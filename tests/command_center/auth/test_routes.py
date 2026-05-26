@@ -440,6 +440,42 @@ class TestLogout:
         # Indicators of deletion: Max-Age=0 OR expires=Thu, 01 Jan 1970.
         assert "max-age=0" in joined or "1970" in joined
 
+    async def test_logout_clear_cookies_match_set_cookies_attributes(
+        self,
+        auth_app: FastAPI,
+        cc_factory: async_sessionmaker[AsyncSession],
+        setup_token_gate: SetupTokenGate,
+    ) -> None:
+        # F5: delete_cookie must mirror set_cookie's attributes (samesite,
+        # secure, path, httponly) — browsers ignore a clearing Set-Cookie
+        # whose attributes don't match the original.
+        token = setup_token_gate.mint()
+        with TestClient(auth_app) as client:
+            begin_reg = client.post(
+                "/auth/register/begin",
+                json={"setup_token": token, "user_name": "operator"},
+            ).json()
+            register_response = _complete_registration(
+                client, begin=begin_reg, credential_id="cred-logout-attrs"
+            ).json()
+            csrf_token = register_response["csrf_token"]
+            response = client.post(
+                "/auth/logout",
+                headers={"X-CSRF-Token": csrf_token},
+            )
+        set_cookies = response.headers.get_list("set-cookie")
+        session_clear = next(c for c in set_cookies if c.startswith("cc_session=")).lower()
+        csrf_clear = next(c for c in set_cookies if c.startswith("cc_csrf=")).lower()
+        # Both clearing headers must carry the same attributes the
+        # set_cookie path emits.
+        assert "samesite=strict" in session_clear
+        assert "path=/" in session_clear
+        assert "httponly" in session_clear
+        assert "samesite=strict" in csrf_clear
+        assert "path=/" in csrf_clear
+        # cc_csrf is NOT HttpOnly.
+        assert "httponly" not in csrf_clear
+
     async def test_logout_requires_csrf(
         self,
         auth_app: FastAPI,

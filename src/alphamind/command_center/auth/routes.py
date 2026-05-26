@@ -621,10 +621,26 @@ def build_auth_router() -> APIRouter:  # noqa: C901, PLR0915 — five routes gro
         await delete_session(cc_factory, session_id=sid)
         session_cookie_name = request.app.state.security_config.session.cookie_name
         csrf_cookie_name = request.app.state.security_config.csrf.cookie_name
+        cookies_secure = bool(getattr(request.app.state, "cookies_secure", False))
         # 204 with explicit ``Set-Cookie`` headers that clear both cookies.
+        # delete_cookie must mirror set_cookie's attributes (samesite,
+        # secure, path) — most browsers ignore a clearing Set-Cookie
+        # whose attributes don't match the original (F5).
         out = Response(status_code=status.HTTP_204_NO_CONTENT)
-        out.delete_cookie(session_cookie_name)
-        out.delete_cookie(csrf_cookie_name)
+        out.delete_cookie(
+            session_cookie_name,
+            path="/",
+            samesite="strict",
+            secure=cookies_secure,
+            httponly=True,
+        )
+        out.delete_cookie(
+            csrf_cookie_name,
+            path="/",
+            samesite="strict",
+            secure=cookies_secure,
+            httponly=False,
+        )
         return out
 
     return router
