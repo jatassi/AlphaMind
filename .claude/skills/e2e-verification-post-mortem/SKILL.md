@@ -11,7 +11,7 @@ The operator just completed an AlphaMind end-to-end verification run and wants a
 
 Each e2e invocation produces ~10 layers of agent input/output across ~30 files. Real bugs hide in:
 
-- **Bootstrap-context conflation**: the calibration label `bootstrap` covers both "we don't have enough data yet" (expected) and "the collector is broken" (urgent). Operators rationally treat green runs as healthy; bugs masquerade as bootstrap.
+- **Calibration-state conflation**: a green run can still ship modules in `unavailable` (collector broken, vendor missing) right next to `accumulating` (warming up — expected). Both used to share the legacy `bootstrap` label until ALP-540 split them; runs that look healthy at the verdict line still have real bugs hiding in `UNAVAILABLE` entries.
 - **Data-quality cascades**: a single broken collector (e.g. FRED unavailable) silently propagates as `correlation: 0` / `beta: 0` defaults into downstream signals. Agents see real-looking zeros and infer no signal.
 - **Statistical multiplicity**: σ-tests run across thousands of pairs produce ~100+ false positives at 3σ thresholds without correction. The synthesizer is fire-hosed with noise that looks like signal.
 - **Code-path divergence**: analyst, strategist, and PM share a guardrail-state header convention — but the analyst can silently get a different assembler path producing a different view of the same portfolio.
@@ -30,7 +30,8 @@ Invocation directory layout (every file is load-bearing):
 <archive_root>/<YYYY-MM-DD>/inv-YYYYMMDDTHHMMSS-<hash>/
 ├── progress.jsonl              ← phase timing, per-agent tool calls / tokens / latency / stop reason
 ├── resolved_config.json        ← active universe, risk profile, agent configs, model assignments
-├── data_calibration_state.json ← currently {} empty — see ALP-540; will be populated once that lands
+├── data_calibration_state.json ← structured {schema_version: "1", summary, unavailable[], accumulating[]} — ALP-540 landed; consumed by verify_summary.txt's DATA HEALTH block
+├── verify_summary.txt          ← wrapper-stdout artifact: PASS/FAIL lines + verdict + DATA HEALTH; at-a-glance entry point
 ├── phase_outputs/              ← per-SDK-phase Pydantic boundary models (ALP-689 resume); 6 analysis + 3 decision files in debug-e2e mode
 │   ├── tech_semis.json
 │   ├── financials.json
@@ -67,23 +68,19 @@ Invocation directory layout (every file is load-bearing):
 
 ### 1. Bootstrap-accumulating series are NOT bugs
 
-The e2e harness runs against a partially-bootstrapped system. Series with `bootstrap_reason: <module>_min_observations: N < M` where `0 < N < M` are accumulating data — by design, not broken. Examples from the seed run:
+The e2e harness runs against a partially-bootstrapped system. The DATA HEALTH block (in `verify_summary.txt` and rendered from `data_calibration_state.json`) partitions every module into three buckets — the operator triage maps to them directly:
 
-- `funding_stress: 11 < 60 observations`
-- `market_liquidity: 11 < 60 observations`
-- `breadth_internals: 128 < 200 observations`
-- `spy_tlt: 39 < 60 observations`
+- **`ACCUMULATING (N) — collector healthy, wait`** → MUST NOT file. The series is warming up by design (e.g., `baseline_days: 13 < 20 for AXP`, `ema_pairs_min_closes: 194 < 200`, `funding_stress_min_observations: 11 < 60`). The collector is writing rows; the module just hasn't accumulated enough history yet. The operator will redirect any such filing.
+- **`UNAVAILABLE (N) — operator action required`** → real-bug candidate set. The vocabulary makes the failure mode explicit: `history unavailable` (vendor unauthed / FRED series missing / collector not scheduled), `0 observations` (collector dead, never wrote a row), `baseline calibration_state=unavailable for <TICKER>` (per-ticker collector gap), `no options snapshots for <list>` (entire sector missing snapshots). File one issue per distinct root cause, not one per `UNAVAILABLE` line.
+- **`calibrated=N`** → healthy; no triage needed.
 
-These MUST NOT be filed. The operator will redirect any such filing.
+What IS a real bug even when the surface label looks benign:
 
-What IS a real bug in the same vicinity:
+- Severity firing `investigate_now` from an `ACCUMULATING` module (severity should be gated by calibration state)
+- An `ACCUMULATING` module publishing numeric defaults (`correlation: 0`, `beta: 0`) instead of `null` / missing-data sentinel (silent default masquerading as real signal)
+- A module appearing in neither `UNAVAILABLE` nor `ACCUMULATING` while its downstream consumer shows the missing-data fallback path (silent calibration miscategorization)
 
-- `observations: 0 < N` (zero accumulation — collector down, never wrote a row)
-- `bootstrap_reason: <series> history unavailable` (vendor unauthed / FRED key missing / collector not scheduled)
-- Severity firing `investigate_now` from a bootstrap-state module (severity should be gated by calibration state)
-- A bootstrap module publishing numeric defaults (`correlation: 0`, `beta: 0`) instead of `null` / missing-data sentinel (silent default masquerading as real signal)
-
-When in doubt, ask the operator. Future e2e runs will inherit the same bootstrap context until the underlying collectors mature; if a "bootstrap" series stays at the same observation count across two consecutive runs a week apart, it's actually a collector bug and should be re-triaged.
+When in doubt, ask the operator. Future e2e runs will inherit the same bootstrap context until the underlying collectors mature; if an `ACCUMULATING` series stays at the same observation count across two consecutive runs a week apart, it's actually a collector bug and should be re-triaged into `UNAVAILABLE`.
 
 ### 2. Operator confirmation per category before filing
 
@@ -120,7 +117,7 @@ The synthesizer publishes the canonical brief via tool calls to `publish_brief`.
    - Agent model assignments and token budgets (`analyst`/`strategist`/`pm` are Opus; researchers are Sonnet)
    - `last_full_validation` date vs invocation date (staleness is informative)
 
-4. Read `data_calibration_state.json`. If `{}` (empty), note it — this is the operator-surface gap from ALP-540. Once ALP-540 lands, this file will carry the structured calibration summary.
+4. Read `verify_summary.txt` first — it carries the wrapper's PASS/FAIL verdict, the 7/7 (or N/7) check summary, and the rendered DATA HEALTH block (`UNAVAILABLE` / `ACCUMULATING` / `calibrated` counts + per-module reasons). This is the at-a-glance entry point for Hard rule 1 triage: anything under `ACCUMULATING (N) — collector healthy, wait` is the "MUST NOT file" set; anything under `UNAVAILABLE (N) — operator action required` is the real-bug candidate set. The structured source is `data_calibration_state.json` (schema_version 1, `summary` + `unavailable[]` + `accumulating[]`) — read that when you need the raw payload (e.g., to filter or compare across runs).
 
 ### Phase 2 — Per-layer audit
 
@@ -138,7 +135,7 @@ The synthesizer's input is the consolidated brief. Sections to walk:
 - `=== LEAD-LAG ===` — `commodity_to_energy_equity`, `credit_to_equity`, `financials_to_market`, `semis_to_tech`
 - `=== CORRELATION REGIME CHANGE ===` — pair-wise σ deviations. For each pair, ask: is the math sensible? Phantom flags from `long_correlation ≈ 0` (data-alignment artifact) or `short_correlation ≈ 0` (numerical-precision floor)?
 - `=== NARRATIVE LAG ===` — count vs qualifying news
-- `=== UNIVERSAL CONTEXT ===` — per-module q6.* / q7.* / qual.* blocks. For each, check `calibration` label + `bootstrap_reason`. Apply Hard rule 1 triage.
+- `=== UNIVERSAL CONTEXT ===` — per-module q6.* / q7.* / qual.* blocks. Each line carries the calibration state (`calibrated` / `accumulating` / `unavailable`) and, for non-calibrated states, a `reason:` clause. Apply Hard rule 1 triage: `accumulating` lines are MUST-NOT-file; `unavailable` lines are real-bug candidates.
 - `=== ANOMALY FLAGS (N) ===` — N is the load-bearing signal here. If N is in the hundreds with a 3σ threshold, multiple-comparison correction is missing (MATH-2 pattern). Count locus tickers (META in 20 pairs? XYZ in 12? = locus aggregation missing, MATH-3 pattern).
 
 **Qualitative researcher**:

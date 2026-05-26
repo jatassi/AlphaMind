@@ -46,7 +46,9 @@ See ``scripts/RUNBOOK_end_to_end_verification.md`` for the operator runbook.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 import os
 import re
@@ -55,7 +57,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
@@ -71,6 +73,7 @@ from alphamind.scripts._stdio import configure_utf8_stdio
 __all__ = [
     "FRESH_START_EXPECTATIONS",
     "SYNTHETIC_EXPECTATIONS",
+    "VERIFY_SUMMARY_FILENAME",
     "CheckResult",
     "PortfolioExpectations",
     "check_archive_directory",
@@ -145,6 +148,15 @@ def check_auth() -> CheckResult:
 
 
 _PROGRESS_JSONL_FILENAME = "progress.jsonl"
+VERIFY_SUMMARY_FILENAME = "verify_summary.txt"
+"""Operator-facing summary persisted alongside the run's archive.
+
+Mirrors the wrapper stdout (PASS/FAIL lines + ``=== DEBUG-E2E VERIFICATION ===``
+summary + ``=== DATA HEALTH ===`` block). Written at the end of
+:func:`main` once the invocation directory is resolved, so the verdict
+lives with the rest of the run's artifacts instead of relying on the
+operator to ``tee`` wrapper output to a side file.
+"""
 
 
 def check_archive_directory(*, archive_root: Path, invocation_id: str) -> CheckResult:
@@ -944,6 +956,33 @@ def _emit(results: list[CheckResult], result: CheckResult) -> None:
     print(result.format_line())
 
 
+class _TeeStream(io.TextIOBase):
+    """Forward writes to a real stdout while accumulating them in a buffer.
+
+    Used by :func:`main` under :func:`contextlib.redirect_stdout` so every
+    operator-facing line (PASS/FAIL, summary, DATA HEALTH) is both shown
+    on the terminal in real time and captured for persistence to
+    ``<inv_dir>/verify_summary.txt``. Operators no longer need a side
+    ``tee`` invocation to keep the verdict after the wrapper exits.
+    """
+
+    def __init__(self, downstream: IO[str]) -> None:
+        super().__init__()
+        self._downstream = downstream
+        self._buffer: list[str] = []
+
+    def write(self, data: str) -> int:
+        self._downstream.write(data)
+        self._buffer.append(data)
+        return len(data)
+
+    def flush(self) -> None:
+        self._downstream.flush()
+
+    def getvalue(self) -> str:
+        return "".join(self._buffer)
+
+
 @dataclass(frozen=True, slots=True)
 class _SubprocessOutput:
     """Captured stdout + stderr of the debug-e2e subprocess."""
@@ -1081,21 +1120,65 @@ def main(argv: Sequence[str] | None = None) -> int:
     subprocess: subsequent checks consume the archive the subprocess
     produces, so there's no value in running them against a missing
     archive.
+
+    Wrapper stdout (PASS/FAIL lines, summary, DATA HEALTH block) is
+    teed into a buffer and persisted to
+    ``<inv_dir>/verify_summary.txt`` once the invocation directory is
+    resolved, so the operator-facing verdict lives with the rest of the
+    run's artifacts. Failures before the inv_dir exists (auth FAIL,
+    subprocess FAIL, missing-archive FAIL) emit to stdout only — there
+    is no inv_dir to write into.
     """
     configure_utf8_stdio()
     args = _parse_args(argv)
+    tee = _TeeStream(sys.stdout)
+    with contextlib.redirect_stdout(tee):
+        exit_code, invocation_id = _run_checks(args)
+    _persist_verify_summary(
+        archive_root=args.archive_root,
+        invocation_id=invocation_id,
+        content=tee.getvalue(),
+    )
+    return exit_code
+
+
+def _persist_verify_summary(*, archive_root: Path, invocation_id: str | None, content: str) -> None:
+    """Write the tee'd wrapper stdout into the run's archive dir, best-effort.
+
+    Silently skips when no ``invocation_id`` was extracted (early pre-flight
+    failure) or when the inv_dir hasn't been materialized yet (subprocess
+    FAIL before ``insert_invocation_record``). An ``OSError`` during the
+    write is swallowed too — losing the side artifact must not turn an
+    otherwise-green run into a non-zero exit.
+    """
+    if invocation_id is None:
+        return
+    inv_dir = find_invocation_archive_dir(archive_root=archive_root, invocation_id=invocation_id)
+    if inv_dir is None or not inv_dir.is_dir():
+        return
+    with contextlib.suppress(OSError):
+        (inv_dir / VERIFY_SUMMARY_FILENAME).write_text(content, encoding="utf-8")
+
+
+def _run_checks(args: argparse.Namespace) -> tuple[int, str | None]:
+    """Body of :func:`main` — extracted so :func:`main` can wrap stdout cleanly.
+
+    Returns ``(exit_code, invocation_id_or_None)``. The invocation_id is
+    threaded back so :func:`main` can locate the run's archive dir for
+    the summary-file write even on the short-circuit FAIL paths.
+    """
     results: list[CheckResult] = []
 
     _emit(results, check_auth())
     if not results[-1].passed:
         _print_summary(results)
-        return 1
+        return 1, None
 
     subprocess_result, output = _drive_debug_e2e_subprocess(args)
     _emit(results, subprocess_result)
     if not subprocess_result.passed or output is None:
         _print_summary(results)
-        return 1
+        return 1, None
 
     invocation_id = _invocation_id_from_summary(output.stdout)
     if invocation_id is None:
@@ -1108,7 +1191,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
         )
         _print_summary(results)
-        return 1
+        return 1, None
 
     _emit(
         results,
@@ -1203,7 +1286,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # failures (``unavailable``) don't masquerade as warm-up state
     # (``accumulating``) inside a green run.
     _print_data_health(archive_root=args.archive_root, invocation_id=invocation_id)
-    return 0 if all(r.passed for r in results) else 1
+    return (0 if all(r.passed for r in results) else 1, invocation_id)
 
 
 def _print_summary(results: list[CheckResult]) -> None:
