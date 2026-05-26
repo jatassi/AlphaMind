@@ -240,7 +240,11 @@ class _InputBundleModel(BaseModel, frozen=True):
         )
 
     def _to_domain(self) -> Any:
-        from alphamind.analysis.domain_researchers.input_bundle import InputBundle
+        import importlib
+
+        _mod = "alphamind.analysis.domain_researchers.input_bundle"
+        _input_bundle = importlib.import_module(_mod)
+        InputBundle = _input_bundle.InputBundle  # noqa: N806
 
         return InputBundle(
             sector=self.sector,
@@ -285,9 +289,12 @@ class DomainResearcherOutputModel(BaseModel, frozen=True):
             retry_count=dc.retry_count,  # type: ignore[attr-defined]
         )
 
-    def to_domain(self) -> object:
+    def to_domain(self) -> Any:
         """Recover the original :class:`DomainResearcherResult`."""
-        from alphamind.analysis.domain_researchers.runner import DomainResearcherResult
+        import importlib
+
+        _runner = importlib.import_module("alphamind.analysis.domain_researchers.runner")
+        DomainResearcherResult = _runner.DomainResearcherResult  # noqa: N806
 
         return DomainResearcherResult(
             sector=self.sector,

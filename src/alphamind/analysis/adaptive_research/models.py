@@ -190,7 +190,10 @@ class _DistillationAnomalyRecordModel(BaseModel, frozen=True):
         )
 
     def _to_domain(self) -> object:
-        from alphamind.analysis.adaptive_research.loaders import DistillationAnomalyRecord
+        import importlib
+
+        _loaders = importlib.import_module("alphamind.analysis.adaptive_research.loaders")
+        DistillationAnomalyRecord = _loaders.DistillationAnomalyRecord  # noqa: N806
 
         return DistillationAnomalyRecord(
             block_id=self.block_id,
@@ -226,7 +229,10 @@ class _SectorAnomalyRecordModel(BaseModel, frozen=True):
         )
 
     def _to_domain(self) -> object:
-        from alphamind.analysis.adaptive_research.loaders import SectorAnomalyRecord
+        import importlib
+
+        _loaders = importlib.import_module("alphamind.analysis.adaptive_research.loaders")
+        SectorAnomalyRecord = _loaders.SectorAnomalyRecord  # noqa: N806
 
         return SectorAnomalyRecord(
             anomaly_id=self.anomaly_id,
@@ -257,11 +263,14 @@ class _AdaptiveAnomalyInputsModel(BaseModel, frozen=True):
         )
 
     def _to_domain(self) -> Any:
-        from alphamind.analysis.adaptive_research.loaders import AdaptiveAnomalyInputs
+        import importlib
+
+        _loaders = importlib.import_module("alphamind.analysis.adaptive_research.loaders")
+        AdaptiveAnomalyInputs = _loaders.AdaptiveAnomalyInputs  # noqa: N806
 
         return AdaptiveAnomalyInputs(
-            distillation=tuple(r._to_domain() for r in self.distillation),  # type: ignore[misc]
-            sector=tuple(r._to_domain() for r in self.sector),  # type: ignore[misc]
+            distillation=tuple(r._to_domain() for r in self.distillation),
+            sector=tuple(r._to_domain() for r in self.sector),
             data_freshness=self.data_freshness,
         )
 
@@ -288,7 +297,10 @@ class _AdaptiveInputBundleModel(BaseModel, frozen=True):
         )
 
     def _to_domain(self) -> Any:
-        from alphamind.analysis.adaptive_research.input_bundle import InputBundle
+        import importlib
+
+        _input_bundle = importlib.import_module("alphamind.analysis.adaptive_research.input_bundle")
+        InputBundle = _input_bundle.InputBundle  # noqa: N806
 
         return InputBundle(
             invocation_id=self.invocation_id,
@@ -330,9 +342,12 @@ class AdaptiveResearcherResultModel(BaseModel, frozen=True):
             retry_count=dc.retry_count,  # type: ignore[attr-defined]
         )
 
-    def to_domain(self) -> object:
+    def to_domain(self) -> Any:
         """Recover the original :class:`AdaptiveResearcherResult`."""
-        from alphamind.analysis.adaptive_research.runner import AdaptiveResearcherResult
+        import importlib
+
+        _runner = importlib.import_module("alphamind.analysis.adaptive_research.runner")
+        AdaptiveResearcherResult = _runner.AdaptiveResearcherResult  # noqa: N806
 
         return AdaptiveResearcherResult(
             brief=self.brief,

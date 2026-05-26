@@ -280,7 +280,7 @@ def _replay_qualitative_researcher(
     """Replay the qualitative researcher phase."""
     from alphamind.analysis.qualitative_research.models import QualitativeResearcherResultModel
 
-    return _replay_analysis_phase(
+    return _replay_analysis_phase(  # type: ignore[no-any-return]
         phase="qualitative",
         model_cls=QualitativeResearcherResultModel,
         convert=QualitativeResearcherResultModel.to_domain,
@@ -302,7 +302,7 @@ def _replay_adaptive_researcher(
     """Replay the adaptive researcher phase."""
     from alphamind.analysis.adaptive_research.models import AdaptiveResearcherResultModel
 
-    return _replay_analysis_phase(
+    return _replay_analysis_phase(  # type: ignore[no-any-return]
         phase="adaptive",
         model_cls=AdaptiveResearcherResultModel,
         convert=AdaptiveResearcherResultModel.to_domain,
@@ -324,7 +324,7 @@ def _replay_synthesizer(
     """Replay the synthesizer phase."""
     from alphamind.analysis.synthesizer.models import SynthesizerResultModel
 
-    return _replay_analysis_phase(
+    return _replay_analysis_phase(  # type: ignore[no-any-return]
         phase="synthesizer",
         model_cls=SynthesizerResultModel,
         convert=SynthesizerResultModel.to_domain,

@@ -213,7 +213,11 @@ class _QualInputBundleModel(BaseModel, frozen=True):
         )
 
     def _to_domain(self) -> Any:
-        from alphamind.analysis.qualitative_research.input_bundle import InputBundle
+        import importlib
+
+        _mod = "alphamind.analysis.qualitative_research.input_bundle"
+        _input_bundle = importlib.import_module(_mod)
+        InputBundle = _input_bundle.InputBundle  # noqa: N806
 
         return InputBundle(
             invocation_id=self.invocation_id,
@@ -261,9 +265,12 @@ class QualitativeResearcherResultModel(BaseModel, frozen=True):
             retry_count=dc.retry_count,  # type: ignore[attr-defined]
         )
 
-    def to_domain(self) -> object:
+    def to_domain(self) -> Any:
         """Recover the original :class:`QualitativeResearcherResult`."""
-        from alphamind.analysis.qualitative_research.runner import QualitativeResearcherResult
+        import importlib
+
+        _runner = importlib.import_module("alphamind.analysis.qualitative_research.runner")
+        QualitativeResearcherResult = _runner.QualitativeResearcherResult  # noqa: N806
 
         return QualitativeResearcherResult(
             brief=self.brief,

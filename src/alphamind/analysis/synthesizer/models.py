@@ -261,11 +261,12 @@ class RetrievalStoreModel(BaseModel, frozen=True):
         return cls(
             entries=dict(store.entries),  # type: ignore[attr-defined]
             freshness_by_source={
-                source.value: ts for source, ts in store.freshness_by_source.items()  # type: ignore[attr-defined]
+                source.value: ts
+                for source, ts in store.freshness_by_source.items()  # type: ignore[attr-defined]
             },
         )
 
-    def to_domain(self) -> object:
+    def to_domain(self) -> Any:
         """Recover the original :class:`RetrievalStore`."""
         from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 
@@ -305,9 +306,12 @@ class SynthesizerResultModel(BaseModel, frozen=True):
             stop_reason=dc.stop_reason,  # type: ignore[attr-defined]
         )
 
-    def to_domain(self) -> object:
+    def to_domain(self) -> Any:
         """Recover the original :class:`SynthesizerResult`."""
-        from alphamind.analysis.synthesizer.runner import SynthesizerResult
+        import importlib
+
+        _runner = importlib.import_module("alphamind.analysis.synthesizer.runner")
+        SynthesizerResult = _runner.SynthesizerResult  # noqa: N806
 
         return SynthesizerResult(
             synthesis_text=self.synthesis_text,

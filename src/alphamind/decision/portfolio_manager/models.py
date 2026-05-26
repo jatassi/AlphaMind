@@ -16,6 +16,8 @@ under each agent's ``models.py`` (ALP-692).
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict
 
 from alphamind.commands.pm_envelope import (
@@ -118,7 +120,7 @@ class SubmissionLogEntryModel(BaseModel):
             submission_results=entry.submission_results,
         )
 
-    def to_domain(self) -> object:
+    def to_domain(self) -> Any:
         """Reconstruct a :class:`SubmissionLogEntry` from this model."""
         from alphamind.commands.submission_log import SubmissionLogEntry
 
@@ -156,7 +158,10 @@ class PMResultModel(BaseModel):
     @classmethod
     def from_domain(cls, dc: object) -> PMResultModel:
         """Construct from a :class:`PMResult` dataclass instance."""
-        from alphamind.decision.portfolio_manager.runner import PMResult
+        import importlib
+
+        _runner = importlib.import_module("alphamind.decision.portfolio_manager.runner")
+        PMResult = _runner.PMResult  # noqa: N806
 
         if not isinstance(dc, PMResult):
             raise TypeError(f"Expected PMResult, got {type(dc).__name__}")
@@ -178,17 +183,18 @@ class PMResultModel(BaseModel):
             stop_reason=dc.stop_reason,
         )
 
-    def to_domain(self) -> object:
+    def to_domain(self) -> Any:
         """Reconstruct a :class:`PMResult` from this model."""
+        import importlib
+
         from alphamind.analysis._shared import TokensUsed
-        from alphamind.decision.portfolio_manager.runner import PMResult
+
+        _runner = importlib.import_module("alphamind.decision.portfolio_manager.runner")
+        PMResult = _runner.PMResult  # noqa: N806
 
         return PMResult(
             output=self.output,
-            submission_log=tuple(
-                entry.to_domain()  # type: ignore[misc]
-                for entry in self.submission_log
-            ),
+            submission_log=tuple(entry.to_domain() for entry in self.submission_log),
             retry_count=self.retry_count,
             tokens_used=TokensUsed(
                 input_tokens=self.tokens_used.input_tokens,

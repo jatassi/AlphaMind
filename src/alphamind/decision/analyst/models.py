@@ -26,7 +26,7 @@ Both are frozen dataclasses; ``GuardrailValidationResult`` carries them via
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -561,7 +561,10 @@ class AnalystResultModel(BaseModel):
     def from_domain(cls, dc: object) -> AnalystResultModel:
         """Construct from an :class:`AnalystResult` dataclass instance."""
         # Imported here to avoid a circular import — runner imports models.
-        from alphamind.decision.analyst.runner import AnalystResult
+        import importlib
+
+        _runner = importlib.import_module("alphamind.decision.analyst.runner")
+        AnalystResult = _runner.AnalystResult  # noqa: N806
 
         if not isinstance(dc, AnalystResult):
             raise TypeError(f"Expected AnalystResult, got {type(dc).__name__}")
@@ -580,10 +583,14 @@ class AnalystResultModel(BaseModel):
             stop_reason=dc.stop_reason,
         )
 
-    def to_domain(self) -> object:
+    def to_domain(self) -> Any:
         """Reconstruct an :class:`AnalystResult` from this model."""
+        import importlib
+
         from alphamind.analysis._shared import TokensUsed
-        from alphamind.decision.analyst.runner import AnalystResult
+
+        _runner = importlib.import_module("alphamind.decision.analyst.runner")
+        AnalystResult = _runner.AnalystResult  # noqa: N806
 
         return AnalystResult(
             output=self.output,

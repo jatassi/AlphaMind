@@ -333,7 +333,7 @@ class TestPMResultModel:
 
         dc = _make_pm_result()
         model = PMResultModel.from_domain(dc)
-        recovered: _PMResult = model.to_domain()  # type: ignore[assignment]
+        recovered: _PMResult = model.to_domain()
         assert len(recovered.submission_log) == len(dc.submission_log)
         for orig, rec in zip(dc.submission_log, recovered.submission_log, strict=False):
             assert orig.envelope.envelope_id == rec.envelope.envelope_id
@@ -349,7 +349,7 @@ class TestPMResultModel:
 
         dc = _make_pm_result()
         model = PMResultModel.from_domain(dc)
-        recovered: _PMResult = model.to_domain()  # type: ignore[assignment]
+        recovered: _PMResult = model.to_domain()
         first_orig = dc.submission_log[0]
         first_rec = recovered.submission_log[0]
         assert first_orig.submission_results[0].status == first_rec.submission_results[0].status

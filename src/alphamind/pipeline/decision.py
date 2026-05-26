@@ -303,11 +303,11 @@ def _replay_decision_phase(
     raw = source_output_path.read_text(encoding="utf-8")
     result: AnalystResult | StrategistResult | PMResult
     if phase == "analyst":
-        result = AnalystResultModel.model_validate_json(raw).to_domain()  # type: ignore[assignment]
+        result = AnalystResultModel.model_validate_json(raw).to_domain()
     elif phase == "strategist":
-        result = StrategistResultModel.model_validate_json(raw).to_domain()  # type: ignore[assignment]
+        result = StrategistResultModel.model_validate_json(raw).to_domain()
     else:  # phase == "pm"
-        result = PMResultModel.model_validate_json(raw).to_domain()  # type: ignore[assignment]
+        result = PMResultModel.model_validate_json(raw).to_domain()
 
     # Copy per-agent diagnostic dir if the target archive is set. The
     # diagnostic dir is the source of the resumed run's record-of-truth for

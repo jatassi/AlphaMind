@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -670,7 +670,10 @@ class StrategistResultModel(BaseModel):
     @classmethod
     def from_domain(cls, dc: object) -> StrategistResultModel:
         """Construct from a :class:`StrategistResult` dataclass instance."""
-        from alphamind.decision.strategist.runner import StrategistResult
+        import importlib
+
+        _runner = importlib.import_module("alphamind.decision.strategist.runner")
+        StrategistResult = _runner.StrategistResult  # noqa: N806
 
         if not isinstance(dc, StrategistResult):
             raise TypeError(f"Expected StrategistResult, got {type(dc).__name__}")
@@ -708,15 +711,19 @@ class StrategistResultModel(BaseModel):
             metadata=dc.metadata,
         )
 
-    def to_domain(self) -> object:
+    def to_domain(self) -> Any:
         """Reconstruct a :class:`StrategistResult` from this model."""
+        import importlib
+
         from alphamind.analysis._shared import TokensUsed
         from alphamind.commands.validation_results import (
             ValidationError,
             ValidationResult,
             ValidationWarning,
         )
-        from alphamind.decision.strategist.runner import StrategistResult
+
+        _runner = importlib.import_module("alphamind.decision.strategist.runner")
+        StrategistResult = _runner.StrategistResult  # noqa: N806
 
         vr_model = self.validation_result
         return StrategistResult(
