@@ -124,6 +124,7 @@ def _details_to_dict(details: PositionDetailsPayload) -> dict[str, Any]:
             "share_count": details.share_count,
             "average_cost_basis_per_share": details.average_cost_basis_per_share,
             "borrow_rate_pct": details.borrow_rate_pct,
+            "accrued_borrow_cost_usd": details.accrued_borrow_cost_usd,
             "locate_status": (
                 details.locate_status.value if details.locate_status is not None else None
             ),
@@ -168,6 +169,7 @@ def _equity_from_dict(payload: dict[str, Any]) -> EquityPositionDetails:
         share_count=payload["share_count"],
         average_cost_basis_per_share=payload["average_cost_basis_per_share"],
         borrow_rate_pct=payload.get("borrow_rate_pct"),
+        accrued_borrow_cost_usd=payload.get("accrued_borrow_cost_usd"),
         locate_status=LocateStatus(locate_raw) if locate_raw is not None else None,
         margin_held_usd=payload.get("margin_held_usd"),
     )
