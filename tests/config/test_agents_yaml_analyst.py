@@ -38,7 +38,7 @@ def test_analyst_entry_loads() -> None:
     assert entry.prompt == "prompts/decision/analyst.md"
     assert entry.latency_budget_seconds == 500
     assert entry.context_token_budget == 8000
-    assert entry.output_token_budget == 6000
+    assert entry.output_token_budget == 100000
 
 
 def test_analyst_prompt_path_exists() -> None:
