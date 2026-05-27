@@ -1539,6 +1539,192 @@ async def test_short_entry_fill_transitions_pending_short_to_open_with_stamped_f
         assert pos.details.margin_held_usd == pytest.approx(10.0 * 150.0 * 0.50)
 
 
+# ---------------------------------------------------------------------------
+# Unit-level coverage of the equity dispatcher's 8-case routing matrix
+# (status × direction × buy_side) + entry-fill resolver contracts. These
+# tests skip the DB substrate and call the dispatcher helpers directly so
+# the matrix coverage stays focused and fast (ALP-717).
+# ---------------------------------------------------------------------------
+
+
+def _make_fill_record(
+    *,
+    fill_id: str = "fill-direct",
+    order_id: str = "ord-direct",
+    fill_quantity: float = 10.0,
+    fill_price: float = 150.0,
+) -> FillRecord:
+    return FillRecord(
+        fill_id=fill_id,
+        order_id=OrderId(order_id),
+        fill_timestamp=_NOW - timedelta(minutes=5),
+        fill_price=price(fill_price),
+        fill_quantity=fill_quantity,
+        remaining_quantity_after=0.0,
+        order_status_after=OrderStatus.FILLED,
+        slippage_usd=signed_money(0.0),
+        fees_usd=money(0.0),
+        execution_venue="NASDAQ",
+        gateway_reference=f"alp-{fill_id}",
+        persistence_timestamp=_NOW,
+        processing_status=FillProcessingStatus.UNPROCESSED,
+        processing_invocation_id=None,
+        processing_timestamp=None,
+        regt_attribution=None,
+        live_execution_estimate=None,
+    )
+
+
+def test_dispatcher_pending_long_buy_routes_to_entry_fill() -> None:
+    """PENDING LONG + BUY → entry-fill (opens the LONG position)."""
+    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+
+    position = _make_pending_position(direction=Direction.LONG)
+    fill = _make_fill_record()
+    result = _apply_fill_to_position(
+        position, fill, is_buy_side=True, borrow_cost_resolver=None
+    )
+    assert result.status == PositionStatus.OPEN
+    assert isinstance(result.details, EquityPositionDetails)
+    assert result.details.share_count == 10.0
+
+
+def test_dispatcher_pending_long_sell_raises_value_error() -> None:
+    """PENDING LONG + SELL → ValueError ("cannot close before it opens")."""
+    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+
+    position = _make_pending_position(direction=Direction.LONG)
+    fill = _make_fill_record()
+    with pytest.raises(ValueError, match="cannot close before it opens") as exc_info:
+        _apply_fill_to_position(position, fill, is_buy_side=False, borrow_cost_resolver=None)
+    # Defensive message names the position id.
+    assert "pos-1" in str(exc_info.value)
+
+
+def test_dispatcher_pending_short_buy_raises_value_error() -> None:
+    """PENDING SHORT + BUY → ValueError ("cannot close before it opens")."""
+    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+
+    position = _make_pending_position(direction=Direction.SHORT)
+    fill = _make_fill_record()
+    with pytest.raises(ValueError, match="cannot close before it opens") as exc_info:
+        _apply_fill_to_position(position, fill, is_buy_side=True, borrow_cost_resolver=None)
+    assert "pos-1" in str(exc_info.value)
+
+
+def test_dispatcher_pending_short_sell_routes_to_entry_fill() -> None:
+    """PENDING SHORT + SELL → entry-fill (SELL_TO_OPEN opens the short)."""
+    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+
+    position = _make_pending_position(direction=Direction.SHORT)
+    fill = _make_fill_record()
+    result = _apply_fill_to_position(
+        position, fill, is_buy_side=False, borrow_cost_resolver=lambda _t: 12.5
+    )
+    assert result.status == PositionStatus.OPEN
+    assert isinstance(result.details, EquityPositionDetails)
+    assert result.details.share_count == 10.0
+    assert result.details.borrow_rate_pct == 12.5
+
+
+def test_dispatcher_open_long_buy_routes_to_add_fill() -> None:
+    """OPEN LONG + BUY → add-fill (grow the long position)."""
+    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+
+    position = _make_open_position(direction=Direction.LONG, share_count=10.0)
+    fill = _make_fill_record(fill_quantity=5.0, fill_price=160.0)
+    result = _apply_fill_to_position(
+        position, fill, is_buy_side=True, borrow_cost_resolver=None
+    )
+    assert result.status == PositionStatus.OPEN
+    assert isinstance(result.details, EquityPositionDetails)
+    assert result.details.share_count == 15.0
+
+
+def test_dispatcher_open_long_sell_routes_to_exit_fill() -> None:
+    """OPEN LONG + SELL → exit-fill (reduce / close the long position)."""
+    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+
+    position = _make_open_position(direction=Direction.LONG, share_count=10.0)
+    fill = _make_fill_record(fill_quantity=10.0, fill_price=160.0)
+    result = _apply_fill_to_position(
+        position, fill, is_buy_side=False, borrow_cost_resolver=None
+    )
+    assert result.status == PositionStatus.CLOSED
+
+
+def test_dispatcher_open_short_buy_routes_to_exit_fill() -> None:
+    """OPEN SHORT + BUY → exit-fill (cover-to-close)."""
+    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+
+    position = _make_open_position(direction=Direction.SHORT, share_count=10.0)
+    fill = _make_fill_record(fill_quantity=10.0, fill_price=140.0)
+    result = _apply_fill_to_position(
+        position, fill, is_buy_side=True, borrow_cost_resolver=None
+    )
+    assert result.status == PositionStatus.CLOSED
+
+
+def test_dispatcher_open_short_sell_routes_to_add_fill() -> None:
+    """OPEN SHORT + SELL → add-fill (grow the short position)."""
+    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+
+    position = _make_open_position(direction=Direction.SHORT, share_count=10.0)
+    fill = _make_fill_record(fill_quantity=5.0, fill_price=140.0)
+    result = _apply_fill_to_position(
+        position, fill, is_buy_side=False, borrow_cost_resolver=None
+    )
+    assert result.status == PositionStatus.OPEN
+    assert isinstance(result.details, EquityPositionDetails)
+    assert result.details.share_count == 15.0
+
+
+def test_entry_fill_short_with_none_resolver_raises_value_error() -> None:
+    """SHORT entry with ``borrow_cost_resolver=None`` raises ValueError naming
+    the missing resolver — short stamping cannot proceed without a rate."""
+    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+
+    position = _make_pending_position(direction=Direction.SHORT, ticker="CRWD")
+    fill = _make_fill_record()
+    with pytest.raises(ValueError, match="requires a borrow_cost_resolver"):
+        _apply_fill_to_position(position, fill, is_buy_side=False, borrow_cost_resolver=None)
+
+
+def test_entry_fill_short_with_resolver_returning_none_raises_value_error() -> None:
+    """SHORT entry with a resolver that returns ``None`` for the ticker
+    raises ValueError naming the upstream contract violation."""
+    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+
+    position = _make_pending_position(direction=Direction.SHORT, ticker="CRWD")
+    fill = _make_fill_record()
+    with pytest.raises(ValueError, match="upstream contract violation"):
+        _apply_fill_to_position(
+            position,
+            fill,
+            is_buy_side=False,
+            borrow_cost_resolver=lambda _t: None,
+        )
+
+
+def test_entry_fill_long_with_none_resolver_succeeds() -> None:
+    """LONG entry with ``borrow_cost_resolver=None`` succeeds — the LONG
+    path never consults the resolver."""
+    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+
+    position = _make_pending_position(direction=Direction.LONG)
+    fill = _make_fill_record()
+    result = _apply_fill_to_position(
+        position, fill, is_buy_side=True, borrow_cost_resolver=None
+    )
+    assert result.status == PositionStatus.OPEN
+    assert isinstance(result.details, EquityPositionDetails)
+    # LONG positions never carry the short-only fields.
+    assert result.details.borrow_rate_pct is None
+    assert result.details.accrued_borrow_cost_usd is None
+    assert result.details.locate_status is None
+    assert result.details.margin_held_usd is None
+
+
 async def test_phase1_stamps_completion_timestamp_on_invocation_row(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
