@@ -488,6 +488,16 @@ PASS: invocation_summary — staleness_flag=false, trigger_source='debug_e2e_cli
 === DEBUG-E2E VERIFICATION === 7/7 checks passed
 ```
 
+**Agent operators driving the verify via tool calls must include the
+invocation ID in their final summary to the operator.** The ID is the
+last path segment of the `PASS: archive_directory` line (e.g.,
+`inv-20260526T210153Z-d34fb51d`). It lets the operator navigate
+directly to `<archive-root>/<YYYY-MM-DD>/<invocation_id>/` to inspect
+per-agent diagnostics, the `progress.jsonl` event stream, or
+`verify_summary.txt` — without having to re-derive the path from the
+wrapper's output or hunt through the archive root. Surface it whether
+the run passed or failed; on FAIL, it is the entry point for triage.
+
 The archive directory carries:
 
 ```

@@ -1,0 +1,95 @@
+# Alerts configuration — load via AlertsConfig.
+# See src/alphamind/command_center/config.py for the model + per-field docs.
+# Story 05a (ALP-671) — 17 default rules per the design doc § Alerting —
+# Default rule set. Rules whose upstream emit point does not yet exist
+# in this work tree's scope are still registered; the alert engine logs
+# a single startup WARNING per dormant rule.
+#
+# Per-rule overrides supported by build_default_rules() in
+# src/alphamind/command_center/alerts/conditions.py:
+#   * severity (critical / important / operational)
+#   * debounce_minutes (timedelta)
+#   * channels ((in_app,) / (in_app, discord))
+#
+# This file enumerates each rule by name so a future operator edit (e.g.
+# disable a noisy rule by removing it, or tighten a debounce window)
+# round-trips through the YAML rather than the Python defaults.
+
+rules:
+  # Critical tier — in-app banner (sticky) + Discord webhook.
+  - name: pipeline_aborted
+    severity: critical
+    debounce_minutes: 15
+    channels: [in_app, discord]
+  - name: critical_api_failure
+    severity: critical
+    debounce_minutes: 30
+    channels: [in_app, discord]
+  - name: schedule_miss_critical
+    severity: critical
+    debounce_minutes: 15
+    channels: [in_app, discord]
+  - name: monitor_websocket_disconnected
+    severity: critical
+    debounce_minutes: 15
+    channels: [in_app, discord]
+  - name: margin_call_detected
+    severity: critical
+    debounce_minutes: 60
+    channels: [in_app, discord]
+  - name: drawdown_tier_crossed
+    severity: critical
+    debounce_minutes: 720
+    channels: [in_app, discord]
+  - name: halt_mode_entered
+    severity: critical
+    debounce_minutes: 15
+    channels: [in_app, discord]
+
+  # Important tier — in-app banner + Discord webhook.
+  - name: important_api_failure
+    severity: important
+    debounce_minutes: 30
+    channels: [in_app, discord]
+  - name: hard_block_guardrail_rejection
+    severity: important
+    debounce_minutes: 15
+    channels: [in_app, discord]
+  - name: regime_jump
+    severity: important
+    debounce_minutes: 360
+    channels: [in_app, discord]
+  - name: agent_malformed_output
+    severity: important
+    debounce_minutes: 10
+    channels: [in_app, discord]
+  - name: schedule_miss
+    severity: important
+    debounce_minutes: 15
+    channels: [in_app, discord]
+  - name: data_directory_disk_pressure
+    severity: important
+    debounce_minutes: 360
+    channels: [in_app, discord]
+
+  # Operational tier — in-app banner only.
+  - name: profile_boundary_crossed
+    severity: operational
+    debounce_minutes: 1440
+    channels: [in_app]
+  - name: optional_data_category_skipped
+    severity: operational
+    debounce_minutes: 30
+    channels: [in_app]
+  - name: command_abandoned
+    severity: operational
+    debounce_minutes: 15
+    channels: [in_app]
+  - name: thesis_resolved
+    severity: operational
+    debounce_minutes: 15
+    channels: [in_app]
+
+channels:
+  discord:
+    webhook_url_env: "ALPHAMIND_DISCORD_WEBHOOK"

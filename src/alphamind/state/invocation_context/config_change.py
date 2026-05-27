@@ -1,25 +1,34 @@
-"""``DISTILLATION_CONFIG_CHANGE`` emission helper (story ALP-100).
+"""Activity-log emission helpers for configuration events.
 
-Wires the distillation configuration loader into the activity-log substrate.
-On reload, the helper is called inside the open ``InvocationContext`` so the
+``emit_distillation_config_change_entry`` (story ALP-100): wires the
+distillation configuration loader into the activity-log substrate.  On
+reload, the helper is called inside the open ``InvocationContext`` so the
 emitted row commits atomically with the invocation row (or rolls back with
 it on exception). The persisted prior-reload ``new_hash`` is consulted to
 suppress a no-op append when the resolved config is byte-identical to the
 prior reload — see ``state-persistence.md`` § Activity log entries.
+
+``emit_profile_switch_entry`` (story ALP-663): wires the operator-console
+profile-switch handler into the activity-log substrate.  When the outcome
+is a no-op (``is_no_op=True``), the helper returns without writing so the
+activity log contains no redundant entry.
 """
 
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
+from alphamind.config.control_handlers.profile_switch import ProfileSwitchOutcome
 from alphamind.config.models.distillation import DistillationConfig
 from alphamind.portfolio_state.computations.activity_log import (
     build_distillation_config_change_entry,
     compute_distillation_config_hash,
 )
 from alphamind.portfolio_state.events.activity_log import ActivityLogEntry, EventType
+from alphamind.portfolio_state.events.configuration import ProfileSwitchedDetail
+from alphamind.portfolio_state.events.types import EventGroup, EventSource
 from alphamind.state.invocation_context.activity_log import (
     append_activity_log_entry,
 )
@@ -122,3 +131,49 @@ async def emit_baseline_config_change_entry(
         git_sha=row.git_sha_at_invocation,
         entry_id=entry_id,
     )
+
+
+def emit_profile_switch_entry(
+    *,
+    handle: InvocationHandle,
+    outcome: ProfileSwitchOutcome,
+    now: datetime | None = None,
+) -> None:
+    """Emit a ``PROFILE_SWITCHED`` entry, or suppress when the switch is a no-op.
+
+    When ``outcome.is_no_op`` is ``True`` (the requested profile equals the
+    current one), returns without writing — no redundant entry is appended to
+    the activity log.
+
+    When ``outcome.is_no_op`` is ``False``, constructs a :class:`ProfileSwitchedDetail`
+    from the outcome fields and appends one typed :class:`ActivityLogEntry` inside
+    the open handle's transaction.  The row commits atomically with the surrounding
+    ``InvocationContext``; an exception escaping the context rolls it back.
+
+    ``now`` lets the caller supply the same timestamp it uses for the response
+    ``applied_at`` so the activity-log row and the HTTP response carry one
+    coherent wall-clock instant.  Defaults to ``datetime.now(UTC)`` when not
+    supplied (F10).
+    """
+    if outcome.is_no_op:
+        return
+
+    detail = ProfileSwitchedDetail(
+        previous_profile=outcome.previous_profile,
+        new_profile=outcome.new_profile,
+        is_no_op=outcome.is_no_op,
+    )
+    entry_id = f"{handle.invocation_id}-{EventType.PROFILE_SWITCHED.value}-{uuid.uuid4().hex}"
+    entry = ActivityLogEntry(
+        entry_id=entry_id,
+        invocation_id=handle.invocation_id,
+        timestamp=now if now is not None else datetime.now(UTC),
+        event_type=EventType.PROFILE_SWITCHED,
+        event_group=EventGroup.CONFIGURATION,
+        position_id=None,
+        order_id=None,
+        thesis_id=None,
+        source=EventSource.OPERATOR_CONSOLE,
+        detail=detail,
+    )
+    append_activity_log_entry(handle, entry)

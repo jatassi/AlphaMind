@@ -162,15 +162,15 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     """
     resolved = _fixture_resolved()
     digest = compute_snapshot_hash(serialize_resolved_config(resolved))
-    # Pin updated 2026-05-25 (ALP-646): guardrails.yaml gained two top-level
-    # fields (``position_zones`` and ``inverse_warning_band_pct``) so the
-    # canonical bytes shifted; the YAML defaults preserve the historical
-    # behaviour but the serialised form now carries the extra keys.
-    # Pin updated 2026-05-25 (PR #200): agents.yaml analyst.latency_budget_seconds
-    # 300 -> 500 to give the analyst real headroom under production-faithful
-    # synthetic-portfolio state (debug-e2e budget_timeout at 305s on actively-
-    # streaming work). The resolved-config snapshot carries the field verbatim.
-    expected = "54226f6385593779025003f9a490e6f6c4f917c51a706c29ea9bb1d3de662e3a"
+    # Pin updated 2026-05-26 (ALP-128 merge into main): canonical bytes shift
+    # from the ALP-128 work tree's added scheduler.yaml.control_port (ALP-664)
+    # combined with main's PR #200 latency_budget bump (300 -> 500), PR #201/202
+    # risk/translator config updates, and the merge-time resolution.
+    # Pin updated 2026-05-26 (analyst output_token_budget 6000 -> 100000):
+    # --fresh-start debug-e2e run caught the analyst hitting the per-response
+    # cap with output_tokens=30400 across 15 turns; the resolved-config
+    # snapshot carries the new budget verbatim.
+    expected = "01cf3ca54066a503e0901c49780bb1c72cdce1c4600dc0f4635ea602325cd681"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

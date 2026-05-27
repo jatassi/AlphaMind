@@ -1,0 +1,10 @@
+# Security configuration — load via SecurityConfig.
+# See src/alphamind/command_center/config.py for the model + per-field docs.
+session:
+  duration_hours: 12
+  cookie_name: "cc_session"
+csrf:
+  cookie_name: "cc_csrf"
+webauthn:
+  relying_party_id: "localhost"
+  relying_party_name: "AlphaMind Command Center"

@@ -1,0 +1,22 @@
+# Command center backend configuration — load via CommandCenterConfig.
+# See src/alphamind/command_center/config.py for the model + per-field docs.
+bind:
+  host: "127.0.0.1"           # loopback-only in v1 (parent issue pre-resolved B);
+                              # operator can switch to a LAN IP for off-machine
+                              # access by editing this value.
+  port: 8080
+db:
+  alphamind_db_path: "%USERPROFILE%/AlphaMind/data/alphamind.db"
+frontend:
+  dist_path: "src/alphamind/command_center/frontend/dist"
+# Loopback URLs the command center forwards to. The /api/control proxy
+# (story ALP-668) uses control_url; the /events SSE multiplexer (story
+# ALP-669) uses events_url. Both default to the upstream services'
+# control_port values pinned in scheduler.yaml (8765) and
+# continuous_monitor.yaml (8766).
+pipeline:
+  control_url: "http://127.0.0.1:8765"
+  events_url: "http://127.0.0.1:8765"
+monitor:
+  control_url: "http://127.0.0.1:8766"
+  events_url: "http://127.0.0.1:8766"

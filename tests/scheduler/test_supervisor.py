@@ -165,3 +165,35 @@ class TestSupervisorShutdownTimeoutValidation:
     def test_supervisor_rejects_zero_shutdown_timeout(self) -> None:
         with pytest.raises(ValueError, match="shutdown_timeout_seconds"):
             PipelineSupervisor(session=_session(), shutdown_timeout_seconds=0)
+
+
+class TestSwallowedCancellationBoundedByTimeout:
+    """F4: a task that swallows CancelledError cannot stall the supervisor.
+
+    Uses a finite swallow count rather than an infinite loop so the
+    pytest event loop can collect the task cleanly after the supervisor
+    abandons it. The supervisor's discipline does not change — it still
+    issues two cancels and gives up after the bounded wait.
+    """
+
+    async def test_swallowed_cancel_does_not_stall_run(self) -> None:
+        supervisor = _supervisor(shutdown_timeout_seconds=1)
+        swallows = 0
+
+        async def swallows_then_exits(session: PipelineSession) -> None:
+            del session
+            nonlocal swallows
+            for _attempt in range(3):
+                try:
+                    await asyncio.sleep(60)
+                except asyncio.CancelledError:
+                    swallows += 1
+                    continue
+            await asyncio.sleep(0)
+
+        supervisor.register_task(name="swallow", coro_fn=swallows_then_exits)
+        run_task = asyncio.create_task(supervisor.run())
+        await asyncio.sleep(0.1)
+        supervisor.request_stop()
+        await asyncio.wait_for(run_task, timeout=5)
+        assert swallows >= 1, "supervisor never cancelled the task"

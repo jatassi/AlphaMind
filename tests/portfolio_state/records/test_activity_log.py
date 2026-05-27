@@ -126,8 +126,11 @@ class TestEnumMembers:
     def test_event_type_is_str_enum(self) -> None:
         assert issubclass(EventType, StrEnum)
 
-    def test_event_type_has_exactly_44_members(self) -> None:
-        assert len(EventType) == 44
+    def test_event_type_has_exactly_45_members(self) -> None:
+        # 45 = 44 baseline + 1 (PROFILE_SWITCHED, added by ALP-663 / Wave 1
+        # of the Command Center work — emitted by the control proxy when
+        # an operator switches profiles via /api/control/switch_profile).
+        assert len(EventType) == 45
 
     def test_event_type_position_lifecycle_members(self) -> None:
         for name in ("POSITION_OPENED", "POSITION_CLOSED", "POSITION_ADDED", "POSITION_REDUCED"):
@@ -315,9 +318,11 @@ class TestMappingExhaustiveness:
 class TestAnyDetailTypeAlias:
     """AnyDetailType is exported and covers all detail-payload classes."""
 
-    def test_any_detail_type_has_44_members(self) -> None:
+    def test_any_detail_type_has_45_members(self) -> None:
+        # See test_event_type_has_exactly_45_members — PROFILE_SWITCHED
+        # added by ALP-663 in the Command Center work.
         members = get_args(AnyDetailType)
-        assert len(members) == 44
+        assert len(members) == 45
 
     def test_any_detail_type_covers_all_detail_classes(self) -> None:
         members = set(get_args(AnyDetailType))
