@@ -233,8 +233,10 @@ versions silently mutate `bun.lock` on `--frozen-lockfile`.
 The paper-Alpaca account must be at zero positions with starting cash before
 this runs. The bootstrap fetches Alpaca's reported cash, writes the
 `cash_ledger` + `drawdown_state` singletons, and runs one `pre_open`
-invocation to validate the pipeline composes end-to-end against the freshly
-seeded state. Refuses to run if either singleton already exists.
+invocation. The invocation drives the full pipeline (Phase 1 → analysis →
+decision → Phase 2 broker dispatch) — the PM's accepted commands must land
+on Alpaca with real broker order ids, not synthetic `alp-{order_id}`
+placeholders. Refuses to run if either singleton already exists.
 
 ```bash
 set -a && source <(tr -d '\r' < .env) && set +a && \
@@ -245,14 +247,16 @@ set -a && source <(tr -d '\r' < .env) && set +a && \
 ```
 
 Expected: one full invocation followed by the process exiting 0. Both
-singletons committed to the DB. Wall-clock is **~25–35 min** on a
-cold-cache cold-start — every SDK call pays first-fill `cache_write` cost
-(no warm prompt cache), the deterministic distillation step takes ~3–5 min
-against the full prod data layer, and at least one of the Sonnet phases
-(`adaptive` is the usual culprit) typically dominates at ~6–8 min. This
-is meaningfully slower than the steady-state ~60–180 s scheduled
-invocations document in § 4; budget accordingly and don't restart the
-process if it looks "stuck" inside that window — run the e2e progress
+singletons committed to the DB, and — if the PM produced any envelopes —
+the corresponding orders + protective legs should appear on the Alpaca
+side with real UUIDs (not synthetic `alp-…` placeholders). Wall-clock is
+**~25–35 min** on a cold-cache cold-start — every SDK call pays first-fill
+`cache_write` cost (no warm prompt cache), the deterministic distillation
+step takes ~3–5 min against the full prod data layer, and at least one of
+the Sonnet phases (`adaptive` is the usual culprit) typically dominates at
+~6–8 min. This is meaningfully slower than the steady-state ~60–180 s
+scheduled invocations document in § 4; budget accordingly and don't restart
+the process if it looks "stuck" inside that window — run the e2e progress
 monitor (`scripts/RUNBOOK_end_to_end_verification.md` § Monitoring
 progress mid-run) against the invocation's archive to see live phase
 transitions. Confirm:
@@ -263,11 +267,20 @@ import sqlite3, os
 db = sqlite3.connect(os.path.expandvars(r'%USERPROFILE%\AlphaMind\data\alphamind.db'))
 print('cash_ledger:', db.execute('SELECT current_cash_usd FROM cash_ledger').fetchone())
 print('drawdown_state:', db.execute('SELECT equity_high_water_mark_usd FROM drawdown_state').fetchone())
+print('order_count:', db.execute('SELECT COUNT(*) FROM orders').fetchone())
+print('synthetic_id_count:', db.execute(\"SELECT COUNT(*) FROM orders WHERE alpaca_order_id LIKE 'alp-%'\").fetchone())
 "
 ```
 
-Both rows should match Alpaca's reported cash on the freshly-reset account
-to the cent.
+Both singleton rows should match Alpaca's reported cash on the freshly-reset
+account to the cent. **`synthetic_id_count` must be `0`** — every persisted
+order should carry a real Alpaca UUID. A non-zero count indicates broker
+dispatch was bypassed (the invocation did not reach Alpaca); regression
+checking should also confirm via `TradingClient.get_orders(status=ALL)`
+that the same orders are visible on the Alpaca side. Pre-ALP-711 the
+bootstrap silently persisted synthetic placeholders without ever calling
+Alpaca; that class of regression is detectable here before completing the
+bootstrap.
 
 **Hard-fail paths.** `--fresh-start` refuses to run when:
 

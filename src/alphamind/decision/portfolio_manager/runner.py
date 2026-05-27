@@ -41,6 +41,9 @@ from alphamind.config.models.agents import (
     AgentsConfig,
     BaseAgentConfig,
 )
+from alphamind.config.models.execution import ExecutionConfig
+from alphamind.config.models.main import ExecutionMode
+from alphamind.config.models.venue import VenueConfig
 from alphamind.decision.portfolio_manager.harness import (  # noqa: F401 — kept for tests that inject the in-process harness
     HarnessSuccess,
     invoke_pm,
@@ -252,6 +255,9 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
     borrow_cost_resolver: Callable[[str], float | None] | None = None,
     prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
     broker_dispatch: BrokerDispatch | None = None,
+    venue_config: VenueConfig | None = None,
+    execution_mode: ExecutionMode | None = None,
+    execution_config: ExecutionConfig | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "pm",
 ) -> PMResult:
@@ -348,11 +354,13 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
     # HarnessFailure propagates up unchanged — the runner does NOT catch and
     # degrade. The pipeline-level orchestrator handles fail-closed semantics.
     # ALP-650: route through the subprocess wrapper so an SDK stall in the
-    # PM's harness no longer wedges the parent pipeline. ``broker_dispatch``
-    # is intentionally not threaded — today's composition path runs PM
-    # validation without broker routing (server.py gates broker dispatch on
-    # ``client/queries/execution_config`` being non-None, which the harness
-    # never threads through).
+    # PM's harness no longer wedges the parent pipeline.
+    # ALP-711: the picklable triple (``venue_config`` / ``execution_mode`` /
+    # ``execution_config``) crosses the subprocess boundary; the worker
+    # reconstructs the live ``TradingClient`` inside the subprocess (the
+    # client itself is not picklable). ``broker_dispatch`` remains for the
+    # in-process test seam — production callers leave it None and pass the
+    # triple instead.
     harness_result: HarnessSuccess = await invoke_portfolio_manager_in_subprocess(
         agent_config=resolved_config,
         user_message=user_message,
@@ -373,6 +381,9 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
         archive_root=archive_root,
         sdk_query_fn=sdk_query_fn,
         broker_dispatch=broker_dispatch,
+        venue_config=venue_config,
+        execution_mode=execution_mode,
+        execution_config=execution_config,
         progress=progress,
         phase=phase,
     )

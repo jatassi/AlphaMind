@@ -57,6 +57,8 @@ if TYPE_CHECKING:
     from alpaca.trading.client import TradingClient
 
     from alphamind.config.models.execution import ExecutionConfig
+    from alphamind.config.models.main import ExecutionMode
+    from alphamind.config.models.venue import VenueConfig
     from alphamind.execution.broker_adapter import AccountStateQueries
     from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
     from alphamind.state.config import StatePersistenceConfig
@@ -64,6 +66,53 @@ if TYPE_CHECKING:
 
 _SERVER_NAME = "alphamind_execution_oms_submit"
 _TOOL_NAME = "submit_envelope"
+
+
+def build_broker_routing_kwargs(
+    venue_config: VenueConfig | None,
+    execution_mode: ExecutionMode | None,
+    execution_config: ExecutionConfig | None,
+) -> dict[str, Any]:
+    """Construct broker-routing kwargs for :func:`build_submit_envelope_mcp_server`.
+
+    ALP-711 — when the orchestrator's production gate is open
+    (``context.debug_e2e is None``) the full triple is passed and this
+    helper builds the Alpaca-backed :class:`alpaca.trading.client.TradingClient`
+    + :class:`alphamind.execution.broker_adapter.queries.AccountStateQueries`
+    needed by ``_handle_submit_envelope``'s broker-routing gate. When any
+    leg is ``None`` (debug-e2e / log-only path) returns ``{}`` so the gate
+    stays False and accepted commands fall through to the synthetic-id
+    placeholder path.
+
+    Lives in ``submit_envelope/`` (the PM MCP composition root, per
+    ``.importlinter``'s ``decision-not-execution`` architectural carve-out)
+    rather than the harness because the live ``TradingClient`` is not
+    picklable across the PM subprocess boundary — the picklable triple
+    traverses the boundary and this helper reconstructs the client inside
+    the worker process where the alpaca-py instance is constructed once
+    per invocation.
+    """
+    if venue_config is None or execution_mode is None or execution_config is None:
+        return {}
+    # Lazy imports — broker_adapter ships an alpaca-py dependency the
+    # fixture-only path doesn't load. Mirrors the lazy-import pattern at
+    # ``dispatch.py:_route_through_broker``.
+    from alphamind.execution.broker_adapter.client_factory import (
+        AlpacaClientFactory,
+    )
+    from alphamind.execution.broker_adapter.client_factory import (
+        ExecutionMode as ClientFactoryExecutionMode,
+    )
+    from alphamind.execution.broker_adapter.queries import AccountStateQueries
+
+    mode_literal: ClientFactoryExecutionMode = "live" if execution_mode.value == "live" else "paper"
+    factory = AlpacaClientFactory(venue_config, mode=mode_literal)
+    client = factory.build_trading_client()
+    return {
+        "client": client,
+        "queries": AccountStateQueries(client),
+        "execution_config": execution_config,
+    }
 
 
 # The MCP SDK validates the input schema is itself a valid JSON-Schema object
@@ -104,6 +153,7 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
     queries: AccountStateQueries | None = None,
     execution_config: ExecutionConfig | None = None,
     broker_dispatch: BrokerDispatch | None = None,
+    defer_writeback: bool = False,
 ) -> tuple[Mapping[str, McpSdkServerConfig], tuple[str, ...], Callable[[], SubmitEnvelopeState]]:
     """Build a per-invocation SDK MCP server bound to *state*.
 
@@ -154,6 +204,17 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
     :func:`alphamind.execution.oms.broker_dispatch.dispatch_command_to_broker`
     for backwards compatibility with callers that haven't switched to the
     Protocol-based wiring yet.
+
+    ``defer_writeback`` (ALP-711) gates Step 6 (in-tool writeback). When
+    ``False`` (the engine-stub default), an accepted envelope writes
+    through to SQL immediately inside the tool handler — the standalone
+    composition path tests + the continuous monitor rely on this. When
+    ``True``, Step 6 is skipped and the orchestrator's ``dispatch_phase2``
+    becomes the sole writer of the per-envelope outcome. The scheduler
+    orchestrator's PM-submit path passes ``True`` because it threads a
+    handle for broker-routing reads (``_dispatcher_context_for`` needs a
+    session to resolve CLOSE/ADD/ADJUST/CANCEL context from the persisted
+    position / order rows) without authorizing duplicate persistence.
     """
     _ = (library_config, library_market)  # accepted for runner-signature parity
 
@@ -183,6 +244,7 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
             queries=queries,
             execution_config=execution_config,
             broker_dispatch=broker_dispatch,
+            defer_writeback=defer_writeback,
         )
         return response
 
@@ -216,6 +278,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
     queries: AccountStateQueries | None = None,
     execution_config: ExecutionConfig | None = None,
     broker_dispatch: BrokerDispatch | None = None,
+    defer_writeback: bool = False,
 ) -> tuple[dict[str, Any], SubmitEnvelopeState]:
     """Coerce input → run validators → process commands → log + respond.
 
@@ -266,7 +329,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
             state,
             failed_submission_log=(*state.failed_submission_log, failed_entry),
         )
-        if invocation_handle is not None:
+        if invocation_handle is not None and not defer_writeback:
             await _persist_envelope_parse_failure_via_phase2(
                 invocation_handle, failed_entry, state_persistence_config
             )
@@ -290,7 +353,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
     )
     if not layer23.is_valid:
         suggested = layer23.errors[0].message
-        if invocation_handle is not None:
+        if invocation_handle is not None and not defer_writeback:
             await _persist_envelope_rejection_via_phase2(
                 invocation_handle, envelope, layer23.errors, state_persistence_config
             )
@@ -329,17 +392,30 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
             broker_dispatch=broker_dispatch,
         )
 
-    # Step 5: append to submission log (post-broker outcome).
+    # Step 5: append to submission log (post-broker outcome). ALP-711 scope (C):
+    # ``dispatch_results`` rides on the log entry so the orchestrator's
+    # Phase 2 dispatcher can forward broker outcomes (real Alpaca order ids,
+    # broker rejection codes) to :func:`persist_envelope_outcome` instead
+    # of falling back to synthetic ``alp-{order_id}`` placeholders.
     state = dataclasses.replace(
         state,
         submission_log=(
             *state.submission_log,
-            SubmissionLogEntry(envelope=envelope, submission_results=submission_results),
+            SubmissionLogEntry(
+                envelope=envelope,
+                submission_results=submission_results,
+                dispatch_results=dispatch_results,
+                abandoned_entries=abandoned_entries,
+            ),
         ),
     )
 
-    # Step 6: SQL writeback (opt-in via invocation_handle).
-    if invocation_handle is not None:
+    # Step 6: SQL writeback (opt-in via invocation_handle; gated off by
+    # ``defer_writeback=True`` for the scheduler orchestrator's PM path,
+    # which threads a handle for broker-routing reads but defers persistence
+    # to the orchestrator's separate ``dispatch_phase2`` stage so the same
+    # envelope is not written twice).
+    if invocation_handle is not None and not defer_writeback:
         await _persist_envelope_outcome_via_phase2(
             invocation_handle,
             envelope,

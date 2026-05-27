@@ -75,12 +75,14 @@ from alphamind.config.guardrails_helpers import (
 )
 from alphamind.config.load import PipelineConfig
 from alphamind.config.loaders import load_overlays, read_yaml_file
+from alphamind.config.models.execution import ExecutionConfig
 from alphamind.config.models.guardrails import ProgressiveTier
-from alphamind.config.models.main import MainConfig
+from alphamind.config.models.main import ExecutionMode, MainConfig
 from alphamind.config.models.profiles import ProfileConfig
 from alphamind.config.models.regimes import Regime
 from alphamind.config.models.run_types import RunType
 from alphamind.config.models.scheduler import SchedulerConfig
+from alphamind.config.models.venue import VenueConfig
 from alphamind.distillation.regime import RegimeLabel as DistillationRegimeLabel
 from alphamind.execution.write_paths.phase1 import (
     Phase1Summary,
@@ -338,6 +340,9 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     progressive_tiers: tuple[ProgressiveTier, ...],
     debug_e2e: Any = None,
     resume_context: Any = None,
+    venue_config: VenueConfig | None = None,
+    execution_mode: ExecutionMode | None = None,
+    execution_config: ExecutionConfig | None = None,
 ) -> dict[str, Any]:
     """Assemble the kwargs ``run_decision_pipeline`` requires."""
     resolved = pipeline_config.resolved
@@ -370,6 +375,14 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
         "archive_root": archive_root,
         "debug_e2e": debug_e2e,
         "resume_context": resume_context,
+        # ALP-711 — broker-routing inputs (all picklable; the PM subprocess
+        # worker reconstructs the live ``TradingClient`` from them). All
+        # three are ``None`` on the debug-e2e / non-prod path so the
+        # submit_envelope wrapper's broker-routing gate stays False and the
+        # log-only / synthetic-id placeholder path persists.
+        "venue_config": venue_config,
+        "execution_mode": execution_mode,
+        "execution_config": execution_config,
     }
 
 
@@ -615,6 +628,20 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     # accrual (ALP-586). Pure + total for the rest of the invocation.
     with context.sync_session_factory() as borrow_session:
         borrow_cost_resolver = build_borrow_cost_resolver(borrow_session)
+    # ALP-711 — broker_dispatch inputs the PM submit_envelope wrapper needs to
+    # dispatch accepted commands to Alpaca (see
+    # ``execution.oms.broker_dispatch.dispatch_command_to_broker``). Production
+    # runs (``context.debug_e2e is None``) thread the picklable triple
+    # ``(venue_config, execution_mode, execution_config)`` through the
+    # decision pipeline → PM runner → subprocess worker, which reconstructs
+    # the live ``TradingClient`` on its own side (alpaca-py is not picklable
+    # across the subprocess boundary). Debug-e2e / log-only runs pass
+    # ``None`` so the submit_envelope wrapper's broker-routing gate stays
+    # False and synthetic-``alp-{order_id}`` placeholders persist. The
+    # ``ExecutionConfig`` is reused from ``pipeline_config.loaded.execution``
+    # rather than re-parsing ``execution.yaml`` — ``parse_loaded_config``
+    # already did the work inside ``insert_invocation_record``.
+    broker_routing_active = context.debug_e2e is None
     decision_kwargs = _build_decision_kwargs(
         invocation_id=invocation_id,
         pipeline_config=pipeline_config,
@@ -636,6 +663,9 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         resume_context=(
             context.debug_e2e.resume_context if context.debug_e2e is not None else None
         ),
+        venue_config=venue_config if broker_routing_active else None,
+        execution_mode=execution_mode if broker_routing_active else None,
+        execution_config=pipeline_config.loaded.execution if broker_routing_active else None,
     )
     decision_result = await run_decision_pipeline(**decision_kwargs, progress=progress)
 

@@ -47,7 +47,10 @@ from alphamind._kernel.mode import PipelineMode
 from alphamind._kernel.money import Money, Price, money, price, signed_money
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
+from alphamind.config.models.execution import ExecutionConfig
 from alphamind.config.models.guardrails import ProgressiveTier
+from alphamind.config.models.main import ExecutionMode
+from alphamind.config.models.venue import VenueConfig
 from alphamind.decision.analyst.runner import AnalystResult, run_analyst
 from alphamind.decision.portfolio_manager.runner import (
     PMResult,
@@ -374,6 +377,9 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     debug_e2e: object | None = None,
     resume_context: object | None = None,
+    venue_config: VenueConfig | None = None,
+    execution_mode: ExecutionMode | None = None,
+    execution_config: ExecutionConfig | None = None,
 ) -> DecisionPipelineResult:
     """Run the decision-layer composition end-to-end.
 
@@ -718,6 +724,14 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
         agent_config=resolved_agents.get(AgentName.portfolio_manager.value),
         borrow_cost_resolver=borrow_cost_resolver,
         prior_health_snapshots=prior_health_snapshots,
+        # ALP-711: forward the orchestrator's picklable broker-routing triple
+        # so the PM subprocess worker can reconstruct the live ``TradingClient``
+        # for production runs (non-prod / debug-e2e callers leave all three
+        # at ``None`` and the submit_envelope wrapper's broker-routing gate
+        # stays False — log-only path).
+        venue_config=venue_config,
+        execution_mode=execution_mode,
+        execution_config=execution_config,
         progress=progress,
         phase="pm",
     )

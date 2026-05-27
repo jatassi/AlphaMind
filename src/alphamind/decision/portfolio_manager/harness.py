@@ -60,11 +60,17 @@ from alphamind.commands.pm_envelope import PMCompletionRecord
 from alphamind.commands.protocols import BrokerDispatch
 from alphamind.commands.submission_log import SubmissionLogEntry
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
+from alphamind.config.models.execution import ExecutionConfig
+from alphamind.config.models.main import ExecutionMode
+from alphamind.config.models.venue import VenueConfig
 from alphamind.decision._shared import system_prompt_as_file
 from alphamind.decision.portfolio_manager.parser import ParseError, parse_pm_completion_record
 from alphamind.decision.portfolio_manager.submit_envelope import (
     SubmitEnvelopeState,
     build_submit_envelope_mcp_server,
+)
+from alphamind.decision.portfolio_manager.submit_envelope.server import (
+    build_broker_routing_kwargs,
 )
 from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
 from alphamind.portfolio_state.consumers.portfolio_manager import (
@@ -357,6 +363,10 @@ def _build_mcp_wiring(  # noqa: PLR0913 — runner-facing signature mirrors per-
     library_market: MarketInputs,
     state_persistence_config: StatePersistenceConfig,
     broker_dispatch: BrokerDispatch | None = None,
+    venue_config: VenueConfig | None = None,
+    execution_mode: ExecutionMode | None = None,
+    execution_config: ExecutionConfig | None = None,
+    invocation_handle: Any | None = None,
 ) -> tuple[dict[str, Any], list[str], Callable[[], SubmitEnvelopeState]]:
     """Compose the four MCP servers and merge their allowed-tool lists.
 
@@ -368,15 +378,37 @@ def _build_mcp_wiring(  # noqa: PLR0913 — runner-facing signature mirrors per-
 
     ``broker_dispatch`` is the composition-root-injected
     :class:`alphamind.commands.protocols.BrokerDispatch` implementation
-    (ALP-458) — forwarded into the submit_envelope wrapper so it can
-    route accepted commands through the broker without importing the
-    concrete dispatcher.
+    (ALP-458) — forwarded into the submit_envelope wrapper as an
+    override seam for tests + future per-invocation dispatch shaping.
+
+    ``venue_config`` / ``execution_mode`` / ``execution_config`` (ALP-711)
+    are the picklable orchestrator-facing inputs the harness uses to
+    build the Alpaca-backed ``client`` + ``queries`` the submit_envelope
+    wrapper's broker-routing gate requires. All three must be non-None
+    for broker routing to activate; when any is ``None`` (debug-e2e /
+    log-only path) the wrapper's gate stays False and synthetic-id
+    placeholders persist as before.
+
+    ``invocation_handle`` (also ALP-711) supplies the AsyncSession the
+    broker-routing code uses to resolve CLOSE / ADD / ADJUST / CANCEL
+    per-command context from persisted ``positions`` and ``orders`` rows
+    (see ``submit_envelope.dispatch._dispatcher_context_for``). The
+    handle is built by the PM subprocess worker against its own async
+    engine; the live Alpaca ``TradingClient`` is constructed alongside
+    it on the worker side because both are non-picklable. Step 6's
+    in-tool writeback is suppressed via ``defer_writeback=True`` so the
+    orchestrator's separate ``dispatch_phase2`` stage remains the sole
+    writer of per-envelope persistence — passing a handle here would
+    otherwise produce duplicate writes.
     """
     validation_servers, validation_tools = build_validate_guardrail_mcp_server(
         initial_validation_state
     )
     retrieval_servers, retrieval_tools = build_retrieve_brief_mcp_server(retrieval_store)
     thesis_servers, thesis_tools = build_get_thesis_components_mcp_server(thesis_component_reader)
+    broker_routing_kwargs = build_broker_routing_kwargs(
+        venue_config, execution_mode, execution_config
+    )
     submit_servers, submit_tools, get_submit_envelope_state = build_submit_envelope_mcp_server(
         initial_submit_envelope_state,
         retrieval_store=retrieval_store,
@@ -389,6 +421,9 @@ def _build_mcp_wiring(  # noqa: PLR0913 — runner-facing signature mirrors per-
         library_market=library_market,
         state_persistence_config=state_persistence_config,
         broker_dispatch=broker_dispatch,
+        invocation_handle=invocation_handle,
+        defer_writeback=True,
+        **broker_routing_kwargs,
     )
     merged_servers: dict[str, Any] = {
         **validation_servers,
@@ -584,6 +619,10 @@ async def invoke_pm(  # noqa: PLR0913 — public signature is fixed by ALP-329 �
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     broker_dispatch: BrokerDispatch | None = None,
+    venue_config: VenueConfig | None = None,
+    execution_mode: ExecutionMode | None = None,
+    execution_config: ExecutionConfig | None = None,
+    invocation_handle: Any | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "pm",
 ) -> HarnessSuccess:
@@ -672,6 +711,10 @@ async def invoke_pm(  # noqa: PLR0913 — public signature is fixed by ALP-329 �
         library_market=library_market,
         state_persistence_config=state_persistence_config,
         broker_dispatch=broker_dispatch,
+        venue_config=venue_config,
+        execution_mode=execution_mode,
+        execution_config=execution_config,
+        invocation_handle=invocation_handle,
     )
     prompt_text = await _load_prompt(agent_config.prompt)
 

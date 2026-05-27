@@ -1101,6 +1101,133 @@ async def test_pm_envelope_close_equity_routes_through_dispatcher(
         await async_engine.dispose()
 
 
+async def test_pm_envelope_close_with_defer_writeback_routes_no_persistence(
+    tmp_path: Any,
+) -> None:
+    """ALP-711 regression — the scheduler orchestrator's PM-submit path passes
+    ``invocation_handle`` to the wrapper for broker-routing reads (CLOSE / ADD /
+    ADJUST / CANCEL all consult persisted positions / orders) but ALSO passes
+    ``defer_writeback=True`` so the orchestrator's separate ``dispatch_phase2``
+    stage remains the sole writer of per-envelope persistence.
+
+    This locks two invariants pre-ALP-711's blocker fix:
+
+    1. A CLOSE command no longer ``ValueError``s at
+       ``_dispatcher_context_for`` for missing ``invocation_handle`` — the
+       handle is now plumbed through from the harness.
+    2. With ``defer_writeback=True``, the wrapper's Step 6 in-tool writeback
+       does not fire, so no ``orders`` rows are inserted from inside the
+       SDK loop — leaving ``dispatch_phase2`` to write them once on a fresh
+       per-envelope session post-loop.
+
+    The broker call still fires and the per-command result's acknowledgment
+    carries the real Alpaca order id (via ``_with_real_order_id`` swap in
+    ``_route_through_broker``).
+    """
+    from alphamind.decision.portfolio_manager.submit_envelope import (
+        _handle_submit_envelope,
+        build_initial_submit_envelope_state,
+    )
+    from alphamind.execution.broker_adapter import AccountStateQueries
+    from tests.execution.oms.test_submit_envelope_mcp import (
+        _DEFAULT_ACTIVE_SECTORS,
+        _close_command,
+        _make_bundle,
+        _make_pm_view,
+        _make_strategist_envelope,
+        _make_validation_state,
+        _position_assessment_stub,
+        _position_view,
+        _retrieval_store,
+        _sector_resolver,
+    )
+
+    async_engine, factory = _build_db_factory(tmp_path)
+    try:
+        await _seed_substrate_with_cash(factory)
+        await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
+
+        invocation_id = "inv-close-defer-1"
+        ctx = InvocationContext(
+            session_factory=factory,
+            record=_make_invocation_record(invocation_id=invocation_id),
+        )
+        handle = await ctx.__aenter__()
+
+        envelope = _make_strategist_envelope(
+            verdict="approve",
+            commands=(_close_command(position_id=PositionId("POS-NVDA-001")),),
+        )
+        validation_state = _make_validation_state()
+        state = build_initial_submit_envelope_state(
+            invocation_id=validation_state.invocation_id,
+            starting_validation_state=validation_state,
+        )
+        bundle = _make_bundle(position_assessments=(_position_assessment_stub("SA-1"),))
+
+        expected_alpaca_order_id = uuid.uuid4()
+        fake_order = _make_fake_alpaca_order(order_class=OrderClass.SIMPLE)
+        fake_order.id = expected_alpaca_order_id
+
+        def _submit_order(req: Any) -> MagicMock:
+            if hasattr(req, "client_order_id"):
+                fake_order.client_order_id = req.client_order_id
+            return fake_order
+
+        client = MagicMock()
+        client.submit_order = MagicMock(side_effect=_submit_order)
+        queries = MagicMock(spec=AccountStateQueries)
+
+        pm_view = _make_pm_view(positions=(_position_view("POS-NVDA-001"),))
+
+        _response, state = await _handle_submit_envelope(
+            envelope.model_dump(mode="json"),
+            state=state,
+            retrieval_store=_retrieval_store(),
+            pre_processor_bundle=bundle,
+            pm_view=pm_view,
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            halt_mode=False,
+            sector_resolver=_sector_resolver,
+            state_persistence_config=_make_state_persistence_config(),
+            invocation_handle=handle,
+            client=client,
+            queries=queries,
+            execution_config=_default_execution_config(),
+            defer_writeback=True,
+        )
+        await ctx.__aexit__(None, None, None)
+
+        # The broker call DID fire — the handle's reads resolved the CLOSE
+        # context successfully (no ValueError from the dispatcher's
+        # `if invocation_handle is None` guard).
+        assert client.submit_order.call_count == 1
+
+        # Step 6 in-tool writeback was suppressed — no CLOSE order row
+        # landed in `orders`. The orchestrator's dispatch_phase2 would
+        # write it from `submission_log[0].submission_results[0]` +
+        # `submission_log[0].dispatch_results[0]` on its own session.
+        async with factory() as sess:
+            order_rows = (await sess.execute(select(OrderRow))).scalars().all()
+            close_orders = [o for o in order_rows if o.order_role == "CLOSE"]
+            assert close_orders == []
+
+        # The submission log carries the broker's real alpaca_order_id via
+        # the `_with_real_order_id` swap inside `_route_through_broker`.
+        assert len(state.submission_log) == 1
+        log_entry = state.submission_log[0]
+        ack = log_entry.submission_results[0].acknowledgment
+        assert ack is not None
+        assert ack.order_id == str(expected_alpaca_order_id)
+        # dispatch_results is populated so `dispatch_phase2` can forward
+        # the real id to `persist_envelope_outcome`.
+        assert log_entry.dispatch_results is not None
+        assert len(log_entry.dispatch_results) == 1
+        assert log_entry.dispatch_results[0].alpaca_order_id == str(expected_alpaca_order_id)
+    finally:
+        await async_engine.dispose()
+
+
 async def test_pm_envelope_permanent_rejection_carries_code_in_gateway_reason(
     tmp_path: Any,
 ) -> None:

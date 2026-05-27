@@ -412,6 +412,15 @@ ignore_imports =
     alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.oms.broker_dispatch
     alphamind.decision.portfolio_manager.submit_envelope.persist -> alphamind.execution.write_paths.phase2
     alphamind.decision.portfolio_manager.submit_envelope.process -> alphamind.execution.oms.command_ids
+    # ALP-711 — ``submit_envelope.server.build_broker_routing_kwargs`` lazily
+    # constructs the Alpaca-backed TradingClient + AccountStateQueries inside
+    # the PM subprocess worker (the live client is not picklable across the
+    # subprocess boundary, so the picklable triple ``(venue_config,
+    # execution_mode, execution_config)`` crosses instead and the client is
+    # built on the worker side). Same composition-root carve-out as the
+    # ``dispatch`` entries above.
+    alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.broker_adapter.client_factory
+    alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.broker_adapter.queries
     # ALP-470 hoisted ``state.config`` out of execution but its
     # ``CorporateActionsConfig`` field still reaches into
     # ``execution.corporate_actions.config`` (the per-feature CA knobs).

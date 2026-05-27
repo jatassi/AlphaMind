@@ -42,14 +42,23 @@ from alphamind.analysis.domain_researchers.harness import invoke_domain_research
 from alphamind.analysis.qualitative_research.harness import invoke_qualitative_researcher
 from alphamind.analysis.synthesizer.harness import invoke_synthesizer
 from alphamind.config.models.agents import BaseAgentConfig
+from alphamind.config.models.execution import ExecutionConfig
+from alphamind.config.models.main import ExecutionMode
+from alphamind.config.models.venue import VenueConfig
 from alphamind.decision.analyst.harness import invoke_analyst
 from alphamind.decision.portfolio_manager.harness import invoke_pm
 from alphamind.decision.strategist.harness import run_strategist_harness
-from alphamind.persistence.session import make_engine, make_session_factory
+from alphamind.persistence.session import (
+    make_async_engine,
+    make_async_session_factory,
+    make_engine,
+    make_session_factory,
+)
 from alphamind.risk_guardrails.guardrail_evaluation import MarketInputs
 from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import SqlOptionsIvProvider
 from alphamind.risk_guardrails.state_delivery.validation_tool import ValidationToolState
 from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.context import InvocationHandle
 
 
 class _JsonlAppender:
@@ -460,9 +469,42 @@ async def _run_portfolio_manager(payload: dict[str, Any]) -> dict[str, Any]:
     state_persistence_config = StatePersistenceConfig.model_validate(
         payload["state_persistence_config"]
     )
+    # ALP-711 — decode the picklable broker-routing triple. ``None`` legs
+    # signal the debug-e2e / log-only path (synthetic order ids); a fully
+    # populated triple drives broker-dispatch construction inside
+    # ``submit_envelope.server.build_broker_routing_kwargs``, which builds the
+    # live ``TradingClient`` here in the worker process so the (non-picklable)
+    # alpaca-py instance never crosses the subprocess boundary.
+    venue_config_payload = payload.get("venue_config")
+    execution_mode_payload = payload.get("execution_mode")
+    execution_config_payload = payload.get("execution_config")
+    venue_config = (
+        VenueConfig.model_validate(venue_config_payload)
+        if venue_config_payload is not None
+        else None
+    )
+    execution_mode = (
+        ExecutionMode(execution_mode_payload) if execution_mode_payload is not None else None
+    )
+    execution_config = (
+        ExecutionConfig.model_validate(execution_config_payload)
+        if execution_config_payload is not None
+        else None
+    )
 
     engine = make_engine()
     sync_session_factory = make_session_factory(engine)
+    # ALP-711 — open a parallel async engine + sessionmaker for broker-routing
+    # reads (``_dispatcher_context_for`` resolves CLOSE / ADD / ADJUST / CANCEL
+    # context from persisted ``positions`` and ``orders`` rows on the
+    # ``InvocationHandle``'s ``AsyncSession``). The handle is built only when
+    # broker routing is active — on the debug-e2e / log-only path it stays
+    # ``None`` and the submit_envelope wrapper's broker branch is unreached.
+    broker_routing_active = (
+        venue_config is not None and execution_mode is not None and execution_config is not None
+    )
+    async_engine = make_async_engine() if broker_routing_active else None
+    async_session_factory = make_async_session_factory(async_engine) if async_engine else None
     try:
         validation_state = _rehydrate_validation_state(
             _decode_pickle(payload["initial_validation_state_pickle"]),
@@ -481,34 +523,63 @@ async def _run_portfolio_manager(payload: dict[str, Any]) -> dict[str, Any]:
             sync_session_factory=sync_session_factory,
         )
 
+        # The handle's session lives for the duration of the SDK loop so
+        # every ``_dispatcher_context_for`` call shares one read-only view.
+        # ``defer_writeback=True`` (set inside ``_build_mcp_wiring``) makes
+        # the in-tool writeback a no-op so the orchestrator's separate
+        # ``dispatch_phase2`` stage remains the sole writer.
+        invocation_handle: Any | None = None
+        async_session = async_session_factory() if async_session_factory is not None else None
         try:
-            result = await invoke_pm(
-                agent_config=agent_config,
-                user_message=payload["user_message"],
-                invocation_id=payload["invocation_id"],
-                initial_validation_state=validation_state,
-                initial_submit_envelope_state=submit_envelope_state,
-                retrieval_store=retrieval_store,
-                thesis_component_reader=thesis_component_reader,
-                pre_processor_bundle=pre_processor_bundle,
-                pm_view=pm_view,
-                active_sectors=active_sectors,
-                halt_mode=halt_mode,
-                sector_resolver=sector_resolver,
-                library_config=library_config,
-                library_market=library_market,
-                state_persistence_config=state_persistence_config,
-                as_of=as_of,
-                archive_root=archive_root,
-                broker_dispatch=None,
-                progress=progress,
-                phase=payload.get("phase", "pm"),
-            )
-        except (MalformedOutputFailure, ContextOverflowFailure, TimeoutFailure, SDKFailure) as exc:
-            return _failure_payload(exc)
-        return _success_payload(result)
+            if async_session is not None:
+                invocation_handle = InvocationHandle(
+                    session=async_session,
+                    invocation_id=payload["invocation_id"],
+                )
+            try:
+                result = await invoke_pm(
+                    agent_config=agent_config,
+                    user_message=payload["user_message"],
+                    invocation_id=payload["invocation_id"],
+                    initial_validation_state=validation_state,
+                    initial_submit_envelope_state=submit_envelope_state,
+                    retrieval_store=retrieval_store,
+                    thesis_component_reader=thesis_component_reader,
+                    pre_processor_bundle=pre_processor_bundle,
+                    pm_view=pm_view,
+                    active_sectors=active_sectors,
+                    halt_mode=halt_mode,
+                    sector_resolver=sector_resolver,
+                    library_config=library_config,
+                    library_market=library_market,
+                    state_persistence_config=state_persistence_config,
+                    as_of=as_of,
+                    archive_root=archive_root,
+                    broker_dispatch=None,
+                    venue_config=venue_config,
+                    execution_mode=execution_mode,
+                    execution_config=execution_config,
+                    invocation_handle=invocation_handle,
+                    progress=progress,
+                    phase=payload.get("phase", "pm"),
+                )
+            except (
+                MalformedOutputFailure,
+                ContextOverflowFailure,
+                TimeoutFailure,
+                SDKFailure,
+            ) as exc:
+                return _failure_payload(exc)
+            return _success_payload(result)
+        finally:
+            if async_session is not None:
+                # The session is read-only — no commit needed; close to
+                # release the SQLite reader.
+                await async_session.close()
     finally:
         engine.dispose()
+        if async_engine is not None:
+            await async_engine.dispose()
 
 
 async def main() -> int:

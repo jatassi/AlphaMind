@@ -17,18 +17,22 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.commands.submission_log import SubmissionLogEntry
 from alphamind.execution.write_paths.phase2 import (
+    persist_command_abandoned,
     persist_envelope_outcome,
 )
 from alphamind.state.config import StatePersistenceConfig
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
+
+if TYPE_CHECKING:
+    from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
 
 __all__ = ["PMResultLike", "Phase2Summary", "dispatch_phase2"]
 
@@ -83,13 +87,45 @@ async def dispatch_phase2(
     for entry in pm_result.submission_log:
         async with session_factory() as session:
             handle = InvocationHandle(session=session, invocation_id=invocation_id)
+            # ALP-711 scope (C) — when the submit_envelope wrapper routed
+            # accepted commands through the broker, ``entry.dispatch_results``
+            # carries the per-command :class:`BrokerDispatchResult` payload
+            # so this writeback persists the broker's real ``alpaca_order_id``.
+            # ``None`` (the debug-e2e / log-only path) falls through to the
+            # synthetic-ID fallback inside :func:`persist_envelope_outcome`.
             await persist_envelope_outcome(
                 handle,
                 entry.envelope,
                 entry.submission_results,
                 config=state_persistence_config,
+                dispatch_results=cast(
+                    "tuple[BrokerDispatchResult | None, ...] | None",
+                    entry.dispatch_results,
+                ),
             )
             await session.commit()
+        # ALP-711 — when broker routing returned ``GatewaySubmissionFailed``
+        # for one or more accepted commands, the wrapper appended an
+        # ``_AbandonedCommandEntry`` per failure onto the log entry. Emit
+        # one ``COMMAND_ABANDONED`` activity-log row per entry on a fresh
+        # session so the audit trail survives the per-envelope rollback the
+        # broker rejection implicitly performs (the rejected command never
+        # wrote orders so there is no rollback artifact, but the
+        # design-doc contract is "abandoned audit lands on a fresh
+        # session" regardless).
+        for abandoned in entry.abandoned_entries:
+            async with session_factory() as session:
+                handle = InvocationHandle(session=session, invocation_id=invocation_id)
+                await persist_command_abandoned(
+                    handle,
+                    envelope_id=str(entry.envelope.envelope_id),
+                    command_id=str(abandoned.command_id),
+                    originating_agent=str(entry.envelope.source_provenance),
+                    command_type=abandoned.command_type,
+                    failure_reason=str(abandoned.failure_reason),
+                    retry_attempt_count=int(abandoned.retry_attempt_count),
+                )
+                await session.commit()
         for result in entry.submission_results:
             if result.status == "accepted":
                 submitted += 1

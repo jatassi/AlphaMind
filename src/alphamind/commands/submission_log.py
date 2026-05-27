@@ -29,10 +29,32 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class SubmissionLogEntry:
-    """One ``submit_envelope`` call's record — envelope + per-command results."""
+    """One ``submit_envelope`` call's record — envelope + per-command results.
+
+    ``dispatch_results`` carries the per-command broker outcome (one entry per
+    command, aligned with ``submission_results``) when the submit_envelope
+    wrapper routed accepted commands through the broker (ALP-711). The field
+    is typed ``tuple[Any, ...] | None`` because ``alphamind.commands`` is a
+    leaf package per ``.importlinter``'s ``commands-leaf`` contract and may
+    not import ``alphamind.execution.oms.broker_dispatch.BrokerDispatchResult``;
+    consumers downstream (the Phase 2 writeback) read the structural
+    ``.alpaca_order_id`` attribute and cast back to the typed shape at
+    their boundary. ``None`` (the default) signals the legacy / debug-e2e
+    log-only path that never routed through a broker — Phase 2 writeback
+    falls back to synthetic ``alp-{order_id}`` placeholders in that case.
+
+    ``abandoned_entries`` (also ALP-711) carries per-broker-failure markers
+    the scheduler's ``dispatch_phase2`` uses to emit ``COMMAND_ABANDONED``
+    activity-log rows. Same ``Any`` rationale: the originating dataclass
+    (``_AbandonedCommandEntry``) lives in the decision layer; downstream
+    consumers read ``.command_id`` / ``.command_type`` / ``.failure_reason``
+    / ``.retry_attempt_count`` structurally.
+    """
 
     envelope: PMEnvelope
     submission_results: tuple[SubmissionResult, ...]
+    dispatch_results: tuple[Any, ...] | None = None
+    abandoned_entries: tuple[Any, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
