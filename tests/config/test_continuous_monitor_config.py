@@ -87,3 +87,22 @@ class TestContinuousMonitorConfigBorrowAccrualKnob:
         payload = {**_base_payload(), "borrow_accrual_tick_local_time": invalid_time}
         with pytest.raises(ValidationError):
             ContinuousMonitorConfig.model_validate(payload)
+
+    def test_invalid_time_diagnostic_matches_session_window_diagnostic(self) -> None:
+        """ALP-715 review F6: the HH:MM error message is canonical across both
+        ``borrow_accrual_tick_local_time`` and ``SessionWindow.open``/``.close``,
+        so an operator sees the same message regardless of which knob mis-parsed.
+        """
+        from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
+        from alphamind.config.models.venue import SessionWindow
+
+        invalid = "9:30"
+        payload = {**_base_payload(), "borrow_accrual_tick_local_time": invalid}
+        with pytest.raises(ValidationError) as monitor_err:
+            ContinuousMonitorConfig.model_validate(payload)
+        with pytest.raises(ValidationError) as window_err:
+            SessionWindow.model_validate({"open": invalid, "close": "16:00"})
+
+        marker = f"Time {invalid!r} must match HH:MM in 24-hour clock"
+        assert marker in str(monitor_err.value)
+        assert marker in str(window_err.value)

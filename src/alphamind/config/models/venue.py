@@ -14,13 +14,11 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from alphamind.config.models._shared import validate_hh_mm as _validate_hh_mm
+
 # Names of environment variables follow the standard convention:
 # uppercase first letter, then uppercase / digits / underscores.
 _ENV_VAR_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
-
-# HH:MM in 24-hour clock; rejects 25:00 and the like. Finer rules
-# (open <= close, etc.) belong to runtime callers if they need them.
-_HH_MM_RE = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
 
 
 def _validate_env_var_name(value: str) -> str:
@@ -29,13 +27,6 @@ def _validate_env_var_name(value: str) -> str:
             f"Env-var name {value!r} must match {_ENV_VAR_NAME_RE.pattern} "
             f"(uppercase start, then uppercase/digit/underscore)"
         )
-        raise ValueError(msg)
-    return value
-
-
-def _validate_hh_mm(value: str) -> str:
-    if not _HH_MM_RE.match(value):
-        msg = f"Time {value!r} must match HH:MM in 24-hour clock ({_HH_MM_RE.pattern})"
         raise ValueError(msg)
     return value
 
