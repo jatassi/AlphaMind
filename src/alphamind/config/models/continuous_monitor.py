@@ -54,3 +54,11 @@ class ContinuousMonitorConfig(BaseModel):
     max_reconnect_attempts: int = Field(ge=1)
     supervisor_shutdown_timeout_seconds: int = Field(ge=1)
     control_port: int = Field(default=8766, ge=1, le=65535)
+    borrow_accrual_tick_local_time: str = Field(
+        default="16:00",
+        pattern=r"^([01]\d|2[0-3]):([0-5]\d)$",
+        description=(
+            "Trading-day local time (HH:MM, US/Eastern) at which the "
+            "borrow-accrual tick fires. See ALP-715 pre-resolved decision (E)."
+        ),
+    )

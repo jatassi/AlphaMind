@@ -177,7 +177,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # ALP-707/PR #222 raised the equity_researcher/macro_researcher/options_researcher/
     # sentiment_researcher latency_budget_s from 600 to 900 in config/agents.yaml,
     # shifting the resolved-config canonical bytes.
-    expected = "e9ee16d15745a81f13715eff117404bab3149e7e3d014fb63cbfcabb2033be04"
+    # Pin updated 2026-05-27 (borrow_accrual_tick_local_time knob, ALP-718):
+    # ALP-718 added borrow_accrual_tick_local_time: "16:00" to
+    # config/continuous_monitor.yaml and ContinuousMonitorConfig, shifting the
+    # resolved-config canonical bytes.
+    expected = "5ebf691114e6a95a54adb9b4fb59d17d84918acc3ac452cebf60f2f059f7f710"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."
