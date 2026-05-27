@@ -48,10 +48,10 @@ from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
     PositionRecord,
 )
-from alphamind.scheduler.invocation import mint_invocation_id
 from alphamind.state.invocation_context.activity_log import (
     activity_log_entry_to_row,
 )
+from alphamind.state.invocation_id import mint_invocation_id
 from alphamind.state.tables.activity_log import ActivityLogRow
 from alphamind.state.tables.invocations import InvocationRow
 from alphamind.state.tables.positions import PositionRow
@@ -297,9 +297,7 @@ async def _read_latest_closes(
         return {}
     ticker_strs = tuple(str(t) for t in tickers)
     cutoff_iso = (
-        (as_of - timedelta(seconds=_MAX_EOD_BAR_AGE_SECONDS))
-        .replace(microsecond=0)
-        .isoformat()
+        (as_of - timedelta(seconds=_MAX_EOD_BAR_AGE_SECONDS)).replace(microsecond=0).isoformat()
     )
     latest_subq = (
         select(

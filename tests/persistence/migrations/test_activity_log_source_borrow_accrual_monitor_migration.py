@@ -131,9 +131,7 @@ class TestActivityLogSourceBorrowAccrualMonitorMigration:
         for idx, source in enumerate(
             ("MARGIN_MONITOR", "BRACKET_MANAGER", "GUARDRAIL_LAYER", "OPERATOR_CONSOLE"),
         ):
-            _insert_activity_log_row(
-                db_path, source=source, entry_id=f"entry-test-after-{idx}"
-            )
+            _insert_activity_log_row(db_path, source=source, entry_id=f"entry-test-after-{idx}")
 
     # NOTE: a "rejected at previous revision" test would normally pin that
     # the new value fails ``ck_activity_log_source`` at the prior head.
@@ -170,9 +168,7 @@ class TestActivityLogSourceBorrowAccrualMonitorMigration:
         _seed_invocation(db_path)
         _insert_activity_log_row(db_path, source="BORROW_ACCRUAL_MONITOR")
 
-    def test_downgrade_refuses_when_borrow_accrual_monitor_rows_exist(
-        self, tmp_path: Path
-    ) -> None:
+    def test_downgrade_refuses_when_borrow_accrual_monitor_rows_exist(self, tmp_path: Path) -> None:
         """Downgrade must abort rather than orphan rows under a stricter constraint."""
         db_path = tmp_path / "alembic.db"
         cfg = _alembic_config(db_path)
@@ -183,9 +179,7 @@ class TestActivityLogSourceBorrowAccrualMonitorMigration:
         with pytest.raises(RuntimeError, match="BORROW_ACCRUAL_MONITOR"):
             command.downgrade(cfg, _PREVIOUS)
 
-    def test_downgrade_succeeds_when_no_borrow_accrual_monitor_rows(
-        self, tmp_path: Path
-    ) -> None:
+    def test_downgrade_succeeds_when_no_borrow_accrual_monitor_rows(self, tmp_path: Path) -> None:
         """Clean downgrade restores the pre-migration vocabulary."""
         from sqlalchemy.exc import IntegrityError
 
@@ -194,9 +188,7 @@ class TestActivityLogSourceBorrowAccrualMonitorMigration:
         command.upgrade(cfg, _REVISION)
         _seed_lifetime(db_path)
         _seed_invocation(db_path)
-        _insert_activity_log_row(
-            db_path, source="MARGIN_MONITOR", entry_id="entry-test-keep"
-        )
+        _insert_activity_log_row(db_path, source="MARGIN_MONITOR", entry_id="entry-test-keep")
         command.downgrade(cfg, _PREVIOUS)
         with pytest.raises(IntegrityError):
             _insert_activity_log_row(

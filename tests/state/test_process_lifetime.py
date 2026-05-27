@@ -269,9 +269,7 @@ class TestRecordProcessLifetimeEventLoopProgress:
         loop_thread_id = threading.get_ident()
         provenance_thread_ids: list[int] = []
 
-        def _slow_git_stub(
-            args: list[str], **kwargs: Any
-        ) -> subprocess.CompletedProcess[str]:
+        def _slow_git_stub(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
             provenance_thread_ids.append(threading.get_ident())
             if args[:3] == ["git", "rev-parse", "HEAD"]:
                 # Block long enough that a concurrent asyncio.sleep(0.01)
