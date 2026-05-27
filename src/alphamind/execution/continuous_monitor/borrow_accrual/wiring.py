@@ -21,6 +21,7 @@ Two protocols the wiring depends on:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date, datetime, time
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -114,11 +115,11 @@ def _resolver_factory(
     in ``borrow_cost_daily`` between two ticks reaches the next tick.
     """
 
-    def _factory() -> object:  # actually Callable[[str], float | None]
+    def _factory() -> Callable[[str], float | None]:
         with sync_session_factory() as sess:
             return build_borrow_cost_resolver(sess)
 
-    return _factory  # type: ignore[return-value]
+    return _factory
 
 
 def _calendar_adapter(calendar_cache: CalendarCacheProtocol) -> TradingCalendar:
