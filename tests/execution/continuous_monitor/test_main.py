@@ -17,8 +17,40 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+from sqlalchemy import create_engine
 
+import alphamind.state.tables  # noqa: F401 — register state-layer tables on Base.metadata
 from alphamind.execution.continuous_monitor.__main__ import main as monitor_main
+from alphamind.persistence.models import Base
+
+
+def _ensure_db_schema(tmp_path: Path) -> None:
+    """Create the ``alphamind.db`` schema where the monitor will read/write.
+
+    The monitor's startup ``record_process_lifetime`` call (ALP-719) writes
+    a row to ``process_lifetimes`` before the supervisor's task tree spins
+    up. Before that change landed, the smoke tests could run against an
+    empty DB because no task body ran (``MonitorSupervisor.run`` is patched
+    to a no-op). With the new write at startup, every smoke test needs the
+    schema in place. ``alphamind.state.tables`` is imported above so its
+    table classes register on ``Base.metadata`` before ``create_all``.
+
+    ``main.yaml`` declares ``%USERPROFILE%\\AlphaMind\\data\\alphamind.db``;
+    on POSIX the backslashes are literal characters in the resolved
+    filename. We mirror that resolution so the engine the monitor builds
+    points at the schema we just created.
+    """
+    from alphamind.persistence.session import _resolve_path
+
+    resolved = _resolve_path(None)
+    db_path = Path(resolved)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    del tmp_path  # signal that the path comes from main.yaml resolution
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        Base.metadata.create_all(engine)
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture()
@@ -54,6 +86,7 @@ def test_main_run_paper_starts_supervisor_and_returns_cleanly(
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("ALPACA_PAPER_KEY", "test-key")
     monkeypatch.setenv("ALPACA_PAPER_SECRET", "test-secret")
+    _ensure_db_schema(tmp_path)
 
     constructed: dict[str, object] = {}
 
@@ -84,6 +117,7 @@ def test_main_run_defaults_to_paper_mode(
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("ALPACA_PAPER_KEY", "test-key")
     monkeypatch.setenv("ALPACA_PAPER_SECRET", "test-secret")
+    _ensure_db_schema(tmp_path)
 
     async def _no_op_run(self: object) -> None:
         del self
@@ -125,6 +159,7 @@ def test_main_registers_wave_2_and_3_tasks(
     monkeypatch.delenv("USERPROFILE", raising=False)
     monkeypatch.setenv("ALPACA_PAPER_KEY", "test-key")
     monkeypatch.setenv("ALPACA_PAPER_SECRET", "test-secret")
+    _ensure_db_schema(tmp_path)
 
     captured: dict[str, object] = {}
 
@@ -146,6 +181,7 @@ def test_main_registers_wave_2_and_3_tasks(
         "greeks_refresh",
         "breach_loop",
         "bracket_stops",
+        "borrow_accrual",
     ):
         assert expected in task_names, f"{expected} not registered; got {task_names!r}"
 
@@ -167,6 +203,7 @@ def test_main_shares_trigger_id_generator_across_breach_loop_and_bracket_stops(
     monkeypatch.delenv("USERPROFILE", raising=False)
     monkeypatch.setenv("ALPACA_PAPER_KEY", "test-key")
     monkeypatch.setenv("ALPACA_PAPER_SECRET", "test-secret")
+    _ensure_db_schema(tmp_path)
 
     captured: dict[str, object] = {}
 
