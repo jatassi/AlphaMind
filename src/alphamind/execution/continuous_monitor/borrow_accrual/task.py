@@ -40,15 +40,13 @@ from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.continuous_monitor.borrow_accrual.recompute import (
     AccrualTickResult,
     compute_tick,
+    is_open_short_equity,
 )
 from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.persistence.models import OhlcvBars
 from alphamind.portfolio_state.records.positions import (
-    Direction,
     EquityPositionDetails,
-    InstrumentType,
     PositionRecord,
-    PositionStatus,
 )
 from alphamind.scheduler.invocation import mint_invocation_id
 from alphamind.state.invocation_context.activity_log import (
@@ -152,7 +150,7 @@ async def run_accrual_tick(
 
     async with session_factory() as session:
         positions = await _read_all_positions(session)
-        in_scope = tuple(p for p in positions if _is_open_short_equity(p))
+        in_scope = tuple(p for p in positions if is_open_short_equity(p))
 
         close_prices = await _read_latest_closes(
             session,
@@ -252,14 +250,6 @@ async def run_borrow_accrual_loop(
 # ---------------------------------------------------------------------------
 # Module-private helpers
 # ---------------------------------------------------------------------------
-
-
-def _is_open_short_equity(position: PositionRecord) -> bool:
-    return (
-        position.status == PositionStatus.OPEN
-        and position.direction == Direction.SHORT
-        and position.instrument_type == InstrumentType.EQUITY
-    )
 
 
 def _ticker_of(position: PositionRecord) -> Symbol:

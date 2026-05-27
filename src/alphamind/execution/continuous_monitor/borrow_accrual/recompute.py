@@ -169,18 +169,27 @@ def compute_tick(
 # ---------------------------------------------------------------------------
 
 
-def _is_open_short_equity(position: PositionRecord) -> bool:
+def is_open_short_equity(position: PositionRecord) -> bool:
     """Predicate: is *position* in scope for the borrow-accrual tick?
 
     A position accrues borrow iff it is currently OPEN, has direction
     SHORT, and is an equity instrument. Strategies (direction None) and
     options never accrue equity borrow.
+
+    Canonical home is the kernel: the shell (``task.py``) imports this
+    name to filter what it hands the kernel, and the kernel re-uses it
+    internally to skip non-scope positions defensively.
     """
     return (
         position.status == PositionStatus.OPEN
         and position.direction == Direction.SHORT
         and position.instrument_type == InstrumentType.EQUITY
     )
+
+
+# Backwards-compatible alias for the prior private name retained within
+# this module's own call sites.
+_is_open_short_equity = is_open_short_equity
 
 
 def _build_activity_log_entry(
@@ -229,4 +238,5 @@ def _build_activity_log_entry(
 __all__ = [
     "AccrualTickResult",
     "compute_tick",
+    "is_open_short_equity",
 ]
