@@ -25,13 +25,13 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     PositionStatus,
 )
+
+# Import private helper for the legacy-blob test
 from alphamind.state.tables.positions_codec import (
+    _equity_from_dict,
     record_to_row,
     row_to_record,
 )
-
-# Import private helper for the legacy-blob test
-from alphamind.state.tables.positions_codec import _equity_from_dict  # noqa: PLC2701
 
 _FILL_TS = datetime(2026, 5, 27, 14, 30, tzinfo=UTC)
 
@@ -94,7 +94,7 @@ class TestAccruedBorrowCostCodec:
     """AC-4 & AC-5: round-trip codec for accrued_borrow_cost_usd."""
 
     def test_short_position_round_trips_accrued_borrow_cost(self) -> None:
-        """AC-4: SHORT with accrued_borrow_cost_usd=42.75 survives record_to_row -> row_to_record."""
+        """AC-4: SHORT with accrued_borrow_cost_usd=42.75 round-trips through codec."""
         record = _make_short_record(accrued_borrow_cost_usd=42.75)
         row = record_to_row(record)
         restored = row_to_record(row)

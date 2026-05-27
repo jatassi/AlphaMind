@@ -113,6 +113,7 @@ def _make_short_equity(
             share_count=100.0,
             average_cost_basis_per_share=notional / 100.0,
             borrow_rate_pct=0.5,
+            accrued_borrow_cost_usd=0.0,
             locate_status=LocateStatus.LOCATED,
             margin_held_usd=1_000.0,
         ),

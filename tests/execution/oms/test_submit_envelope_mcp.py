@@ -1850,6 +1850,7 @@ def test_add_command_equity_carries_position_direction() -> None:
             share_count=100.0,
             average_cost_basis_per_share=750.0,
             borrow_rate_pct=3.0,
+            accrued_borrow_cost_usd=0.0,
             locate_status=LocateStatus.LOCATED,
             margin_held_usd=10_000.0,
         ),

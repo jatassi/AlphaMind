@@ -559,6 +559,7 @@ def _build_pending_position(
             share_count=0.0,
             average_cost_basis_per_share=0.0,
             borrow_rate_pct=0.0 if short_fields_present else None,
+            accrued_borrow_cost_usd=0.0 if short_fields_present else None,
             locate_status=LocateStatus.LOCATED if short_fields_present else None,
             margin_held_usd=0.0 if short_fields_present else None,
         )

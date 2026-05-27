@@ -230,6 +230,7 @@ def _make_equity_position(
         share_count=share_count,
         average_cost_basis_per_share=cost_per_share,
         borrow_rate_pct=0.5 if is_short else None,
+        accrued_borrow_cost_usd=0.0 if is_short else None,
         locate_status=LocateStatus.LOCATED if is_short else None,
         margin_held_usd=1_000.0 if is_short else None,
     )

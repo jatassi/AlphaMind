@@ -51,6 +51,7 @@ def _short_mara_position() -> PositionView:
             share_count=140.0,
             average_cost_basis_per_share=20.0,
             borrow_rate_pct=2.5,
+            accrued_borrow_cost_usd=0.0,
             locate_status=LocateStatus.LOCATED,
             margin_held_usd=560.0,
         ),

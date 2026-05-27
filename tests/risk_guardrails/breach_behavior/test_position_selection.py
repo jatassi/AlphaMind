@@ -125,6 +125,7 @@ def _make_short_position(
             share_count=10.0,
             average_cost_basis_per_share=100.0,
             borrow_rate_pct=0.5,
+            accrued_borrow_cost_usd=0.0,
             locate_status=LocateStatus.LOCATED,
             margin_held_usd=200.0,
         ),
