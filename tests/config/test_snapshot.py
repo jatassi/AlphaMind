@@ -173,7 +173,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # Pin updated 2026-05-26 (CTRA removed from energy sector): CTRA was
     # acquired by DVN on 2026-05-07 and delisted; ALP-584/585 closed the
     # data-layer detection, this removes the stale entry from config/assets.yaml.
-    expected = "9862639948e5ca9005739ad723c79a9eac0804a265b672bba1d8720694936a40"
+    # Pin updated 2026-05-27 (researcher latency budgets 600 -> 900s, PR #222):
+    # ALP-707/PR #222 raised the equity_researcher/macro_researcher/options_researcher/
+    # sentiment_researcher latency_budget_s from 600 to 900 in config/agents.yaml,
+    # shifting the resolved-config canonical bytes.
+    expected = "e9ee16d15745a81f13715eff117404bab3149e7e3d014fb63cbfcabb2033be04"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."
