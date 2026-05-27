@@ -150,6 +150,7 @@ class EquityPositionDetails:
     share_count: float
     average_cost_basis_per_share: float
     borrow_rate_pct: float | None = None
+    accrued_borrow_cost_usd: float | None = None
     locate_status: LocateStatus | None = None
     margin_held_usd: float | None = None
     instrument_type: InstrumentType = field(default=InstrumentType.EQUITY, init=False)
@@ -311,19 +312,20 @@ class PositionRecord:
             return
         short_fields = (
             self.details.borrow_rate_pct,
+            self.details.accrued_borrow_cost_usd,
             self.details.locate_status,
             self.details.margin_held_usd,
         )
         if self.direction == Direction.SHORT and any(f is None for f in short_fields):
             msg = (
-                "borrow_rate_pct, locate_status, and margin_held_usd must all be non-None "
-                "when direction is SHORT"
+                "borrow_rate_pct, accrued_borrow_cost_usd, locate_status, and margin_held_usd "
+                "must all be non-None when direction is SHORT"
             )
             raise ValueError(msg)
         if self.direction == Direction.LONG and any(f is not None for f in short_fields):
             msg = (
-                "borrow_rate_pct, locate_status, and margin_held_usd must all be None "
-                "when direction is LONG"
+                "borrow_rate_pct, accrued_borrow_cost_usd, locate_status, and margin_held_usd "
+                "must all be None when direction is LONG"
             )
             raise ValueError(msg)
 

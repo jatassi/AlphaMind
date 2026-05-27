@@ -409,6 +409,7 @@ _SHORT_EQUITY = EquityPositionDetails(
     share_count=100.0,
     average_cost_basis_per_share=150.0,
     borrow_rate_pct=0.5,
+    accrued_borrow_cost_usd=0.0,
     locate_status=LocateStatus.LOCATED,
     margin_held_usd=5000.0,
 )
@@ -659,6 +660,116 @@ class TestDirectionShortFields:
         with pytest.raises((ValueError, TypeError)) as exc_info:
             _make_position(direction=Direction.SHORT, details=partial)
         assert "borrow_rate_pct" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# ALP-716: accrued_borrow_cost_usd field + extended validator
+# ---------------------------------------------------------------------------
+
+
+class TestAccruedBorrowCostField:
+    """AC-1: field exists as fourth short-only field between borrow_rate_pct and locate_status."""
+
+    def test_field_defaults_to_none(self) -> None:
+        d = EquityPositionDetails(
+            ticker=Symbol("AAPL"),
+            share_count=100.0,
+            average_cost_basis_per_share=150.0,
+        )
+        assert d.accrued_borrow_cost_usd is None
+
+    def test_field_accepts_float(self) -> None:
+        d = EquityPositionDetails(
+            ticker=Symbol("AAPL"),
+            share_count=100.0,
+            average_cost_basis_per_share=150.0,
+            borrow_rate_pct=2.5,
+            accrued_borrow_cost_usd=42.75,
+            locate_status=LocateStatus.LOCATED,
+            margin_held_usd=5000.0,
+        )
+        assert d.accrued_borrow_cost_usd == 42.75
+
+    def test_field_ordered_between_borrow_rate_and_locate_status(self) -> None:
+        """Field ordering: ticker, share_count, avg_cost, borrow_rate_pct,
+        accrued_borrow_cost_usd, locate_status, margin_held_usd, instrument_type."""
+        import dataclasses
+
+        field_names = [f.name for f in dataclasses.fields(EquityPositionDetails)]
+        borrow_idx = field_names.index("borrow_rate_pct")
+        accrued_idx = field_names.index("accrued_borrow_cost_usd")
+        locate_idx = field_names.index("locate_status")
+        assert borrow_idx < accrued_idx < locate_idx
+
+
+class TestExtendedShortFieldValidator:
+    """AC-2 & AC-3: extended validator covers all four short-only fields."""
+
+    def test_short_with_accrued_none_raises(self) -> None:
+        """AC-2: SHORT with accrued_borrow_cost_usd=None raises ValueError
+        naming all four short-only fields."""
+        partial = EquityPositionDetails(
+            ticker=Symbol("AAPL"),
+            share_count=100.0,
+            average_cost_basis_per_share=150.0,
+            borrow_rate_pct=2.5,
+            accrued_borrow_cost_usd=None,
+            locate_status=LocateStatus.LOCATED,
+            margin_held_usd=5000.0,
+        )
+        with pytest.raises(ValueError) as exc_info:
+            _make_position(direction=Direction.SHORT, details=partial)
+        msg = str(exc_info.value)
+        assert "accrued_borrow_cost_usd" in msg
+
+    def test_short_error_names_all_four_short_only_fields(self) -> None:
+        """AC-2: error message names all four short-only fields."""
+        partial = EquityPositionDetails(
+            ticker=Symbol("AAPL"),
+            share_count=100.0,
+            average_cost_basis_per_share=150.0,
+            borrow_rate_pct=None,
+            accrued_borrow_cost_usd=None,
+            locate_status=None,
+            margin_held_usd=None,
+        )
+        with pytest.raises(ValueError) as exc_info:
+            _make_position(direction=Direction.SHORT, details=partial)
+        msg = str(exc_info.value)
+        assert "borrow_rate_pct" in msg
+        assert "accrued_borrow_cost_usd" in msg
+        assert "locate_status" in msg
+        assert "margin_held_usd" in msg
+
+    def test_long_with_accrued_non_none_raises(self) -> None:
+        """AC-3: LONG with accrued_borrow_cost_usd non-None raises ValueError."""
+        details_with_accrued = EquityPositionDetails(
+            ticker=Symbol("AAPL"),
+            share_count=100.0,
+            average_cost_basis_per_share=150.0,
+            borrow_rate_pct=None,
+            accrued_borrow_cost_usd=0.0,
+            locate_status=None,
+            margin_held_usd=None,
+        )
+        with pytest.raises(ValueError) as exc_info:
+            _make_position(direction=Direction.LONG, details=details_with_accrued)
+        assert "accrued_borrow_cost_usd" in str(exc_info.value)
+
+    def test_short_with_all_four_fields_passes(self) -> None:
+        """SHORT with all four short-only fields set constructs cleanly."""
+        details = EquityPositionDetails(
+            ticker=Symbol("AAPL"),
+            share_count=100.0,
+            average_cost_basis_per_share=150.0,
+            borrow_rate_pct=2.5,
+            accrued_borrow_cost_usd=0.0,
+            locate_status=LocateStatus.LOCATED,
+            margin_held_usd=5000.0,
+        )
+        p = _make_position(direction=Direction.SHORT, details=details)
+        assert isinstance(p.details, EquityPositionDetails)
+        assert p.details.accrued_borrow_cost_usd == 0.0
 
 
 # ---------------------------------------------------------------------------
