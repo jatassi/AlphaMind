@@ -516,15 +516,77 @@ class CollectOutcome:
 
 
 def _describe_block(block: Any) -> dict[str, Any]:
-    """One content-block summary for :func:`_describe_sdk_message`."""
+    """One content-block summary for :func:`_describe_sdk_message`.
+
+    For ``ToolUseBlock`` the SDK exposes ``id`` and ``name``; both are
+    captured so the matching ``ToolResultBlock`` (which carries
+    ``tool_use_id`` linking back to ``id``) can be paired by the
+    ``verify_debug_e2e`` tool-layer health check (ALP-703).
+
+    For ``ToolResultBlock`` the envelope JSON content is parsed and its
+    ``quality`` field extracted — that is what the operator needs to see
+    to know whether the analysis tool layer was healthy on this run.
+    Unparseable content lands the row without ``quality``; the check
+    classifies such rows as ``"other"``.
+    """
     summary: dict[str, Any] = {"block": type(block).__name__}
     name = getattr(block, "name", None)
     if name is not None:
         summary["tool"] = name
+    block_id = getattr(block, "id", None)
+    if isinstance(block_id, str):
+        summary["id"] = block_id
+    tool_use_id = getattr(block, "tool_use_id", None)
+    if isinstance(tool_use_id, str):
+        summary["tool_use_id"] = tool_use_id
+        is_error = getattr(block, "is_error", None)
+        if isinstance(is_error, bool):
+            summary["is_error"] = is_error
+        quality = _extract_tool_result_quality(getattr(block, "content", None))
+        if quality is not None:
+            summary["quality"] = quality
     text = getattr(block, "text", None)
     if isinstance(text, str):
         summary["text_len"] = len(text)
     return summary
+
+
+def _extract_tool_result_quality(content: Any) -> str | None:
+    """Pull the envelope ``quality`` field out of a ToolResultBlock's content.
+
+    The MCP adapter wraps each tool result in a single ``text`` content
+    block whose body is the JSON-encoded envelope (see
+    :mod:`alphamind.analysis.tools._sdk_adapter`). The SDK surfaces that
+    content as either a plain string or a list of
+    ``{"type": "text", "text": <json>}`` dicts depending on transport;
+    handle both shapes and ignore anything else so a non-envelope tool
+    (or a malformed payload) doesn't crash the trace summary.
+    """
+    if isinstance(content, str):
+        return _parse_quality_from_json_text(content)
+    if isinstance(content, list):
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text")
+            if not isinstance(text, str):
+                continue
+            quality = _parse_quality_from_json_text(text)
+            if quality is not None:
+                return quality
+    return None
+
+
+def _parse_quality_from_json_text(text: str) -> str | None:
+    """Decode *text* as JSON and return its ``quality`` field if present."""
+    try:
+        payload = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    quality = payload.get("quality")
+    return quality if isinstance(quality, str) else None
 
 
 def _describe_sdk_message(message: Any) -> dict[str, Any]:

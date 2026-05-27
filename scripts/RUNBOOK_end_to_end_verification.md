@@ -475,7 +475,7 @@ set -a && source <(tr -d '\r' < .env) && set +a && \
 
 ## Expected output
 
-Seven PASS lines on a clean run, in order:
+Eight PASS lines on a clean run, in order:
 
 ```
 PASS: auth — all required env vars present (CLAUDE_CODE_OAUTH_TOKEN)
@@ -485,7 +485,8 @@ PASS: jsonl_ordering — 12/12 phases with paired start/done in dependency order
 PASS: synthetic_portfolio — positions=8, theses=8, cash_ledger.current_cash_usd=24440.0
 PASS: no_alpaca — no alpaca indicators in captured stream
 PASS: invocation_summary — staleness_flag=false, trigger_source='debug_e2e_cli', commands_submitted=N
-=== DEBUG-E2E VERIFICATION === 7/7 checks passed
+PASS: tool_layer_health — N/M tool calls complete, unavailable=K, other=L[; degraded: <tool>=K/M unavailable, …]
+=== DEBUG-E2E VERIFICATION === 8/8 checks passed
 ```
 
 **Agent operators driving the verify via tool calls must include the
@@ -497,6 +498,8 @@ per-agent diagnostics, the `progress.jsonl` event stream, or
 `verify_summary.txt` — without having to re-derive the path from the
 wrapper's output or hunt through the archive root. Surface it whether
 the run passed or failed; on FAIL, it is the entry point for triage.
+
+A `=== TOOL LAYER HEALTH ===` block (ALP-703) lands below `=== DATA HEALTH ===` carrying per-tool counts so a "8/8 checks passed" verdict cannot hide a half-dark enrichment layer.
 
 The archive directory carries:
 
@@ -606,10 +609,10 @@ special-case them.
 wrapper adds one extra check (`check_deterministic_prefix`) that
 hashes the source-archive vs new-archive distillation outputs
 pairwise and FAILs on the first byte mismatch. A clean resume run
-shows 8 PASS lines (the existing 7 plus this one) and the summary
-reads `8/8 checks passed`; a FAIL surfaces as `7/8 checks passed`.
+shows 9 PASS lines (the existing 8 plus this one) and the summary
+reads `9/9 checks passed`; a FAIL surfaces as `8/9 checks passed`.
 The check fires ONLY on resume — fresh debug-e2e invocations stay at
-`7/7 checks passed` with no extra line emitted.
+`8/8 checks passed` with no extra line emitted.
 
 A FAIL of this check means the upstream-replayed SDK phases are now
 operating against a different deterministic prefix than they

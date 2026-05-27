@@ -55,7 +55,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import IO, Any
 
@@ -67,6 +67,7 @@ from alphamind._kernel.archive_layout import (
     RESOLVED_CONFIG_FILENAME,
     find_invocation_archive_dir,
 )
+from alphamind.analysis.tools._envelope import ToolQuality
 from alphamind.config.models.run_types import RunType
 from alphamind.scripts._stdio import configure_utf8_stdio
 
@@ -83,7 +84,9 @@ __all__ = [
     "check_jsonl_ordering",
     "check_no_alpaca",
     "check_synthetic_portfolio_visibility",
+    "check_tool_layer_health",
     "format_data_health_block",
+    "format_tool_layer_health_block",
     "main",
 ]
 
@@ -800,7 +803,7 @@ def check_deterministic_prefix(
     * a non-determinism regression slipped into distillation.
 
     The check fires ONLY on resume runs — the wrapper omits it on a
-    fresh debug-e2e invocation, keeping the summary line at ``7/7
+    fresh debug-e2e invocation, keeping the summary line at ``8/8
     checks passed``.
 
     Returns a :class:`CheckResult` with ``label='deterministic_prefix'``;
@@ -1243,9 +1246,34 @@ def _run_checks(args: argparse.Namespace) -> tuple[int, str | None]:
     _emit(results, check_no_alpaca(output.stderr))
     _emit(results, check_invocation_summary(output.stdout))
 
+    # ALP-703: tally analysis-tool outcomes per agent so an enrichment
+    # outage surfaces at the verdict line. Falls back to a FAIL when no
+    # ``sdk_trace.jsonl`` files exist (instrumentation regression).
+    # Compute tallies once and thread through both the check + the printer
+    # so the archive is rglob-walked exactly once per run.
+    if _inv_dir_for_progress is not None:
+        tool_tallies = _tally_tool_outcomes(_inv_dir_for_progress)
+        _emit(
+            results,
+            check_tool_layer_health(_inv_dir_for_progress, tallies=tool_tallies),
+        )
+    else:
+        tool_tallies = {}
+        _emit(
+            results,
+            CheckResult(
+                label="tool_layer_health",
+                passed=False,
+                message=(
+                    f"invocation directory unavailable for {invocation_id!r}; "
+                    "tool-layer health cannot be computed"
+                ),
+            ),
+        )
+
     # ALP-696: the deterministic-prefix check fires ONLY on resume runs.
     # On a fresh debug-e2e invocation the line is absent and the summary
-    # stays at ``7/7 checks passed``; on a resume run we hash the source
+    # stays at ``8/8 checks passed``; on a resume run we hash the source
     # vs new distillation outputs pairwise and emit one extra PASS / FAIL
     # line. Source / new dirs are looked up via glob over the archive
     # root (distillation outputs land under the
@@ -1299,6 +1327,11 @@ def _run_checks(args: argparse.Namespace) -> tuple[int, str | None]:
     # failures (``unavailable``) don't masquerade as warm-up state
     # (``accumulating``) inside a green run.
     _print_data_health(archive_root=args.archive_root, invocation_id=invocation_id)
+    # ALP-703: same shape as DATA HEALTH but for the analysis-tool layer
+    # — silent enrichment outages surface at the verdict line, not buried
+    # inside per-agent narrative response files. Re-use the tallies the
+    # check already computed; no second rglob walk.
+    print(format_tool_layer_health_block(tool_tallies))
     return (0 if all(r.passed for r in results) else 1, invocation_id)
 
 
@@ -1450,6 +1483,299 @@ def _print_data_health(*, archive_root: Path, invocation_id: str) -> None:
     except (OSError, json.JSONDecodeError):
         snapshot = {}
     print(format_data_health_block(snapshot))
+
+
+# ---------------------------------------------------------------------------
+# TOOL LAYER HEALTH block (ALP-703)
+# ---------------------------------------------------------------------------
+#
+# Root-cause documentation for the three tools the parent issue named:
+#
+# - ``news_search`` (``src/alphamind/analysis/tools/news_search.py``): DB-backed
+#   query over ``news_articles`` + ``news_article_tickers``. Returns
+#   UNAVAILABLE/``vendor_api_error`` when the news collector has not ingested
+#   any rows inside the lookback window (NO_ROWS_IN_DB / COLLECTOR_INACTIVE);
+#   UNAVAILABLE/``no_data`` when rows exist but the query/ticker filter
+#   matches nothing.
+#
+# - ``prediction_markets`` (``src/alphamind/analysis/tools/prediction_markets.py``):
+#   DB-backed query over ``prediction_market_contracts`` + ``prediction_market_snapshots``.
+#   Returns UNAVAILABLE when no contracts match the keyword/categories OR
+#   when matched contracts have no snapshot rows.
+#
+# - ``macro_data`` (``src/alphamind/analysis/tools/macro_data.py``): DB-backed
+#   query over ``MacroObservations`` + ``TreasuryAuctions``. Returns UNAVAILABLE
+#   when the indicator isn't in the fail-closed registry OR when no rows
+#   exist in the lookback window.
+#
+# None of these tools call vendor APIs at agent time — they read the collector's
+# persisted output. ``unavailable`` therefore reflects collector freshness /
+# coverage, not a credential leak or vendor outage. The block below makes that
+# health surface scannable from the verify_summary verdict so a "7/7 checks
+# passed" line cannot hide a half-dark enrichment layer (the symptom that
+# motivated ALP-703).
+
+
+_SDK_TRACE_FILENAME = "sdk_trace.jsonl"
+_MCP_TOOL_PREFIX = "mcp__"
+"""Only ``mcp__<server>__<name>`` tool calls are real AlphaMind enrichment.
+
+The SDK emits synthetic ``ToolUseBlock(name="StructuredOutput")`` blocks on
+every ``output_format=json_schema`` invocation (and similar pseudo-tools for
+the built-in SDK toolset). Those carry no AlphaMind envelope, so their
+result blocks have no ``quality`` field and would fall into the ``other``
+bucket — falsely tagging the synthetic tool as DEGRADED on every clean run.
+Mirrors the ``tool_name_prefix`` filter the qualitative / adaptive harnesses
+use to count real tool calls vs synthetic ones.
+"""
+
+
+def _strip_mcp_prefix(tool_name: str) -> str:
+    """Reduce ``mcp__<server>__<name>`` to the canonical short ``<name>``.
+
+    The MCP namespace prefix is operator noise — both qualitative and
+    adaptive agents share the same toolset under different server names,
+    so collapsing the prefix lets the per-tool tally aggregate calls
+    across agents under one entry per tool.
+
+    ``maxsplit=2`` is deliberate so a tool name that itself contains ``__``
+    (e.g. ``mcp__server__news_search__variant``) survives intact rather than
+    being truncated at the inner ``__``.
+    """
+    if tool_name.startswith(_MCP_TOOL_PREFIX):
+        parts = tool_name.split("__", 2)
+        if len(parts) == 3 and parts[2]:
+            return parts[2]
+    return tool_name
+
+
+@dataclass(frozen=True, slots=True)
+class _ToolOutcomeTally:
+    """Per-tool count of result qualities observed across the invocation.
+
+    ``other`` collapses every non-COMPLETE / non-UNAVAILABLE quality (e.g.
+    PARTIAL, PARTIAL_NO_TRANSCRIPT) plus any call whose result couldn't be
+    linked back by ``tool_use_id`` or whose envelope didn't carry a
+    parseable ``quality`` field. Keeping the bucket separate avoids
+    inflating the "unavailable" headline count when a tool legitimately
+    returns partial data.
+    """
+
+    complete: int = 0
+    unavailable: int = 0
+    other: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.complete + self.unavailable + self.other
+
+
+def _iter_trace_files(inv_dir: Path) -> list[Path]:
+    """Sorted ``sdk_trace.jsonl`` paths under *inv_dir* (deterministic walk)."""
+    try:
+        return sorted(inv_dir.rglob(_SDK_TRACE_FILENAME))
+    except OSError:
+        return []
+
+
+def _tally_tool_outcomes(inv_dir: Path) -> dict[str, _ToolOutcomeTally]:
+    """Walk every ``sdk_trace.jsonl`` under *inv_dir* and tally tool outcomes.
+
+    Pairs ``ToolUseBlock`` entries (which carry ``id`` + ``tool`` name) with
+    their matching ``ToolResultBlock`` entries (``tool_use_id``) inside each
+    per-agent trace. Non-MCP tools (``StructuredOutput`` and other SDK-internal
+    synthetic blocks) are filtered out — only ``mcp__<server>__<name>`` real
+    AlphaMind tools count, matching the harness's ``tool_name_prefix``
+    convention. A use without a matching result is counted as ``"other"`` —
+    the call may have been interrupted by a timeout or the trace truncated;
+    the operator needs to see it.
+    """
+    tallies: dict[str, _ToolOutcomeTally] = {}
+    for trace_path in _iter_trace_files(inv_dir):
+        use_blocks, result_qualities = _load_tool_blocks_from_trace(trace_path)
+        for use_id, tool in use_blocks.items():
+            current = tallies.get(tool, _ToolOutcomeTally())
+            quality = result_qualities.get(use_id)
+            tallies[tool] = _bump_tally(current, quality)
+    return tallies
+
+
+def _bump_tally(current: _ToolOutcomeTally, quality: str | None) -> _ToolOutcomeTally:
+    """Return ``current`` with one more observation in the matching bucket."""
+    if quality == ToolQuality.COMPLETE.value:
+        return replace(current, complete=current.complete + 1)
+    if quality == ToolQuality.UNAVAILABLE.value:
+        return replace(current, unavailable=current.unavailable + 1)
+    return replace(current, other=current.other + 1)
+
+
+def _load_tool_blocks_from_trace(
+    trace_path: Path,
+) -> tuple[dict[str, str], dict[str, str | None]]:
+    """Read *trace_path* and return ``(use_blocks, result_qualities)`` indexed by tool_use_id.
+
+    ``use_blocks`` only carries entries whose tool name starts with
+    ``mcp__`` — synthetic SDK tool blocks (e.g. ``StructuredOutput``) are
+    dropped at parse time so the tally never sees them.
+    """
+    use_blocks: dict[str, str] = {}
+    result_qualities: dict[str, str | None] = {}
+    try:
+        with trace_path.open("r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                blocks = record.get("blocks")
+                if not isinstance(blocks, list):
+                    continue
+                for block in blocks:
+                    if isinstance(block, dict):
+                        _ingest_block(block, use_blocks, result_qualities)
+    except OSError:
+        return use_blocks, result_qualities
+    return use_blocks, result_qualities
+
+
+def _ingest_block(
+    block: dict[str, Any],
+    use_blocks: dict[str, str],
+    result_qualities: dict[str, str | None],
+) -> None:
+    """Route a single trace block into the use/result indices in place.
+
+    Only ``mcp__``-prefixed ToolUseBlocks are recorded; ToolResultBlock entries
+    are recorded unconditionally so a synthetic-tool result that arrives later
+    is paired against nothing (and silently dropped at tally time).
+    """
+    kind = block.get("block")
+    if kind == "ToolUseBlock":
+        tool = block.get("tool")
+        use_id = block.get("id")
+        if isinstance(tool, str) and isinstance(use_id, str) and tool.startswith(_MCP_TOOL_PREFIX):
+            use_blocks[use_id] = _strip_mcp_prefix(tool)
+    elif kind == "ToolResultBlock":
+        use_id = block.get("tool_use_id")
+        if isinstance(use_id, str):
+            quality = block.get("quality")
+            result_qualities[use_id] = quality if isinstance(quality, str) else None
+
+
+def check_tool_layer_health(
+    inv_dir: Path, *, tallies: dict[str, _ToolOutcomeTally] | None = None
+) -> CheckResult:
+    """Surface analysis-tool layer outcomes so silent outages reach the verdict.
+
+    Walks every per-agent ``sdk_trace.jsonl`` under *inv_dir* (or uses
+    pre-computed *tallies* to avoid a second walk when the caller has
+    already done one), pairs each ``ToolUseBlock`` with its matching
+    ``ToolResultBlock`` by tool-use id, and tallies per-tool quality
+    outcomes (``complete`` / ``unavailable`` / ``other``). The PASS message
+    names the totals + per-tool unavailable counts; a separate
+    :func:`format_tool_layer_health_block` line below the main summary
+    renders the full per-tool breakdown analogous to the DATA HEALTH block.
+
+    Returns PASS whenever at least one ``sdk_trace.jsonl`` file exists
+    under *inv_dir* — the line is informational, designed to make a
+    silent enrichment outage visible at the verdict, not to fail the
+    gate. PASS even when no MCP tool calls were captured (legitimate
+    output_format-only runs, or pre-PR archives whose traces lack the
+    ``id``/``tool_use_id`` fields the tally needs). FAIL fires only when
+    no ``sdk_trace.jsonl`` file exists anywhere under *inv_dir*, which
+    indicates the SDK call tracer didn't run (an instrumentation
+    regression on the harness side).
+    """
+    if not _iter_trace_files(inv_dir):
+        return CheckResult(
+            label="tool_layer_health",
+            passed=False,
+            message=(
+                f"no sdk_trace.jsonl files found under {inv_dir}; "
+                "the SDK call tracer did not run — instrumentation regression?"
+            ),
+        )
+
+    if tallies is None:
+        tallies = _tally_tool_outcomes(inv_dir)
+
+    if not tallies:
+        return CheckResult(
+            label="tool_layer_health",
+            passed=True,
+            message="no MCP tool calls captured (output_format-only run or pre-PR trace format)",
+        )
+
+    total, complete, unavailable, other = _summarise_tallies(tallies)
+    unavailable_tools = sorted(
+        ((tool, t) for tool, t in tallies.items() if t.unavailable > 0),
+        key=lambda item: (-item[1].unavailable, item[0]),
+    )
+    if unavailable_tools:
+        per_tool = ", ".join(
+            f"{tool}={t.unavailable}/{t.total} unavailable" for tool, t in unavailable_tools
+        )
+        suffix = f"; degraded: {per_tool}"
+    else:
+        suffix = ""
+    return CheckResult(
+        label="tool_layer_health",
+        passed=True,
+        message=(
+            f"{complete}/{total} tool calls complete, "
+            f"unavailable={unavailable}, other={other}{suffix}"
+        ),
+    )
+
+
+def _summarise_tallies(tallies: dict[str, _ToolOutcomeTally]) -> tuple[int, int, int, int]:
+    """Return ``(total, complete, unavailable, other)`` summed across *tallies*."""
+    total = complete = unavailable = other = 0
+    for t in tallies.values():
+        total += t.total
+        complete += t.complete
+        unavailable += t.unavailable
+        other += t.other
+    return total, complete, unavailable, other
+
+
+def format_tool_layer_health_block(tallies: dict[str, _ToolOutcomeTally]) -> str:
+    """Render the operator-facing TOOL LAYER HEALTH block from a tally map.
+
+    Mirrors the DATA HEALTH block's two-tier layout: a header counts line
+    summarising the run, then a per-tool table when at least one tool
+    returned a non-COMPLETE result. The block is informational — it
+    accompanies the PASS line from :func:`check_tool_layer_health` so the
+    operator can see WHICH tools are degraded without having to grep the
+    researchers' narrative response files.
+
+    Tolerates an empty *tallies* map: a single
+    ``"(no tool calls observed)"`` line lands so the section header is
+    present in every run, matching DATA HEALTH's no-snapshot fallback.
+    """
+    lines: list[str] = ["=== TOOL LAYER HEALTH ==="]
+    if not tallies:
+        lines.append("  (no tool calls observed)")
+        return "\n".join(lines)
+
+    total, complete, unavailable, other = _summarise_tallies(tallies)
+    lines.append(
+        f"  tool_calls={total}  complete={complete}  unavailable={unavailable}  other={other}"
+    )
+
+    degraded = sorted(
+        ((tool, t) for tool, t in tallies.items() if t.unavailable > 0 or t.other > 0),
+        key=lambda item: (-item[1].unavailable, -item[1].other, item[0]),
+    )
+    if degraded:
+        lines.append("")
+        lines.append(f"  DEGRADED ({len(degraded)}) — enrichment surface dark:")
+        for tool, t in degraded:
+            lines.append(f"    - {tool}: {t.unavailable}/{t.total} unavailable, {t.other} other")
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":  # pragma: no cover - operator entry point

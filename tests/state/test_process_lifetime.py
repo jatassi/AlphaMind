@@ -82,6 +82,20 @@ def _patch_subprocess(stub: Any = _git_rev_parse_stub) -> Any:
     )
 
 
+def _patch_platform_platform(value: str = "Linux-stub-test") -> Any:
+    """Patch ``platform.platform()`` inside the helper module.
+
+    On macOS, ``platform.platform()`` shells out to ``uname -p`` (and on
+    some configurations ``file -b``) to determine processor type. Those
+    extra subprocess calls trip the ``_git_rev_parse_stub`` guard above.
+    On the Windows CI runner and on Linux, ``platform.platform()`` is
+    pure-Python and doesn't shell out. Patching it directly keeps the
+    test platform-agnostic without expanding the subprocess stub to
+    cover every Mac-internal probe.
+    """
+    return patch("alphamind.state.process_lifetime.platform.platform", return_value=value)
+
+
 def _patch_distributions(distributions: tuple[_StubDistribution, ...] = _STUB_DISTRIBUTIONS) -> Any:
     """Patch ``importlib.metadata.distributions`` inside the helper module."""
     return patch(
@@ -106,7 +120,7 @@ class TestRecordProcessLifetimeHappyPath:
         session_factory: async_sessionmaker[AsyncSession],
         tmp_path: Path,
     ) -> None:
-        with _patch_subprocess(), _patch_distributions():
+        with _patch_subprocess(), _patch_distributions(), _patch_platform_platform():
             plt_id = await record_process_lifetime(
                 session_factory=session_factory,
                 process_role="pipeline",
@@ -130,7 +144,7 @@ class TestRecordProcessLifetimeHappyPath:
         session_factory: async_sessionmaker[AsyncSession],
         tmp_path: Path,
     ) -> None:
-        with _patch_subprocess(), _patch_distributions():
+        with _patch_subprocess(), _patch_distributions(), _patch_platform_platform():
             await record_process_lifetime(
                 session_factory=session_factory,
                 process_role="monitor",
@@ -161,7 +175,7 @@ class TestRecordProcessLifetimeHappyPath:
         session_factory: async_sessionmaker[AsyncSession],
         tmp_path: Path,
     ) -> None:
-        with _patch_subprocess(), _patch_distributions():
+        with _patch_subprocess(), _patch_distributions(), _patch_platform_platform():
             plt_id = await record_process_lifetime(
                 session_factory=session_factory,
                 process_role="pipeline",
@@ -188,7 +202,11 @@ class TestRecordProcessLifetimeHappyPath:
                 )
             return _git_rev_parse_stub(args, **kwargs)
 
-        with _patch_subprocess(stub=dirty_stub), _patch_distributions():
+        with (
+            _patch_subprocess(stub=dirty_stub),
+            _patch_distributions(),
+            _patch_platform_platform(),
+        ):
             await record_process_lifetime(
                 session_factory=session_factory,
                 process_role="pipeline",
@@ -214,6 +232,7 @@ class TestRecordProcessLifetimeFailFast:
         with (
             _patch_subprocess(stub=bad_git_stub),
             _patch_distributions(),
+            _patch_platform_platform(),
             pytest.raises(subprocess.CalledProcessError),
         ):
             await record_process_lifetime(

@@ -1357,6 +1357,16 @@ def _stub_main_dependencies(
     monkeypatch.setattr(
         verify_module, "check_synthetic_portfolio_visibility", _capturing_visibility
     )
+    # ALP-703: tool_layer_health walks sdk_trace.jsonl files; the stub
+    # invocation directory has none, so without a stub the new check
+    # would FAIL the wrapper exit code and break these polarity tests.
+    monkeypatch.setattr(
+        verify_module,
+        "check_tool_layer_health",
+        lambda _inv_dir, *, tallies=None: verify_module.CheckResult(
+            label="tool_layer_health", passed=True, message="stub"
+        ),
+    )
 
     # Pre-flight auth: ensure CLAUDE_CODE_OAUTH_TOKEN is set so check_auth passes.
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "stub-token")
@@ -1684,3 +1694,281 @@ def test_format_data_health_inflow_section_handles_null_window(
     assert "INFLOW (sentiment)" in rendered
     assert "None" not in rendered
     assert "populated_secondary=0/0" in rendered
+
+
+# ---------------------------------------------------------------------------
+# check_tool_layer_health — ALP-703
+# ---------------------------------------------------------------------------
+
+
+def _write_sdk_trace(path: Path, records: list[dict[str, Any]]) -> None:
+    """Append ``records`` as JSONL into ``path``, creating parents as needed."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        for record in records:
+            f.write(json.dumps(record) + "\n")
+
+
+def _trace_tool_use(tool: str, *, use_id: str) -> dict[str, Any]:
+    return {
+        "event": "sdk_message",
+        "type": "AssistantMessage",
+        "blocks": [{"block": "ToolUseBlock", "tool": tool, "id": use_id}],
+    }
+
+
+def _trace_tool_result(use_id: str, *, quality: str | None) -> dict[str, Any]:
+    block: dict[str, Any] = {
+        "block": "ToolResultBlock",
+        "tool_use_id": use_id,
+        "is_error": False,
+    }
+    if quality is not None:
+        block["quality"] = quality
+    return {"event": "sdk_message", "type": "UserMessage", "blocks": [block]}
+
+
+def test_check_tool_layer_health_passes_when_all_complete(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """A run where every tool result is COMPLETE emits PASS with per-tool counts."""
+    inv_dir = tmp_path / "inv-001"
+    _write_sdk_trace(
+        inv_dir / "analysis" / "qualitative_researcher" / "sdk_trace.jsonl",
+        [
+            _trace_tool_use("mcp__alphamind_qualitative__news_search", use_id="t1"),
+            _trace_tool_result("t1", quality="complete"),
+            _trace_tool_use("mcp__alphamind_qualitative__news_search", use_id="t2"),
+            _trace_tool_result("t2", quality="complete"),
+        ],
+    )
+    result = verify_module.check_tool_layer_health(inv_dir)
+    assert result.label == "tool_layer_health"
+    assert result.passed is True
+    assert "2/2 tool calls complete" in result.message
+    assert "unavailable=0" in result.message
+    # No degraded tools → no per-tool detail in the headline message;
+    # per-tool counts surface in the TOOL LAYER HEALTH block instead.
+    assert "degraded" not in result.message
+
+
+def test_check_tool_layer_health_names_degraded_tools_in_headline(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """The ALP-703 symptom: news_search 6/6 unavailable, prediction_markets 3/3 unavailable.
+
+    The headline message must name each degraded tool with its
+    unavailable / total ratio so the operator catches the outage
+    at the verdict line without descending into per-agent traces.
+    """
+    inv_dir = tmp_path / "inv-002"
+    records: list[dict[str, Any]] = []
+    for i in range(6):
+        records.append(_trace_tool_use("mcp__alphamind_qualitative__news_search", use_id=f"n{i}"))
+        records.append(_trace_tool_result(f"n{i}", quality="unavailable"))
+    for i in range(3):
+        records.append(
+            _trace_tool_use("mcp__alphamind_qualitative__prediction_markets", use_id=f"p{i}")
+        )
+        records.append(_trace_tool_result(f"p{i}", quality="unavailable"))
+    # Healthy companion calls so the run isn't a single-tool universe.
+    records.append(_trace_tool_use("mcp__alphamind_qualitative__ticker_deep_pull", use_id="t1"))
+    records.append(_trace_tool_result("t1", quality="complete"))
+    _write_sdk_trace(inv_dir / "analysis" / "qualitative_researcher" / "sdk_trace.jsonl", records)
+
+    result = verify_module.check_tool_layer_health(inv_dir)
+    assert result.passed is True  # informational — silent outages surface but don't fail the gate
+    assert "1/10 tool calls complete" in result.message
+    assert "unavailable=9" in result.message
+    assert "news_search=6/6 unavailable" in result.message
+    assert "prediction_markets=3/3 unavailable" in result.message
+    # The healthy companion tool is NOT listed under degraded
+    assert "ticker_deep_pull" not in result.message
+
+
+def test_check_tool_layer_health_aggregates_across_agents(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """One tool's calls from different agents fold into a single tally entry.
+
+    qualitative_researcher and adaptive_researcher share the news_search
+    tool through different MCP server names; the strip-prefix rule means
+    both surface under ``news_search`` in the tally instead of fragmenting
+    into ``mcp__alphamind_qualitative__news_search`` and
+    ``mcp__alphamind_adaptive__news_search``.
+    """
+    inv_dir = tmp_path / "inv-003"
+    _write_sdk_trace(
+        inv_dir / "analysis" / "qualitative_researcher" / "sdk_trace.jsonl",
+        [
+            _trace_tool_use("mcp__alphamind_qualitative__news_search", use_id="q1"),
+            _trace_tool_result("q1", quality="unavailable"),
+        ],
+    )
+    _write_sdk_trace(
+        inv_dir / "analysis" / "adaptive_researcher" / "sdk_trace.jsonl",
+        [
+            _trace_tool_use("mcp__alphamind_adaptive__news_search", use_id="a1"),
+            _trace_tool_result("a1", quality="complete"),
+        ],
+    )
+    result = verify_module.check_tool_layer_health(inv_dir)
+    assert "news_search=1/2 unavailable" in result.message
+
+
+def test_check_tool_layer_health_passes_when_traces_exist_with_no_mcp_calls(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """sdk_trace.jsonl files present but no MCP tool calls → PASS, not FAIL.
+
+    A real run where every agent produced only ``StructuredOutput`` synthetic
+    blocks (no real MCP tool calls) is legitimate — the tracer ran, but no
+    enrichment tools were called. This must NOT trip the instrumentation-
+    regression FAIL the way an empty inv_dir does.
+    """
+    inv_dir = tmp_path / "inv-no-mcp"
+    _write_sdk_trace(
+        inv_dir / "analysis" / "tech_semis_researcher" / "sdk_trace.jsonl",
+        [{"event": "sdk_message", "type": "AssistantMessage", "blocks": []}],
+    )
+    result = verify_module.check_tool_layer_health(inv_dir)
+    assert result.passed is True
+    assert "no MCP tool calls" in result.message
+
+
+def test_check_tool_layer_health_skips_synthetic_structured_output_tool(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """The SDK emits a synthetic ``StructuredOutput`` ToolUseBlock on every
+    output_format=json_schema invocation. Its result has no AlphaMind envelope,
+    so it would fall into the ``other`` bucket and falsely tag the synthetic
+    tool as DEGRADED on every clean run. The tally must filter to real MCP
+    tools only — the same convention the harness uses via ``tool_name_prefix``.
+    """
+    inv_dir = tmp_path / "inv-with-synthetic"
+    _write_sdk_trace(
+        inv_dir / "analysis" / "tech_semis_researcher" / "sdk_trace.jsonl",
+        [
+            _trace_tool_use("StructuredOutput", use_id="so1"),
+            _trace_tool_result("so1", quality=None),
+            _trace_tool_use("mcp__alphamind_qualitative__ticker_deep_pull", use_id="t1"),
+            _trace_tool_result("t1", quality="complete"),
+        ],
+    )
+    result = verify_module.check_tool_layer_health(inv_dir)
+    assert result.passed is True
+    # Only the real MCP tool counts — the synthetic block is filtered.
+    assert "1/1 tool calls complete" in result.message
+    assert "other=0" in result.message
+    # The tally returned by _tally_tool_outcomes must not contain StructuredOutput.
+    tallies = verify_module._tally_tool_outcomes(inv_dir)
+    assert "StructuredOutput" not in tallies
+    assert "ticker_deep_pull" in tallies
+
+
+def test_check_tool_layer_health_fails_when_no_sdk_traces_present(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """No sdk_trace.jsonl anywhere → instrumentation regression FAIL.
+
+    When the SDK call tracer doesn't write any traces the check fails
+    so an operator catches the regression rather than seeing a silent
+    "PASS — no tool calls observed" message that would also fire on a
+    legitimate no-tool run.
+    """
+    inv_dir = tmp_path / "inv-004"
+    inv_dir.mkdir()
+    result = verify_module.check_tool_layer_health(inv_dir)
+    assert result.passed is False
+    assert "instrumentation regression" in result.message
+
+
+def test_check_tool_layer_health_counts_unmatched_use_as_other(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """A ToolUseBlock with no matching ToolResultBlock falls into ``other``.
+
+    The most common path to this state is a stalled SDK call that was
+    timed out before the tool returned. The check must not lose the call
+    or misclassify it as ``unavailable`` — the operator needs to see the
+    truncation signal separately.
+    """
+    inv_dir = tmp_path / "inv-005"
+    _write_sdk_trace(
+        inv_dir / "analysis" / "qualitative_researcher" / "sdk_trace.jsonl",
+        [
+            _trace_tool_use("mcp__alphamind_qualitative__news_search", use_id="u1"),
+            # No matching ToolResultBlock — the SDK call was cut off
+        ],
+    )
+    result = verify_module.check_tool_layer_health(inv_dir)
+    assert result.passed is True
+    assert "other=1" in result.message
+
+
+def test_check_tool_layer_health_treats_missing_quality_as_other(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """An MCP tool whose result lacks a ``quality`` field buckets as ``other``.
+
+    A real AlphaMind tool that — through a bug or partial migration — emits
+    a result envelope without the ``quality`` field must not pollute the
+    COMPLETE or UNAVAILABLE counts. The tally surfaces it as ``other`` so
+    the malformed envelope is visible to the operator without being
+    miscounted as either success or failure.
+    """
+    inv_dir = tmp_path / "inv-006"
+    _write_sdk_trace(
+        inv_dir / "analysis" / "qualitative_researcher" / "sdk_trace.jsonl",
+        [
+            _trace_tool_use("mcp__alphamind_qualitative__news_search", use_id="n1"),
+            _trace_tool_result("n1", quality=None),
+        ],
+    )
+    result = verify_module.check_tool_layer_health(inv_dir)
+    assert result.passed is True
+    assert "other=1" in result.message
+    assert "unavailable=0" in result.message
+    assert "0/1 tool calls complete" in result.message
+
+
+# ---------------------------------------------------------------------------
+# format_tool_layer_health_block
+# ---------------------------------------------------------------------------
+
+
+def test_format_tool_layer_health_block_empty(verify_module: ModuleType) -> None:
+    """No tool calls at all renders the no-calls fallback line under the header."""
+    rendered = verify_module.format_tool_layer_health_block({})
+    assert "=== TOOL LAYER HEALTH ===" in rendered
+    assert "no tool calls observed" in rendered
+
+
+def test_format_tool_layer_health_block_all_healthy(verify_module: ModuleType) -> None:
+    """A run with only COMPLETE tools renders the counts line without a degraded block."""
+    tally_cls = verify_module._ToolOutcomeTally
+    rendered = verify_module.format_tool_layer_health_block({"news_search": tally_cls(complete=4)})
+    assert "tool_calls=4  complete=4  unavailable=0  other=0" in rendered
+    assert "DEGRADED" not in rendered
+
+
+def test_format_tool_layer_health_block_degraded(verify_module: ModuleType) -> None:
+    """Degraded tools surface in a DEGRADED block ordered by unavailable count desc."""
+    tally_cls = verify_module._ToolOutcomeTally
+    rendered = verify_module.format_tool_layer_health_block(
+        {
+            "news_search": tally_cls(unavailable=6),
+            "prediction_markets": tally_cls(unavailable=3),
+            "ticker_deep_pull": tally_cls(complete=8),
+        }
+    )
+    assert "tool_calls=17  complete=8  unavailable=9  other=0" in rendered
+    assert "DEGRADED (2) — enrichment surface dark:" in rendered
+    # Highest unavailable count first.
+    news_index = rendered.index("news_search:")
+    pm_index = rendered.index("prediction_markets:")
+    assert news_index < pm_index
+    assert "news_search: 6/6 unavailable, 0 other" in rendered
+    assert "prediction_markets: 3/3 unavailable, 0 other" in rendered
+    # Healthy tool is NOT listed in the degraded block.
+    assert rendered.count("ticker_deep_pull") == 0
