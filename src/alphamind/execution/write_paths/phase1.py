@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -78,6 +79,7 @@ from alphamind.portfolio_state.records.orders import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
+    LocateStatus,
     OptionsPositionDetails,
     PositionFill,
     PositionRecord,
@@ -212,6 +214,7 @@ async def process_unprocessed_fills(
     *,
     market_inputs: MarketInputs,
     config: StatePersistenceConfig,
+    borrow_cost_resolver: Callable[[str], float | None] | None = None,
 ) -> Phase1Summary:
     """Drain every unprocessed fill + CA activity and integrate them atomically.
 
@@ -287,7 +290,9 @@ async def process_unprocessed_fills(
     for event in _iter_merged_events(valid_fills, ca_activities):
         if isinstance(event, FillRecord):
             pre_positions = await _read_all_positions(handle)
-            await _integrate_one_fill(handle, event)
+            await _integrate_one_fill(
+                handle, event, borrow_cost_resolver=borrow_cost_resolver
+            )
             post_positions = await _read_all_positions(handle)
             attribution = compute_attribution(
                 pre_fill_positions=pre_positions,
@@ -416,6 +421,8 @@ def _quarantine_invalid(
 async def _integrate_one_fill(
     handle: InvocationHandle,
     fill: FillRecord,
+    *,
+    borrow_cost_resolver: Callable[[str], float | None] | None = None,
 ) -> None:
     """Apply the design-doc nine-step sequence for one fill.
 
@@ -427,6 +434,12 @@ async def _integrate_one_fill(
     Strategy / mleg positions take a per-leg-aware path that consults
     sibling per-leg ``OrderRow`` statuses to gate the atomic PENDING → OPEN
     transition (per ``broker-adapter.md § Multi-leg fill events``).
+
+    ``borrow_cost_resolver`` is forwarded to the equity dispatcher so a
+    SHORT-equity PENDING → OPEN transition can stamp the four short-only
+    fields (borrow_rate_pct, accrued_borrow_cost_usd, locate_status,
+    margin_held_usd). LONG equity, single-leg options, and strategy paths
+    ignore the resolver.
     """
     order = await _read_order(handle, fill.order_id)
     updated_order = _apply_fill_to_order(order, fill)
@@ -451,7 +464,12 @@ async def _integrate_one_fill(
             updated_order=updated_order,
         )
     else:
-        updated_position = _apply_fill_to_position(position, fill, is_buy_side=direction_is_buy)
+        updated_position = _apply_fill_to_position(
+            position,
+            fill,
+            is_buy_side=direction_is_buy,
+            borrow_cost_resolver=borrow_cost_resolver,
+        )
         incomplete_legs = ()
     _persist_position_update(position_row, updated_position)
 
@@ -589,6 +607,7 @@ def _apply_fill_to_position(
     fill: FillRecord,
     *,
     is_buy_side: bool,
+    borrow_cost_resolver: Callable[[str], float | None] | None = None,
 ) -> PositionRecord:
     """Dispatch entry / add / exit handling based on instrument type, status, and direction.
 
@@ -596,10 +615,22 @@ def _apply_fill_to_position(
     (:func:`_integrate_one_fill`) routes them to
     :func:`_apply_strategy_fill_to_position` because the strategy path needs
     DB access to consult sibling per-leg order statuses.
+
+    ``borrow_cost_resolver`` is consulted by the equity branch on a
+    SHORT-PENDING entry-fill to stamp the four short-only fields. Options
+    positions are direction-aware natively (SELL_TO_OPEN routes to the
+    entry-fill helper without a borrow leg), so the resolver is not threaded
+    into the options branch.
     """
     details = position.details
     if isinstance(details, EquityPositionDetails):
-        return _apply_fill_to_equity_position(position, details, fill, is_buy_side=is_buy_side)
+        return _apply_fill_to_equity_position(
+            position,
+            details,
+            fill,
+            is_buy_side=is_buy_side,
+            borrow_cost_resolver=borrow_cost_resolver,
+        )
     if isinstance(details, OptionsPositionDetails):
         return _apply_fill_to_options_position(position, details, fill, is_buy_side=is_buy_side)
     # Strategy positions are intercepted upstream; this branch defends against
@@ -614,16 +645,50 @@ def _apply_fill_to_equity_position(
     fill: FillRecord,
     *,
     is_buy_side: bool,
+    borrow_cost_resolver: Callable[[str], float | None] | None,
 ) -> PositionRecord:
-    """Equity branch: PENDING entry, OPEN add, or sell-side exit."""
-    if is_buy_side and position.status == PositionStatus.PENDING:
-        return _apply_entry_fill(position, details, fill)
-    if is_buy_side and position.status == PositionStatus.OPEN:
-        return _apply_add_fill(position, details, fill)
-    if not is_buy_side and position.status == PositionStatus.PENDING:
-        msg = "SHORT entry fills not yet supported by Phase 1; supported direction is LONG only."
-        raise NotImplementedError(msg)
-    return _apply_exit_fill(position, details, fill)
+    """Direction-aware dispatcher mirroring the options dispatcher.
+
+    The 8 routing cases (status × direction × buy_side):
+
+    +---------+-----------+----------+--------------------+
+    | Status  | Direction | Buy side | Routing            |
+    +=========+===========+==========+====================+
+    | PENDING | LONG      | True     | _apply_entry_fill  |
+    | PENDING | LONG      | False    | ValueError         |
+    | PENDING | SHORT     | True     | ValueError         |
+    | PENDING | SHORT     | False    | _apply_entry_fill  |
+    | OPEN    | LONG      | True     | _apply_add_fill    |
+    | OPEN    | LONG      | False    | _apply_exit_fill   |
+    | OPEN    | SHORT     | True     | _apply_exit_fill   |
+    | OPEN    | SHORT     | False    | _apply_add_fill    |
+    +---------+-----------+----------+--------------------+
+
+    The two defensive ValueError cases (PENDING LONG + SELL, PENDING SHORT +
+    BUY) represent "a position cannot close before it opens" — the broker
+    cannot fire an exit-side fill on a position that has not yet
+    transitioned PENDING → OPEN.
+    """
+    direction = position_direction(position)
+    # Equity positions always carry direction; strategy positions are
+    # intercepted upstream by _integrate_one_fill.
+    assert direction is not None
+    if position.status == PositionStatus.PENDING:
+        if _is_opening_fill(direction, is_buy_side):
+            return _apply_entry_fill(
+                position, details, fill, borrow_cost_resolver=borrow_cost_resolver
+            )
+        msg = (
+            f"Phase 1 received closing fill on PENDING position "
+            f"{position.position_id!r}; a position cannot close before it opens"
+        )
+        raise ValueError(msg)
+    if position.status == PositionStatus.OPEN:
+        if _is_opening_fill(direction, is_buy_side):
+            return _apply_add_fill(position, details, fill)
+        return _apply_exit_fill(position, details, fill)
+    msg = f"Phase 1 cannot integrate fill against position status {position.status!r}"
+    raise ValueError(msg)
 
 
 def _apply_fill_to_options_position(
@@ -713,8 +778,24 @@ def _apply_entry_fill(
     position: PositionRecord,
     details: EquityPositionDetails,
     fill: FillRecord,
+    *,
+    borrow_cost_resolver: Callable[[str], float | None] | None,
 ) -> PositionRecord:
     """PENDING → OPEN: set entry timestamp, quantity, cost basis, history.
+
+    For a SHORT position, also stamp the four short-only fields:
+    ``borrow_rate_pct`` (resolver lookup on the ticker), ``accrued_borrow_cost_usd``
+    (initialised to 0.0 — Story 04 increments it daily), ``locate_status``
+    (LOCATED by construction; the AT_RISK_OF_RECALL transition is
+    broker-driven and lands separately), and ``margin_held_usd`` (Reg T
+    initial margin = ``fill_quantity × fill_price × 0.50``).
+
+    A missing resolver (``None``) or a resolver returning ``None`` for the
+    ticker is an upstream contract violation — the analyst's validation tool
+    short-circuits with UNAVAILABLE on MISSING_BORROW_COST, so a missing rate
+    at entry-fill time means a SHORT EQUITY OpenCommand reached Phase 1
+    despite the rate being unavailable. The helper raises ``ValueError`` in
+    both cases.
 
     ALP-462: ``fill.fill_price`` is ``Price`` (Decimal); the legacy
     ``average_cost_basis_per_share`` field on ``EquityPositionDetails`` is
@@ -727,6 +808,30 @@ def _apply_entry_fill(
         share_count=fill.fill_quantity,
         average_cost_basis_per_share=float(fill.fill_price),
     )
+    if position.direction == Direction.SHORT:
+        if borrow_cost_resolver is None:
+            msg = (
+                f"Phase 1 SHORT-equity entry on {details.ticker!r} requires a "
+                "borrow_cost_resolver; got None"
+            )
+            raise ValueError(msg)
+        annual_fee_pct = borrow_cost_resolver(details.ticker)
+        if annual_fee_pct is None:
+            msg = (
+                f"Phase 1 SHORT-equity entry on {details.ticker!r}: "
+                "borrow_cost_resolver returned None, but the analyst's validation "
+                "tool short-circuits with UNAVAILABLE on MISSING_BORROW_COST. "
+                "A missing rate at entry-fill time is an upstream contract violation."
+            )
+            raise ValueError(msg)
+        margin_held_usd = fill.fill_quantity * float(fill.fill_price) * 0.50
+        new_details = dataclasses.replace(
+            new_details,
+            borrow_rate_pct=annual_fee_pct,
+            accrued_borrow_cost_usd=0.0,
+            locate_status=LocateStatus.LOCATED,
+            margin_held_usd=margin_held_usd,
+        )
     return dataclasses.replace(
         position,
         status=PositionStatus.OPEN,

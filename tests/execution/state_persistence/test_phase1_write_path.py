@@ -72,6 +72,7 @@ from alphamind.portfolio_state.records.orders import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
+    LocateStatus,
     PositionRecord,
     PositionStatus,
 )
@@ -295,10 +296,15 @@ def _make_pending_position(
     share_count: float = 0.0,
     average_cost_basis_per_share: float = 0.0,
 ) -> PositionRecord:
+    is_short = direction == Direction.SHORT
     details = EquityPositionDetails(
         ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=average_cost_basis_per_share,
+        borrow_rate_pct=0.0 if is_short else None,
+        accrued_borrow_cost_usd=0.0 if is_short else None,
+        locate_status=LocateStatus.LOCATED if is_short else None,
+        margin_held_usd=0.0 if is_short else None,
     )
     return PositionRecord(
         position_id=PositionId(position_id),
@@ -326,14 +332,32 @@ def _make_open_position(
     share_count: float = 10.0,
     average_cost_basis_per_share: float = 150.0,
     fill_price: float = 150.0,
+    borrow_rate_pct: float = 15.0,
+    accrued_borrow_cost_usd: float = 0.0,
+    margin_held_usd: float | None = None,
 ) -> PositionRecord:
-    """Build an OPEN position whose execution_history reflects an entry fill."""
+    """Build an OPEN position whose execution_history reflects an entry fill.
+
+    For SHORT positions the four short-only fields default to a borrow rate
+    of 15%, zero accrued borrow cost, located locate status, and Reg T initial
+    margin (share_count × average_cost_basis × 0.50).
+    """
     from alphamind.portfolio_state.records.positions import PositionFill
 
+    is_short = direction == Direction.SHORT
+    resolved_margin_held = (
+        margin_held_usd
+        if margin_held_usd is not None
+        else share_count * average_cost_basis_per_share * 0.50
+    )
     details = EquityPositionDetails(
         ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=average_cost_basis_per_share,
+        borrow_rate_pct=borrow_rate_pct if is_short else None,
+        accrued_borrow_cost_usd=accrued_borrow_cost_usd if is_short else None,
+        locate_status=LocateStatus.LOCATED if is_short else None,
+        margin_held_usd=resolved_margin_held if is_short else None,
     )
     history = (
         PositionFill(
@@ -1094,9 +1118,11 @@ async def test_atomicity_exception_rolls_back_fills_and_log(
     """An exception mid-integration leaves fills unprocessed and the activity
     log carries no entries from this invocation.
 
-    The trigger is a SELL_TO_OPEN direction on a PENDING position — Phase 1
-    raises NotImplementedError for short-entry fills (FK enforcement makes the
-    original "missing position row" scenario impossible at the seeding layer).
+    The trigger is a closing fill against a PENDING position — the equity
+    dispatcher raises ``ValueError`` ("a position cannot close before it
+    opens") because routing a SELL_TO_OPEN fill at a PENDING LONG position
+    crosses the defensive guard. FK enforcement on ``fill_records.order_id``
+    rules out the original "missing position row" seeding scenario.
     """
     from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
@@ -1104,28 +1130,30 @@ async def test_atomicity_exception_rolls_back_fills_and_log(
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    short_entry_order = _make_pending_entry_order(
-        order_id=OrderId("ord-short-1"),
-        direction=OrderDirection.SELL_TO_OPEN,
-        position_id=PositionId("pos-1"),
-    )
+    # PENDING LONG position + a SELL_TO_OPEN order routes through the new
+    # dispatcher's defensive ValueError ("closing fill on PENDING position").
     await _seed_position_order_thesis_bracket(
         factory,
         _make_pending_position(),
-        short_entry_order,
+        _make_pending_entry_order(
+            order_id=OrderId("ord-bogus-sell"),
+            direction=OrderDirection.SELL_TO_OPEN,
+            position_id=PositionId("pos-1"),
+        ),
         _make_active_thesis(),
         _make_pending_bracket(),
     )
     await _seed_cash_ledger(factory)
     await _seed_drawdown_state(factory)
     await _append_fill(
-        factory, _make_unprocessed_fill(fill_id="fill-1", order_id=OrderId("ord-short-1"))
+        factory,
+        _make_unprocessed_fill(fill_id="fill-1", order_id=OrderId("ord-bogus-sell")),
     )
 
     ctx, handle = await _open_handle(factory)
     invocation_id = handle.invocation_id
     try:
-        with pytest.raises(NotImplementedError, match="SHORT entry"):
+        with pytest.raises(ValueError, match="cannot close before it opens"):
             await process_unprocessed_fills(
                 handle,
                 market_inputs=_make_market_inputs(),
@@ -1134,7 +1162,7 @@ async def test_atomicity_exception_rolls_back_fills_and_log(
     finally:
         # Funnel the (caught) exception through the context manager so the
         # surrounding transaction rolls back.
-        await ctx.__aexit__(NotImplementedError, NotImplementedError("forced"), None)
+        await ctx.__aexit__(ValueError, ValueError("forced"), None)
 
     async with factory() as sess:
         # Fill row remains unprocessed.
@@ -1447,23 +1475,25 @@ async def test_corporate_action_position_with_missing_bracket_row_rejected_at_co
             await sess.commit()
 
 
-async def test_short_entry_fill_raises_explicit_not_implemented(
+async def test_short_entry_fill_transitions_pending_short_to_open_with_stamped_fields(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """A SELL-side fill against a PENDING position represents a short-open
-    entry — narrowed out of Phase 1 v1. The dispatcher must surface a clear
-    NotImplementedError naming the missing capability, not the cryptic
-    "exit fill quantity exceeds open share count" leak from ``_apply_exit_fill``.
+    """A SELL_TO_OPEN fill against a PENDING SHORT EQUITY position transitions
+    it to OPEN and stamps the four short-only fields from the borrow-cost
+    resolver: borrow_rate_pct, accrued_borrow_cost_usd=0.0,
+    locate_status=LOCATED, margin_held_usd = qty × price × 0.50 (Reg T
+    initial margin).
     """
     from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
+    from alphamind.portfolio_state.records.positions import LocateStatus
 
     _, factory = db
     await _seed_invocation_substrate(factory)
     await _seed_position_order_thesis_bracket(
         factory,
-        _make_pending_position(),
+        _make_pending_position(direction=Direction.SHORT),
         _make_pending_entry_order(
             order_id=OrderId("ord-short-entry"),
             direction=OrderDirection.SELL_TO_OPEN,
@@ -1480,15 +1510,33 @@ async def test_short_entry_fill_raises_explicit_not_implemented(
     )
 
     ctx, handle = await _open_handle(factory)
-    try:
-        with pytest.raises(NotImplementedError, match="SHORT entry"):
-            await process_unprocessed_fills(
-                handle,
-                market_inputs=_make_market_inputs(),
-                config=_make_state_persistence_config(),
-            )
-    finally:
-        await ctx.__aexit__(NotImplementedError, NotImplementedError("forced"), None)
+    summary = await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+        borrow_cost_resolver=lambda _ticker: 15.0,
+    )
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.fills_processed == 1
+    assert summary.fills_quarantined == 0
+
+    async with factory() as sess:
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert pos.status == PositionStatus.OPEN
+        assert pos.direction == Direction.SHORT
+        assert isinstance(pos.details, EquityPositionDetails)
+        assert pos.details.share_count == 10.0
+        assert pos.details.average_cost_basis_per_share == 150.0
+        # Four short-only fields stamped per the design doc.
+        assert pos.details.borrow_rate_pct == 15.0
+        assert pos.details.accrued_borrow_cost_usd == 0.0
+        assert pos.details.locate_status == LocateStatus.LOCATED
+        # Reg T initial margin: 10 × 150 × 0.50 = 750.
+        assert pos.details.margin_held_usd == pytest.approx(10.0 * 150.0 * 0.50)
 
 
 async def test_phase1_stamps_completion_timestamp_on_invocation_row(
