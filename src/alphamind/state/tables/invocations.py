@@ -43,8 +43,10 @@ _TRIGGER_SOURCES = (
     "cli",
     "debug_e2e_cli",
     "operator_console",
-    # Continuous monitor (emergency dispatch path).
+    # Continuous monitor — emergency dispatch and scheduled ticks.
     "continuous_monitor",
+    # Daily borrow-accrual tick emitted by the continuous monitor (ALP-718 / ALP-715 § 4f).
+    "borrow_accrual",
     # Replay harness (distillation back-tests).
     "replay",
     # Scheduler cron triggers — every RunType member doubles as a
