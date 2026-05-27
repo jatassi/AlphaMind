@@ -4,7 +4,8 @@ For every OPEN SHORT EQUITY position the kernel:
 
 1. Resolves the live closing print from ``close_prices``.
 2. Resolves the live annualized borrow fee from ``fee_rates``.
-3. Computes today's per-position cost via :func:`today_cost_usd`.
+3. Computes today's per-position cost via
+   :func:`alphamind.risk_guardrails.borrow_cost.daily_borrow_cost_usd`.
 4. Returns a new :class:`PositionRecord` whose
    :attr:`EquityPositionDetails.accrued_borrow_cost_usd` accumulator has
    advanced by today's cost.
@@ -52,28 +53,11 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     PositionStatus,
 )
-
-# Trading-day basis the borrow-cost lifecycle uses everywhere
-# (``risk_guardrails.borrow_cost._TRADING_DAYS_PER_YEAR``).
-_TRADING_DAYS_PER_YEAR = 252
+from alphamind.risk_guardrails.borrow_cost import daily_borrow_cost_usd
 
 # The accrual date the activity-log entry stamps follows the configured
 # US/Eastern tick wall clock — the trading day the tick covers.
 _US_EASTERN = ZoneInfo("US/Eastern")
-
-
-def today_cost_usd(*, share_count: float, close_price: float, annual_fee_pct: float) -> float:
-    """Per-position one-day USD accrual.
-
-    ``abs(share_count * close_price) * annual_fee_pct / 100 / 252``.
-
-    ``share_count`` is wrapped in ``abs`` so the formula is sign-agnostic —
-    the SHORT-equity codec stores ``share_count`` as a positive value
-    today, but the math survives a future sign-convention change without
-    silently inverting the cost.
-    """
-    notional_usd = abs(share_count * close_price)
-    return notional_usd * (annual_fee_pct / 100.0) / _TRADING_DAYS_PER_YEAR
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,9 +130,13 @@ def compute_tick(
             )
             raise ValueError(msg)
 
-        today = today_cost_usd(
-            share_count=details.share_count,
-            close_price=close,
+        # ``share_count`` is wrapped in ``abs`` so the formula is sign-agnostic.
+        # The SHORT-equity codec stores ``share_count`` as a positive value
+        # today, but the math survives a future sign-convention change
+        # without silently inverting the cost.
+        notional_usd = abs(details.share_count * close)
+        today = daily_borrow_cost_usd(
+            notional_usd=notional_usd,
             annual_fee_pct=fee_rate,
         )
         prior_accrued = details.accrued_borrow_cost_usd or 0.0
@@ -157,7 +145,6 @@ def compute_tick(
         new_record = dataclasses.replace(position, details=new_details)
         updated_positions.append(new_record)
 
-        notional = abs(details.share_count * close)
         entry = _build_activity_log_entry(
             position=position,
             invocation_id=invocation_id,
@@ -165,7 +152,7 @@ def compute_tick(
             today_cost=today,
             cumulative=new_accrued,
             annual_fee_pct=fee_rate,
-            notional_usd=notional,
+            notional_usd=notional_usd,
         )
         activity_log_entries.append(entry)
         total_accrued += today
@@ -242,5 +229,4 @@ def _build_activity_log_entry(
 __all__ = [
     "AccrualTickResult",
     "compute_tick",
-    "today_cost_usd",
 ]

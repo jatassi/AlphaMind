@@ -19,7 +19,6 @@ See :doc:`docs/design/05-execution-layer/architecture.md` § 4f and
 from alphamind.execution.continuous_monitor.borrow_accrual.recompute import (
     AccrualTickResult,
     compute_tick,
-    today_cost_usd,
 )
 from alphamind.execution.continuous_monitor.borrow_accrual.task import (
     BorrowCostResolverFactory,
@@ -39,5 +38,4 @@ __all__ = [
     "register_borrow_accrual_task",
     "run_accrual_tick",
     "run_borrow_accrual_loop",
-    "today_cost_usd",
 ]

@@ -23,7 +23,6 @@ from alphamind._kernel.ids import PositionId, ThesisId, make_symbol
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.continuous_monitor.borrow_accrual.recompute import (
     compute_tick,
-    today_cost_usd,
 )
 from alphamind.portfolio_state.events.activity_log import (
     BorrowCostAccruedDetail,
@@ -117,26 +116,6 @@ def _long_equity_position(*, position_id: str, ticker: str) -> PositionRecord:
         parent_position_id=None,
         origin=None,
     )
-
-
-class TestTodayCostUsd:
-    """Pure formula: ``abs(share_count * close_price) * annual_fee_pct / 100 / 252``."""
-
-    def test_canonical_example(self) -> None:
-        assert today_cost_usd(
-            share_count=100.0, close_price=50.0, annual_fee_pct=10.0
-        ) == pytest.approx(100 * 50 * 10 / 100 / 252)
-
-    def test_takes_abs_of_share_count(self) -> None:
-        """SHORT positions are stored with a positive ``share_count`` per the
-        codec, but the formula uses ``abs`` so a future sign-convention change
-        does not break the math."""
-        assert today_cost_usd(
-            share_count=-100.0, close_price=50.0, annual_fee_pct=10.0
-        ) == pytest.approx(today_cost_usd(share_count=100.0, close_price=50.0, annual_fee_pct=10.0))
-
-    def test_zero_fee_returns_zero(self) -> None:
-        assert today_cost_usd(share_count=100.0, close_price=50.0, annual_fee_pct=0.0) == 0.0
 
 
 class TestComputeTickHappyPath:
