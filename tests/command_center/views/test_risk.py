@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -138,17 +139,28 @@ async def seeded_db(db_path: str) -> AsyncIterator[str]:
         )
 
         # Seed activity_log: one guardrail rejection within last 24 h.
+        # Timestamp is derived from wall-clock so the row always falls inside
+        # the dashboard's `datetime.now(UTC) - timedelta(hours=24)` window
+        # regardless of when the test runs; a hardcoded ISO string drifts out
+        # of the window over time (ALP-712 fallback discovery).
+        recent_entry_at = (
+            (datetime.now(UTC) - timedelta(hours=1))
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
         await conn.execute(
-            text("""
-                INSERT INTO activity_log
-                    (entry_id, invocation_id, entry_at, event_type, event_group,
-                     position_id, order_id, thesis_id, source, detail_json)
-                VALUES
-                    ('entry-1', 'inv-1', '2026-05-26T12:00:00Z',
-                     'GUARDRAIL_REJECTION', 'RISK_AND_GUARDRAIL',
-                     NULL, NULL, NULL, 'GUARDRAIL_LAYER',
-                     '{"rule": "net_long_exposure", "action": "BLOCK"}')
-            """)
+            text(
+                "INSERT INTO activity_log "
+                "(entry_id, invocation_id, entry_at, event_type, event_group, "
+                " position_id, order_id, thesis_id, source, detail_json) "
+                "VALUES "
+                "('entry-1', 'inv-1', :entry_at, "
+                " 'GUARDRAIL_REJECTION', 'RISK_AND_GUARDRAIL', "
+                " NULL, NULL, NULL, 'GUARDRAIL_LAYER', "
+                ' \'{"rule": "net_long_exposure", "action": "BLOCK"}\')'
+            ),
+            {"entry_at": recent_entry_at},
         )
 
         # Seed a RISK_PARAMETER_CHANGED event (older — outside recent 24 h window).

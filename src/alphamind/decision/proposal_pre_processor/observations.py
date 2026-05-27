@@ -10,7 +10,7 @@ contributions for FAIL rules.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 
 from alphamind.decision.analyst.models import Recommendation
@@ -152,6 +152,7 @@ def compute_combined_set_impact(
     market: MarketInputs,
     snapshot_timestamp: datetime,
     strategist_holds_excluded_count: int,
+    borrow_cost_resolver: Callable[[str], float | None] | None = None,
 ) -> CombinedSetImpact:
     """Compute §1.A combined_set_impact for the pre-processor bundle.
 
@@ -164,12 +165,20 @@ def compute_combined_set_impact(
     The caller is responsible for filtering hold-action assessments before
     calling — ``strategist_holds_excluded_count`` is reported as basis
     metadata only.
+
+    ``borrow_cost_resolver`` is the same ticker → annualized-fee_pct callable
+    the validation tool consumed for the upstream agent, threaded through to
+    :func:`translate_recommendation_to_proposed_delta` so new SHORT EQUITY
+    recommendations (no matching existing position) can compute their daily
+    borrow cost from ``borrow_cost_daily`` rather than raising (ALP-712).
     """
     # Analyst recs first, then strategist non-hold actions — preserves caller
     # order so basis IDs and contributor IDs line up with the input sequences.
     proposals = (
         *(
-            translate_recommendation_to_proposed_delta(r, snapshot=snapshot)
+            translate_recommendation_to_proposed_delta(
+                r, snapshot=snapshot, borrow_cost_resolver=borrow_cost_resolver
+            )
             for r in recommendations
         ),
         *(

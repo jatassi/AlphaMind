@@ -5,10 +5,17 @@ Pure functions that map analyst ``Recommendation`` and strategist
 ``ProposedDelta`` shape. These are the input adapters for the combined-set
 guardrail check (story 03 consumes the translated deltas).
 
-No resolver callbacks, no clock reads, no I/O.
+A ``borrow_cost_resolver`` (annualized fee_pct per ticker, the same callable
+the validation tool consumes) may be threaded through to convert a new SHORT
+EQUITY recommendation's notional into a one-day USD accrual. The resolver is
+optional; when absent or when it returns ``None`` for a ticker that has no
+matching existing SHORT EQUITY position, the translator raises
+``TranslatorError`` (ALP-712).
 """
 
 from __future__ import annotations
+
+from collections.abc import Callable
 
 from alphamind._kernel.money import Money, money
 from alphamind.decision.analyst.models import (
@@ -23,6 +30,7 @@ from alphamind.decision.strategist.models import (
     PositionAssessment,
     ReduceParameters,
 )
+from alphamind.risk_guardrails.borrow_cost import daily_borrow_cost_usd
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
     Action,
     AssetType,
@@ -46,7 +54,8 @@ class TranslatorError(Exception):
     - Hold-action PositionAssessment passed to translate_position_assessment_to_proposed_delta.
     - PositionAssessment.position_id not present in snapshot.existing_positions.
     - SHORT EQUITY recommendation with no same-ticker short in the snapshot
-      (no borrow cost available; caller must seed or skip).
+      and either no borrow_cost_resolver supplied or one that returns ``None``
+      for the ticker (no borrow data available; the caller must seed or skip).
     """
 
 
@@ -59,12 +68,20 @@ def translate_recommendation_to_proposed_delta(
     recommendation: Recommendation,
     *,
     snapshot: PortfolioStateSnapshot,
+    borrow_cost_resolver: Callable[[str], float | None] | None = None,
 ) -> ProposedDelta:
     """Convert an analyst Recommendation to the guardrail-evaluation library's ProposedDelta shape.
 
     The recommendation always represents an OPEN action — analyst recommendations
     are new entries, never additions/closes (existing-position management is the
     strategist's responsibility). The library validates this invariant.
+
+    ``borrow_cost_resolver`` is the ticker → annualized-fee_pct callable from
+    :func:`alphamind.risk_guardrails.borrow_cost.build_borrow_cost_resolver`.
+    It is consulted only for SHORT EQUITY recommendations that have no matching
+    SHORT EQUITY existing position in the snapshot — see
+    :func:`_resolve_borrow_cost_for_recommendation` for the fast-path + resolver
+    fallback rules.
     """
     instrument = recommendation.instrument
     direction = _direction_from_instrument(instrument)
@@ -72,8 +89,12 @@ def translate_recommendation_to_proposed_delta(
 
     notional_usd = _notional_for_recommendation(recommendation)
     option_legs = _build_option_legs_from_recommendation(recommendation)
-    daily_borrow_cost_usd = _resolve_borrow_cost_for_recommendation(
-        recommendation, direction=direction, asset_type=asset_type, snapshot=snapshot
+    borrow_cost = _resolve_borrow_cost_for_recommendation(
+        recommendation,
+        direction=direction,
+        asset_type=asset_type,
+        snapshot=snapshot,
+        borrow_cost_resolver=borrow_cost_resolver,
     )
     reserves_capital = recommendation.entry_order.type in ("limit", "stop_limit")
 
@@ -88,7 +109,7 @@ def translate_recommendation_to_proposed_delta(
         option_legs=option_legs,
         action=Action.OPEN,
         existing_position_id=None,
-        daily_borrow_cost_usd=daily_borrow_cost_usd,
+        daily_borrow_cost_usd=borrow_cost,
         reserves_capital=reserves_capital,
     )
 
@@ -264,13 +285,38 @@ def _resolve_borrow_cost_for_recommendation(
     direction: Direction | None,
     asset_type: AssetType,
     snapshot: PortfolioStateSnapshot,
+    borrow_cost_resolver: Callable[[str], float | None] | None,
 ) -> float | None:
     """Return daily_borrow_cost_usd for SHORT EQUITY recommendations.
 
-    Scans snapshot.existing_positions for a same-ticker SHORT EQUITY position
-    and returns its daily_borrow_cost_usd. Raises TranslatorError if no such
-    position exists (caller must seed snapshot or skip translation). Returns
-    None for all non-short-equity cases.
+    Resolution order for SHORT EQUITY (returns ``None`` immediately for any
+    other instrument shape):
+
+    1. **Fast path.** If ``snapshot.existing_positions`` already holds a
+       SHORT EQUITY position on the same ticker AND that position carries a
+       non-``None`` ``daily_borrow_cost_usd``, return it directly — the daily
+       accrual was computed at snapshot-assembly time and stored on the
+       existing position. A matching position with ``daily_borrow_cost_usd
+       is None`` (the snapshot assembler emits ``None`` when its own resolver
+       had no row for the ticker — see ``library_snapshot.py``) falls through
+       to the resolver path so a current rate can be tried before raising.
+    2. **Resolver fallback.** A *new* short on a ticker has no existing
+       position, so consult ``borrow_cost_resolver`` (the same callable the
+       validation tool consumed when validating the analyst's proposal). The
+       resolver returns an annualized fee_pct from ``borrow_cost_daily``; we
+       convert it to a one-day USD accrual against the proposal notional via
+       :func:`alphamind.risk_guardrails.borrow_cost.daily_borrow_cost_usd`,
+       mirroring the validation tool's own conversion at
+       ``state_delivery/validation_tool.py::_resolve_borrow_cost`` (ALP-712).
+
+    Fail-hard semantics. If both paths come up empty — no matching position
+    and either no resolver supplied or one that returns ``None`` for the
+    ticker — raise ``TranslatorError`` rather than silently dropping the
+    proposal. A proposal that reaches the pre-processor without borrow data
+    indicates an upstream contract violation: the analyst's validation tool
+    returns ``UNAVAILABLE`` for tickers the resolver can't price, so a SHORT
+    EQUITY recommendation here should always have a resolvable rate. Failing
+    loud surfaces the upstream gap rather than masking it as a missing trade.
     """
     if direction is not Direction.SHORT or asset_type is not AssetType.EQUITY:
         return None
@@ -281,12 +327,24 @@ def _resolve_borrow_cost_for_recommendation(
             pos.underlying == ticker
             and pos.direction is Direction.SHORT
             and pos.asset_type is AssetType.EQUITY
+            and pos.daily_borrow_cost_usd is not None
         ):
             return pos.daily_borrow_cost_usd
 
+    if borrow_cost_resolver is not None:
+        annual_fee_pct = borrow_cost_resolver(ticker)
+        if annual_fee_pct is not None:
+            notional = _notional_for_recommendation(recommendation)
+            return daily_borrow_cost_usd(
+                notional_usd=float(notional), annual_fee_pct=annual_fee_pct
+            )
+
     raise TranslatorError(
         f"borrow cost unavailable for new short on {ticker!r} — "
-        "caller must seed snapshot or skip translation"
+        "no matching SHORT EQUITY position in snapshot and the "
+        "borrow_cost_resolver was either not provided or returned None "
+        "for this ticker (expected the analyst's validation tool to have "
+        "rejected this proposal as UNAVAILABLE upstream)"
     )
 
 
