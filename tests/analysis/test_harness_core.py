@@ -1133,7 +1133,7 @@ def test_describe_sdk_message_captures_tool_use_id_and_name() -> None:
     ]
 
 
-def test_describe_sdk_message_captures_tool_result_quality(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_describe_sdk_message_captures_tool_result_quality() -> None:
     """ToolResultBlock summary carries ``tool_use_id`` and parsed ``quality`` (ALP-703).
 
     The tool envelope renders its result as a single text content block whose

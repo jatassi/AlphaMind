@@ -407,7 +407,7 @@ def _stub_main_for_resume(
     monkeypatch.setattr(
         verify_module,
         "check_tool_layer_health",
-        lambda _inv_dir: verify_module.CheckResult(
+        lambda _inv_dir, *, tallies=None: verify_module.CheckResult(
             label="tool_layer_health", passed=True, message="stub"
         ),
     )
@@ -422,7 +422,7 @@ def _capture_stdout(monkeypatch: pytest.MonkeyPatch) -> io.StringIO:
 
 
 # ---------------------------------------------------------------------------
-# 4. Non-resume run: no deterministic_prefix line; summary 7/7
+# 4. Non-resume run: no deterministic_prefix line; summary 8/8
 # ---------------------------------------------------------------------------
 
 
@@ -453,7 +453,7 @@ def test_main_non_resume_run_omits_deterministic_prefix_line(
 
 
 # ---------------------------------------------------------------------------
-# 2 (cont.) Resume run: PASS line lands; summary 8/8
+# 2 (cont.) Resume run: PASS line lands; summary 9/9
 # ---------------------------------------------------------------------------
 
 
@@ -461,8 +461,8 @@ def test_main_resume_run_emits_deterministic_prefix_pass(
     verify_module: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """On a clean resume run the wrapper emits ``PASS:
-    deterministic_prefix`` and the summary becomes ``8/8 checks
-    passed`` (story ALP-696 acceptance crit 2).
+    deterministic_prefix`` and the summary becomes ``9/9 checks
+    passed`` (story ALP-696 acceptance crit 2; total bumped by ALP-703).
     """
     source_id = "inv-20260525T231625Z-b9f1a7aa"
     new_id = "inv-20260526T100000Z-12345678"

@@ -1363,7 +1363,7 @@ def _stub_main_dependencies(
     monkeypatch.setattr(
         verify_module,
         "check_tool_layer_health",
-        lambda _inv_dir: verify_module.CheckResult(
+        lambda _inv_dir, *, tallies=None: verify_module.CheckResult(
             label="tool_layer_health", passed=True, message="stub"
         ),
     )
@@ -1816,6 +1816,56 @@ def test_check_tool_layer_health_aggregates_across_agents(
     assert "news_search=1/2 unavailable" in result.message
 
 
+def test_check_tool_layer_health_passes_when_traces_exist_with_no_mcp_calls(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """sdk_trace.jsonl files present but no MCP tool calls → PASS, not FAIL.
+
+    A real run where every agent produced only ``StructuredOutput`` synthetic
+    blocks (no real MCP tool calls) is legitimate — the tracer ran, but no
+    enrichment tools were called. This must NOT trip the instrumentation-
+    regression FAIL the way an empty inv_dir does.
+    """
+    inv_dir = tmp_path / "inv-no-mcp"
+    _write_sdk_trace(
+        inv_dir / "analysis" / "tech_semis_researcher" / "sdk_trace.jsonl",
+        [{"event": "sdk_message", "type": "AssistantMessage", "blocks": []}],
+    )
+    result = verify_module.check_tool_layer_health(inv_dir)
+    assert result.passed is True
+    assert "no MCP tool calls" in result.message
+
+
+def test_check_tool_layer_health_skips_synthetic_structured_output_tool(
+    verify_module: ModuleType, tmp_path: Path
+) -> None:
+    """The SDK emits a synthetic ``StructuredOutput`` ToolUseBlock on every
+    output_format=json_schema invocation. Its result has no AlphaMind envelope,
+    so it would fall into the ``other`` bucket and falsely tag the synthetic
+    tool as DEGRADED on every clean run. The tally must filter to real MCP
+    tools only — the same convention the harness uses via ``tool_name_prefix``.
+    """
+    inv_dir = tmp_path / "inv-with-synthetic"
+    _write_sdk_trace(
+        inv_dir / "analysis" / "tech_semis_researcher" / "sdk_trace.jsonl",
+        [
+            _trace_tool_use("StructuredOutput", use_id="so1"),
+            _trace_tool_result("so1", quality=None),
+            _trace_tool_use("mcp__alphamind_qualitative__ticker_deep_pull", use_id="t1"),
+            _trace_tool_result("t1", quality="complete"),
+        ],
+    )
+    result = verify_module.check_tool_layer_health(inv_dir)
+    assert result.passed is True
+    # Only the real MCP tool counts — the synthetic block is filtered.
+    assert "1/1 tool calls complete" in result.message
+    assert "other=0" in result.message
+    # The tally returned by _tally_tool_outcomes must not contain StructuredOutput.
+    tallies = verify_module._tally_tool_outcomes(inv_dir)
+    assert "StructuredOutput" not in tallies
+    assert "ticker_deep_pull" in tallies
+
+
 def test_check_tool_layer_health_fails_when_no_sdk_traces_present(
     verify_module: ModuleType, tmp_path: Path
 ) -> None:
@@ -1859,26 +1909,26 @@ def test_check_tool_layer_health_counts_unmatched_use_as_other(
 def test_check_tool_layer_health_treats_missing_quality_as_other(
     verify_module: ModuleType, tmp_path: Path
 ) -> None:
-    """A result block with no ``quality`` field is bucketed as ``other``.
+    """An MCP tool whose result lacks a ``quality`` field buckets as ``other``.
 
-    Non-envelope tools (e.g. built-in SDK tools) return results that
-    aren't AlphaMind tool envelopes; their results land without a
-    ``quality`` field. They must not pollute the COMPLETE or UNAVAILABLE
-    counts.
+    A real AlphaMind tool that — through a bug or partial migration — emits
+    a result envelope without the ``quality`` field must not pollute the
+    COMPLETE or UNAVAILABLE counts. The tally surfaces it as ``other`` so
+    the malformed envelope is visible to the operator without being
+    miscounted as either success or failure.
     """
     inv_dir = tmp_path / "inv-006"
     _write_sdk_trace(
         inv_dir / "analysis" / "qualitative_researcher" / "sdk_trace.jsonl",
         [
-            _trace_tool_use("Bash", use_id="b1"),
-            _trace_tool_result("b1", quality=None),
+            _trace_tool_use("mcp__alphamind_qualitative__news_search", use_id="n1"),
+            _trace_tool_result("n1", quality=None),
         ],
     )
     result = verify_module.check_tool_layer_health(inv_dir)
     assert result.passed is True
     assert "other=1" in result.message
     assert "unavailable=0" in result.message
-    assert "complete=" not in result.message  # zero complete; only headline n/m carries it
     assert "0/1 tool calls complete" in result.message
 
 
