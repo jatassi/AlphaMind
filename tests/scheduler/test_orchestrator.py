@@ -1333,6 +1333,104 @@ class TestRunInvocationDebugE2EWiring:
         assert gather_kw.get("ca_queries_factory") is None
 
 
+class TestRunInvocationBrokerDispatchWiring:
+    """ALP-711 — orchestrator threads the broker-routing triple into the decision
+    pipeline.
+
+    Production runs (``context.debug_e2e is None``) must pass the full
+    ``(venue_config, execution_mode, execution_config)`` triple into
+    ``run_decision_pipeline`` so the PM subprocess worker can reconstruct
+    the live ``TradingClient`` and route PM-originated commands to Alpaca.
+    Non-production runs (``context.debug_e2e is not None``) must leave all
+    three at ``None`` so the submit_envelope wrapper's broker-routing gate
+    stays False — preserving the log-only behavior the debug-e2e harness
+    already wires for Phase 1 reads.
+    """
+
+    async def test_production_path_threads_full_broker_routing_triple(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``context.debug_e2e is None`` → decision pipeline gets the triple."""
+        from alphamind.config.models.execution import ExecutionConfig
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        captured: dict[str, Any] = {}
+        _patch_no_op_pipeline(monkeypatch, captured=captured)
+
+        await run_invocation(
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        decision_kwargs = captured["decision"]
+        assert isinstance(decision_kwargs["venue_config"], VenueConfig)
+        assert decision_kwargs["execution_mode"] is ExecutionMode.paper
+        assert isinstance(decision_kwargs["execution_config"], ExecutionConfig)
+
+    async def test_debug_e2e_path_leaves_broker_routing_triple_at_none(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``context.debug_e2e`` populated → all three legs are ``None``.
+
+        The submit_envelope wrapper's broker-routing gate requires all three
+        legs to be non-None; with the triple at ``None`` accepted commands
+        fall through to the synthetic-id placeholder path and no live Alpaca
+        call fires. This is the contract the operator's log-only behavior
+        relies on (debug-e2e runs must not hit the broker).
+        """
+        from alphamind.scheduler.debug_e2e.broker import (
+            LogOnlyAccountStateQueries,
+            LogOnlyCorporateActionsQueries,
+        )
+        from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
+        from alphamind.scheduler.debug_e2e.settings import DebugE2ESettings
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        debug_settings = DebugE2ESettings(
+            account_queries=LogOnlyAccountStateQueries(SYNTHETIC_PORTFOLIO),
+            ca_queries=LogOnlyCorporateActionsQueries(),
+            emitter_factory=lambda _inv_id, _as_of: NOOP_PROGRESS_EMITTER,
+        )
+
+        captured: dict[str, Any] = {}
+        _patch_no_op_pipeline(monkeypatch, captured=captured)
+
+        await run_invocation(
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+                debug_e2e=debug_settings,
+            ),
+            trigger_type="manual",
+            trigger_source="debug_e2e_cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        decision_kwargs = captured["decision"]
+        assert decision_kwargs["venue_config"] is None
+        assert decision_kwargs["execution_mode"] is None
+        assert decision_kwargs["execution_config"] is None
+
+
 def _make_invocation_row(
     invocation_id: str,
     start_at: datetime,

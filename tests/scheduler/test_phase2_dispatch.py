@@ -263,6 +263,105 @@ class TestDispatchPhase2:
         assert summary.commands_submitted == 1
         assert summary.commands_rejected == 1
 
+    async def test_dispatch_results_forwarded_to_persist_envelope_outcome(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Per ALP-711 scope (C): each ``SubmissionLogEntry``'s
+        ``dispatch_results`` flows verbatim into ``persist_envelope_outcome``
+        so the writeback persists the broker's real ``alpaca_order_id``
+        instead of falling back to ``alp-{order_id}`` synthetic placeholders.
+        """
+        from alphamind.scheduler import phase2_dispatch as module
+        from alphamind.scheduler.phase2_dispatch import dispatch_phase2
+
+        captured_dispatch_results: list[Any] = []
+
+        async def _capture_persist(
+            handle: Any,
+            envelope: Any,
+            results: Any,
+            *,
+            config: Any,
+            dispatch_results: Any = None,
+        ) -> None:
+            captured_dispatch_results.append(dispatch_results)
+
+        monkeypatch.setattr(module, "persist_envelope_outcome", _capture_persist)
+
+        # Sentinel "BrokerDispatchResult" payload — the dispatcher's only
+        # contract with downstream callers is its ``alpaca_order_id``
+        # attribute; the type annotation in ``SubmissionLogEntry`` is
+        # ``Any`` so a sentinel suffices to verify forwarding.
+        class _Sentinel:
+            alpaca_order_id = "real-alpaca-uuid-abc"
+
+        sentinel = _Sentinel()
+        envelope = _StubEnvelope("ENV-REC-1")
+        submission_results = (
+            _make_submission_result(command_ordinal=0, command_id="cmd-a", status="accepted"),
+        )
+        entry = SubmissionLogEntry(
+            envelope=cast(Any, envelope),
+            submission_results=submission_results,
+            dispatch_results=(sentinel,),
+        )
+
+        await dispatch_phase2(
+            session_factory=async_factory,
+            invocation_id=_INVOCATION_ID,
+            pm_result=_make_pm_result(submission_log=(entry,)),
+            state_persistence_config=_make_state_persistence_config(),
+        )
+
+        assert captured_dispatch_results == [(sentinel,)]
+
+    async def test_dispatch_results_default_none_for_legacy_entries(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``SubmissionLogEntry.dispatch_results`` defaults to ``None`` for
+        callers that don't run broker routing (debug-e2e / non-prod log-only
+        path). ``dispatch_phase2`` forwards ``None`` so the synthetic-ID
+        fallback in ``persist_envelope_outcome`` still fires for those runs.
+        """
+        from alphamind.scheduler import phase2_dispatch as module
+        from alphamind.scheduler.phase2_dispatch import dispatch_phase2
+
+        captured_dispatch_results: list[Any] = []
+
+        async def _capture_persist(
+            handle: Any,
+            envelope: Any,
+            results: Any,
+            *,
+            config: Any,
+            dispatch_results: Any = None,
+        ) -> None:
+            captured_dispatch_results.append(dispatch_results)
+
+        monkeypatch.setattr(module, "persist_envelope_outcome", _capture_persist)
+
+        envelope = _StubEnvelope("ENV-REC-1")
+        submission_results = (
+            _make_submission_result(command_ordinal=0, command_id="cmd-a", status="accepted"),
+        )
+        entry = SubmissionLogEntry(
+            envelope=cast(Any, envelope),
+            submission_results=submission_results,
+        )
+
+        await dispatch_phase2(
+            session_factory=async_factory,
+            invocation_id=_INVOCATION_ID,
+            pm_result=_make_pm_result(submission_log=(entry,)),
+            state_persistence_config=_make_state_persistence_config(),
+        )
+
+        assert captured_dispatch_results == [None]
+
     async def test_each_envelope_runs_in_its_own_transaction(
         self,
         async_factory: async_sessionmaker[AsyncSession],
@@ -281,7 +380,12 @@ class TestDispatchPhase2:
         captured_sessions: list[AsyncSession] = []
 
         async def _capture_session_persist(
-            handle: Any, envelope: Any, results: Any, *, config: Any
+            handle: Any,
+            envelope: Any,
+            results: Any,
+            *,
+            config: Any,
+            dispatch_results: Any = None,
         ) -> None:
             captured_sessions.append(handle.session)
 
@@ -363,7 +467,14 @@ class TestDispatchPhase2:
         )
         await insert_invocation_row(async_factory, record)
 
-        async def _marker_persist(handle: Any, envelope: Any, results: Any, *, config: Any) -> None:
+        async def _marker_persist(
+            handle: Any,
+            envelope: Any,
+            results: Any,
+            *,
+            config: Any,
+            dispatch_results: Any = None,
+        ) -> None:
             # Stamp the row's command_execution_summary_json with the
             # current envelope_id as a marker for "this envelope's session
             # reached persist". Each envelope sees a fresh session; on

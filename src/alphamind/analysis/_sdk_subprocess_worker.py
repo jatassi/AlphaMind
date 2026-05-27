@@ -42,6 +42,9 @@ from alphamind.analysis.domain_researchers.harness import invoke_domain_research
 from alphamind.analysis.qualitative_research.harness import invoke_qualitative_researcher
 from alphamind.analysis.synthesizer.harness import invoke_synthesizer
 from alphamind.config.models.agents import BaseAgentConfig
+from alphamind.config.models.execution import ExecutionConfig
+from alphamind.config.models.main import ExecutionMode
+from alphamind.config.models.venue import VenueConfig
 from alphamind.decision.analyst.harness import invoke_analyst
 from alphamind.decision.portfolio_manager.harness import invoke_pm
 from alphamind.decision.strategist.harness import run_strategist_harness
@@ -460,6 +463,28 @@ async def _run_portfolio_manager(payload: dict[str, Any]) -> dict[str, Any]:
     state_persistence_config = StatePersistenceConfig.model_validate(
         payload["state_persistence_config"]
     )
+    # ALP-711 — decode the picklable broker-routing triple. ``None`` legs
+    # signal the debug-e2e / log-only path (synthetic order ids); a fully
+    # populated triple drives broker-dispatch construction inside the
+    # harness's ``_build_broker_routing_kwargs`` helper, which builds the
+    # live ``TradingClient`` here in the worker process so the (non-picklable)
+    # alpaca-py instance never crosses the subprocess boundary.
+    venue_config_payload = payload.get("venue_config")
+    execution_mode_payload = payload.get("execution_mode")
+    execution_config_payload = payload.get("execution_config")
+    venue_config = (
+        VenueConfig.model_validate(venue_config_payload)
+        if venue_config_payload is not None
+        else None
+    )
+    execution_mode = (
+        ExecutionMode(execution_mode_payload) if execution_mode_payload is not None else None
+    )
+    execution_config = (
+        ExecutionConfig.model_validate(execution_config_payload)
+        if execution_config_payload is not None
+        else None
+    )
 
     engine = make_engine()
     sync_session_factory = make_session_factory(engine)
@@ -501,6 +526,9 @@ async def _run_portfolio_manager(payload: dict[str, Any]) -> dict[str, Any]:
                 as_of=as_of,
                 archive_root=archive_root,
                 broker_dispatch=None,
+                venue_config=venue_config,
+                execution_mode=execution_mode,
+                execution_config=execution_config,
                 progress=progress,
                 phase=payload.get("phase", "pm"),
             )

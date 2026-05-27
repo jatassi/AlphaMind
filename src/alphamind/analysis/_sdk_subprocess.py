@@ -723,36 +723,42 @@ async def invoke_portfolio_manager_in_subprocess(  # noqa: PLR0913 — signature
     archive_root: Path | None = None,
     sdk_query_fn: Any = None,
     broker_dispatch: Any = None,
+    venue_config: Any = None,  # VenueConfig — Pydantic, picklable
+    execution_mode: Any = None,  # ExecutionMode — StrEnum, picklable
+    execution_config: Any = None,  # ExecutionConfig — Pydantic, picklable
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "pm",
 ) -> PMHarnessSuccess:
     """Drop-in subprocess-isolated replacement for ``invoke_pm``.
 
-    The PM harness today does not thread ``client``/``queries``/
-    ``execution_config`` into the submit_envelope wrapper — broker routing
-    is conditional on all three being supplied (``server._handle_submit_envelope``
-    L306). PM-side submission is therefore a pure validation+log path; the
-    worker can safely pass ``broker_dispatch=None`` and the harness's
-    lazy-import branch is never entered (no broker-config is wired in
-    today's composition path).
+    ALP-711 — production broker routing is wired by passing the picklable
+    triple ``(venue_config, execution_mode, execution_config)`` across the
+    subprocess boundary. The live ``TradingClient`` is not picklable, so
+    the worker reconstructs it from the triple on its own side via
+    :func:`alphamind.decision.portfolio_manager.harness._build_broker_routing_kwargs`.
+    Production callers (the scheduler orchestrator) pass the triple;
+    debug-e2e / non-prod callers leave all three at ``None`` so the
+    submit_envelope wrapper's broker-routing gate stays False and the
+    log-only path persists (synthetic ``alp-{order_id}`` placeholders).
 
-    A non-``None`` ``broker_dispatch`` raises ``NotImplementedError``:
-    threading a live broker callable across a pickle boundary is not
-    supported, and silently dropping it would mask broker-routing
-    regressions the day composition starts wiring it through. Callers
-    that need broker routing must either (a) reroute through the
-    in-process harness, or (b) extend the wrapper's transport.
+    A non-``None`` ``broker_dispatch`` is still rejected when routed
+    through the subprocess: a live callable cannot pickle. Tests that
+    need to inject a fake ``broker_dispatch`` must supply ``sdk_query_fn``
+    so the in-process branch below takes them — the in-process harness
+    accepts ``broker_dispatch`` directly.
 
     When ``sdk_query_fn`` is supplied, the wrapper bypasses the subprocess
     transport and routes to the in-process harness so the SDK-substitution
     test seam is preserved.
     """
-    if broker_dispatch is not None:
+    if broker_dispatch is not None and sdk_query_fn is None:
         msg = (
             "invoke_portfolio_manager_in_subprocess does not support a non-None "
-            "broker_dispatch; route through the in-process invoke_pm instead "
-            "(supply sdk_query_fn to take that path) or extend the wrapper's "
-            "transport to carry the callable."
+            "broker_dispatch across the subprocess boundary; supply sdk_query_fn "
+            "to take the in-process branch (which forwards broker_dispatch to "
+            "invoke_pm directly), or pass the (venue_config, execution_mode, "
+            "execution_config) triple so the worker reconstructs the dispatch "
+            "internally."
         )
         raise NotImplementedError(msg)
 
@@ -778,7 +784,10 @@ async def invoke_portfolio_manager_in_subprocess(  # noqa: PLR0913 — signature
             as_of=as_of,
             archive_root=archive_root,
             sdk_query_fn=sdk_query_fn,
-            broker_dispatch=None,
+            broker_dispatch=broker_dispatch,
+            venue_config=venue_config,
+            execution_mode=execution_mode,
+            execution_config=execution_config,
             progress=progress,
             phase=phase,
         )
@@ -808,6 +817,17 @@ async def invoke_portfolio_manager_in_subprocess(  # noqa: PLR0913 — signature
         "archive_root": str(archive_root) if archive_root is not None else None,
         "progress_jsonl_path": _extract_progress_jsonl_path(progress),
         "phase": phase,
+        # ALP-711 — picklable broker-routing inputs the worker uses to
+        # reconstruct the live ``TradingClient`` on its own side. All three
+        # round-trip via Pydantic JSON; ``None`` legs mean "no broker
+        # routing" (debug-e2e / log-only path).
+        "venue_config": (
+            venue_config.model_dump(mode="json") if venue_config is not None else None
+        ),
+        "execution_mode": execution_mode.value if execution_mode is not None else None,
+        "execution_config": (
+            execution_config.model_dump(mode="json") if execution_config is not None else None
+        ),
     }
     result = await _run_worker(payload)
     if result["kind"] == "failure":

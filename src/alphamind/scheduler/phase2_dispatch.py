@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -29,6 +29,9 @@ from alphamind.state.config import StatePersistenceConfig
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
+
+if TYPE_CHECKING:
+    from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
 
 __all__ = ["PMResultLike", "Phase2Summary", "dispatch_phase2"]
 
@@ -83,11 +86,21 @@ async def dispatch_phase2(
     for entry in pm_result.submission_log:
         async with session_factory() as session:
             handle = InvocationHandle(session=session, invocation_id=invocation_id)
+            # ALP-711 scope (C) — when the submit_envelope wrapper routed
+            # accepted commands through the broker, ``entry.dispatch_results``
+            # carries the per-command :class:`BrokerDispatchResult` payload
+            # so this writeback persists the broker's real ``alpaca_order_id``.
+            # ``None`` (the debug-e2e / log-only path) falls through to the
+            # synthetic-ID fallback inside :func:`persist_envelope_outcome`.
             await persist_envelope_outcome(
                 handle,
                 entry.envelope,
                 entry.submission_results,
                 config=state_persistence_config,
+                dispatch_results=cast(
+                    "tuple[BrokerDispatchResult | None, ...] | None",
+                    entry.dispatch_results,
+                ),
             )
             await session.commit()
         for result in entry.submission_results:

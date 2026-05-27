@@ -57,6 +57,8 @@ if TYPE_CHECKING:
     from alpaca.trading.client import TradingClient
 
     from alphamind.config.models.execution import ExecutionConfig
+    from alphamind.config.models.main import ExecutionMode
+    from alphamind.config.models.venue import VenueConfig
     from alphamind.execution.broker_adapter import AccountStateQueries
     from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
     from alphamind.state.config import StatePersistenceConfig
@@ -64,6 +66,58 @@ if TYPE_CHECKING:
 
 _SERVER_NAME = "alphamind_execution_oms_submit"
 _TOOL_NAME = "submit_envelope"
+
+
+def build_broker_routing_kwargs(
+    venue_config: VenueConfig | None,
+    execution_mode: ExecutionMode | None,
+    execution_config: ExecutionConfig | None,
+) -> dict[str, Any]:
+    """Construct broker-routing kwargs for :func:`build_submit_envelope_mcp_server`.
+
+    ALP-711 — when the orchestrator's production gate is open
+    (``context.debug_e2e is None``) the full triple is passed and this
+    helper builds the Alpaca-backed :class:`alpaca.trading.client.TradingClient`
+    + :class:`alphamind.execution.broker_adapter.queries.AccountStateQueries`
+    needed by ``_handle_submit_envelope``'s broker-routing gate. When any
+    leg is ``None`` (debug-e2e / log-only path) returns ``{}`` so the gate
+    stays False and accepted commands fall through to the synthetic-id
+    placeholder path.
+
+    Lives in ``submit_envelope/`` (the PM MCP composition root, per
+    ``.importlinter``'s ``decision-not-execution`` architectural carve-out)
+    rather than the harness because the live ``TradingClient`` is not
+    picklable across the PM subprocess boundary — the picklable triple
+    traverses the boundary and this helper reconstructs the client inside
+    the worker process where the alpaca-py instance is constructed once
+    per invocation.
+    """
+    if venue_config is None or execution_mode is None or execution_config is None:
+        return {}
+    # Lazy imports — broker_adapter ships an alpaca-py dependency the
+    # fixture-only path doesn't load. Mirrors the lazy-import pattern at
+    # ``dispatch.py:_route_through_broker``.
+    from alphamind.config.models.main import (
+        ExecutionMode as _ExecutionMode,
+    )
+    from alphamind.execution.broker_adapter.client_factory import (
+        AlpacaClientFactory,
+    )
+    from alphamind.execution.broker_adapter.client_factory import (
+        ExecutionMode as ClientFactoryExecutionMode,
+    )
+    from alphamind.execution.broker_adapter.queries import AccountStateQueries
+
+    mode_literal: ClientFactoryExecutionMode = (
+        "live" if execution_mode is _ExecutionMode.live else "paper"
+    )
+    factory = AlpacaClientFactory(venue_config, mode=mode_literal)
+    client = factory.build_trading_client()
+    return {
+        "client": client,
+        "queries": AccountStateQueries(client),
+        "execution_config": execution_config,
+    }
 
 
 # The MCP SDK validates the input schema is itself a valid JSON-Schema object
@@ -329,12 +383,20 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
             broker_dispatch=broker_dispatch,
         )
 
-    # Step 5: append to submission log (post-broker outcome).
+    # Step 5: append to submission log (post-broker outcome). ALP-711 scope (C):
+    # ``dispatch_results`` rides on the log entry so the orchestrator's
+    # Phase 2 dispatcher can forward broker outcomes (real Alpaca order ids,
+    # broker rejection codes) to :func:`persist_envelope_outcome` instead
+    # of falling back to synthetic ``alp-{order_id}`` placeholders.
     state = dataclasses.replace(
         state,
         submission_log=(
             *state.submission_log,
-            SubmissionLogEntry(envelope=envelope, submission_results=submission_results),
+            SubmissionLogEntry(
+                envelope=envelope,
+                submission_results=submission_results,
+                dispatch_results=dispatch_results,
+            ),
         ),
     )
 

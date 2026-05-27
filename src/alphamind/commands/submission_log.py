@@ -29,10 +29,24 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class SubmissionLogEntry:
-    """One ``submit_envelope`` call's record — envelope + per-command results."""
+    """One ``submit_envelope`` call's record — envelope + per-command results.
+
+    ``dispatch_results`` carries the per-command broker outcome (one entry per
+    command, aligned with ``submission_results``) when the submit_envelope
+    wrapper routed accepted commands through the broker (ALP-711). The field
+    is typed ``tuple[Any, ...] | None`` because ``alphamind.commands`` is a
+    leaf package per ``.importlinter``'s ``commands-leaf`` contract and may
+    not import ``alphamind.execution.oms.broker_dispatch.BrokerDispatchResult``;
+    consumers downstream (the Phase 2 writeback) read the structural
+    ``.alpaca_order_id`` attribute and cast back to the typed shape at
+    their boundary. ``None`` (the default) signals the legacy / debug-e2e
+    log-only path that never routed through a broker — Phase 2 writeback
+    falls back to synthetic ``alp-{order_id}`` placeholders in that case.
+    """
 
     envelope: PMEnvelope
     submission_results: tuple[SubmissionResult, ...]
+    dispatch_results: tuple[Any, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
