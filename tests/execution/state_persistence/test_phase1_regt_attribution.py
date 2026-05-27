@@ -508,7 +508,7 @@ async def test_short_entry_fill_attribution_carries_150pct_initial_margin(
 ) -> None:
     """A SHORT-equity entry fill's Reg T attribution reflects the
     short-equity 150%-MV initial margin formula: ``regt_marginal_consumption
-    = 1.50 × fill_quantity × fill_price``.
+    = 1.50 * fill_quantity * fill_price``.
 
     The wedge snapshots positions pre- and post-fill, calls
     ``compute_attribution`` (which folds short-equity positions into the
@@ -540,15 +540,13 @@ async def test_short_entry_fill_attribution_carries_150pct_initial_margin(
 
     async with factory() as sess:
         fill_row = (
-            await sess.execute(
-                select(FillRecordRow).where(FillRecordRow.fill_id == "fill-short-1")
-            )
+            await sess.execute(select(FillRecordRow).where(FillRecordRow.fill_id == "fill-short-1"))
         ).scalar_one()
         assert fill_row.regt_attribution_json is not None
         attribution = RegTMarginAttribution.model_validate_json(fill_row.regt_attribution_json)
         # Pre-fill: PENDING SHORT position has share_count=0 → 0 Reg T margin.
         assert attribution.regt_margin_before == pytest.approx(0.0)
-        # Post-fill: 10 shares short at $150 → 1.50 × 10 × 150 = 2250.
+        # Post-fill: 10 shares short at $150 → 1.50 * 10 * 150 = 2250.
         assert attribution.regt_margin_after == pytest.approx(1.50 * 10.0 * 150.0)
         assert attribution.regt_marginal_consumption == pytest.approx(1.50 * 10.0 * 150.0)
 

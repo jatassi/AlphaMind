@@ -290,9 +290,7 @@ async def process_unprocessed_fills(
     for event in _iter_merged_events(valid_fills, ca_activities):
         if isinstance(event, FillRecord):
             pre_positions = await _read_all_positions(handle)
-            await _integrate_one_fill(
-                handle, event, borrow_cost_resolver=borrow_cost_resolver
-            )
+            await _integrate_one_fill(handle, event, borrow_cost_resolver=borrow_cost_resolver)
             post_positions = await _read_all_positions(handle)
             attribution = compute_attribution(
                 pre_fill_positions=pre_positions,
@@ -649,7 +647,7 @@ def _apply_fill_to_equity_position(
 ) -> PositionRecord:
     """Direction-aware dispatcher mirroring the options dispatcher.
 
-    The 8 routing cases (status × direction × buy_side):
+    The 8 routing cases (status x direction x buy_side):
 
     +---------+-----------+----------+--------------------+
     | Status  | Direction | Buy side | Routing            |
@@ -788,7 +786,7 @@ def _apply_entry_fill(
     (initialised to 0.0 — Story 04 increments it daily), ``locate_status``
     (LOCATED by construction; the AT_RISK_OF_RECALL transition is
     broker-driven and lands separately), and ``margin_held_usd`` (Reg T
-    initial margin = ``fill_quantity × fill_price × 0.50``).
+    initial margin = ``fill_quantity * fill_price * 0.50``).
 
     A missing resolver (``None``) or a resolver returning ``None`` for the
     ticker is an upstream contract violation — the analyst's validation tool

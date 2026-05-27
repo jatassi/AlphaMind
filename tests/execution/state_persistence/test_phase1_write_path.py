@@ -340,7 +340,7 @@ def _make_open_position(
 
     For SHORT positions the four short-only fields default to a borrow rate
     of 15%, zero accrued borrow cost, located locate status, and Reg T initial
-    margin (share_count × average_cost_basis × 0.50).
+    margin (share_count * average_cost_basis * 0.50).
     """
     from alphamind.portfolio_state.records.positions import PositionFill
 
@@ -1481,7 +1481,7 @@ async def test_short_entry_fill_transitions_pending_short_to_open_with_stamped_f
     """A SELL_TO_OPEN fill against a PENDING SHORT EQUITY position transitions
     it to OPEN and stamps the four short-only fields from the borrow-cost
     resolver: borrow_rate_pct, accrued_borrow_cost_usd=0.0,
-    locate_status=LOCATED, margin_held_usd = qty × price × 0.50 (Reg T
+    locate_status=LOCATED, margin_held_usd = qty * price * 0.50 (Reg T
     initial margin).
     """
     from alphamind.execution.write_paths.phase1 import (
@@ -1535,13 +1535,13 @@ async def test_short_entry_fill_transitions_pending_short_to_open_with_stamped_f
         assert pos.details.borrow_rate_pct == 15.0
         assert pos.details.accrued_borrow_cost_usd == 0.0
         assert pos.details.locate_status == LocateStatus.LOCATED
-        # Reg T initial margin: 10 × 150 × 0.50 = 750.
+        # Reg T initial margin: 10 * 150 * 0.50 = 750.
         assert pos.details.margin_held_usd == pytest.approx(10.0 * 150.0 * 0.50)
 
 
 # ---------------------------------------------------------------------------
 # Unit-level coverage of the equity dispatcher's 8-case routing matrix
-# (status × direction × buy_side) + entry-fill resolver contracts. These
+# (status x direction x buy_side) + entry-fill resolver contracts. These
 # tests skip the DB substrate and call the dispatcher helpers directly so
 # the matrix coverage stays focused and fast (ALP-717).
 # ---------------------------------------------------------------------------
@@ -1581,9 +1581,7 @@ def test_dispatcher_pending_long_buy_routes_to_entry_fill() -> None:
 
     position = _make_pending_position(direction=Direction.LONG)
     fill = _make_fill_record()
-    result = _apply_fill_to_position(
-        position, fill, is_buy_side=True, borrow_cost_resolver=None
-    )
+    result = _apply_fill_to_position(position, fill, is_buy_side=True, borrow_cost_resolver=None)
     assert result.status == PositionStatus.OPEN
     assert isinstance(result.details, EquityPositionDetails)
     assert result.details.share_count == 10.0
@@ -1633,9 +1631,7 @@ def test_dispatcher_open_long_buy_routes_to_add_fill() -> None:
 
     position = _make_open_position(direction=Direction.LONG, share_count=10.0)
     fill = _make_fill_record(fill_quantity=5.0, fill_price=160.0)
-    result = _apply_fill_to_position(
-        position, fill, is_buy_side=True, borrow_cost_resolver=None
-    )
+    result = _apply_fill_to_position(position, fill, is_buy_side=True, borrow_cost_resolver=None)
     assert result.status == PositionStatus.OPEN
     assert isinstance(result.details, EquityPositionDetails)
     assert result.details.share_count == 15.0
@@ -1647,9 +1643,7 @@ def test_dispatcher_open_long_sell_routes_to_exit_fill() -> None:
 
     position = _make_open_position(direction=Direction.LONG, share_count=10.0)
     fill = _make_fill_record(fill_quantity=10.0, fill_price=160.0)
-    result = _apply_fill_to_position(
-        position, fill, is_buy_side=False, borrow_cost_resolver=None
-    )
+    result = _apply_fill_to_position(position, fill, is_buy_side=False, borrow_cost_resolver=None)
     assert result.status == PositionStatus.CLOSED
 
 
@@ -1659,9 +1653,7 @@ def test_dispatcher_open_short_buy_routes_to_exit_fill() -> None:
 
     position = _make_open_position(direction=Direction.SHORT, share_count=10.0)
     fill = _make_fill_record(fill_quantity=10.0, fill_price=140.0)
-    result = _apply_fill_to_position(
-        position, fill, is_buy_side=True, borrow_cost_resolver=None
-    )
+    result = _apply_fill_to_position(position, fill, is_buy_side=True, borrow_cost_resolver=None)
     assert result.status == PositionStatus.CLOSED
 
 
@@ -1671,9 +1663,7 @@ def test_dispatcher_open_short_sell_routes_to_add_fill() -> None:
 
     position = _make_open_position(direction=Direction.SHORT, share_count=10.0)
     fill = _make_fill_record(fill_quantity=5.0, fill_price=140.0)
-    result = _apply_fill_to_position(
-        position, fill, is_buy_side=False, borrow_cost_resolver=None
-    )
+    result = _apply_fill_to_position(position, fill, is_buy_side=False, borrow_cost_resolver=None)
     assert result.status == PositionStatus.OPEN
     assert isinstance(result.details, EquityPositionDetails)
     assert result.details.share_count == 15.0
@@ -1713,9 +1703,7 @@ def test_entry_fill_long_with_none_resolver_succeeds() -> None:
 
     position = _make_pending_position(direction=Direction.LONG)
     fill = _make_fill_record()
-    result = _apply_fill_to_position(
-        position, fill, is_buy_side=True, borrow_cost_resolver=None
-    )
+    result = _apply_fill_to_position(position, fill, is_buy_side=True, borrow_cost_resolver=None)
     assert result.status == PositionStatus.OPEN
     assert isinstance(result.details, EquityPositionDetails)
     # LONG positions never carry the short-only fields.
@@ -1739,9 +1727,7 @@ def test_exit_fill_short_cover_to_close_flushes_accrued_borrow_into_pnl() -> Non
         accrued_borrow_cost_usd=5.0,
     )
     fill = _make_fill_record(fill_quantity=10.0, fill_price=90.0)
-    result = _apply_fill_to_position(
-        position, fill, is_buy_side=True, borrow_cost_resolver=None
-    )
+    result = _apply_fill_to_position(position, fill, is_buy_side=True, borrow_cost_resolver=None)
     assert result.status == PositionStatus.CLOSED
     # (entry - exit) * qty * direction_sign(SHORT) - accrued = (100-90)*10*1 - 5 = 95
     assert result.realized_pnl_to_date_usd == pytest.approx(95.0)
@@ -1754,7 +1740,7 @@ def test_exit_fill_short_cover_to_close_flushes_accrued_borrow_into_pnl() -> Non
 def test_exit_fill_short_cover_to_close_with_zero_accrued_skips_flush() -> None:
     """Cover-to-close on an OPEN SHORT with ``accrued_borrow_cost_usd=0.0``:
     no subtraction (zero falsy short-circuits the flush branch); realized
-    P/L is ``(entry - exit) × qty`` only."""
+    P/L is ``(entry - exit) * qty`` only."""
     from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
 
     position = _make_open_position(
@@ -1764,9 +1750,7 @@ def test_exit_fill_short_cover_to_close_with_zero_accrued_skips_flush() -> None:
         accrued_borrow_cost_usd=0.0,
     )
     fill = _make_fill_record(fill_quantity=10.0, fill_price=90.0)
-    result = _apply_fill_to_position(
-        position, fill, is_buy_side=True, borrow_cost_resolver=None
-    )
+    result = _apply_fill_to_position(position, fill, is_buy_side=True, borrow_cost_resolver=None)
     assert result.status == PositionStatus.CLOSED
     # (100 - 90) * 10 * 1 - 0 = 100
     assert result.realized_pnl_to_date_usd == pytest.approx(100.0)
@@ -1787,9 +1771,7 @@ def test_exit_fill_short_partial_cover_leaves_position_open_no_flush() -> None:
         accrued_borrow_cost_usd=5.0,
     )
     fill = _make_fill_record(fill_quantity=4.0, fill_price=90.0)
-    result = _apply_fill_to_position(
-        position, fill, is_buy_side=True, borrow_cost_resolver=None
-    )
+    result = _apply_fill_to_position(position, fill, is_buy_side=True, borrow_cost_resolver=None)
     assert result.status == PositionStatus.OPEN
     assert isinstance(result.details, EquityPositionDetails)
     assert result.details.share_count == pytest.approx(6.0)
@@ -1814,9 +1796,7 @@ def test_add_fill_open_short_preserves_borrow_fields() -> None:
         accrued_borrow_cost_usd=3.5,
     )
     fill = _make_fill_record(fill_quantity=5.0, fill_price=110.0)
-    result = _apply_fill_to_position(
-        position, fill, is_buy_side=False, borrow_cost_resolver=None
-    )
+    result = _apply_fill_to_position(position, fill, is_buy_side=False, borrow_cost_resolver=None)
     assert result.status == PositionStatus.OPEN
     assert isinstance(result.details, EquityPositionDetails)
     # Weighted-average cost basis: (100*10 + 110*5) / 15 = 1550 / 15 = 103.333...
