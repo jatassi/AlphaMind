@@ -1196,3 +1196,54 @@ async def test_invoke_sdk_writes_sdk_trace_to_diag_dir(tmp_path: Path) -> None:
     events = [r["event"] for r in records]
     assert "attempt_start" in events
     assert "success" in events
+
+
+# ---------------------------------------------------------------------------
+# SDK-call semaphore (ALP-702): admits the analysis-layer fan-out concurrently
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sdk_call_semaphore_admits_analysis_layer_fanout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SDK-call semaphore admits the analysis fan-out (3 sectors + qualitative).
+
+    Regression guard for ALP-702: cap=1 (set in 2026-05-18 during the
+    in-process back-to-back-stall investigation) serialized the 4 analysis
+    SDK calls, inflating wall-clock from ~6 min (parallel) to ~23 min
+    (serial). ALP-650 then migrated every harness to subprocess isolation,
+    so each SDK call runs in a fresh ``python -m
+    alphamind.analysis._sdk_subprocess_worker``. The in-process state
+    degradation that motivated cap=1 cannot recur because no subprocess
+    makes more than one SDK call. The cap must allow at least 4 concurrent
+    acquisitions so ``domain_researchers`` + ``qualitative`` actually fan
+    out under their ``asyncio.TaskGroup``.
+    """
+    # Reset the lazy singleton so this test is independent of any prior
+    # in-process acquisitions (the production semaphore is process-global).
+    monkeypatch.setattr(core, "_sdk_call_semaphore", None)
+
+    semaphore = core._get_sdk_call_semaphore()
+    # All four acquisitions must complete within the loop's next ticks; if
+    # the cap is <4, at least one ``acquire()`` blocks indefinitely and the
+    # wait_for trips.
+    holders = [asyncio.create_task(semaphore.acquire()) for _ in range(4)]
+    try:
+        await asyncio.wait_for(asyncio.gather(*holders), timeout=1.0)
+        # All four permits are now held; the semaphore's internal counter
+        # should be exactly zero. Catches a future change that loosens the
+        # cap past the analysis fan-out's actual width (e.g. cap=5+ would
+        # still pass the wait_for check but the counter would be >0).
+        assert semaphore._value == 0
+    finally:
+        # Cleanup contract: every acquired permit must be released exactly
+        # once, and every still-pending task must be cancelled. wait_for's
+        # timeout path leaves some tasks done-with-permit and some still
+        # pending — the per-task probe distinguishes them. Short-circuit
+        # AND skips ``.exception()`` on cancelled tasks (which would raise).
+        for task in holders:
+            if task.done() and not task.cancelled() and task.exception() is None:
+                semaphore.release()
+            else:
+                task.cancel()
