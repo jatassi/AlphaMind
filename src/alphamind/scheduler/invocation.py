@@ -254,16 +254,25 @@ def _git_rev_parse_head() -> str:
     return completed.stdout.strip()
 
 
-def _mint_invocation_id(now: datetime) -> str:
+def mint_invocation_id(now: datetime) -> str:
     """Mint a fresh invocation id: ``inv-YYYYMMDDTHHMMSSZ-<8-hex>``.
 
     The timestamp prefix sorts lexicographically — critical for the
     ``_persist_data_calibration_snapshot`` directory scan that picks the most
     recent prior invocation. The 8-hex suffix is drawn from ``secrets.token_hex``
     so concurrent invocations within the same second do not collide.
+
+    Shared with the continuous monitor's borrow-accrual tick and the command
+    center's operator-action path; an invocation row from any producer
+    sorts alongside pipeline rows on the timestamp prefix.
     """
     stamp = now.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
     return f"inv-{stamp}-{secrets.token_hex(4)}"
+
+
+# Backwards-compatible alias for the prior private name. New call sites
+# should import :func:`mint_invocation_id` directly.
+_mint_invocation_id = mint_invocation_id
 
 
 async def insert_invocation_record(  # noqa: PLR0913 — composition surface threads typed inputs

@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import secrets
 from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Final, Protocol
@@ -51,6 +50,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     PositionStatus,
 )
+from alphamind.scheduler.invocation import mint_invocation_id
 from alphamind.state.invocation_context.activity_log import (
     activity_log_entry_to_row,
 )
@@ -143,7 +143,7 @@ async def run_accrual_tick(
     # progressing (breach_loop / fill_stream_consumer / greeks_refresh) while
     # the borrow-cost query runs.
     resolver = await asyncio.to_thread(borrow_cost_resolver_factory)
-    invocation_id = _mint_borrow_accrual_invocation_id(now)
+    invocation_id = mint_invocation_id(now)
 
     async with session_factory() as session:
         positions = await _read_all_positions(session)
@@ -354,17 +354,6 @@ async def _persist_updated_position(session: AsyncSession, updated: PositionReco
     # No other field changes for this tick, but defensive about future kernel
     # extensions writing to ``realized_pnl_to_date_usd`` etc.
     row.realized_pnl_to_date_usd = new_row.realized_pnl_to_date_usd
-
-
-def _mint_borrow_accrual_invocation_id(now: datetime) -> str:
-    """Mint the per-tick invocation id (``inv-YYYYMMDDTHHMMSSZ-<8hex>``).
-
-    Same shape :func:`alphamind.scheduler.invocation._mint_invocation_id`
-    uses for the pipeline; the borrow-accrual tick is just another
-    invocation flavour as far as the table is concerned.
-    """
-    stamp = now.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
-    return f"inv-{stamp}-{secrets.token_hex(4)}"
 
 
 def _build_invocation_row(
