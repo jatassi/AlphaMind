@@ -697,6 +697,161 @@ def load_sentiment_aggregates(
 
 
 # ---------------------------------------------------------------------------
+# Inter-baseline inflow telemetry — ALP-709
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class SentimentInflowMetrics:
+    """Per-invocation telemetry for the inter-baseline sentiment window.
+
+    ``window_start`` / ``window_end`` are the dominant
+    ``(prior_baseline.as_of, latest_baseline.as_of]`` pair across the
+    calibrated cohort. In the Class B steady state every calibrated ticker
+    shares one pair; when refreshes desync the panel the helper reports the
+    bucket carrying the most tickers (tiebreaker: latest ``latest_as_of``)
+    so the renderer always has a single human-readable window. Both fall
+    back to ``None`` when no calibrated ticker has two baselines — the
+    motivating case for which the secondary fields are correctly ``None``.
+
+    ``articles_in_window`` and ``scored_articles_in_window`` are summed
+    across every ticker x window pair the calibrated cohort touches, not
+    only the dominant window — so divergent-window panels still report the
+    full inflow the loader saw.
+
+    ``calibrated_tickers_with_populated_secondary`` mirrors the
+    percentile/magnitude gate in :func:`load_sentiment_aggregates`: a
+    ticker counts iff its window sentiment mean is non-null AND the stored
+    baseline ``stdev`` is positive. The operator's headline metric — "%
+    populated secondary" — is computable as that field divided by
+    ``calibrated_tickers_total``.
+    """
+
+    window_start: datetime | None
+    window_end: datetime | None
+    articles_in_window: int
+    scored_articles_in_window: int
+    calibrated_tickers_total: int
+    calibrated_tickers_with_populated_secondary: int
+
+
+def _count_scored_articles_in_window(
+    session: Session,
+    *,
+    tickers: Sequence[str],
+    window_start_str: str,
+    window_end_str: str,
+) -> int:
+    """Count ``news_article_tickers`` rows with non-null
+    ``vendor_sentiment_score`` whose article published in
+    ``(window_start_str, window_end_str]``.
+
+    Mirrors :func:`_load_window_sentiment_mean_by_ticker`'s join + filter
+    without the ``GROUP BY`` — the helper returns one scalar, not a
+    per-ticker mapping.
+    """
+    if not tickers:
+        return 0
+    value = session.execute(
+        select(func.count())
+        .select_from(NewsArticleTickers)
+        .join(NewsArticles, NewsArticleTickers.article_id == NewsArticles.article_id)
+        .where(
+            NewsArticleTickers.ticker.in_(tuple(tickers)),
+            NewsArticleTickers.vendor_sentiment_score.isnot(None),
+            NewsArticles.published_at > window_start_str,
+            NewsArticles.published_at <= window_end_str,
+        )
+    ).scalar()
+    return int(value or 0)
+
+
+def compute_sentiment_inflow_metrics(
+    session: Session,
+    *,
+    as_of: datetime,
+    ticker_scope: Sequence[str] | None = None,
+) -> SentimentInflowMetrics:
+    """Compute per-invocation inter-baseline sentiment inflow telemetry.
+
+    Reuses :func:`_load_recent_sentiment_baselines` so the
+    ``(prior, latest)`` pairs the helper reports against match the windows
+    :func:`load_sentiment_aggregates` would compute against. Only the
+    ``CalibrationState.CALIBRATED`` cohort is in scope — non-calibrated
+    baselines never emit secondary fields and would inflate the denominator
+    of the operator's headline metric.
+    """
+    as_of_str = _format_iso_utc(as_of)
+    baselines = _load_recent_sentiment_baselines(
+        session, as_of_str=as_of_str, ticker_scope=ticker_scope
+    )
+    calibrated: dict[str, list[DistillationTickerBaseline]] = {
+        ticker: recent
+        for ticker, recent in baselines.items()
+        if CalibrationState(recent[0].calibration_state) is CalibrationState.CALIBRATED
+    }
+
+    # Group tickers by their (prior, latest) inter-baseline pair, mirroring
+    # ``load_sentiment_aggregates``. Tickers with only a single baseline row
+    # carry no window and contribute nothing to the inflow counts.
+    window_buckets: dict[tuple[str, str], list[str]] = {}
+    for ticker, recent in calibrated.items():
+        if len(recent) == 2:
+            window_buckets.setdefault((recent[1].as_of, recent[0].as_of), []).append(ticker)
+
+    articles_in_window = 0
+    scored_articles_in_window = 0
+    populated_secondary = 0
+    for (prior_as_of, latest_as_of), bucket_tickers in window_buckets.items():
+        volume_by_ticker = _load_article_volume_by_ticker(
+            session,
+            tickers=bucket_tickers,
+            window_start_str=prior_as_of,
+            window_end_str=latest_as_of,
+        )
+        articles_in_window += sum(volume_by_ticker.values())
+        scored_articles_in_window += _count_scored_articles_in_window(
+            session,
+            tickers=bucket_tickers,
+            window_start_str=prior_as_of,
+            window_end_str=latest_as_of,
+        )
+        mean_by_ticker = _load_window_sentiment_mean_by_ticker(
+            session,
+            tickers=bucket_tickers,
+            window_start_str=prior_as_of,
+            window_end_str=latest_as_of,
+        )
+        for ticker in bucket_tickers:
+            stdev = float(calibrated[ticker][0].stdev)
+            if mean_by_ticker.get(ticker) is not None and stdev > 0:
+                populated_secondary += 1
+
+    if window_buckets:
+        # Dominant window = the bucket with the most tickers; tiebreaker is
+        # the latest ``latest_as_of`` so a freshly-refreshed bucket beats a
+        # lagging-baseline bucket of equal size.
+        primary_pair = max(
+            window_buckets.items(),
+            key=lambda kv: (len(kv[1]), kv[0][1]),
+        )[0]
+        window_start: datetime | None = _parse_iso_utc(primary_pair[0])
+        window_end: datetime | None = _parse_iso_utc(primary_pair[1])
+    else:
+        window_start = None
+        window_end = None
+
+    return SentimentInflowMetrics(
+        window_start=window_start,
+        window_end=window_end,
+        articles_in_window=articles_in_window,
+        scored_articles_in_window=scored_articles_in_window,
+        calibrated_tickers_total=len(calibrated),
+        calibrated_tickers_with_populated_secondary=populated_secondary,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Prediction market snapshot
 # ---------------------------------------------------------------------------
 
@@ -1102,6 +1257,8 @@ __all__ = [
     "PredictionMarketSnapshot",
     "QualitativeInputs",
     "SentimentAggregate",
+    "SentimentInflowMetrics",
+    "compute_sentiment_inflow_metrics",
     "load_active_thesis_summaries",
     "load_calendar_events_72h",
     "load_prediction_market_snapshot",

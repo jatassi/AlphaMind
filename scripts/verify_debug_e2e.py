@@ -1313,14 +1313,43 @@ def _print_summary(results: list[CheckResult]) -> None:
 # ---------------------------------------------------------------------------
 
 
-_OPERATOR_SNAPSHOT_SCHEMA_VERSION = "1"
+_OPERATOR_SNAPSHOT_SCHEMA_VERSION = "2"
 """Schema version of the operator-facing data-health snapshot we render.
 
 Must match
 :data:`alphamind.distillation.calibration_snapshot.OPERATOR_SUMMARY_SCHEMA_VERSION`.
-The renderer refuses to interpret any other version so an internal V2
-snapshot accidentally landing at this path doesn't render as silent zeros.
+The renderer refuses to interpret any other version so an unexpected
+snapshot landing at this path doesn't render as silent zeros. ALP-709
+bumped both constants from ``"1"`` to ``"2"`` to admit the
+``inflow_metrics`` top-level key (always-on inter-baseline sentiment
+inflow telemetry); ``inflow_metrics`` itself remains optional within V2
+so the renderer tolerates V2 payloads that lack the key.
 """
+
+
+def _format_inflow_sentiment_line(sentiment: dict[str, Any]) -> str:
+    """Render the ``INFLOW (sentiment)`` line from a V2 ``inflow_metrics`` block.
+
+    Always-on; no severity bucket, no threshold gating — quiet news windows
+    are legitimate and frequent, so the operator's value lies in raw
+    discrimination between zero-inflow and broken-pipeline states.
+    """
+    window_start = sentiment.get("window_start")
+    window_end = sentiment.get("window_end")
+    window_text = (
+        f"{window_start}→{window_end}"
+        if window_start is not None and window_end is not None
+        else "(no inter-baseline window)"
+    )
+    articles = int(sentiment.get("articles_in_window", 0))
+    scored = int(sentiment.get("scored_articles_in_window", 0))
+    populated = int(sentiment.get("calibrated_tickers_with_populated_secondary", 0))
+    total = int(sentiment.get("calibrated_tickers_total", 0))
+    return (
+        f"  INFLOW (sentiment) — window: {window_text}  "
+        f"articles_in_window={articles}  scored={scored}  "
+        f"populated_secondary={populated}/{total}"
+    )
 
 
 def format_data_health_block(snapshot: dict[str, Any]) -> str:
@@ -1332,13 +1361,19 @@ def format_data_health_block(snapshot: dict[str, Any]) -> str:
     ``unavailable`` list elevates collector failures to the operator's
     attention; the ``accumulating`` list reports series still warming up.
 
+    Post-ALP-709 V2 payloads carry an optional ``inflow_metrics.sentiment``
+    block; when present the renderer emits an always-on ``INFLOW
+    (sentiment)`` line between the counts summary and the UNAVAILABLE
+    block. When absent (older V2 snapshot or a run that didn't plumb the
+    metrics) the rest of DATA HEALTH renders normally without the new line.
+
     Tolerates two failure modes:
 
     - Missing / empty snapshot (distillation didn't run, JSON read failed,
       bootstrap-seed ``{}``) → a single ``"(no calibration snapshot)"`` line.
-    - Wrong schema version (internal V2 snapshot landed at the operator
-      path) → a single ``"(unrecognized snapshot schema_version=…)"`` line
-      so the operator notices instead of seeing silent zeros.
+    - Wrong schema version (V1 legacy snapshot or any other) → a single
+      ``"(unrecognized snapshot schema_version=…)"`` line so the operator
+      notices instead of seeing silent zeros.
     """
     lines: list[str] = ["=== DATA HEALTH ==="]
     summary = snapshot.get("summary")
@@ -1356,6 +1391,12 @@ def format_data_health_block(snapshot: dict[str, Any]) -> str:
     lines.append(
         f"  calibrated={calibrated}  accumulating={accumulating}  unavailable={unavailable}"
     )
+
+    inflow_metrics = snapshot.get("inflow_metrics")
+    if isinstance(inflow_metrics, dict):
+        sentiment = inflow_metrics.get("sentiment")
+        if isinstance(sentiment, dict):
+            lines.append(_format_inflow_sentiment_line(sentiment))
 
     for state_label, header, entries in (
         ("UNAVAILABLE", "operator action required", snapshot.get("unavailable") or []),

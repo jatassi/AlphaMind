@@ -87,6 +87,20 @@ ignore_imports =
     alphamind.distillation.calibration -> sqlalchemy
     alphamind.distillation.contract_scope -> sqlalchemy
     alphamind.distillation.orchestrator -> sqlalchemy
+    # ALP-709: orchestrator phase-6 invokes
+    # ``analysis.qualitative_research.loaders.compute_sentiment_inflow_metrics``
+    # so the operator data-health snapshot carries inter-baseline news-flow
+    # telemetry. The helper reuses three private loader functions
+    # (``_load_recent_sentiment_baselines``, ``_load_article_volume_by_ticker``,
+    # ``_load_window_sentiment_mean_by_ticker``); duplicating them into
+    # distillation would fork the query shape the qualitative loader uses.
+    # Sibling-layer ``analysis : distillation`` already permits the edge in
+    # ``composition-root-layering``; the indirect ``-> sqlalchemy`` chain
+    # this creates is the same shape the already-grandfathered direct
+    # ``orchestrator -> sqlalchemy`` edge above already establishes. Retires
+    # when the punch-list #9 split lands and the orchestrator's own
+    # ``-> sqlalchemy`` entry retires.
+    alphamind.distillation.orchestrator -> alphamind.analysis.qualitative_research.loaders
     alphamind.distillation.q12_corporate_actions -> sqlalchemy
     alphamind.distillation.q1.assemble -> sqlalchemy
     alphamind.distillation.q3.anomalies -> sqlalchemy

@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from alphamind.analysis.qualitative_research.loaders import SentimentInflowMetrics
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.calibration_snapshot import (
     OPERATOR_SUMMARY_SCHEMA_VERSION,
@@ -749,3 +750,90 @@ def test_operator_summary_is_deterministic(tmp_path: Path) -> None:
         outputs=outputs, invocation_id="inv-id", archive_root=tmp_path / "b"
     )
     assert path_a.read_bytes() == path_b.read_bytes()
+
+
+# ---------------------------------------------------------------------------
+# Operator data-health V2 — inflow_metrics.sentiment (ALP-709)
+# ---------------------------------------------------------------------------
+
+
+def test_operator_summary_schema_version_is_two() -> None:
+    """ALP-709: operator summary schema bumped 1→2 to admit ``inflow_metrics``."""
+    assert OPERATOR_SUMMARY_SCHEMA_VERSION == "2"
+
+
+def test_operator_summary_carries_inflow_metrics_sentiment_block(tmp_path: Path) -> None:
+    """When ``sentiment_inflow`` is plumbed in, the payload carries an
+    ``inflow_metrics.sentiment`` top-level block with the spec's six fields.
+    """
+    outputs = _build_outputs(blocks=())
+    inflow = SentimentInflowMetrics(
+        window_start=datetime(2026, 5, 26, 20, 40, 25, tzinfo=UTC),
+        window_end=datetime(2026, 5, 26, 21, 1, 53, tzinfo=UTC),
+        articles_in_window=0,
+        scored_articles_in_window=0,
+        calibrated_tickers_total=20,
+        calibrated_tickers_with_populated_secondary=0,
+    )
+    path = write_operator_data_health_summary(
+        outputs=outputs,
+        invocation_id="inv-id",
+        archive_root=tmp_path,
+        sentiment_inflow=inflow,
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["schema_version"] == "2"
+    assert payload["inflow_metrics"] == {
+        "sentiment": {
+            "window_start": "2026-05-26T20:40:25Z",
+            "window_end": "2026-05-26T21:01:53Z",
+            "articles_in_window": 0,
+            "scored_articles_in_window": 0,
+            "calibrated_tickers_total": 20,
+            "calibrated_tickers_with_populated_secondary": 0,
+        }
+    }
+
+
+def test_operator_summary_serializes_null_window_when_missing(tmp_path: Path) -> None:
+    """When no calibrated ticker has two baselines, window edges are null —
+    the metric still emits the cohort counts so the operator can tell ``no
+    calibrated cohort yet`` apart from ``cohort present but zero inflow``.
+    """
+    outputs = _build_outputs(blocks=())
+    inflow = SentimentInflowMetrics(
+        window_start=None,
+        window_end=None,
+        articles_in_window=0,
+        scored_articles_in_window=0,
+        calibrated_tickers_total=0,
+        calibrated_tickers_with_populated_secondary=0,
+    )
+    path = write_operator_data_health_summary(
+        outputs=outputs,
+        invocation_id="inv-id",
+        archive_root=tmp_path,
+        sentiment_inflow=inflow,
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["inflow_metrics"]["sentiment"]["window_start"] is None
+    assert payload["inflow_metrics"]["sentiment"]["window_end"] is None
+
+
+def test_operator_summary_omits_inflow_metrics_when_not_provided(tmp_path: Path) -> None:
+    """Without a ``sentiment_inflow`` kwarg the writer emits a V2 payload
+    that lacks the ``inflow_metrics`` key; the renderer tolerates this
+    (per the V2 schema rule) by omitting the INFLOW line.
+    """
+    outputs = _build_outputs(blocks=())
+    path = write_operator_data_health_summary(
+        outputs=outputs,
+        invocation_id="inv-id",
+        archive_root=tmp_path,
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["schema_version"] == "2"
+    assert "inflow_metrics" not in payload
