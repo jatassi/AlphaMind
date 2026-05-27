@@ -247,6 +247,62 @@ class TestRecordProcessLifetimeFailFast:
             assert list(result.scalars()) == []
 
 
+class TestRecordProcessLifetimeEventLoopProgress:
+    """ALP-715 review F2(b): blocking provenance must run off the event loop."""
+
+    async def test_event_loop_progresses_during_blocking_provenance(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+    ) -> None:
+        """Blocking subprocess + file-write work runs in a worker thread.
+
+        We give one of the patched subprocess calls a deliberately slow
+        sleep and verify a concurrent ``asyncio.sleep`` makes progress in
+        parallel. If the gathered provenance work were inline on the event
+        loop, the concurrent sleep could not complete first.
+        """
+        import asyncio
+        import threading
+        import time as _time
+
+        loop_thread_id = threading.get_ident()
+        provenance_thread_ids: list[int] = []
+
+        def _slow_git_stub(
+            args: list[str], **kwargs: Any
+        ) -> subprocess.CompletedProcess[str]:
+            provenance_thread_ids.append(threading.get_ident())
+            if args[:3] == ["git", "rev-parse", "HEAD"]:
+                # Block long enough that a concurrent asyncio.sleep(0.01)
+                # would still complete first if the call is off the loop.
+                _time.sleep(0.05)
+            return _git_rev_parse_stub(args, **kwargs)
+
+        async def _record() -> str:
+            with (
+                _patch_subprocess(stub=_slow_git_stub),
+                _patch_distributions(),
+                _patch_platform_platform(),
+            ):
+                return await record_process_lifetime(
+                    session_factory=session_factory,
+                    process_role="monitor",
+                    archive_root=tmp_path,
+                )
+
+        plt_id, _ = await asyncio.gather(_record(), asyncio.sleep(0.01))
+        assert plt_id.startswith("plt-monitor-")
+        assert provenance_thread_ids, "subprocess stub never ran"
+        # Every provenance subprocess invocation must have run in a worker
+        # thread — not the event loop's thread.
+        for tid in provenance_thread_ids:
+            assert tid != loop_thread_id, (
+                "blocking provenance must run off the event loop; "
+                f"observed on loop thread id={loop_thread_id}"
+            )
+
+
 class TestCapturePipFreeze:
     """Direct tests for ``_capture_pip_freeze``'s importlib.metadata path."""
 

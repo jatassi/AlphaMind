@@ -331,6 +331,56 @@ class TestHappyPathTick:
         assert row.trigger_source == "borrow_accrual"
         assert row.process_lifetime_id == _PROCESS_LIFETIME_ID
 
+    async def test_resolver_factory_runs_off_event_loop(
+        self, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """The borrow-cost resolver factory runs in a worker thread.
+
+        ALP-715 review F2(a): the sync ``build_borrow_cost_resolver`` query
+        — multi-table SQL on a sync ``Session`` — must not block the event
+        loop while ``run_accrual_tick`` is on the async path. We give the
+        factory a deliberately slow sleep and verify a concurrent
+        ``asyncio.sleep`` completes alongside it: if the resolver were
+        invoked synchronously on the loop the concurrent sleep would only
+        finish after the resolver returned, and ``asyncio.gather`` would
+        observe serial completion.
+        """
+        import threading
+        import time as _time
+
+        await _seed_process_lifetime(async_factory)
+        await _seed_position(
+            async_factory, _short_equity_record(position_id="pos-1", ticker="ABCD")
+        )
+        await _seed_ohlcv(async_factory, ticker="ABCD", close=50.0)
+
+        loop_thread_id = threading.get_ident()
+        factory_thread_id: list[int] = []
+
+        def _blocking_factory() -> Any:
+            factory_thread_id.append(threading.get_ident())
+            # Block long enough that a concurrent ``asyncio.sleep(0.01)`` would
+            # not complete first if we were on the event loop's thread.
+            _time.sleep(0.05)
+            return lambda ticker: {"ABCD": 10.0}.get(ticker)
+
+        async def _drive_tick() -> None:
+            await run_accrual_tick(
+                session_factory=async_factory,
+                borrow_cost_resolver_factory=_blocking_factory,
+                process_lifetime_id=_PROCESS_LIFETIME_ID,
+                now=_NOW,
+            )
+
+        # The tick + a concurrent ``asyncio.sleep`` both complete; the factory
+        # ran in a worker thread (so the sleep made progress in parallel).
+        await asyncio.gather(_drive_tick(), asyncio.sleep(0.01))
+        assert factory_thread_id, "factory was never invoked"
+        assert factory_thread_id[0] != loop_thread_id, (
+            "borrow-cost resolver factory must run in a worker thread; "
+            f"observed it on loop thread id={loop_thread_id}"
+        )
+
     async def test_emits_activity_log_entry_with_full_payload(
         self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:

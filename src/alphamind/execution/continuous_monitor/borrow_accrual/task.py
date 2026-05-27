@@ -127,8 +127,12 @@ async def run_accrual_tick(
     """
     # The resolver factory builds one fresh resolver per tick — captures
     # the current ``borrow_cost_daily`` state without caching stale rates
-    # across ticks (per the design's *Trigger* section).
-    resolver = borrow_cost_resolver_factory()
+    # across ticks (per the design's *Trigger* section). The factory opens a
+    # synchronous ``Session`` and runs the multi-table ``build_borrow_cost_resolver``
+    # query; hand it to ``asyncio.to_thread`` so the event loop keeps
+    # progressing (breach_loop / fill_stream_consumer / greeks_refresh) while
+    # the borrow-cost query runs.
+    resolver = await asyncio.to_thread(borrow_cost_resolver_factory)
     invocation_id = _mint_borrow_accrual_invocation_id(now)
 
     async with session_factory() as session:
