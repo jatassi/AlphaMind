@@ -26,7 +26,9 @@ from functools import partial
 from pathlib import Path
 from typing import cast
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
+from fastapi import FastAPI
 
 from alphamind.config.loaders import read_yaml_file
 from alphamind.config.models.main import ExecutionMode
@@ -35,13 +37,20 @@ from alphamind.config.models.scheduler import SchedulerConfig
 from alphamind.config.models.venue import VenueConfig
 from alphamind.persistence.session import engine_pair_context
 from alphamind.risk_guardrails.breach_behavior.config import load_breach_behavior_config
+from alphamind.scheduler.control.adapters import (
+    ActivityLogEmergencyTrigger,
+    AsyncIOSchedulerControl,
+    DeferredUniverseValidator,
+)
+from alphamind.scheduler.control.app import VerbDispatch, build_app, run_uvicorn_server_task
+from alphamind.scheduler.control.events import SSEEventEmitter
 from alphamind.scheduler.driver import run_pipeline_scheduler_task
 from alphamind.scheduler.emergency import run_emergency_receiver_task
 from alphamind.scheduler.fresh_start import run_fresh_start_bootstrap
 from alphamind.scheduler.logging_setup import configure_pipeline_logging
 from alphamind.scheduler.orchestrator import run_invocation
 from alphamind.scheduler.run_context import RunInvocationContext
-from alphamind.scheduler.session import PipelineMode, new_session
+from alphamind.scheduler.session import PipelineMode, PipelineSession, new_session
 from alphamind.scheduler.supervisor import PipelineSupervisor
 from alphamind.scripts._stdio import configure_utf8_stdio
 from alphamind.state.process_lifetime import (
@@ -471,12 +480,37 @@ async def _run_daemon(*, mode: PipelineMode) -> None:
             session=session,
             shutdown_timeout_seconds=shutdown_timeout,
         )
+
+        # ALP-720 — build the SSE event emitter + control-surface task tree.
+        # The AsyncIOScheduler is constructed here (instead of inside the
+        # driver task) so the SchedulerControl verb adapter and the driver
+        # share the same instance — pause / resume on the verb side flips
+        # the scheduler the driver is running.
+        sse_emitter = SSEEventEmitter()
+        apscheduler = AsyncIOScheduler(timezone=cfg.timezone)
+        scheduler_control = AsyncIOSchedulerControl(apscheduler)
+        emergency_trigger = ActivityLogEmergencyTrigger(
+            session_factory=engines.async_session_factory,
+            cooldown_minutes=breach_behavior_config.emergency_invocation_cooldown_minutes,
+        )
+        universe_validator = DeferredUniverseValidator()
+        dispatch = VerbDispatch(
+            scheduler=scheduler_control,
+            emergency=emergency_trigger,
+            universe_validator=universe_validator,
+            config_dir=_CONFIG_DIR,
+            now_factory=lambda: datetime.now(UTC),
+        )
+        control_app = build_app(emitter=sse_emitter, dispatch=dispatch)
+
         supervisor.register_task(
             name="apscheduler",
             coro_fn=partial(
                 run_pipeline_scheduler_task,
                 scheduler_config=cfg,
                 context=context,
+                scheduler=apscheduler,
+                sse_emitter=sse_emitter,
             ),
         )
         supervisor.register_task(
@@ -486,10 +520,39 @@ async def _run_daemon(*, mode: PipelineMode) -> None:
                 poll_interval_seconds=cfg.emergency_poll_interval_seconds,
                 cooldown_minutes=breach_behavior_config.emergency_invocation_cooldown_minutes,
                 context=context,
+                sse_emitter=sse_emitter,
             ),
         )
-        await supervisor.run()
+        supervisor.register_task(
+            name="control_surface",
+            coro_fn=partial(
+                _run_control_surface,
+                app=control_app,
+                port=cfg.control_port,
+            ),
+        )
+        try:
+            await supervisor.run()
+        finally:
+            # ALP-720 — when ``__main__`` owns the apscheduler (the
+            # production daemon path), the driver's ``finally`` skips
+            # the shutdown because ``owned_scheduler`` is False. Drain
+            # explicitly here so APScheduler's executor threads + job
+            # stores stop cleanly before the engines dispose.
+            if apscheduler.running:
+                apscheduler.shutdown(wait=True)
         log.info("pipeline scheduler session end: process_lifetime_id=%s", process_lifetime_id)
+
+
+async def _run_control_surface(session: PipelineSession, *, app: FastAPI, port: int) -> None:
+    """Adapter wrapping :func:`run_uvicorn_server_task` for the supervisor task signature.
+
+    The supervisor's :class:`TaskCoroFn` is ``(session) -> Awaitable[None]``; the
+    Uvicorn helper takes ``(app, host, port)``.  Close over the app + port at
+    registration time so the surface binds to the configured ``control_port``.
+    """
+    del session  # not consumed by the Uvicorn helper
+    await run_uvicorn_server_task(app=app, host="127.0.0.1", port=port)
 
 
 def main(argv: Sequence[str] | None = None) -> None:

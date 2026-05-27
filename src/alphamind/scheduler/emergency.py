@@ -31,6 +31,7 @@ from alphamind.portfolio_state.events.activity_log import (
     EventType,
     decode_detail,
 )
+from alphamind.scheduler.control.events import SSEEventEmitter
 from alphamind.scheduler.orchestrator import run_invocation
 from alphamind.scheduler.run_context import RunInvocationContext
 from alphamind.scheduler.session import PipelineSession
@@ -119,6 +120,7 @@ async def run_emergency_receiver_task(
     poll_interval_seconds: float,
     cooldown_minutes: int,
     context: RunInvocationContext,
+    sse_emitter: SSEEventEmitter | None = None,
 ) -> None:
     """Poll ``activity_log`` for emergency requests and dispatch ``run_invocation``.
 
@@ -162,6 +164,7 @@ async def run_emergency_receiver_task(
                 row,
                 cooldown_minutes=cooldown_minutes,
                 context=context,
+                sse_emitter=sse_emitter,
             )
 
 
@@ -170,6 +173,7 @@ async def _process_one_entry(
     *,
     cooldown_minutes: int,
     context: RunInvocationContext,
+    sse_emitter: SSEEventEmitter | None = None,
 ) -> None:
     """Parse, cooldown-check, and dispatch one emergency-request row.
 
@@ -222,6 +226,7 @@ async def _process_one_entry(
             trigger_reason=detail.trigger_reason,
             firing_run_type=RunType.emergency,
             now=datetime.now(UTC),
+            sse_emitter=sse_emitter,
         )
     except Exception:
         # Per-iteration supervisor per runtime §G1: any unhandled error from

@@ -244,9 +244,16 @@ def test_l19_async_over_sync_count_at_protocol_residue(antipattern_findings: Scr
     # body is sync, and (3) Fake substitutables matching async Protocol
     # signatures (FakePipelineClient, FakeMonitorClient,
     # FakeDiscordChannel). All audited at PR #209 final-state review.
-    assert l19 <= 95, (
-        f"L19 (async-over-sync) count drift: {l19}. Post-Command-Center "
-        f"ceiling is 95 (Protocol stubs + SDK decorators + alert "
+    # Ceiling raised from 95 to 96 (2026-05-27, ALP-720 control-surface
+    # wiring): the monitor's ``_run_daemon`` adds NotImplemented stub
+    # adapters for the deferred cancel_order / force_close_position /
+    # order_lookup / position_lookup Protocols — each is an async
+    # signature on the matching Protocol so the stub must be ``async def``
+    # to satisfy the structural type. The four stubs are warranted
+    # short-term scaffolding pending the broker-dispatch follow-up.
+    assert l19 <= 96, (
+        f"L19 (async-over-sync) count drift: {l19}. Post-ALP-720 "
+        f"ceiling is 96 (Protocol stubs + SDK decorators + alert "
         f"channels). Climbing above this suggests new ``async def`` "
         f"functions that never ``await`` — convert to sync unless the "
         f"function legitimately awaits I/O."

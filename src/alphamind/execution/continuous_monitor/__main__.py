@@ -74,6 +74,24 @@ from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
 from alphamind.execution.continuous_monitor.cascade_dispatch.per_rule_kwargs import (
     build_per_rule_kwargs_providers,
 )
+from alphamind.execution.continuous_monitor.control.app import (
+    ControlSurfaceDependencies,
+    make_control_surface_task,
+)
+from alphamind.execution.continuous_monitor.control.events import SSEEventEmitter
+from alphamind.execution.continuous_monitor.control.halt_mode_repo import (
+    HaltModeRepository,
+)
+from alphamind.execution.continuous_monitor.control.verbs import (
+    BrokerErrorCancel,
+    BrokerErrorClose,
+    OrderState,
+    PositionState,
+)
+from alphamind.execution.continuous_monitor.control.wiring import (
+    wrap_fill_enrichment_with_emit,
+    wrap_on_immediate_breach,
+)
 from alphamind.execution.continuous_monitor.emergency_trigger import (
     AlpacaMarginCallObserver,
     make_emergency_callback,
@@ -341,7 +359,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-async def _run_daemon(*, mode: MonitorMode) -> None:
+async def _run_daemon(*, mode: MonitorMode) -> None:  # noqa: PLR0915 — composition root; each statement wires one task seam, extraction would not simplify the dependency graph
     """Daemon path — load config, build supervisor, register tasks, run.
 
     Stories 02b / 02c register their tasks on the supervisor below. Each
@@ -393,6 +411,10 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     account_state_queries = AccountStateQueries(client_factory.build_trading_client())
     calendar_cache = TradingCalendarCache(account_state_queries)
     supervisor = MonitorSupervisor(session=session, config=config)
+    # ALP-720 — shared SSE event emitter for the /events stream + the
+    # production wiring adapters that observe each breach / fill /
+    # emergency callsite.
+    sse_emitter = SSEEventEmitter()
     underlying_cache = register_underlying_stream_task(supervisor, repository=open_positions_reader)
     # ALP-528/530/642 — one shared realized-vol dict feeds both the paper-mode
     # enrichment wedge (via MapVolLookup) and the breach-loop's
@@ -442,11 +464,18 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         session_factory=db_session_factory,
         realized_vol_map=realized_vol_map,
     )
+    # ALP-720 — wrap enrichment with the SSE fill_received emit. The wrapper
+    # passes the FillRecord through to the inner enrichment (or returns it
+    # unchanged in live mode where ``inner`` is None) so persistence stays
+    # unchanged; emit failures log and continue.
+    sse_wrapped_enrichment = wrap_fill_enrichment_with_emit(
+        emitter=sse_emitter, inner=enrichment_callable
+    )
     _register_fill_stream_consumer(
         supervisor,
         venue_config=venue_config,
         db_session_factory=db_session_factory,
-        enrichment_callable=enrichment_callable,
+        enrichment_callable=sse_wrapped_enrichment,
     )
     register_greeks_refresh_task(
         supervisor,
@@ -484,6 +513,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         state_persistence_config=state_persistence_config,
         config_dir=_CONFIG_DIR,
         realized_vol_map=realized_vol_map,
+        sse_emitter=sse_emitter,
     )
     register_options_bracket_watcher_task(
         supervisor,
@@ -496,12 +526,103 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         ),
         trigger_ids=trigger_ids,
     )
+
+    # ALP-720 — control surface task: /control/* verbs + /events SSE.
+    # ``set_halt_mode`` is wired against the real :class:`HaltModeRepository`;
+    # ``cancel_order`` / ``force_close_position`` use stub adapters that
+    # return ``not_implemented`` error envelopes until the broker-dispatch
+    # path is wired in a follow-up (the verbs' Protocols are stable; only
+    # the production seam is deferred).
+    halt_mode_repo = HaltModeRepository(session_factory=db_session_factory)
+    control_deps = ControlSurfaceDependencies(
+        order_lookup=_NotImplementedOrderLookup(),
+        position_lookup=_NotImplementedPositionLookup(),
+        cancel_emitter=_NotImplementedCancelEmitter(),
+        close_submitter=_NotImplementedCloseSubmitter(),
+        halt_mode_repo=halt_mode_repo,
+        event_emitter=sse_emitter,
+    )
+    supervisor.register_task(
+        name="control_surface",
+        coro_fn=make_control_surface_task(
+            deps=control_deps,
+            port=config.control_port,
+        ),
+    )
+
     try:
         await supervisor.run()
     finally:
         sync_engine.dispose()
         await engine.dispose()
         log.info("monitor session end: session_id=%s", session.session_id)
+
+
+# ---------------------------------------------------------------------------
+# Stub verb dependencies (ALP-720 follow-up).
+#
+# The cancel_order + force_close_position verbs require live broker-dispatch
+# wiring (the OmsCloseSubmitter needs the breach-loop's ``submit_envelope``
+# closure; the cancel-emitter needs a real broker adapter). Both are out of
+# scope for the binding-fix PR but the control surface must construct
+# *some* implementation of every Protocol. These stubs return the error
+# envelopes documented in the schema's per-verb error table.
+# ---------------------------------------------------------------------------
+
+
+class _NotImplementedOrderLookup:
+    """Returns ``None`` for every order_id → verb sees ``not_found``."""
+
+    async def fetch(self, order_id: str) -> OrderState | None:
+        del order_id
+        return None
+
+
+class _NotImplementedPositionLookup:
+    """Returns ``None`` for every position_id → verb sees ``not_found``."""
+
+    async def fetch(self, position_id: str) -> PositionState | None:
+        del position_id
+        return None
+
+
+class _NotImplementedCancelEmitter:
+    """Cancel verb wiring deferred; returns a broker-error envelope."""
+
+    async def submit_cancel(self, *, order_id: str) -> BrokerErrorCancel:
+        del order_id
+        return BrokerErrorCancel(
+            broker_message=(
+                "cancel_order verb not yet wired to the broker adapter; see ALP-720 follow-up"
+            )
+        )
+
+
+class _NotImplementedCloseSubmitter:
+    """Force-close verb wiring deferred; returns a broker-error envelope."""
+
+    async def submit_close(
+        self,
+        *,
+        position_id: str,
+        position_selection_rationale: str,
+        rule_breached: str,
+        breach_details_current: float,
+        breach_details_limit: float,
+    ) -> BrokerErrorClose:
+        del (
+            position_id,
+            position_selection_rationale,
+            rule_breached,
+            breach_details_current,
+            breach_details_limit,
+        )
+        return BrokerErrorClose(
+            broker_message=(
+                "force_close_position verb not yet wired to the OMS submit path; "
+                "see ALP-720 follow-up"
+            )
+        )
 
 
 def _register_fill_stream_consumer(
@@ -567,6 +688,7 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
     state_persistence_config: StatePersistenceConfig,
     config_dir: Path,
     realized_vol_map: Mapping[str, RealizedVolEntry],
+    sse_emitter: SSEEventEmitter | None = None,
 ) -> None:
     """Register the ``breach_loop`` task (story 03b / ALP-437) with the cascade
     dispatcher (story 04a / ALP-438) on ``on_immediate_breach`` and the
@@ -721,6 +843,16 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
         margin_call_observer=AlpacaMarginCallObserver(queries=account_state_queries),
     )
 
+    # ALP-720 — wrap the cascade dispatcher's immediate-breach handler so each
+    # immediate-classification breach also emits a ``breach_detected`` SSE
+    # event for the operator console. The wrapper delegates to the inner
+    # dispatch path unchanged; SSE emit failures log and continue.
+    on_immediate_breach = (
+        wrap_on_immediate_breach(emitter=sse_emitter, inner=dispatcher.handle_immediate_breach)
+        if sse_emitter is not None
+        else dispatcher.handle_immediate_breach
+    )
+
     register_breach_loop_task(
         supervisor,
         repository=breach_loop_repository,
@@ -733,7 +865,7 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
         risk_free_rate=0.045,
         breach_response_lookup=breach_response_lookup,
         market_hours=calendar_cache,
-        on_immediate_breach=dispatcher.handle_immediate_breach,
+        on_immediate_breach=on_immediate_breach,
         on_emergency_input=on_emergency_input,
         activity_log_sink=_activity_log_sink,
     )
