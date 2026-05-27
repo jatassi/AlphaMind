@@ -10,7 +10,7 @@ Exercises the four user-visible surfaces this story adds:
 3. ``check_deterministic_prefix`` FAILs naming the first mismatched file
    on a divergence (criterion 3).
 4. ``main()`` does NOT emit a ``deterministic_prefix`` line on a
-   non-resume run; summary stays at ``7/7 checks passed`` (criterion 4).
+   non-resume run; summary stays at ``8/8 checks passed`` (criterion 4).
 5. ``main()`` emits the PASS line on a resume targeting ``pm`` (all
    upstream phases replayed); distillation comparison is unconditional
    on resume (criterion 5).
@@ -401,6 +401,16 @@ def _stub_main_for_resume(
             label="synthetic_portfolio", passed=True, message="stub"
         ),
     )
+    # ALP-703: tool_layer_health walks sdk_trace.jsonl files; the stub
+    # invocation directory has none, so without a stub the new check
+    # would FAIL on every resume-suite test and flip exit_code to 1.
+    monkeypatch.setattr(
+        verify_module,
+        "check_tool_layer_health",
+        lambda _inv_dir: verify_module.CheckResult(
+            label="tool_layer_health", passed=True, message="stub"
+        ),
+    )
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "stub-token")
 
 
@@ -421,7 +431,7 @@ def test_main_non_resume_run_omits_deterministic_prefix_line(
 ) -> None:
     """On a fresh (non-resume) debug-e2e invocation, the
     ``deterministic_prefix`` check does NOT fire and the summary line
-    stays at ``7/7 checks passed`` (story ALP-696 acceptance crit 4).
+    stays at ``8/8 checks passed`` (story ALP-696 acceptance crit 4).
     """
     new_id = "inv-20260526T100000Z-12345678"
     _stub_main_for_resume(verify_module, monkeypatch, new_invocation_id=new_id)
@@ -439,7 +449,7 @@ def test_main_non_resume_run_omits_deterministic_prefix_line(
     out = stdout.getvalue()
     assert exit_code == 0
     assert "deterministic_prefix" not in out
-    assert "7/7 checks passed" in out
+    assert "8/8 checks passed" in out
 
 
 # ---------------------------------------------------------------------------
@@ -477,11 +487,11 @@ def test_main_resume_run_emits_deterministic_prefix_pass(
     out = stdout.getvalue()
     assert exit_code == 0
     assert "PASS: deterministic_prefix" in out
-    assert "8/8 checks passed" in out
+    assert "9/9 checks passed" in out
 
 
 # ---------------------------------------------------------------------------
-# 3 (cont.) Resume run with mutated source: FAIL line; summary 7/8
+# 3 (cont.) Resume run with mutated source: FAIL line; summary 8/9
 # ---------------------------------------------------------------------------
 
 
@@ -490,8 +500,8 @@ def test_main_resume_run_with_mutated_source_emits_fail(
 ) -> None:
     """On a resume run whose source distillation has a mutated file,
     the wrapper emits ``FAIL: deterministic_prefix`` naming the file
-    and the summary becomes ``7/8 checks passed`` (story ALP-696
-    acceptance crit 3).
+    and the summary becomes ``8/9 checks passed`` (story ALP-696
+    acceptance crit 3; total bumped by ALP-703's tool_layer_health).
     """
     source_id = "inv-20260525T231625Z-b9f1a7aa"
     new_id = "inv-20260526T100000Z-12345678"
@@ -519,7 +529,7 @@ def test_main_resume_run_with_mutated_source_emits_fail(
     assert exit_code == 1  # any FAIL → exit non-zero
     assert "FAIL: deterministic_prefix" in out
     assert "tech_semis_sector.md" in out
-    assert "7/8 checks passed" in out
+    assert "8/9 checks passed" in out
 
 
 # ---------------------------------------------------------------------------
@@ -565,7 +575,7 @@ def test_main_resume_target_pm_still_runs_deterministic_prefix(
     out = stdout.getvalue()
     assert exit_code == 0
     assert "PASS: deterministic_prefix" in out
-    assert "8/8 checks passed" in out
+    assert "9/9 checks passed" in out
 
 
 # ---------------------------------------------------------------------------
@@ -606,4 +616,4 @@ def test_main_resume_run_with_missing_source_distillation_fails(
     assert exit_code == 1
     assert "FAIL: deterministic_prefix" in out
     assert source_id in out
-    assert "7/8 checks passed" in out
+    assert "8/9 checks passed" in out

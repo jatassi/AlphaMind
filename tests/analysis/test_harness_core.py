@@ -1112,6 +1112,81 @@ def test_describe_sdk_message_summarises_result_terminal_state() -> None:
     assert desc["is_error"] is False
 
 
+def test_describe_sdk_message_captures_tool_use_id_and_name() -> None:
+    """ToolUseBlock summary carries ``id`` so the result block can be paired (ALP-703).
+
+    The forensic trace previously only recorded the tool ``name``; without
+    ``id`` an operator (or the verify_debug_e2e tool-layer health check) had
+    no way to link a tool call to its result. Pairing by id lets the check
+    tally per-tool quality outcomes (complete vs unavailable) end-to-end.
+    """
+    from claude_agent_sdk import ToolUseBlock
+
+    use = ToolUseBlock(id="toolu_01", name="mcp__alphamind_qualitative__news_search", input={})
+    desc = core._describe_sdk_message(_make_sdk_assistant(text="", tool_use=[use]))
+    assert desc["blocks"] == [
+        {
+            "block": "ToolUseBlock",
+            "tool": "mcp__alphamind_qualitative__news_search",
+            "id": "toolu_01",
+        }
+    ]
+
+
+def test_describe_sdk_message_captures_tool_result_quality(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ToolResultBlock summary carries ``tool_use_id`` and parsed ``quality`` (ALP-703).
+
+    The tool envelope renders its result as a single text content block whose
+    text is the JSON-encoded payload. The trace summary parses that JSON,
+    pulls the envelope ``quality`` field, and surfaces it so the post-run
+    tool-layer health check can tally outcomes per tool without re-parsing
+    the agents' narrative response files.
+    """
+    from claude_agent_sdk import ToolResultBlock, UserMessage
+
+    payload = json.dumps({"quality": "unavailable", "data_freshness": "2026-05-26T00:00:00Z"})
+    result_block = ToolResultBlock(
+        tool_use_id="toolu_01",
+        content=[{"type": "text", "text": payload}],
+        is_error=False,
+    )
+    user_msg = UserMessage(content=[result_block])
+    desc = core._describe_sdk_message(user_msg)
+    assert desc["blocks"] == [
+        {
+            "block": "ToolResultBlock",
+            "tool_use_id": "toolu_01",
+            "is_error": False,
+            "quality": "unavailable",
+        }
+    ]
+
+
+def test_describe_sdk_message_handles_unparseable_tool_result() -> None:
+    """A non-JSON tool result still records the block; quality is absent (ALP-703).
+
+    An exception path that returns plain text (or a non-envelope tool's
+    output) must not break the trace summary — the verify check tolerates
+    missing ``quality`` by classifying the call as ``"other"``.
+    """
+    from claude_agent_sdk import ToolResultBlock, UserMessage
+
+    result_block = ToolResultBlock(
+        tool_use_id="toolu_02",
+        content="plain text, not JSON",
+        is_error=True,
+    )
+    user_msg = UserMessage(content=[result_block])
+    desc = core._describe_sdk_message(user_msg)
+    assert desc["blocks"] == [
+        {
+            "block": "ToolResultBlock",
+            "tool_use_id": "toolu_02",
+            "is_error": True,
+        }
+    ]
+
+
 def test_sdk_call_tracer_disabled_without_diag_dir(tmp_path: Path) -> None:
     tracer = core._SdkCallTracer(None)
     assert tracer.enabled is False
