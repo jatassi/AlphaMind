@@ -520,6 +520,7 @@ async def _run_daemon(*, mode: PipelineMode) -> None:
                 poll_interval_seconds=cfg.emergency_poll_interval_seconds,
                 cooldown_minutes=breach_behavior_config.emergency_invocation_cooldown_minutes,
                 context=context,
+                sse_emitter=sse_emitter,
             ),
         )
         supervisor.register_task(
@@ -530,7 +531,16 @@ async def _run_daemon(*, mode: PipelineMode) -> None:
                 port=cfg.control_port,
             ),
         )
-        await supervisor.run()
+        try:
+            await supervisor.run()
+        finally:
+            # ALP-720 — when ``__main__`` owns the apscheduler (the
+            # production daemon path), the driver's ``finally`` skips
+            # the shutdown because ``owned_scheduler`` is False. Drain
+            # explicitly here so APScheduler's executor threads + job
+            # stores stop cleanly before the engines dispose.
+            if apscheduler.running:
+                apscheduler.shutdown(wait=True)
         log.info("pipeline scheduler session end: process_lifetime_id=%s", process_lifetime_id)
 
 

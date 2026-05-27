@@ -214,6 +214,25 @@ def register_pipeline_jobs(
         )
 
 
+# Trigger keys that match the schema's ``_RunType`` literal in
+# ``scheduler.control.models``. APScheduler registers six jobs (per
+# ``config/scheduler.yaml``) — the two weekend triggers are valid
+# AlphaMind run types but the wire-format schema does not include them
+# in its closed enum, so a ``NextTriggerChangedEvent`` constructed with
+# a weekend key raises ``ValidationError``. Filter at the emit boundary
+# so weekend slots simply don't update the operator console rather than
+# silently dropping all weekend emits to an error log.
+_SCHEMA_TRIGGER_TYPES: frozenset[str] = frozenset(
+    {
+        "market_hours_rolling",
+        "off_hours_rolling",
+        "pre_open",
+        "pre_close",
+        "emergency",
+    }
+)
+
+
 def emit_next_trigger_changed(
     *,
     emitter: SSEEventEmitter,
@@ -221,14 +240,22 @@ def emit_next_trigger_changed(
 ) -> None:
     """Publish the current next-trigger preview as an SSE event (ALP-720).
 
-    Reads the soonest ``next_run_time`` across registered jobs and emits
-    one :class:`NextTriggerChangedEvent` with that timestamp + the job ID
-    (which matches the ``run_type`` enum used by the schema).  Idempotent
-    on no jobs — emits nothing.  Errors are logged and swallowed so a
-    bad emit never crashes the daemon.
+    Reads the soonest ``next_run_time`` across registered jobs whose ID is
+    in the schema's :class:`_RunType` literal, and emits one
+    :class:`NextTriggerChangedEvent`. Idempotent on no jobs — emits
+    nothing. Errors are logged and swallowed so a bad emit never crashes
+    the daemon.
+
+    Weekend-only triggers (``weekend_saturday`` / ``weekend_sunday``) are
+    skipped because the schema's ``next_trigger_type`` literal does not
+    include them; if every upcoming job is a weekend trigger, no event
+    fires until a schema-valid trigger is the soonest again (e.g., the
+    Monday ``market_hours_rolling`` slot once the weekend is past).
     """
     soonest: tuple[datetime, str] | None = None
     for job in scheduler.get_jobs():
+        if job.id not in _SCHEMA_TRIGGER_TYPES:
+            continue
         nrt = job.next_run_time
         if nrt is None:
             continue

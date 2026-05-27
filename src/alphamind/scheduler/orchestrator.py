@@ -462,13 +462,15 @@ def _emit_phase_transition(
     *,
     invocation_id: str,
     phase: str,
-    now: datetime,
 ) -> None:
     """Best-effort SSE phase-transition emit (ALP-720).
 
     No-op when ``emitter`` is ``None`` (test path / debug-e2e harness).
-    Errors are logged + swallowed so a broken emit never crashes the
-    invocation hot path.
+    Reads wall-clock at the emit boundary so ``phase_started_at`` reflects
+    when the orchestrator actually transitioned into the phase, not the
+    invocation's start ``now`` (a long invocation would otherwise stamp
+    every phase with the same timestamp).  Errors are logged + swallowed
+    so a broken emit never crashes the invocation hot path.
     """
     if emitter is None:
         return
@@ -477,7 +479,7 @@ def _emit_phase_transition(
             PhaseTransitionEvent(
                 invocation_id=invocation_id,
                 phase=phase,  # type: ignore[arg-type]
-                phase_started_at=now,
+                phase_started_at=datetime.now(UTC),
             )
         )
     except Exception:
@@ -627,7 +629,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     )
 
     # Step 3 — Phase 1 transaction.
-    _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="collect", now=now)
+    _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="collect")
     progress.phase_start("phase1")
     async with session_factory() as session:
         phase1_handle = InvocationHandle(session=session, invocation_id=invocation_id)
@@ -674,7 +676,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     progress.phase_done("phase1", fills_processed=phase1_summary.fills_processed)
 
     # Step 4 — Between-phase snapshot read.
-    _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="distill", now=now)
+    _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="distill")
     progress.phase_start("snapshot_assembly")
     sector_resolver = build_sector_resolver(pipeline_config.resolved)
     assembled, snapshot_repository = _assemble_phase1_snapshot(
@@ -692,7 +694,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     progress.phase_done("snapshot_assembly")
 
     # Step 5 — Read-only analysis + decision pipelines.
-    _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="analyze", now=now)
+    _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="analyze")
     analysis_result = await _run_analysis(
         invocation_id=invocation_id,
         sync_session_factory=context.sync_session_factory,
@@ -760,11 +762,11 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         execution_mode=execution_mode if broker_routing_active else None,
         execution_config=pipeline_config.loaded.execution if broker_routing_active else None,
     )
-    _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="decide", now=now)
+    _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="decide")
     decision_result = await run_decision_pipeline(**decision_kwargs, progress=progress)
 
     # Step 6 — Phase 2.
-    _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="execute", now=now)
+    _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="execute")
     progress.phase_start("phase2")
     phase2_summary = await dispatch_phase2(
         session_factory=session_factory,
