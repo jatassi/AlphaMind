@@ -30,7 +30,7 @@ import logging
 import secrets
 from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Protocol
+from typing import Final, Protocol
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -73,6 +73,16 @@ _US_EASTERN = ZoneInfo("US/Eastern")
 # (see ``scheduler/phase1_inputs.py``). The accrual tick wants the most
 # recent EOD bar; intraday timeframes are not consulted.
 _OHLCV_DAILY_TIMEFRAME = "1d"
+
+# ALP-715 review F3 — staleness ceiling for the per-ticker closing print.
+# Mirrors ``scheduler.phase1_inputs._MAX_EOD_BAR_AGE_SECONDS`` (7 calendar
+# days). The longest US market-holiday weekend is ~4 days; 7 days clears
+# that yet still drops a ticker whose OHLCV feed has genuinely stalled
+# (data-source outage, ticker delisted). A dropped ticker then becomes
+# absent from the close-price map and the kernel's existing "missing
+# closing print" ``ValueError`` fires — partial accrual would silently
+# under-report P/L drag, so fail-fast is the correct posture.
+_MAX_EOD_BAR_AGE_SECONDS: Final[int] = 7 * 24 * 60 * 60
 
 
 BorrowCostResolverFactory = Callable[[], Callable[[str], float | None]]
@@ -140,7 +150,9 @@ async def run_accrual_tick(
         in_scope = tuple(p for p in positions if _is_open_short_equity(p))
 
         close_prices = await _read_latest_closes(
-            session, tickers=tuple(_ticker_of(p) for p in in_scope)
+            session,
+            tickers=tuple(_ticker_of(p) for p in in_scope),
+            as_of=now,
         )
         fee_rates: dict[Symbol, float | None] = {
             _ticker_of(p): resolver(str(_ticker_of(p))) for p in in_scope
@@ -264,18 +276,36 @@ async def _read_all_positions(session: AsyncSession) -> tuple[PositionRecord, ..
 
 
 async def _read_latest_closes(
-    session: AsyncSession, *, tickers: tuple[Symbol, ...]
+    session: AsyncSession,
+    *,
+    tickers: tuple[Symbol, ...],
+    as_of: datetime,
 ) -> dict[Symbol, float]:
     """Read the latest ``ohlcv_bars`` close (``timeframe='1d'``) per ticker.
 
-    Returns a dict only for tickers whose latest bar exists; the kernel
+    Returns a dict only for tickers whose latest bar exists *and* is fresher
+    than ``_MAX_EOD_BAR_AGE_SECONDS`` relative to ``as_of``; the kernel
     raises if any in-scope ticker is missing. ``unadj_close`` is the
     actual traded price (matches the convention
     ``scheduler.phase1_inputs.read_universe_eod_close_map`` uses).
+
+    Staleness bound (ALP-715 review F3): ``period_start`` is held to within
+    seven calendar days of ``as_of`` so a ticker whose OHLCV feed has
+    silently stopped (delisting, data-source outage) does not produce a
+    stale-but-present accrual. Dropping the ticker here surfaces the
+    kernel's existing "missing closing print" ``ValueError`` instead.
+    The bound is applied via lexicographic ISO-8601 comparison on the
+    ``period_start`` string, matching the pattern in
+    ``scheduler.phase1_inputs.read_universe_eod_close_map``.
     """
     if not tickers:
         return {}
     ticker_strs = tuple(str(t) for t in tickers)
+    cutoff_iso = (
+        (as_of - timedelta(seconds=_MAX_EOD_BAR_AGE_SECONDS))
+        .replace(microsecond=0)
+        .isoformat()
+    )
     latest_subq = (
         select(
             OhlcvBars.ticker.label("ticker"),
@@ -284,6 +314,7 @@ async def _read_latest_closes(
         .where(
             OhlcvBars.timeframe == _OHLCV_DAILY_TIMEFRAME,
             OhlcvBars.ticker.in_(ticker_strs),
+            OhlcvBars.period_start >= cutoff_iso,
         )
         .group_by(OhlcvBars.ticker)
         .subquery()
@@ -295,7 +326,10 @@ async def _read_latest_closes(
             (OhlcvBars.ticker == latest_subq.c.ticker)
             & (OhlcvBars.period_start == latest_subq.c.latest),
         )
-        .where(OhlcvBars.timeframe == _OHLCV_DAILY_TIMEFRAME)
+        .where(
+            OhlcvBars.timeframe == _OHLCV_DAILY_TIMEFRAME,
+            OhlcvBars.period_start >= cutoff_iso,
+        )
     )
     rows = (await session.execute(stmt)).all()
     return {make_symbol(str(ticker)): float(close) for ticker, close in rows}

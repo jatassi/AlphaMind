@@ -537,6 +537,51 @@ class TestRollbackOnFailure:
         assert isinstance(record.details, EquityPositionDetails)
         assert record.details.accrued_borrow_cost_usd == pytest.approx(0.0)
 
+    async def test_stale_ohlcv_bar_rolls_back(
+        self, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """ALP-715 review F3: a >7-day-old bar is treated as absent.
+
+        Seed an OPEN SHORT for ABCD whose only ``ohlcv_bars`` row is
+        30 days older than the tick. The staleness filter drops the bar
+        from the close-price map, the kernel's "missing closing print"
+        guard fires, and the whole tick rolls back. Without the filter
+        the stale bar would silently produce an accrual at a 30-day-old
+        price — under-reporting P/L drag on a (possibly delisted) ticker
+        whose feed has stopped.
+        """
+        await _seed_process_lifetime(async_factory)
+        await _seed_position(
+            async_factory, _short_equity_record(position_id="pos-1", ticker="ABCD")
+        )
+        # 30 days before _NOW (2026-05-27) → 2026-04-27.
+        await _seed_ohlcv(
+            async_factory,
+            ticker="ABCD",
+            close=50.0,
+            period_start="2026-04-27T00:00:00",
+        )
+
+        with pytest.raises(ValueError, match="ABCD"):
+            await run_accrual_tick(
+                session_factory=async_factory,
+                borrow_cost_resolver_factory=_stub_resolver_factory({"ABCD": 10.0}),
+                process_lifetime_id=_PROCESS_LIFETIME_ID,
+                now=_NOW,
+            )
+
+        async with async_factory() as sess:
+            invocations = (await sess.execute(select(InvocationRow))).scalars().all()
+            entries = (await sess.execute(select(ActivityLogRow))).scalars().all()
+            position_row = (
+                await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+            ).scalar_one()
+        assert invocations == []
+        assert entries == []
+        record = position_row_to_record(position_row)
+        assert isinstance(record.details, EquityPositionDetails)
+        assert record.details.accrued_borrow_cost_usd == pytest.approx(0.0)
+
 
 # ---------------------------------------------------------------------------
 # Multi-position commits atomically in one transaction
