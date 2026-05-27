@@ -36,7 +36,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from alphamind.config.models._shared import validate_hh_mm
 
 
 class ContinuousMonitorConfig(BaseModel):
@@ -54,3 +56,16 @@ class ContinuousMonitorConfig(BaseModel):
     max_reconnect_attempts: int = Field(ge=1)
     supervisor_shutdown_timeout_seconds: int = Field(ge=1)
     control_port: int = Field(default=8766, ge=1, le=65535)
+    borrow_accrual_tick_local_time: str = Field(
+        default="16:00",
+        description=(
+            "Trading-day local time (HH:MM, US/Eastern) at which the "
+            "borrow-accrual tick fires. See ALP-715 pre-resolved decision (E). "
+            "Same HH:MM format as ``SessionWindow.open``/``.close`` in venue.yaml."
+        ),
+    )
+
+    @field_validator("borrow_accrual_tick_local_time")
+    @classmethod
+    def _hh_mm_well_formed(cls, value: str) -> str:
+        return validate_hh_mm(value)

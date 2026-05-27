@@ -130,6 +130,7 @@ def equity_view(
     short_fields: dict[str, Any] = (
         {
             "borrow_rate_pct": 0.5,
+            "accrued_borrow_cost_usd": 0.0,
             "locate_status": LocateStatus.LOCATED,
             "margin_held_usd": 750.0,
         }

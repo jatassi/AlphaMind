@@ -8,7 +8,7 @@ round-trip with exact equality, including ``Money`` / ``Price`` precision
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
@@ -18,6 +18,7 @@ from alphamind._kernel.money import money, price, signed_money
 from alphamind.config.models.main import Profile
 from alphamind.portfolio_state.events import (
     EVENT_TYPE_TO_DETAIL_CLASS,
+    BorrowCostAccruedDetail,
     BracketActivatedDetail,
     BracketCancelledCorporateActionDetail,
     BracketCompletedDetail,
@@ -446,6 +447,16 @@ def _all_detail_instances() -> list[tuple[type, object]]:
                 previous_profile=Profile.small,
                 new_profile=Profile.large,
                 is_no_op=False,
+            ),
+        ),
+        (
+            BorrowCostAccruedDetail,
+            BorrowCostAccruedDetail(
+                accrued_amount_usd=money("12.34"),
+                cumulative_accrued_usd=money("56.78"),
+                annual_fee_pct_used=15.0,
+                notional_usd_used=money("10000.00"),
+                accrual_date=date(2026, 5, 27),
             ),
         ),
     ]

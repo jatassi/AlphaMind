@@ -928,6 +928,7 @@ async def test_reconcile_short_equity_drift_uses_unsigned_magnitude(
     short_details = dc_replace(
         short_pos.details,
         borrow_rate_pct=0.5,
+        accrued_borrow_cost_usd=0.0,
         locate_status=LocateStatus.LOCATED,
         margin_held_usd=750.0,
     )
@@ -999,6 +1000,7 @@ async def test_reconcile_short_no_drift_no_alert(
     short_details = dc_replace(
         short_pos.details,
         borrow_rate_pct=0.5,
+        accrued_borrow_cost_usd=0.0,
         locate_status=LocateStatus.LOCATED,
         margin_held_usd=750.0,
     )

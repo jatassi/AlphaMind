@@ -98,6 +98,7 @@ class TestCashMarginRegistry:
             EventType.MARGIN_CALL,
             EventType.MARGIN_CALL_RESOLVED,
             EventType.MARGIN_LIQUIDATION,
+            EventType.BORROW_COST_ACCRUED,
         }
         assert keys == expected
 

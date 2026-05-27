@@ -20,6 +20,7 @@ before the row is inserted, leaving the database in its pre-call state.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import importlib.metadata
 import os
@@ -110,6 +111,32 @@ def _package_version_or_absent(distribution_name: str) -> str:
         return "not-installed"
 
 
+def _gather_blocking_provenance(
+    *,
+    process_lifetime_id: str,
+    archive_root: Path,
+) -> tuple[str, str, bool, str, str]:
+    """Run the four blocking provenance gathers as one bundle.
+
+    Three ``git`` subprocess calls + one ``pip freeze`` snapshot file write.
+    Each individual operation is fast (milliseconds), but composing them
+    into one ``asyncio.to_thread`` round-trip keeps the event loop free
+    for the rest of monitor / scheduler startup. Returns
+    ``(git_sha, git_branch, git_dirty, pip_freeze_text, pip_freeze_path)``
+    so the async caller can compute the SHA-256 hash inline.
+    """
+    git_sha = _run_git("rev-parse", "HEAD")
+    git_branch = _run_git("rev-parse", "--abbrev-ref", "HEAD")
+    git_dirty = bool(_run_git("status", "--porcelain"))
+    pip_freeze_text = _capture_pip_freeze()
+    pip_freeze_path = write_pip_freeze_snapshot(
+        process_lifetime_id=process_lifetime_id,
+        pip_freeze_text=pip_freeze_text,
+        root=str(archive_root),
+    )
+    return git_sha, git_branch, git_dirty, pip_freeze_text, pip_freeze_path
+
+
 async def record_process_lifetime(
     *,
     session_factory: async_sessionmaker[AsyncSession],
@@ -126,19 +153,19 @@ async def record_process_lifetime(
     """
     started_at = datetime.now(UTC)
 
-    git_sha = _run_git("rev-parse", "HEAD")
-    git_branch = _run_git("rev-parse", "--abbrev-ref", "HEAD")
-    git_dirty = bool(_run_git("status", "--porcelain"))
-
-    pip_freeze_text = _capture_pip_freeze()
-    pip_freeze_hash = hashlib.sha256(pip_freeze_text.encode("utf-8")).hexdigest()
-
+    # The provenance fields are gathered via blocking subprocess calls
+    # (``git rev-parse``, ``git status``) and a synchronous file write
+    # (``pip_freeze.txt`` snapshot). Push the bundle to a worker thread so
+    # the caller's event loop keeps progressing during process startup —
+    # particularly important for the continuous monitor, whose
+    # ``record_process_lifetime`` call sits inline with TaskGroup setup.
     process_lifetime_id = _build_id(process_role, started_at)
-    pip_freeze_path = write_pip_freeze_snapshot(
+    git_sha, git_branch, git_dirty, pip_freeze_text, pip_freeze_path = await asyncio.to_thread(
+        _gather_blocking_provenance,
         process_lifetime_id=process_lifetime_id,
-        pip_freeze_text=pip_freeze_text,
-        root=str(archive_root),
+        archive_root=archive_root,
     )
+    pip_freeze_hash = hashlib.sha256(pip_freeze_text.encode("utf-8")).hexdigest()
 
     record = ProcessLifetimeRecord(
         process_lifetime_id=process_lifetime_id,

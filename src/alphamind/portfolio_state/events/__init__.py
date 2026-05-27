@@ -43,6 +43,7 @@ from alphamind.portfolio_state.events.bracket import (
     BracketModifiedDetail,
 )
 from alphamind.portfolio_state.events.cash_margin import (
+    BorrowCostAccruedDetail,
     CapitalReleasedDetail,
     CapitalReservedDetail,
     CashCreditedDetail,
@@ -201,6 +202,7 @@ AnyDetailType = (
     | MarginCallDetail
     | MarginCallResolvedDetail
     | MarginLiquidationDetail
+    | BorrowCostAccruedDetail
     | GuardrailRejectionDetail
     | RiskLimitApproachedDetail
     | RiskParameterChangedDetail
@@ -225,6 +227,7 @@ __all__ = [
     "EVENT_TYPE_TO_GROUP",
     "ActivityLogEntry",
     "AnyDetailType",
+    "BorrowCostAccruedDetail",
     "BracketActivatedDetail",
     "BracketCancelledCorporateActionDetail",
     "BracketCompletedDetail",

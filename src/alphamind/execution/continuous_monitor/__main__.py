@@ -44,6 +44,9 @@ from alphamind.config.models.guardrails import BreachResponse, GuardrailsConfig,
 from alphamind.config.models.venue import VenueConfig
 from alphamind.distillation.realized_vol import read_realized_vol_map
 from alphamind.execution.broker_adapter import AccountStateQueries, AlpacaClientFactory
+from alphamind.execution.continuous_monitor.borrow_accrual import (
+    register_borrow_accrual_task,
+)
 from alphamind.execution.continuous_monitor.bracket_stops import (
     AlpacaBracketCloseSubmitter,
     register_options_bracket_watcher_task,
@@ -134,6 +137,7 @@ from alphamind.state.config import (
     StatePersistenceConfig,
     load_state_persistence_config,
 )
+from alphamind.state.process_lifetime import record_process_lifetime
 from alphamind.state.repository import (
     build_sql_portfolio_state_repository,
 )
@@ -153,6 +157,16 @@ _VENUE_CONFIG_PATH = _CONFIG_DIR / "venue.yaml"
 _GUARDRAILS_CONFIG_PATH = _CONFIG_DIR / "guardrails.yaml"
 _BREACH_BEHAVIOR_CONFIG_PATH = _CONFIG_DIR / "breach_behavior.yaml"
 _EXECUTION_CONFIG_PATH = _CONFIG_DIR / "execution.yaml"
+
+
+# Same default the scheduler uses (``alphamind.scheduler.__main__``) so the
+# pip-freeze + process-lifetime snapshots land in the canonical archive root.
+# Resolved lazily inside ``_run_daemon`` so tests that ``monkeypatch.setenv``
+# ``HOME`` after import don't get the developer's real home directory.
+def _default_archive_root() -> Path:
+    return Path.home() / "AlphaMind" / "archive"
+
+
 _MAIN_CONFIG_PATH = _CONFIG_DIR / "main.yaml"
 
 # ALP-530 — refresh cadence for the shared realized-vol map. The distillation
@@ -359,6 +373,16 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     # avoids the async-bridge cost and matches the scheduler's pair pattern.
     sync_engine = make_engine()
     sync_session_factory: sessionmaker[Session] = make_session_factory(sync_engine)
+    # ALP-719 — the borrow-accrual tick inserts its own ``InvocationRow`` per
+    # tick, FK-referencing a ``process_lifetimes`` row owned by this monitor
+    # process. Mirrors the scheduler's startup record_process_lifetime call.
+    archive_root = _default_archive_root()
+    archive_root.mkdir(parents=True, exist_ok=True)
+    process_lifetime_id = await record_process_lifetime(
+        session_factory=db_session_factory,
+        process_role="monitor",
+        archive_root=archive_root,
+    )
     open_positions_reader = SqlOpenPositionsReader(db_session_factory)
     # One ``AccountStateQueries`` + one ``TradingCalendarCache`` are shared
     # across the breach loop (market-hours predicate, margin-call observer),
@@ -430,6 +454,13 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         cache=underlying_cache,
         session_factory=db_session_factory,
         market_open=calendar_cache.is_market_open,
+    )
+    register_borrow_accrual_task(
+        supervisor,
+        session_factory=db_session_factory,
+        sync_session_factory=sync_session_factory,
+        calendar_cache=calendar_cache,
+        process_lifetime_id=process_lifetime_id,
     )
     # Constructed once per monitor session so the cascade dispatcher and
     # bracket-stops watcher mint trigger ids from the same monotonic

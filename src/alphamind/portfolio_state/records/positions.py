@@ -144,12 +144,33 @@ class PositionFill:
 
 @dataclass(frozen=True, slots=True)
 class EquityPositionDetails:
-    """Equity position details; short-only fields are None for long positions."""
+    """Equity position details; short-only fields are None for long positions.
+
+    Field semantics for the short-only fields:
+
+    * ``borrow_rate_pct`` — the broker's borrow rate (annualized %) stamped at
+      entry. Not updated on ADD fills; the borrow-accrual monitor reads the
+      live rate from broker each tick to compute accrual. The stamped value is
+      a snapshot of the rate at the first entry fill.
+    * ``accrued_borrow_cost_usd`` — running borrow accumulator. Updated only by
+      the borrow-accrual monitor (tick-based recomputation against the live
+      broker rate); the write-path preserves it verbatim on ADD fills.
+    * ``locate_status`` — borrow locate state (LOCATED / AT_RISK_OF_RECALL).
+      Preserved verbatim on ADD fills; updated only by the breach/locate
+      monitor when broker indicates recall risk.
+    * ``margin_held_usd`` — **entry-stamp Reg T initial margin**, captured at
+      first entry as ``qty * entry_price * 0.50``. NOT updated on ADD fills —
+      readers needing live required margin should compute
+      ``qty * current_price * 0.50`` from ``share_count`` and the live close.
+      This field is a frozen entry snapshot, useful for audit/attribution; it
+      is not the broker's current required margin.
+    """
 
     ticker: Symbol
     share_count: float
     average_cost_basis_per_share: float
     borrow_rate_pct: float | None = None
+    accrued_borrow_cost_usd: float | None = None
     locate_status: LocateStatus | None = None
     margin_held_usd: float | None = None
     instrument_type: InstrumentType = field(default=InstrumentType.EQUITY, init=False)
@@ -311,19 +332,20 @@ class PositionRecord:
             return
         short_fields = (
             self.details.borrow_rate_pct,
+            self.details.accrued_borrow_cost_usd,
             self.details.locate_status,
             self.details.margin_held_usd,
         )
         if self.direction == Direction.SHORT and any(f is None for f in short_fields):
             msg = (
-                "borrow_rate_pct, locate_status, and margin_held_usd must all be non-None "
-                "when direction is SHORT"
+                "borrow_rate_pct, accrued_borrow_cost_usd, locate_status, and margin_held_usd "
+                "must all be non-None when direction is SHORT"
             )
             raise ValueError(msg)
         if self.direction == Direction.LONG and any(f is not None for f in short_fields):
             msg = (
-                "borrow_rate_pct, locate_status, and margin_held_usd must all be None "
-                "when direction is LONG"
+                "borrow_rate_pct, accrued_borrow_cost_usd, locate_status, and margin_held_usd "
+                "must all be None when direction is LONG"
             )
             raise ValueError(msg)
 
@@ -351,3 +373,28 @@ def position_direction(record: PositionRecord) -> Direction | None:
     ``PositionView`` calls ``position_direction(view.record)``.
     """
     return record.direction
+
+
+def is_open_short_equity(record: PositionRecord) -> bool:
+    """Predicate: is *record* an OPEN SHORT EQUITY position?
+
+    True iff all three clauses hold:
+
+    * ``status == OPEN`` — PENDING and CLOSED positions are out of scope.
+    * ``direction == SHORT`` — LONG and strategy (None) directions are out.
+    * ``isinstance(details, EquityPositionDetails)`` — options and strategy
+      payloads never carry equity borrow.
+
+    This predicate has no kernel- or execution-specific dependency; it's a
+    pure ``PositionRecord`` shape check. It lives here next to
+    :class:`PositionRecord` so any layer (state-persistence, snapshot
+    assembly, breach monitor, borrow-accrual kernel) can reuse it without
+    cross-layer imports. The borrow-accrual kernel
+    (``alphamind.execution.continuous_monitor.borrow_accrual.recompute``)
+    re-exports it for backwards compatibility.
+    """
+    return (
+        record.status == PositionStatus.OPEN
+        and record.direction == Direction.SHORT
+        and isinstance(record.details, EquityPositionDetails)
+    )

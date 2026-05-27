@@ -57,6 +57,7 @@ from alphamind.portfolio_state.records.orders import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
+    LocateStatus,
     PositionRecord,
     PositionStatus,
 )
@@ -228,20 +229,30 @@ def _make_pending_position(
     position_id: str = _POSITION_ID,
     *,
     ticker: str = _TICKER,
+    direction: Direction = Direction.LONG,
 ) -> PositionRecord:
     """Pending position with ``bracket_id=None`` — the wedge skips bracket
-    transitions entirely when the position carries no bracket_id."""
+    transitions entirely when the position carries no bracket_id.
+
+    SHORT positions get the four short-only fields stamped at their PENDING
+    skeleton defaults (zeroed numeric fields, LOCATED locate status).
+    """
+    is_short = direction == Direction.SHORT
     details = EquityPositionDetails(
         ticker=Symbol(ticker),
         share_count=0.0,
         average_cost_basis_per_share=0.0,
+        borrow_rate_pct=0.0 if is_short else None,
+        accrued_borrow_cost_usd=0.0 if is_short else None,
+        locate_status=LocateStatus.LOCATED if is_short else None,
+        margin_held_usd=0.0 if is_short else None,
     )
     return PositionRecord(
         position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.PENDING,
-        direction=Direction.LONG,
+        direction=direction,
         entry_timestamp=None,
         details=details,
         execution_history=(),
@@ -490,6 +501,54 @@ async def test_processed_fill_carries_populated_attribution(
         ):
             assert math.isfinite(value)
         assert attribution.pm_model_version  # non-empty version pinned to the snapshot
+
+
+async def test_short_entry_fill_attribution_carries_150pct_initial_margin(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A SHORT-equity entry fill's Reg T attribution reflects the
+    short-equity 150%-MV initial margin formula: ``regt_marginal_consumption
+    = 1.50 * fill_quantity * fill_price``.
+
+    The wedge snapshots positions pre- and post-fill, calls
+    ``compute_attribution`` (which folds short-equity positions into the
+    150%-MV bucket per
+    ``regt_margin.py::_SHORT_EQUITY_INITIAL_MARGIN_PCT``), and writes the
+    delta into ``regt_marginal_consumption`` (ALP-717)."""
+    from alphamind.execution.write_paths.phase1 import (
+        process_unprocessed_fills,
+    )
+
+    _, factory = db
+    await _seed_minimal_substrate(
+        factory,
+        position=_make_pending_position(direction=Direction.SHORT),
+        order=_make_pending_entry_order(direction=OrderDirection.SELL_TO_OPEN),
+    )
+    await _append_fill(factory, _make_unprocessed_fill(fill_id="fill-short-1"))
+
+    ctx, handle = await _open_handle(factory)
+    summary = await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs({_TICKER: _SPOT}),
+        config=_state_persistence_config(),
+        borrow_cost_resolver=lambda _t: 15.0,
+    )
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.fills_processed == 1
+
+    async with factory() as sess:
+        fill_row = (
+            await sess.execute(select(FillRecordRow).where(FillRecordRow.fill_id == "fill-short-1"))
+        ).scalar_one()
+        assert fill_row.regt_attribution_json is not None
+        attribution = RegTMarginAttribution.model_validate_json(fill_row.regt_attribution_json)
+        # Pre-fill: PENDING SHORT position has share_count=0 → 0 Reg T margin.
+        assert attribution.regt_margin_before == pytest.approx(0.0)
+        # Post-fill: 10 shares short at $150 → 1.50 * 10 * 150 = 2250.
+        assert attribution.regt_margin_after == pytest.approx(1.50 * 10.0 * 150.0)
+        assert attribution.regt_marginal_consumption == pytest.approx(1.50 * 10.0 * 150.0)
 
 
 async def test_quarantined_fill_retains_null_attribution(

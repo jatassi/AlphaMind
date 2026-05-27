@@ -50,7 +50,7 @@ Each pipeline invocation has two phases:
 
 ## 4. Continuous monitor
 
-A first-class system component running persistently during market hours — peer of the OMS, adapter, and guardrail layer. Five responsibilities span both paper and live trading. The process-supervision shape (NSSM service layout, asyncio runtime, log file, configuration surface) lives in the paired runtime doc [continuous-monitor-runtime.md](continuous-monitor-runtime.md); this section covers the per-responsibility behavior.
+A first-class system component running persistently during market hours — peer of the OMS, adapter, and guardrail layer. Each responsibility below spans both paper and live trading. The process-supervision shape (NSSM service layout, asyncio runtime, log file, configuration surface) lives in the paired runtime doc [continuous-monitor-runtime.md](continuous-monitor-runtime.md); this section covers the per-responsibility behavior.
 
 ### 4a. Alpaca fill-stream consumption
 
@@ -98,6 +98,40 @@ Alpaca does not support bracket, OCO, or OTO order classes on options ([broker-a
 **Guardrail P/L monitoring.** Position-level max-loss guardrails on options positions use the same derived pricing — the capital-protection layer catching greek-driven value erosion independently of underlying movement. Under refresh failure, the monitor widens the uncertainty buffer; if breach determination remains ambiguous, it escalates to emergency invocation (4c).
 
 **Strategy positions.** Multi-leg strategies evaluate stops on the underlying and close the entire strategy via market orders. Alpaca's `mleg` does not support contingent submission, so the monitor submits a fresh `mleg` closing order (or per-leg market orders if Alpaca rejects a combined close) when the stop fires.
+
+### 4f. Daily borrow-cost accrual
+
+For OPEN SHORT-equity positions, the monitor advances per-position
+accrued-borrow-cost accumulators once per trading day at the configured
+local time (`borrow_accrual_tick_local_time`, default 16:00 ET). For each
+OPEN SHORT-equity position, the tick reads the live `share_count`,
+resolves the live annualized fee via `build_borrow_cost_resolver`, reads
+the session's closing print from `equity_bars`, computes
+`today_cost_usd = abs(share_count × close_price) × annual_fee_pct / 100 / 252`,
+adds it to the position's `accrued_borrow_cost_usd` accumulator, and emits
+a `BORROW_COST_ACCRUED` activity-log entry. Cover-to-close (Phase 1's
+`_apply_exit_fill`) flushes the accumulator into `realized_pnl_to_date_usd`.
+
+**Trigger.** Once per trading day at the configured local time
+(US/Eastern wall clock). Off-hours and weekends, the timer sleeps to the
+next trading-day's tick. Holidays follow the same market-hours calendar
+the rest of the monitor consumes.
+
+**Failure semantics.** A resolver miss or a missing closing print for any
+ticker mid-tick raises and propagates to the supervisor; NSSM restarts
+the process. The missed tick's accrual stays lost; operators repair the
+data source and the next tick catches up. This is fail-fast by intent —
+silently skipping a tick would underaccrue P/L without a trace.
+
+**Off-tick reads.** The persisted `accrued_borrow_cost_usd` is a discrete
+end-of-day quantity. Mid-session snapshot reads (analyst, strategist, PM)
+see the prior-day-close value; the resolver-driven snapshot projection at
+`risk_guardrails/library_snapshot.py:342-362` covers intraday borrow
+projection independently for guardrail purposes.
+
+See [SHORT-equity write path § Daily accrual tick](short-equity-write-path.md)
+for the per-tick recipe; the persistence and lifecycle attribution side
+lives there.
 
 ### Why first-class?
 

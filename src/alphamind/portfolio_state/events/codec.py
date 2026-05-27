@@ -34,7 +34,7 @@ import json
 import sys
 import types
 from dataclasses import is_dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Any, Union, get_args, get_origin, get_type_hints
@@ -93,7 +93,7 @@ _SENTINEL = object()
 
 
 def _try_encode_leaf(value: Any) -> Any:
-    """Encode JSON-leaf shapes (None / scalars / Decimal / Enum / datetime)."""
+    """Encode JSON-leaf shapes (None / scalars / Decimal / Enum / datetime / date)."""
     if value is None:
         return None
     # bool is a subclass of int; check before int so True/False survive intact.
@@ -105,8 +105,16 @@ def _try_encode_leaf(value: Any) -> Any:
         return str(value)
     if isinstance(value, Enum):
         return value.value
+    return _try_encode_temporal(value)
+
+
+def _try_encode_temporal(value: Any) -> Any:
+    """Encode temporal shapes (datetime / date). datetime first — it is a date subclass."""
+    # datetime check must come before date — datetime is a subclass of date.
     if isinstance(value, datetime):
         return _datetime_to_iso_z(value)
+    if isinstance(value, date):
+        return value.isoformat()
     return _SENTINEL
 
 
@@ -237,8 +245,11 @@ def _decode_concrete(value: Any, target: type) -> Any:
         return None
     if isinstance(target, type) and issubclass(target, Enum):
         return target(value)
+    # datetime check must come before date — datetime is a subclass of date.
     if isinstance(target, type) and issubclass(target, datetime):
         return datetime.fromisoformat(value)
+    if isinstance(target, type) and issubclass(target, date):
+        return date.fromisoformat(value)
     if is_dataclass(target):
         return _decode_dataclass(value, target)
     return value
@@ -251,6 +262,7 @@ _STRING_TYPENAME_DECODERS: dict[str, Any] = {
     "Price": price,
     "Decimal": Decimal,
     "datetime": datetime.fromisoformat,
+    "date": date.fromisoformat,
 }
 
 

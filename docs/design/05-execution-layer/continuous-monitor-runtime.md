@@ -27,7 +27,7 @@ Rotation is daily at midnight; retention is 30 days. The handler is idempotent �
 
 ## Configuration surface
 
-`config/continuous_monitor.yaml` (Class A per the configuration-management taxonomy) is loaded into a frozen Pydantic `ContinuousMonitorConfig` at process start and surfaced on `resolved_config.continuous_monitor`. The six knobs (parent issue ALP-123 § Pre-resolved decision (E)):
+`config/continuous_monitor.yaml` (Class A per the configuration-management taxonomy) is loaded into a frozen Pydantic `ContinuousMonitorConfig` at process start and surfaced on `resolved_config.continuous_monitor`. The current knobs (parent issue ALP-123 § Pre-resolved decision (E)):
 
 - `breach_evaluation_cadence_seconds: 60` — how often the breach loop (story 03b) wakes and walks the active rule set.
 - `greeks_refresh_interval_minutes: 15` — scheduled cadence for the greeks-refresh task (story 03a); move-based triggers operate independently.
@@ -35,6 +35,13 @@ Rotation is daily at midnight; retention is 30 days. The handler is idempotent �
 - `underlying_stream_provider: alpaca-iex` — `Literal` today; story-02b's vendor surface (Alpaca `StockDataStream` against the IEX feed, per decision (B)).
 - `max_reconnect_attempts: 5` — websocket reconnect ceiling per session. Once exhausted, the supervisor's owning task raises and NSSM's restart policy kicks in.
 - `supervisor_shutdown_timeout_seconds: 5` — per-task cancellation budget the asyncio supervisor enforces at shutdown so a task that swallows `CancelledError` doesn't stall the process.
+- `borrow_accrual_tick_local_time: "16:00"` — trading-day local time
+  (HH:MM ET, US/Eastern wall clock) at which the daily borrow-accrual tick
+  ([architecture.md § 4f](architecture.md#4f-daily-borrow-cost-accrual)) fires. Off-hours and
+  weekends the timer sleeps to the next trading-day's tick. A resolver
+  miss or a missing closing print mid-tick raises and propagates to the
+  supervisor; NSSM restarts the process and the missed tick's accrual
+  stays lost — fail-fast by intent.
 
 The emergency-invocation cooldown lives canonically in `config/breach_behavior.yaml` as `emergency_invocation_cooldown_minutes` — it is a property of the emergency-trigger rule itself, peer of `drawdown_velocity` and `multi_rule_breach`. The monitor's story 04b reads it from `BreachBehaviorConfig`, not from `ContinuousMonitorConfig`.
 

@@ -272,6 +272,7 @@ def _make_equity_position_view(
             share_count=share_count,
             average_cost_basis_per_share=market_value_usd / max(share_count, 1),
             borrow_rate_pct=borrow_rate_pct if borrow_rate_pct is not None else 0.5,
+            accrued_borrow_cost_usd=0.0,
             locate_status=locate_status if locate_status is not None else LocateStatus.LOCATED,
             margin_held_usd=margin_held_usd if margin_held_usd is not None else notional_usd * 0.5,
         )

@@ -126,11 +126,11 @@ class TestEnumMembers:
     def test_event_type_is_str_enum(self) -> None:
         assert issubclass(EventType, StrEnum)
 
-    def test_event_type_has_exactly_45_members(self) -> None:
-        # 45 = 44 baseline + 1 (PROFILE_SWITCHED, added by ALP-663 / Wave 1
-        # of the Command Center work — emitted by the control proxy when
-        # an operator switches profiles via /api/control/switch_profile).
-        assert len(EventType) == 45
+    def test_event_type_has_exactly_46_members(self) -> None:
+        # 46 = 44 baseline + 1 (PROFILE_SWITCHED, ALP-663) + 1
+        # (BORROW_COST_ACCRUED, ALP-718, emitted by the continuous monitor's
+        # daily borrow-accrual tick — architecture.md § 4f).
+        assert len(EventType) == 46
 
     def test_event_type_position_lifecycle_members(self) -> None:
         for name in ("POSITION_OPENED", "POSITION_CLOSED", "POSITION_ADDED", "POSITION_REDUCED"):
@@ -209,6 +209,7 @@ class TestEnumMembers:
             "COMMAND_EXECUTOR",
             "BRACKET_MANAGER",
             "MARGIN_MONITOR",
+            "BORROW_ACCRUAL_MONITOR",
             "GUARDRAIL_LAYER",
             "CORPORATE_ACTION_PROCESSOR",
             "CONFIG_RELOAD",
@@ -318,11 +319,11 @@ class TestMappingExhaustiveness:
 class TestAnyDetailTypeAlias:
     """AnyDetailType is exported and covers all detail-payload classes."""
 
-    def test_any_detail_type_has_45_members(self) -> None:
-        # See test_event_type_has_exactly_45_members — PROFILE_SWITCHED
-        # added by ALP-663 in the Command Center work.
+    def test_any_detail_type_has_46_members(self) -> None:
+        # See test_event_type_has_exactly_46_members — BorrowCostAccruedDetail
+        # added by ALP-718 alongside PROFILE_SWITCHED (ALP-663).
         members = get_args(AnyDetailType)
-        assert len(members) == 45
+        assert len(members) == 46
 
     def test_any_detail_type_covers_all_detail_classes(self) -> None:
         members = set(get_args(AnyDetailType))

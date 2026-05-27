@@ -26,6 +26,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
     StrategyLeg,
     StrategyPositionDetails,
+    is_open_short_equity,
     position_direction,
     resolve_ticker,
 )
@@ -409,6 +410,7 @@ _SHORT_EQUITY = EquityPositionDetails(
     share_count=100.0,
     average_cost_basis_per_share=150.0,
     borrow_rate_pct=0.5,
+    accrued_borrow_cost_usd=0.0,
     locate_status=LocateStatus.LOCATED,
     margin_held_usd=5000.0,
 )
@@ -662,6 +664,116 @@ class TestDirectionShortFields:
 
 
 # ---------------------------------------------------------------------------
+# ALP-716: accrued_borrow_cost_usd field + extended validator
+# ---------------------------------------------------------------------------
+
+
+class TestAccruedBorrowCostField:
+    """AC-1: field exists as fourth short-only field between borrow_rate_pct and locate_status."""
+
+    def test_field_defaults_to_none(self) -> None:
+        d = EquityPositionDetails(
+            ticker=Symbol("AAPL"),
+            share_count=100.0,
+            average_cost_basis_per_share=150.0,
+        )
+        assert d.accrued_borrow_cost_usd is None
+
+    def test_field_accepts_float(self) -> None:
+        d = EquityPositionDetails(
+            ticker=Symbol("AAPL"),
+            share_count=100.0,
+            average_cost_basis_per_share=150.0,
+            borrow_rate_pct=2.5,
+            accrued_borrow_cost_usd=42.75,
+            locate_status=LocateStatus.LOCATED,
+            margin_held_usd=5000.0,
+        )
+        assert d.accrued_borrow_cost_usd == 42.75
+
+    def test_field_ordered_between_borrow_rate_and_locate_status(self) -> None:
+        """Field ordering: ticker, share_count, avg_cost, borrow_rate_pct,
+        accrued_borrow_cost_usd, locate_status, margin_held_usd, instrument_type."""
+        import dataclasses
+
+        field_names = [f.name for f in dataclasses.fields(EquityPositionDetails)]
+        borrow_idx = field_names.index("borrow_rate_pct")
+        accrued_idx = field_names.index("accrued_borrow_cost_usd")
+        locate_idx = field_names.index("locate_status")
+        assert borrow_idx < accrued_idx < locate_idx
+
+
+class TestExtendedShortFieldValidator:
+    """AC-2 & AC-3: extended validator covers all four short-only fields."""
+
+    def test_short_with_accrued_none_raises(self) -> None:
+        """AC-2: SHORT with accrued_borrow_cost_usd=None raises ValueError
+        naming all four short-only fields."""
+        partial = EquityPositionDetails(
+            ticker=Symbol("AAPL"),
+            share_count=100.0,
+            average_cost_basis_per_share=150.0,
+            borrow_rate_pct=2.5,
+            accrued_borrow_cost_usd=None,
+            locate_status=LocateStatus.LOCATED,
+            margin_held_usd=5000.0,
+        )
+        with pytest.raises(ValueError) as exc_info:
+            _make_position(direction=Direction.SHORT, details=partial)
+        msg = str(exc_info.value)
+        assert "accrued_borrow_cost_usd" in msg
+
+    def test_short_error_names_all_four_short_only_fields(self) -> None:
+        """AC-2: error message names all four short-only fields."""
+        partial = EquityPositionDetails(
+            ticker=Symbol("AAPL"),
+            share_count=100.0,
+            average_cost_basis_per_share=150.0,
+            borrow_rate_pct=None,
+            accrued_borrow_cost_usd=None,
+            locate_status=None,
+            margin_held_usd=None,
+        )
+        with pytest.raises(ValueError) as exc_info:
+            _make_position(direction=Direction.SHORT, details=partial)
+        msg = str(exc_info.value)
+        assert "borrow_rate_pct" in msg
+        assert "accrued_borrow_cost_usd" in msg
+        assert "locate_status" in msg
+        assert "margin_held_usd" in msg
+
+    def test_long_with_accrued_non_none_raises(self) -> None:
+        """AC-3: LONG with accrued_borrow_cost_usd non-None raises ValueError."""
+        details_with_accrued = EquityPositionDetails(
+            ticker=Symbol("AAPL"),
+            share_count=100.0,
+            average_cost_basis_per_share=150.0,
+            borrow_rate_pct=None,
+            accrued_borrow_cost_usd=0.0,
+            locate_status=None,
+            margin_held_usd=None,
+        )
+        with pytest.raises(ValueError) as exc_info:
+            _make_position(direction=Direction.LONG, details=details_with_accrued)
+        assert "accrued_borrow_cost_usd" in str(exc_info.value)
+
+    def test_short_with_all_four_fields_passes(self) -> None:
+        """SHORT with all four short-only fields set constructs cleanly."""
+        details = EquityPositionDetails(
+            ticker=Symbol("AAPL"),
+            share_count=100.0,
+            average_cost_basis_per_share=150.0,
+            borrow_rate_pct=2.5,
+            accrued_borrow_cost_usd=0.0,
+            locate_status=LocateStatus.LOCATED,
+            margin_held_usd=5000.0,
+        )
+        p = _make_position(direction=Direction.SHORT, details=details)
+        assert isinstance(p.details, EquityPositionDetails)
+        assert p.details.accrued_borrow_cost_usd == 0.0
+
+
+# ---------------------------------------------------------------------------
 # Optional-direction validator tests (ALP-610)
 # ---------------------------------------------------------------------------
 
@@ -865,3 +977,95 @@ class TestResolveTicker:
             strategy_greeks=OptionGreeks(delta=0.0, gamma=0.0, theta=0.0, vega=0.0),
         )
         assert resolve_ticker(details) is None
+
+
+# ---------------------------------------------------------------------------
+# is_open_short_equity() predicate — three-clause truth table (ALP-715 review)
+# ---------------------------------------------------------------------------
+
+
+class TestIsOpenShortEquityPredicate:
+    """Three-clause truth table for ``is_open_short_equity``:
+
+    The predicate is True iff all three clauses hold:
+      (1) ``status == OPEN``
+      (2) ``direction == SHORT``
+      (3) ``isinstance(details, EquityPositionDetails)``
+
+    Each negative test below flips exactly one clause from the
+    canonical-true case and asserts False.
+    """
+
+    def test_open_short_equity_returns_true(self) -> None:
+        """All three clauses true → True."""
+        position = _make_position(
+            status=PositionStatus.OPEN,
+            direction=Direction.SHORT,
+            details=_SHORT_EQUITY,
+        )
+        assert is_open_short_equity(position) is True
+
+    def test_pending_short_equity_returns_false(self) -> None:
+        """Clause (1) false (status PENDING): predicate is False."""
+        position = _make_position(
+            status=PositionStatus.PENDING,
+            direction=Direction.SHORT,
+            details=_SHORT_EQUITY,
+            execution_history=(),  # PENDING requires empty history
+        )
+        assert is_open_short_equity(position) is False
+
+    def test_closed_short_equity_returns_false(self) -> None:
+        """Clause (1) false (status CLOSED): predicate is False."""
+        position = _make_position(
+            status=PositionStatus.CLOSED,
+            direction=Direction.SHORT,
+            details=_SHORT_EQUITY,
+            realized_pnl_to_date_usd=0.0,  # CLOSED requires non-None realized P/L
+        )
+        assert is_open_short_equity(position) is False
+
+    def test_open_long_equity_returns_false(self) -> None:
+        """Clause (2) false (direction LONG): predicate is False."""
+        position = _make_position(
+            status=PositionStatus.OPEN,
+            direction=Direction.LONG,
+            details=_LONG_EQUITY,
+        )
+        assert is_open_short_equity(position) is False
+
+    def test_open_short_options_returns_false(self) -> None:
+        """Clause (3) false (options details, not equity): predicate is False."""
+        position = _make_position(
+            status=PositionStatus.OPEN,
+            direction=Direction.SHORT,
+            details=_OPTIONS_DETAILS,
+        )
+        assert is_open_short_equity(position) is False
+
+    def test_open_strategy_returns_false(self) -> None:
+        """Clauses (2) and (3) false (strategy with None direction, not equity):
+        predicate is False — strategies never carry equity borrow."""
+        leg = _make_strategy_leg()
+        strategy_details = StrategyPositionDetails(
+            strategy_type_label="iron_condor",
+            legs=(leg,),
+            net_premium_usd=-100.0,
+            max_profit_usd=200.0,
+            max_loss_usd=-500.0,
+            breakeven_levels=(195.0, 215.0),
+            strategy_greeks=_GREEKS,
+        )
+        position = _make_position(
+            status=PositionStatus.OPEN,
+            direction=None,
+            details=strategy_details,
+        )
+        assert is_open_short_equity(position) is False
+
+    def test_re_export_from_recompute_module_is_same_function(self) -> None:
+        """Backwards-compat — the borrow-accrual kernel re-exports the
+        canonical predicate from ``portfolio_state.records.positions``."""
+        from alphamind.execution.continuous_monitor.borrow_accrual import recompute
+
+        assert recompute.is_open_short_equity is is_open_short_equity

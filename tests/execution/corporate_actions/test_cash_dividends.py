@@ -227,6 +227,7 @@ def _make_open_position(
             share_count=share_count,
             average_cost_basis_per_share=average_cost_basis_per_share,
             borrow_rate_pct=0.025,
+            accrued_borrow_cost_usd=0.0,
             locate_status=LocateStatus.LOCATED,
             margin_held_usd=share_count * average_cost_basis_per_share * 0.5,
         )
