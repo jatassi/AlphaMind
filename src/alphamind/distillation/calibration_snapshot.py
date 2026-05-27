@@ -30,6 +30,7 @@ from alphamind.distillation.calibration import CALIBRATION_STATE_VALUES, Calibra
 from alphamind.distillation.output import OutputBlock
 
 if TYPE_CHECKING:
+    from alphamind.analysis.qualitative_research.loaders import SentimentInflowMetrics
     from alphamind.distillation.orchestrator import DistillationOutputs
 
 # ---------------------------------------------------------------------------
@@ -202,24 +203,72 @@ def write_calibration_state_snapshot(
     return target_path
 
 
-OPERATOR_SUMMARY_SCHEMA_VERSION: str = "1"
-"""Schema version for the operator-facing data-health summary (ALP-540)."""
+OPERATOR_SUMMARY_SCHEMA_VERSION: str = "2"
+"""Schema version for the operator-facing data-health summary.
+
+Bumped to ``"2"`` for ALP-709 to admit the ``inflow_metrics`` top-level
+key (currently carrying ``sentiment`` inter-baseline news-window
+telemetry; future surfaces — news-price divergence, prediction-market
+inflow — extend the same key). The renderer in ``scripts/verify_debug_e2e.py``
+must bump :data:`_OPERATOR_SNAPSHOT_SCHEMA_VERSION` in lockstep so a V1
+payload at the operator path does not silently render as zeros.
+"""
 
 
-def _operator_summary_payload(outputs: DistillationOutputs, invocation_id: str) -> dict[str, Any]:
+def _inflow_metrics_payload(
+    sentiment_inflow: SentimentInflowMetrics | None,
+) -> dict[str, Any] | None:
+    """Render :class:`SentimentInflowMetrics` as the ``inflow_metrics``
+    JSON value.
+
+    ``None`` collapses to ``None`` (caller omits the key). ``window_start``
+    and ``window_end`` serialize to ISO-8601 ``Z``-suffixed UTC, or JSON
+    ``null`` when the calibrated cohort holds no two-baseline ticker.
+    """
+    if sentiment_inflow is None:
+        return None
+    return {
+        "sentiment": {
+            "window_start": (
+                _format_as_of(sentiment_inflow.window_start)
+                if sentiment_inflow.window_start is not None
+                else None
+            ),
+            "window_end": (
+                _format_as_of(sentiment_inflow.window_end)
+                if sentiment_inflow.window_end is not None
+                else None
+            ),
+            "articles_in_window": sentiment_inflow.articles_in_window,
+            "scored_articles_in_window": sentiment_inflow.scored_articles_in_window,
+            "calibrated_tickers_total": sentiment_inflow.calibrated_tickers_total,
+            "calibrated_tickers_with_populated_secondary": (
+                sentiment_inflow.calibrated_tickers_with_populated_secondary
+            ),
+        }
+    }
+
+
+def _operator_summary_payload(
+    outputs: DistillationOutputs,
+    invocation_id: str,
+    *,
+    sentiment_inflow: SentimentInflowMetrics | None = None,
+) -> dict[str, Any]:
     """Build the operator-facing data-health summary payload.
 
-    Shape (per ALP-540 § Layer 2):
+    Shape (V2 per ALP-709; ALP-540 originated the V1 shape this extends):
 
     .. code-block:: json
 
         {
-          "schema_version": "1",
+          "schema_version": "2",
           "invocation_id": "...",
           "as_of": "...",
           "summary": {"calibrated": N, "accumulating": M, "unavailable": K},
           "unavailable": [{"module": "<block_id>", "reason": "..."}, ...],
-          "accumulating": [{"module": "<block_id>", "reason": "..."}, ...]
+          "accumulating": [{"module": "<block_id>", "reason": "..."}, ...],
+          "inflow_metrics": {"sentiment": {...}}   // ALP-709, optional
         }
 
     The per-block lists are emitted in block-id-sorted order. Both
@@ -227,7 +276,11 @@ def _operator_summary_payload(outputs: DistillationOutputs, invocation_id: str) 
     ``reason`` — the strawman fields ``since`` / ``eta_calibrated_at``
     require historical state the orchestrator doesn't currently track,
     and the reason text already encodes the ``observations < required``
-    delta for accumulating series.
+    delta for accumulating series. The ``inflow_metrics`` key is sibling
+    to ``summary`` (not nested under it) so future inflow surfaces
+    (news-price divergence, prediction-market inflow) extend by adding
+    siblings to ``sentiment``; it is OMITTED entirely when the caller
+    doesn't plumb metrics, and the renderer tolerates absence.
     """
     sorted_blocks = sorted(outputs.all_blocks, key=lambda b: b.block_id)
 
@@ -261,7 +314,7 @@ def _operator_summary_payload(outputs: DistillationOutputs, invocation_id: str) 
         if block.calibration_state is CalibrationState.CALIBRATED
     }
 
-    return {
+    payload: dict[str, Any] = {
         "schema_version": OPERATOR_SUMMARY_SCHEMA_VERSION,
         "invocation_id": invocation_id,
         "as_of": _format_as_of(outputs.as_of),
@@ -273,12 +326,22 @@ def _operator_summary_payload(outputs: DistillationOutputs, invocation_id: str) 
         "unavailable": unavailable,
         "accumulating": accumulating,
     }
+    # ALP-709: ``inflow_metrics`` is a sibling top-level key (not nested
+    # under ``summary``, which is reserved for per-state counts). Omitted
+    # entirely when the caller doesn't plumb metrics so the renderer can
+    # detect "older / no-inflow snapshot" via key absence.
+    inflow_payload = _inflow_metrics_payload(sentiment_inflow)
+    if inflow_payload is not None:
+        payload["inflow_metrics"] = inflow_payload
+    return payload
 
 
 def write_operator_data_health_summary(
     outputs: DistillationOutputs,
     invocation_id: str,
     archive_root: Path,
+    *,
+    sentiment_inflow: SentimentInflowMetrics | None = None,
 ) -> Path:
     """Write the operator-facing data-health summary to the archive root.
 
@@ -297,7 +360,7 @@ def write_operator_data_health_summary(
     - It carries the issue's flat ``summary``/``unavailable``/``accumulating``
       shape, not the internal ``by_audience``/``by_block_kind`` breakdown.
     """
-    payload = _operator_summary_payload(outputs, invocation_id)
+    payload = _operator_summary_payload(outputs, invocation_id, sentiment_inflow=sentiment_inflow)
     target_path = (
         invocation_archive_dir(
             archive_root=archive_root, as_of=outputs.as_of, invocation_id=invocation_id

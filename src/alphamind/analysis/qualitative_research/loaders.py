@@ -430,9 +430,9 @@ def _load_window_sentiment_mean_by_ticker(
     tickers: Sequence[str],
     window_start_str: str,
     window_end_str: str,
-) -> dict[str, float]:
-    """Return ``ticker → mean vendor_sentiment_score`` over the inter-baseline
-    window ``(window_start_str, window_end_str]``.
+) -> dict[str, tuple[float, int]]:
+    """Return ``ticker → (mean vendor_sentiment_score, scored_count)`` over
+    the inter-baseline window ``(window_start_str, window_end_str]``.
 
     Only ``news_article_tickers`` rows carrying a non-NULL
     ``vendor_sentiment_score`` contribute — the same per-article observations
@@ -441,6 +441,11 @@ def _load_window_sentiment_mean_by_ticker(
     "current reading" :func:`load_sentiment_aggregates` percentiles against a
     ticker's own trailing distribution. Tickers with no scored article in the
     window are absent from the mapping.
+
+    The trailing ``scored_count`` rides on the same row so callers that
+    aggregate the scored-article volume don't pay for a second JOIN through
+    ``news_articles`` (ALP-709): summing the second tuple element across all
+    returned rows equals the total scored-article count for the bucket.
 
     Deliberately parallels :func:`_load_article_volume_by_ticker` (same join,
     same half-open lower / inclusive upper window edges) rather than sharing
@@ -465,6 +470,7 @@ def _load_window_sentiment_mean_by_ticker(
         select(
             NewsArticleTickers.ticker,
             func.avg(NewsArticleTickers.vendor_sentiment_score),
+            func.count(),
         )
         .join(NewsArticles, NewsArticleTickers.article_id == NewsArticles.article_id)
         .where(
@@ -475,7 +481,31 @@ def _load_window_sentiment_mean_by_ticker(
         )
         .group_by(NewsArticleTickers.ticker)
     ).all()
-    return {row[0]: float(row[1]) for row in rows if row[1] is not None}
+    return {row[0]: (float(row[1]), int(row[2])) for row in rows if row[1] is not None}
+
+
+def _load_window_sentiment_means_over_buckets(
+    session: Session,
+    window_buckets: dict[tuple[str, str], list[str]],
+) -> dict[str, float]:
+    """Flatten the mean-helper's ``(mean, count)`` tuples to mean-only across
+    every bucket — the projection :func:`load_sentiment_aggregates` needs.
+
+    The mean helper also returns scored-article counts (ALP-709) for the
+    inflow telemetry path; ``load_sentiment_aggregates`` discards them.
+    Extracting this loop keeps the loader's cyclomatic complexity flat.
+    """
+    out: dict[str, float] = {}
+    for (prior_as_of, latest_as_of), bucket_tickers in window_buckets.items():
+        mean_and_count = _load_window_sentiment_mean_by_ticker(
+            session,
+            tickers=bucket_tickers,
+            window_start_str=prior_as_of,
+            window_end_str=latest_as_of,
+        )
+        for ticker, (mean, _count) in mean_and_count.items():
+            out[ticker] = mean
+    return out
 
 
 def _load_recent_sentiment_baselines(
@@ -598,17 +628,12 @@ def load_sentiment_aggregates(
         )
 
     # Reuses window_buckets — one query per distinct (prior, latest) pair,
-    # same as the volume pass above.
-    window_sentiment_mean_by_ticker: dict[str, float] = {}
-    for (prior_as_of, latest_as_of), bucket_tickers in window_buckets.items():
-        window_sentiment_mean_by_ticker.update(
-            _load_window_sentiment_mean_by_ticker(
-                session,
-                tickers=bucket_tickers,
-                window_start_str=prior_as_of,
-                window_end_str=latest_as_of,
-            )
-        )
+    # same as the volume pass above. The mean helper also returns the scored
+    # count per ticker (ALP-709); load_sentiment_aggregates only needs the
+    # mean, so the count rides along unused here.
+    window_sentiment_mean_by_ticker = _load_window_sentiment_means_over_buckets(
+        session, window_buckets
+    )
 
     price_returns = _load_price_returns_by_ticker(
         session,
@@ -694,6 +719,137 @@ def load_sentiment_aggregates(
         )
 
     return tuple(results)
+
+
+# ---------------------------------------------------------------------------
+# Inter-baseline inflow telemetry — ALP-709
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class SentimentInflowMetrics:
+    """Per-invocation telemetry for the inter-baseline sentiment window.
+
+    ``window_start`` / ``window_end`` are the dominant
+    ``(prior_baseline.as_of, latest_baseline.as_of]`` pair across the
+    calibrated cohort. In the Class B steady state every calibrated ticker
+    shares one pair; when refreshes desync the panel the helper reports the
+    bucket carrying the most tickers (tiebreaker: latest ``latest_as_of``)
+    so the renderer always has a single human-readable window. Both fall
+    back to ``None`` when no calibrated ticker has two baselines — the
+    motivating case for which the secondary fields are correctly ``None``.
+
+    ``articles_in_window`` and ``scored_articles_in_window`` are summed
+    across every calibrated bucket — under refresh-desync each calibrated
+    ticker still belongs to exactly one ``(prior, latest)`` bucket, so the
+    sum spans the full calibrated cohort without double-counting.
+
+    ``calibrated_tickers_with_populated_secondary`` mirrors the
+    percentile/magnitude gate in :func:`load_sentiment_aggregates`: a
+    ticker counts iff its window sentiment mean is non-null AND the stored
+    baseline ``stdev`` is positive. ``calibrated_tickers_total`` counts
+    every ticker carrying a ``CALIBRATED`` baseline at ``as_of``, including
+    first-calibration tickers whose single baseline defines no window —
+    those count toward the denominator but never the numerator. The
+    operator's headline metric — "% populated secondary" — is computable
+    as ``populated / total`` and reads as "fraction of calibrated tickers
+    that emitted secondary signal this invocation".
+    """
+
+    window_start: datetime | None
+    window_end: datetime | None
+    articles_in_window: int
+    scored_articles_in_window: int
+    calibrated_tickers_total: int
+    calibrated_tickers_with_populated_secondary: int
+
+
+def compute_sentiment_inflow_metrics(
+    session: Session,
+    *,
+    as_of: datetime,
+    ticker_scope: Sequence[str] | None = None,
+) -> SentimentInflowMetrics:
+    """Compute per-invocation inter-baseline sentiment inflow telemetry.
+
+    Reuses :func:`_load_recent_sentiment_baselines` so the
+    ``(prior, latest)`` pairs the helper reports against match the windows
+    :func:`load_sentiment_aggregates` would compute against. Only the
+    ``CalibrationState.CALIBRATED`` cohort is in scope — non-calibrated
+    baselines never emit secondary fields and would inflate the denominator
+    of the operator's headline metric. Within the calibrated cohort, only
+    tickers with two baselines define an inter-baseline window; first-
+    calibration tickers (single baseline) count toward
+    ``calibrated_tickers_total`` but cannot populate secondary fields this
+    invocation.
+    """
+    as_of_str = _format_iso_utc(as_of)
+    baselines = _load_recent_sentiment_baselines(
+        session, as_of_str=as_of_str, ticker_scope=ticker_scope
+    )
+    calibrated: dict[str, list[DistillationTickerBaseline]] = {
+        ticker: recent
+        for ticker, recent in baselines.items()
+        if CalibrationState(recent[0].calibration_state) is CalibrationState.CALIBRATED
+    }
+
+    # Group tickers by their (prior, latest) inter-baseline pair, mirroring
+    # ``load_sentiment_aggregates``. Tickers with only a single baseline row
+    # carry no window and contribute nothing to the inflow counts.
+    window_buckets: dict[tuple[str, str], list[str]] = {}
+    for ticker, recent in calibrated.items():
+        if len(recent) == 2:
+            window_buckets.setdefault((recent[1].as_of, recent[0].as_of), []).append(ticker)
+
+    articles_in_window = 0
+    scored_articles_in_window = 0
+    populated_secondary = 0
+    for (prior_as_of, latest_as_of), bucket_tickers in window_buckets.items():
+        volume_by_ticker = _load_article_volume_by_ticker(
+            session,
+            tickers=bucket_tickers,
+            window_start_str=prior_as_of,
+            window_end_str=latest_as_of,
+        )
+        articles_in_window += sum(volume_by_ticker.values())
+        # The mean helper now returns (mean, scored_count) per ticker, so
+        # one query yields both the populated-secondary gate and the
+        # bucket's scored-article sum. Retires the separate count query.
+        mean_and_count_by_ticker = _load_window_sentiment_mean_by_ticker(
+            session,
+            tickers=bucket_tickers,
+            window_start_str=prior_as_of,
+            window_end_str=latest_as_of,
+        )
+        scored_articles_in_window += sum(count for _, count in mean_and_count_by_ticker.values())
+        for ticker in bucket_tickers:
+            stdev = float(calibrated[ticker][0].stdev)
+            entry = mean_and_count_by_ticker.get(ticker)
+            if entry is not None and stdev > 0:
+                populated_secondary += 1
+
+    if window_buckets:
+        # Dominant window = the bucket with the most tickers; tiebreaker is
+        # the latest ``latest_as_of`` so a freshly-refreshed bucket beats a
+        # lagging-baseline bucket of equal size.
+        primary_pair = max(
+            window_buckets.items(),
+            key=lambda kv: (len(kv[1]), kv[0][1]),
+        )[0]
+        window_start: datetime | None = _parse_iso_utc(primary_pair[0])
+        window_end: datetime | None = _parse_iso_utc(primary_pair[1])
+    else:
+        window_start = None
+        window_end = None
+
+    return SentimentInflowMetrics(
+        window_start=window_start,
+        window_end=window_end,
+        articles_in_window=articles_in_window,
+        scored_articles_in_window=scored_articles_in_window,
+        calibrated_tickers_total=len(calibrated),
+        calibrated_tickers_with_populated_secondary=populated_secondary,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1102,6 +1258,8 @@ __all__ = [
     "PredictionMarketSnapshot",
     "QualitativeInputs",
     "SentimentAggregate",
+    "SentimentInflowMetrics",
+    "compute_sentiment_inflow_metrics",
     "load_active_thesis_summaries",
     "load_calendar_events_72h",
     "load_prediction_market_snapshot",

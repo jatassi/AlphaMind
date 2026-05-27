@@ -24,6 +24,8 @@ from alphamind.analysis.qualitative_research.loaders import (
     PredictionMarketSnapshot,
     QualitativeInputs,
     SentimentAggregate,
+    SentimentInflowMetrics,
+    compute_sentiment_inflow_metrics,
     load_active_thesis_summaries,
     load_calendar_events_72h,
     load_prediction_market_snapshot,
@@ -2153,3 +2155,303 @@ class TestImmutability:
         result = load_qualitative_inputs(session, as_of=AS_OF)
         with pytest.raises((TypeError, AttributeError, ValidationError)):
             result.theses = ()  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# 9. compute_sentiment_inflow_metrics — ALP-709
+# ---------------------------------------------------------------------------
+
+
+class TestComputeSentimentInflowMetrics:
+    """Per-invocation inter-baseline inflow telemetry — ALP-709.
+
+    The helper surfaces, per operator data-health snapshot, whether
+    universally-null sentiment secondary fields across calibrated baselines
+    reflect a quiet news window (zero inflow) or a structural regression
+    (broken collector, scoring failure). The metric is intentionally
+    always-on; no threshold, no severity bucket.
+    """
+
+    def test_empty_db_returns_zero_metrics(self, session: Session) -> None:
+        """No baselines anywhere → zero-valued metrics, no window."""
+        metrics = compute_sentiment_inflow_metrics(session, as_of=AS_OF)
+        assert metrics == SentimentInflowMetrics(
+            window_start=None,
+            window_end=None,
+            articles_in_window=0,
+            scored_articles_in_window=0,
+            calibrated_tickers_total=0,
+            calibrated_tickers_with_populated_secondary=0,
+        )
+
+    def test_calibrated_ticker_zero_inflow_reports_window_and_zero_counts(
+        self, session: Session
+    ) -> None:
+        """Motivating case: calibrated baselines exist, the inter-baseline
+        window is well-defined, but no article landed inside it.
+
+        The renderer must distinguish this (quiet news window) from a
+        pipeline regression — the metric reports the window edges and zero
+        inflow counts.
+        """
+        prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=prior_iso
+        )
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        # No news_article rows seeded — zero inflow in the window.
+        session.commit()
+
+        metrics = compute_sentiment_inflow_metrics(session, as_of=AS_OF)
+        assert metrics.window_start == AS_OF - timedelta(days=7)
+        assert metrics.window_end == AS_OF
+        assert metrics.articles_in_window == 0
+        assert metrics.scored_articles_in_window == 0
+        assert metrics.calibrated_tickers_total == 1
+        assert metrics.calibrated_tickers_with_populated_secondary == 0
+
+    def test_unscored_articles_in_window_count_articles_but_not_scored(
+        self, session: Session
+    ) -> None:
+        """Articles present but vendor_sentiment_score NULL — the percentile
+        gate stays closed (populated_secondary stays 0) even though raw
+        inflow is non-zero.
+
+        This is the discrimination operator needs: a healthy collector with
+        a broken sentiment-scoring step looks identical to a quiet window
+        until articles_in_window and scored_articles_in_window diverge.
+        """
+        prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        in_window_iso = (AS_OF - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=prior_iso
+        )
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        _add_news_article(
+            session,
+            article_id="nvda-1",
+            ticker="NVDA",
+            published_at=in_window_iso,
+            vendor_sentiment_score=None,
+        )
+        _add_news_article(
+            session,
+            article_id="nvda-2",
+            ticker="NVDA",
+            published_at=in_window_iso,
+            vendor_sentiment_score=None,
+        )
+        session.commit()
+
+        metrics = compute_sentiment_inflow_metrics(session, as_of=AS_OF)
+        assert metrics.articles_in_window == 2
+        assert metrics.scored_articles_in_window == 0
+        assert metrics.calibrated_tickers_total == 1
+        assert metrics.calibrated_tickers_with_populated_secondary == 0
+
+    def test_full_inflow_populates_secondary_for_calibrated_tickers(self, session: Session) -> None:
+        """Calibrated + scored article in window → percentile/magnitude gate
+        opens (stdev>0, window mean computable). populated_secondary == total.
+        """
+        prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        in_window_iso = (AS_OF - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=prior_iso
+        )
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        _add_news_article(
+            session,
+            article_id="nvda-1",
+            ticker="NVDA",
+            published_at=in_window_iso,
+            vendor_sentiment_score=0.7,
+        )
+
+        _add_ticker(session, "JPM", sector="financials")
+        _add_sentiment_baseline(
+            session, "JPM", mean=0.0, stdev=0.2, n_observations=100, as_of_str=prior_iso
+        )
+        _add_sentiment_baseline(
+            session, "JPM", mean=0.0, stdev=0.2, n_observations=100, as_of_str=_ISO
+        )
+        _add_news_article(
+            session,
+            article_id="jpm-1",
+            ticker="JPM",
+            published_at=in_window_iso,
+            vendor_sentiment_score=-0.1,
+        )
+        session.commit()
+
+        metrics = compute_sentiment_inflow_metrics(session, as_of=AS_OF)
+        assert metrics.articles_in_window == 2
+        assert metrics.scored_articles_in_window == 2
+        assert metrics.calibrated_tickers_total == 2
+        assert metrics.calibrated_tickers_with_populated_secondary == 2
+
+    def test_non_calibrated_baselines_excluded_from_totals(self, session: Session) -> None:
+        """ACCUMULATING and UNAVAILABLE baselines don't count toward
+        calibrated_tickers_total. The metric only reports on the cohort that
+        could have populated secondary fields.
+        """
+        prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session,
+            "NVDA",
+            mean=0.0,
+            stdev=0.0,
+            n_observations=5,
+            as_of_str=prior_iso,
+            calibration_state="accumulating",
+        )
+        _add_sentiment_baseline(
+            session,
+            "NVDA",
+            mean=0.0,
+            stdev=0.0,
+            n_observations=5,
+            as_of_str=_ISO,
+            calibration_state="accumulating",
+        )
+        _add_ticker(session, "JPM", sector="financials")
+        _add_sentiment_baseline(
+            session,
+            "JPM",
+            mean=0.0,
+            stdev=0.0,
+            n_observations=0,
+            as_of_str=prior_iso,
+            calibration_state="unavailable",
+        )
+        _add_sentiment_baseline(
+            session,
+            "JPM",
+            mean=0.0,
+            stdev=0.0,
+            n_observations=0,
+            as_of_str=_ISO,
+            calibration_state="unavailable",
+        )
+        session.commit()
+
+        metrics = compute_sentiment_inflow_metrics(session, as_of=AS_OF)
+        assert metrics.calibrated_tickers_total == 0
+        assert metrics.calibrated_tickers_with_populated_secondary == 0
+        # No calibrated cohort → no inter-baseline window.
+        assert metrics.window_start is None
+        assert metrics.window_end is None
+
+    def test_single_baseline_ticker_counts_toward_total_but_not_populated(
+        self, session: Session
+    ) -> None:
+        """First-calibration tickers have a single baseline row, so no
+        inter-baseline window exists for them. They count toward
+        ``calibrated_tickers_total`` (the operator's headline denominator)
+        but can never increment ``calibrated_tickers_with_populated_secondary``
+        — the docstring promises this and the operator's "% populated"
+        reading depends on it.
+        """
+        in_window_iso = (AS_OF - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_ticker(session, "FRESH")
+        # Single calibrated baseline — no prior row.
+        _add_sentiment_baseline(
+            session, "FRESH", mean=0.1, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        # Articles published recently — irrelevant since this ticker has
+        # no window.
+        _add_news_article(
+            session,
+            article_id="fresh-1",
+            ticker="FRESH",
+            published_at=in_window_iso,
+            vendor_sentiment_score=0.5,
+        )
+        session.commit()
+
+        metrics = compute_sentiment_inflow_metrics(session, as_of=AS_OF)
+        assert metrics.calibrated_tickers_total == 1
+        assert metrics.calibrated_tickers_with_populated_secondary == 0
+        assert metrics.window_start is None  # no two-baseline ticker
+        assert metrics.articles_in_window == 0
+
+    def test_divergent_windows_sum_inflow_pick_dominant_bucket(self, session: Session) -> None:
+        """When refresh desync produces two distinct ``(prior, latest)``
+        buckets, the helper sums articles across both buckets and reports
+        the larger bucket's window edges (tiebreaker: latest
+        ``latest_as_of``).
+        """
+        # Two windows: NVDA on window A (prior_a → as_of), JPM + AAPL on
+        # window B (prior_b → as_of). Window B has the larger bucket.
+        prior_a = (AS_OF - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        prior_b = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        article_a = (AS_OF - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        article_b = (AS_OF - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=prior_a
+        )
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        _add_news_article(
+            session,
+            article_id="nvda-a",
+            ticker="NVDA",
+            published_at=article_a,
+            vendor_sentiment_score=0.4,
+        )
+
+        for ticker in ("JPM", "AAPL"):
+            _add_ticker(session, ticker, sector="financials")
+            _add_sentiment_baseline(
+                session, ticker, mean=0.0, stdev=0.2, n_observations=100, as_of_str=prior_b
+            )
+            _add_sentiment_baseline(
+                session, ticker, mean=0.0, stdev=0.2, n_observations=100, as_of_str=_ISO
+            )
+            _add_news_article(
+                session,
+                article_id=f"{ticker.lower()}-b",
+                ticker=ticker,
+                published_at=article_b,
+                vendor_sentiment_score=-0.1,
+            )
+        session.commit()
+
+        metrics = compute_sentiment_inflow_metrics(session, as_of=AS_OF)
+        # 1 NVDA article in window A + 2 JPM/AAPL articles in window B.
+        assert metrics.articles_in_window == 3
+        assert metrics.scored_articles_in_window == 3
+        # Bucket B has 2 tickers vs A's 1 — dominant window is B.
+        assert metrics.window_start == AS_OF - timedelta(days=7)
+        assert metrics.calibrated_tickers_total == 3
+        assert metrics.calibrated_tickers_with_populated_secondary == 3
+
+    def test_ticker_scope_restricts_cohort(self, session: Session) -> None:
+        """``ticker_scope`` filters the calibrated set the same way the
+        loader does — totals reflect only in-scope tickers.
+        """
+        prior_iso = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for ticker in ("NVDA", "JPM"):
+            _add_ticker(session, ticker, sector="tech")
+            _add_sentiment_baseline(
+                session, ticker, mean=0.1, stdev=0.3, n_observations=100, as_of_str=prior_iso
+            )
+            _add_sentiment_baseline(
+                session, ticker, mean=0.1, stdev=0.3, n_observations=100, as_of_str=_ISO
+            )
+        session.commit()
+
+        metrics = compute_sentiment_inflow_metrics(session, as_of=AS_OF, ticker_scope=["NVDA"])
+        assert metrics.calibrated_tickers_total == 1

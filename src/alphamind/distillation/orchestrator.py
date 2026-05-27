@@ -56,6 +56,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.archive_layout import invocation_archive_dir
+from alphamind.analysis.qualitative_research.loaders import (
+    compute_sentiment_inflow_metrics,
+)
 from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation._repository_sql import SqlDistillationRepository
 from alphamind.distillation._severity_cap import cap_blocks_for_calibration
@@ -1363,11 +1366,24 @@ async def run_external_distillation(
     # ``_persist_data_calibration_snapshot`` at invocation start) is the
     # ``{}`` placeholder the operator sees in failed e2e runs — Phase 6
     # overwrites it with the structured per-state summary.
+    #
+    # ALP-709: compute inter-baseline sentiment inflow telemetry against
+    # the same session + ticker_scope the qualitative loader will see
+    # downstream. Phase 1 has already refreshed the sentiment baselines,
+    # so the (prior, latest) windows the helper reports against match the
+    # windows ``load_sentiment_aggregates`` would compute against.
+    sentiment_inflow = await asyncio.to_thread(
+        compute_sentiment_inflow_metrics,
+        session,
+        as_of=as_of,
+        ticker_scope=ticker_scope,
+    )
     await asyncio.to_thread(
         write_operator_data_health_summary,
         outputs,
         invocation_id,
         archive_root,
+        sentiment_inflow=sentiment_inflow,
     )
     logger.info(
         "phase 6 (archive write) complete: dir=%s elapsed=%.3fs",
