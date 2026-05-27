@@ -1729,7 +1729,10 @@ def test_exit_fill_short_cover_to_close_flushes_accrued_borrow_into_pnl() -> Non
     fill = _make_fill_record(fill_quantity=10.0, fill_price=90.0)
     result = _apply_fill_to_position(position, fill, is_buy_side=True, borrow_cost_resolver=None)
     assert result.status == PositionStatus.CLOSED
-    # (entry - exit) * qty * direction_sign(SHORT) - accrued = (100-90)*10*1 - 5 = 95
+    # Phase1 computes: pnl_per_share = exit - entry = 90 - 100 = -10;
+    # direction_sign(SHORT) = -1; realized = (-10) * 10 * (-1) - 5 = 95.
+    # Equivalent intuition: SHORT profits when price falls, so the per-share
+    # gain is +10 (entry - exit); minus the $5 borrow drag yields 95.
     assert result.realized_pnl_to_date_usd == pytest.approx(95.0)
     assert isinstance(result.details, EquityPositionDetails)
     # Lifetime borrow total is preserved post-flush (audit-trail readers
@@ -1752,7 +1755,8 @@ def test_exit_fill_short_cover_to_close_with_zero_accrued_skips_flush() -> None:
     fill = _make_fill_record(fill_quantity=10.0, fill_price=90.0)
     result = _apply_fill_to_position(position, fill, is_buy_side=True, borrow_cost_resolver=None)
     assert result.status == PositionStatus.CLOSED
-    # (100 - 90) * 10 * 1 - 0 = 100
+    # pnl_per_share = exit - entry = 90 - 100 = -10; direction_sign(SHORT) = -1;
+    # realized = (-10) * 10 * (-1) - 0 = 100 (zero accrued falsy → flush skipped).
     assert result.realized_pnl_to_date_usd == pytest.approx(100.0)
     assert isinstance(result.details, EquityPositionDetails)
     assert result.details.accrued_borrow_cost_usd == pytest.approx(0.0)
@@ -1775,7 +1779,9 @@ def test_exit_fill_short_partial_cover_leaves_position_open_no_flush() -> None:
     assert result.status == PositionStatus.OPEN
     assert isinstance(result.details, EquityPositionDetails)
     assert result.details.share_count == pytest.approx(6.0)
-    # SHORT direction sign: (100 - 90) * 4 * 1 = +40. No borrow flush.
+    # pnl_per_share = exit - entry = 90 - 100 = -10; direction_sign(SHORT) = -1;
+    # partial realized = (-10) * 4 * (-1) = +40 (SHORT profits when price falls).
+    # No borrow flush on a partial cover.
     assert result.realized_pnl_to_date_usd == pytest.approx(40.0)
     # Accrued unchanged on partial cover.
     assert result.details.accrued_borrow_cost_usd == pytest.approx(5.0)
