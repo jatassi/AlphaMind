@@ -157,12 +157,16 @@ _VENUE_CONFIG_PATH = _CONFIG_DIR / "venue.yaml"
 _GUARDRAILS_CONFIG_PATH = _CONFIG_DIR / "guardrails.yaml"
 _BREACH_BEHAVIOR_CONFIG_PATH = _CONFIG_DIR / "breach_behavior.yaml"
 _EXECUTION_CONFIG_PATH = _CONFIG_DIR / "execution.yaml"
+
+
 # Same default the scheduler uses (``alphamind.scheduler.__main__``) so the
 # pip-freeze + process-lifetime snapshots land in the canonical archive root.
 # Resolved lazily inside ``_run_daemon`` so tests that ``monkeypatch.setenv``
 # ``HOME`` after import don't get the developer's real home directory.
 def _default_archive_root() -> Path:
     return Path.home() / "AlphaMind" / "archive"
+
+
 _MAIN_CONFIG_PATH = _CONFIG_DIR / "main.yaml"
 
 # ALP-530 — refresh cadence for the shared realized-vol map. The distillation

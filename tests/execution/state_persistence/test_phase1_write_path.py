@@ -1815,7 +1815,7 @@ def test_add_fill_open_short_preserves_borrow_fields() -> None:
 
 def test_add_fill_open_short_preserves_margin_held_usd_entry_snapshot() -> None:
     """ADD on an OPEN SHORT leaves ``margin_held_usd`` unchanged — the field
-    is the Reg T initial margin stamped at entry (``qty × entry_price ×
+    is the Reg T initial margin stamped at entry (``qty * entry_price *
     0.50``), not a live required-margin recomputation.
 
     Per the design doc + ``EquityPositionDetails`` docstring, readers needing

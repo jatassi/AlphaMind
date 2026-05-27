@@ -159,9 +159,9 @@ class EquityPositionDetails:
       Preserved verbatim on ADD fills; updated only by the breach/locate
       monitor when broker indicates recall risk.
     * ``margin_held_usd`` — **entry-stamp Reg T initial margin**, captured at
-      first entry as ``qty × entry_price × 0.50``. NOT updated on ADD fills —
+      first entry as ``qty * entry_price * 0.50``. NOT updated on ADD fills —
       readers needing live required margin should compute
-      ``qty × current_price × 0.50`` from ``share_count`` and the live close.
+      ``qty * current_price * 0.50`` from ``share_count`` and the live close.
       This field is a frozen entry snapshot, useful for audit/attribution; it
       is not the broker's current required margin.
     """
