@@ -362,6 +362,66 @@ class TestDispatchPhase2:
 
         assert captured_dispatch_results == [None]
 
+    async def test_abandoned_entries_emit_command_abandoned_rows(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """ALP-711 — abandoned entries on the log entry trigger one
+        ``COMMAND_ABANDONED`` activity-log row per entry. The orchestrator's
+        PM-submit path uses ``defer_writeback=True`` so the submit_envelope
+        wrapper's in-tool emit is suppressed; dispatch_phase2 takes over and
+        emits the abandoned-command audit trail from the data carried on
+        ``SubmissionLogEntry.abandoned_entries``.
+        """
+        from types import SimpleNamespace
+
+        from alphamind.scheduler import phase2_dispatch as module
+        from alphamind.scheduler.phase2_dispatch import dispatch_phase2
+
+        persist_envelope_mock = AsyncMock(return_value=None)
+        abandoned_calls: list[dict[str, Any]] = []
+
+        async def _capture_abandoned(handle: Any, **kwargs: Any) -> None:
+            abandoned_calls.append(kwargs)
+
+        monkeypatch.setattr(module, "persist_envelope_outcome", persist_envelope_mock)
+        monkeypatch.setattr(module, "persist_command_abandoned", _capture_abandoned)
+
+        envelope = SimpleNamespace(
+            envelope_id="ENV-REC-1",
+            source_provenance="strategist",
+        )
+        submission_results = (
+            _make_submission_result(command_ordinal=0, command_id="cmd-a", status="rejected"),
+        )
+        abandoned_entry = SimpleNamespace(
+            command_id="cmd-a",
+            command_type="OPEN",
+            failure_reason="gateway_submission_failed: timeout",
+            retry_attempt_count=3,
+        )
+        entry = SubmissionLogEntry(
+            envelope=cast(Any, envelope),
+            submission_results=submission_results,
+            abandoned_entries=(abandoned_entry,),
+        )
+
+        await dispatch_phase2(
+            session_factory=async_factory,
+            invocation_id=_INVOCATION_ID,
+            pm_result=_make_pm_result(submission_log=(entry,)),
+            state_persistence_config=_make_state_persistence_config(),
+        )
+
+        assert len(abandoned_calls) == 1
+        call = abandoned_calls[0]
+        assert call["envelope_id"] == "ENV-REC-1"
+        assert call["command_id"] == "cmd-a"
+        assert call["command_type"] == "OPEN"
+        assert call["failure_reason"] == "gateway_submission_failed: timeout"
+        assert call["retry_attempt_count"] == 3
+
     async def test_each_envelope_runs_in_its_own_transaction(
         self,
         async_factory: async_sessionmaker[AsyncSession],

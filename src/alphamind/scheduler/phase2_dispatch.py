@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.commands.submission_log import SubmissionLogEntry
 from alphamind.execution.write_paths.phase2 import (
+    persist_command_abandoned,
     persist_envelope_outcome,
 )
 from alphamind.state.config import StatePersistenceConfig
@@ -103,6 +104,28 @@ async def dispatch_phase2(
                 ),
             )
             await session.commit()
+        # ALP-711 — when broker routing returned ``GatewaySubmissionFailed``
+        # for one or more accepted commands, the wrapper appended an
+        # ``_AbandonedCommandEntry`` per failure onto the log entry. Emit
+        # one ``COMMAND_ABANDONED`` activity-log row per entry on a fresh
+        # session so the audit trail survives the per-envelope rollback the
+        # broker rejection implicitly performs (the rejected command never
+        # wrote orders so there is no rollback artifact, but the
+        # design-doc contract is "abandoned audit lands on a fresh
+        # session" regardless).
+        for abandoned in entry.abandoned_entries:
+            async with session_factory() as session:
+                handle = InvocationHandle(session=session, invocation_id=invocation_id)
+                await persist_command_abandoned(
+                    handle,
+                    envelope_id=str(entry.envelope.envelope_id),
+                    command_id=str(abandoned.command_id),
+                    originating_agent=str(entry.envelope.source_provenance),
+                    command_type=abandoned.command_type,
+                    failure_reason=str(abandoned.failure_reason),
+                    retry_attempt_count=int(abandoned.retry_attempt_count),
+                )
+                await session.commit()
         for result in entry.submission_results:
             if result.status == "accepted":
                 submitted += 1

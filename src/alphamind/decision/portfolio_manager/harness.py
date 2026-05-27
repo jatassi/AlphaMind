@@ -366,6 +366,7 @@ def _build_mcp_wiring(  # noqa: PLR0913 — runner-facing signature mirrors per-
     venue_config: VenueConfig | None = None,
     execution_mode: ExecutionMode | None = None,
     execution_config: ExecutionConfig | None = None,
+    invocation_handle: Any | None = None,
 ) -> tuple[dict[str, Any], list[str], Callable[[], SubmitEnvelopeState]]:
     """Compose the four MCP servers and merge their allowed-tool lists.
 
@@ -387,6 +388,18 @@ def _build_mcp_wiring(  # noqa: PLR0913 — runner-facing signature mirrors per-
     for broker routing to activate; when any is ``None`` (debug-e2e /
     log-only path) the wrapper's gate stays False and synthetic-id
     placeholders persist as before.
+
+    ``invocation_handle`` (also ALP-711) supplies the AsyncSession the
+    broker-routing code uses to resolve CLOSE / ADD / ADJUST / CANCEL
+    per-command context from persisted ``positions`` and ``orders`` rows
+    (see ``submit_envelope.dispatch._dispatcher_context_for``). The
+    handle is built by the PM subprocess worker against its own async
+    engine; the live Alpaca ``TradingClient`` is constructed alongside
+    it on the worker side because both are non-picklable. Step 6's
+    in-tool writeback is suppressed via ``defer_writeback=True`` so the
+    orchestrator's separate ``dispatch_phase2`` stage remains the sole
+    writer of per-envelope persistence — passing a handle here would
+    otherwise produce duplicate writes.
     """
     validation_servers, validation_tools = build_validate_guardrail_mcp_server(
         initial_validation_state
@@ -408,6 +421,8 @@ def _build_mcp_wiring(  # noqa: PLR0913 — runner-facing signature mirrors per-
         library_market=library_market,
         state_persistence_config=state_persistence_config,
         broker_dispatch=broker_dispatch,
+        invocation_handle=invocation_handle,
+        defer_writeback=True,
         **broker_routing_kwargs,
     )
     merged_servers: dict[str, Any] = {
@@ -607,6 +622,7 @@ async def invoke_pm(  # noqa: PLR0913 — public signature is fixed by ALP-329 �
     venue_config: VenueConfig | None = None,
     execution_mode: ExecutionMode | None = None,
     execution_config: ExecutionConfig | None = None,
+    invocation_handle: Any | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "pm",
 ) -> HarnessSuccess:
@@ -698,6 +714,7 @@ async def invoke_pm(  # noqa: PLR0913 — public signature is fixed by ALP-329 �
         venue_config=venue_config,
         execution_mode=execution_mode,
         execution_config=execution_config,
+        invocation_handle=invocation_handle,
     )
     prompt_text = await _load_prompt(agent_config.prompt)
 

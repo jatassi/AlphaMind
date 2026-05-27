@@ -97,9 +97,6 @@ def build_broker_routing_kwargs(
     # Lazy imports — broker_adapter ships an alpaca-py dependency the
     # fixture-only path doesn't load. Mirrors the lazy-import pattern at
     # ``dispatch.py:_route_through_broker``.
-    from alphamind.config.models.main import (
-        ExecutionMode as _ExecutionMode,
-    )
     from alphamind.execution.broker_adapter.client_factory import (
         AlpacaClientFactory,
     )
@@ -108,9 +105,7 @@ def build_broker_routing_kwargs(
     )
     from alphamind.execution.broker_adapter.queries import AccountStateQueries
 
-    mode_literal: ClientFactoryExecutionMode = (
-        "live" if execution_mode is _ExecutionMode.live else "paper"
-    )
+    mode_literal: ClientFactoryExecutionMode = "live" if execution_mode.value == "live" else "paper"
     factory = AlpacaClientFactory(venue_config, mode=mode_literal)
     client = factory.build_trading_client()
     return {
@@ -158,6 +153,7 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
     queries: AccountStateQueries | None = None,
     execution_config: ExecutionConfig | None = None,
     broker_dispatch: BrokerDispatch | None = None,
+    defer_writeback: bool = False,
 ) -> tuple[Mapping[str, McpSdkServerConfig], tuple[str, ...], Callable[[], SubmitEnvelopeState]]:
     """Build a per-invocation SDK MCP server bound to *state*.
 
@@ -208,6 +204,17 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
     :func:`alphamind.execution.oms.broker_dispatch.dispatch_command_to_broker`
     for backwards compatibility with callers that haven't switched to the
     Protocol-based wiring yet.
+
+    ``defer_writeback`` (ALP-711) gates Step 6 (in-tool writeback). When
+    ``False`` (the engine-stub default), an accepted envelope writes
+    through to SQL immediately inside the tool handler — the standalone
+    composition path tests + the continuous monitor rely on this. When
+    ``True``, Step 6 is skipped and the orchestrator's ``dispatch_phase2``
+    becomes the sole writer of the per-envelope outcome. The scheduler
+    orchestrator's PM-submit path passes ``True`` because it threads a
+    handle for broker-routing reads (``_dispatcher_context_for`` needs a
+    session to resolve CLOSE/ADD/ADJUST/CANCEL context from the persisted
+    position / order rows) without authorizing duplicate persistence.
     """
     _ = (library_config, library_market)  # accepted for runner-signature parity
 
@@ -237,6 +244,7 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
             queries=queries,
             execution_config=execution_config,
             broker_dispatch=broker_dispatch,
+            defer_writeback=defer_writeback,
         )
         return response
 
@@ -270,6 +278,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
     queries: AccountStateQueries | None = None,
     execution_config: ExecutionConfig | None = None,
     broker_dispatch: BrokerDispatch | None = None,
+    defer_writeback: bool = False,
 ) -> tuple[dict[str, Any], SubmitEnvelopeState]:
     """Coerce input → run validators → process commands → log + respond.
 
@@ -320,7 +329,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
             state,
             failed_submission_log=(*state.failed_submission_log, failed_entry),
         )
-        if invocation_handle is not None:
+        if invocation_handle is not None and not defer_writeback:
             await _persist_envelope_parse_failure_via_phase2(
                 invocation_handle, failed_entry, state_persistence_config
             )
@@ -344,7 +353,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
     )
     if not layer23.is_valid:
         suggested = layer23.errors[0].message
-        if invocation_handle is not None:
+        if invocation_handle is not None and not defer_writeback:
             await _persist_envelope_rejection_via_phase2(
                 invocation_handle, envelope, layer23.errors, state_persistence_config
             )
@@ -396,12 +405,17 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
                 envelope=envelope,
                 submission_results=submission_results,
                 dispatch_results=dispatch_results,
+                abandoned_entries=abandoned_entries,
             ),
         ),
     )
 
-    # Step 6: SQL writeback (opt-in via invocation_handle).
-    if invocation_handle is not None:
+    # Step 6: SQL writeback (opt-in via invocation_handle; gated off by
+    # ``defer_writeback=True`` for the scheduler orchestrator's PM path,
+    # which threads a handle for broker-routing reads but defers persistence
+    # to the orchestrator's separate ``dispatch_phase2`` stage so the same
+    # envelope is not written twice).
+    if invocation_handle is not None and not defer_writeback:
         await _persist_envelope_outcome_via_phase2(
             invocation_handle,
             envelope,

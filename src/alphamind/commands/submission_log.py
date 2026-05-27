@@ -42,11 +42,19 @@ class SubmissionLogEntry:
     their boundary. ``None`` (the default) signals the legacy / debug-e2e
     log-only path that never routed through a broker — Phase 2 writeback
     falls back to synthetic ``alp-{order_id}`` placeholders in that case.
+
+    ``abandoned_entries`` (also ALP-711) carries per-broker-failure markers
+    the scheduler's ``dispatch_phase2`` uses to emit ``COMMAND_ABANDONED``
+    activity-log rows. Same ``Any`` rationale: the originating dataclass
+    (``_AbandonedCommandEntry``) lives in the decision layer; downstream
+    consumers read ``.command_id`` / ``.command_type`` / ``.failure_reason``
+    / ``.retry_attempt_count`` structurally.
     """
 
     envelope: PMEnvelope
     submission_results: tuple[SubmissionResult, ...]
     dispatch_results: tuple[Any, ...] | None = None
+    abandoned_entries: tuple[Any, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

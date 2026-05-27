@@ -735,7 +735,7 @@ async def invoke_portfolio_manager_in_subprocess(  # noqa: PLR0913 — signature
     triple ``(venue_config, execution_mode, execution_config)`` across the
     subprocess boundary. The live ``TradingClient`` is not picklable, so
     the worker reconstructs it from the triple on its own side via
-    :func:`alphamind.decision.portfolio_manager.harness._build_broker_routing_kwargs`.
+    :func:`alphamind.decision.portfolio_manager.submit_envelope.server.build_broker_routing_kwargs`.
     Production callers (the scheduler orchestrator) pass the triple;
     debug-e2e / non-prod callers leave all three at ``None`` so the
     submit_envelope wrapper's broker-routing gate stays False and the
