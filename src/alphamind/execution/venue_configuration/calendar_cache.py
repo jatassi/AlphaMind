@@ -213,8 +213,20 @@ class TradingCalendarCache:
         # find next business day.
         return self._next_open_after_date(d)
 
-    def _next_session_day_after(self, d: dt.date) -> CalendarDay:
-        """Return the CalendarDay for the first business day strictly after *d*."""
+    def next_session_day_after(self, d: dt.date) -> dt.date:
+        """Return the date of the first regular trading session strictly after *d*.
+
+        Honors Alpaca's holiday + weekend calendar (and early-close days
+        are still sessions — the date returned represents a real session).
+        Public surface for callers that only need the date — e.g. the
+        continuous monitor's borrow-accrual scheduler picks the next
+        trading-day's wall-clock-tick by combining this date with a
+        configured local time.
+        """
+        return self._next_session_day(d).date
+
+    def _next_session_day(self, d: dt.date) -> CalendarDay:
+        """Return the full CalendarDay for the first session strictly after *d*."""
         candidate = d + dt.timedelta(days=1)
         for _ in range(_MAX_SESSION_SEARCH_DAYS):
             self._ensure_date_cached(candidate)
@@ -227,7 +239,7 @@ class TradingCalendarCache:
 
     def _next_open_after_date(self, d: dt.date) -> dt.datetime:
         """Return the open time of the first business day strictly after *d*."""
-        return _as_et(self._next_session_day_after(d).session_open)
+        return _as_et(self._next_session_day(d).session_open)
 
     def next_session_close(self, after: dt.datetime) -> dt.datetime:
         """Return the regular-session close at or after ``after``.
@@ -246,7 +258,7 @@ class TradingCalendarCache:
                 return close_et
 
         # Past today's close or no session today: find next business day.
-        return _as_et(self._next_session_day_after(d).session_close)
+        return _as_et(self._next_session_day(d).session_close)
 
     def business_day_offset(self, start: dt.date, days: int) -> dt.date:
         """Return the date ``days`` business days from ``start``.

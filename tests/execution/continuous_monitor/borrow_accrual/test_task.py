@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 from collections.abc import AsyncIterator
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -693,12 +693,21 @@ class _AlwaysOpenCalendar:
     def is_trading_day(self, day: date) -> bool:
         return True
 
+    def next_session_day_after(self, day: date) -> date:
+        return day + timedelta(days=1)
+
 
 class _WeekdaysOnlyCalendar:
     """Stub :class:`TradingCalendar` that skips Saturday + Sunday."""
 
     def is_trading_day(self, day: date) -> bool:
         return day.weekday() < 5  # Mon=0 .. Fri=4
+
+    def next_session_day_after(self, day: date) -> date:
+        candidate = day + timedelta(days=1)
+        while candidate.weekday() >= 5:
+            candidate += timedelta(days=1)
+        return candidate
 
 
 class TestNextTickUtc:

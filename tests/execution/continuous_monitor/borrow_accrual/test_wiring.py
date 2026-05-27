@@ -99,6 +99,11 @@ class TestRegisterBorrowAccrualTask:
             def is_market_open(self, _ts: datetime) -> bool:
                 return True
 
+            def next_session_day_after(self, day: date) -> date:
+                from datetime import timedelta
+
+                return day + timedelta(days=1)
+
         register_borrow_accrual_task(
             supervisor,
             session_factory=async_factory,
@@ -188,6 +193,11 @@ class TestCalendarAdapter:
                 # Weekdays only.
                 return ts.weekday() < 5
 
+            def next_session_day_after(self, day: date) -> date:
+                from datetime import timedelta
+
+                return day + timedelta(days=1)
+
         adapter = _calendar_adapter(_RecordingCache())
 
         # Tuesday 2026-05-26 should be a trading day per the stub.
@@ -199,3 +209,28 @@ class TestCalendarAdapter:
             # Each probe sat at 12:00 in some timezone with a non-None tz.
             assert ts.tzinfo is not None
             assert ts.hour == 12
+
+    def test_next_session_day_after_delegates_to_cache(self) -> None:
+        """Adapter forwards ``next_session_day_after`` to the cache directly.
+
+        ALP-715 review F7 — the borrow-accrual scheduler no longer runs
+        its own 14-day forward noon-probe; it asks the cache for the next
+        session date, which is holiday-aware (and early-close days remain
+        sessions for purposes of this read).
+        """
+        captured: list[date] = []
+
+        class _RecordingCache:
+            def is_market_open(self, _ts: datetime) -> bool:
+                return True
+
+            def next_session_day_after(self, day: date) -> date:
+                from datetime import timedelta
+
+                captured.append(day)
+                return day + timedelta(days=3)  # arbitrary fixture answer
+
+        adapter = _calendar_adapter(_RecordingCache())
+
+        assert adapter.next_session_day_after(date(2026, 5, 27)) == date(2026, 5, 30)
+        assert captured == [date(2026, 5, 27)]

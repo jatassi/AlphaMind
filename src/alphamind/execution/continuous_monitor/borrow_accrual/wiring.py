@@ -14,7 +14,7 @@ substrate is a small constructor that is independently unit-testable.
 Two protocols the wiring depends on:
 
 * The :class:`alphamind.execution.venue_configuration.calendar_cache.TradingCalendarCache`
-  surface (``is_market_open(ts) -> bool``).
+  surface (``is_market_open(ts)`` + ``next_session_day_after(d)``).
 * :func:`build_borrow_cost_resolver` over a sync ``Session`` (returns
   ``Callable[[str], float | None]``).
 """
@@ -40,9 +40,10 @@ from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
 from alphamind.risk_guardrails.borrow_cost import build_borrow_cost_resolver
 
 _US_EASTERN = ZoneInfo("US/Eastern")
-# 12:00 ET is safely inside any regular market session; the calendar
-# cache's ``is_market_open`` answers "is this a trading day" for a
-# noon-of-day probe (avoids pre-open / after-hours windows).
+# 12:00 ET is safely inside any regular market session; we use it for the
+# ``is_trading_day`` probe via ``is_market_open`` (avoids pre-open / after-hours
+# overhang). ``next_session_day_after`` reads directly off the cache's
+# date-keyed map and needs no time-of-day probe.
 _NOON = time(12, 0)
 
 
@@ -50,12 +51,17 @@ class CalendarCacheProtocol(Protocol):
     """Narrow probe surface this wiring needs from the production cache.
 
     The full :class:`alphamind.execution.venue_configuration.calendar_cache.TradingCalendarCache`
-    carries more behavior; the borrow-accrual scheduler only needs to
-    answer "is the supplied datetime inside a regular session" so a noon-ET
-    probe can answer "is this a trading day".
+    carries more behavior; the borrow-accrual scheduler needs two reads:
+
+    * ``is_market_open(noon_ET)`` — "is this date a trading day?"
+    * ``next_session_day_after(date)`` — first session strictly after the
+      given date, honoring Alpaca's holiday calendar (and early-close days
+      remain sessions for purposes of this read).
     """
 
     def is_market_open(self, ts: datetime) -> bool: ...
+
+    def next_session_day_after(self, day: date) -> date: ...
 
 
 # ---------------------------------------------------------------------------
@@ -125,15 +131,21 @@ def _resolver_factory(
 def _calendar_adapter(calendar_cache: CalendarCacheProtocol) -> TradingCalendar:
     """Adapt ``TradingCalendarCache`` to the narrow ``TradingCalendar`` Protocol.
 
-    The probe uses 12:00 US/Eastern: well inside any regular session and
-    well outside the pre-open / after-hours overhang where
-    ``is_market_open`` could disagree with "is this a trading day".
+    ``is_trading_day`` probes 12:00 US/Eastern via ``is_market_open`` so
+    the answer agrees with the rest of the system's "this date hosts a
+    regular session" semantics. ``next_session_day_after`` reads directly
+    off the cache's holiday-aware calendar — no noon-probe iteration; the
+    cache already returns the date for the first session strictly after
+    the supplied date.
     """
 
     class _Adapter:
         def is_trading_day(self, day: date) -> bool:
             noon_et = datetime.combine(day, _NOON, tzinfo=_US_EASTERN)
             return calendar_cache.is_market_open(noon_et)
+
+        def next_session_day_after(self, day: date) -> date:
+            return calendar_cache.next_session_day_after(day)
 
     return _Adapter()
 

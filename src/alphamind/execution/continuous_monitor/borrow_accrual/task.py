@@ -102,12 +102,17 @@ class TradingCalendar(Protocol):
     """Narrow surface the daily timer needs from the calendar cache.
 
     A *trading day* is a Mon-Fri non-holiday session day. The wiring layer
-    adapts the monitor-wide ``TradingCalendarCache.is_market_open`` predicate
-    into this protocol by closure-binding a representative session-noon
-    datetime per probed date.
+    adapts ``TradingCalendarCache`` directly: ``is_trading_day`` answers
+    "does *day* host a regular session" (early-close days qualify, just
+    like the rest of the system treats them) and ``next_session_day_after``
+    returns the date of the first session strictly after *day*. Both reads
+    consult Alpaca's holiday calendar, so the scheduler does not need its
+    own noon-ET market-hours probe loop.
     """
 
     def is_trading_day(self, day: date) -> bool: ...
+
+    def next_session_day_after(self, day: date) -> date: ...
 
 
 # ---------------------------------------------------------------------------
@@ -411,31 +416,21 @@ def _next_tick_utc(
 ) -> datetime:
     """Return the next-fire wall clock in UTC.
 
-    Computed in US/Eastern: today's ``tick_local_time`` if it is still in
-    the future AND today is a trading day; otherwise the next trading
-    day's ``tick_local_time``. Up to 14 forward iterations cover any
-    realistic weekend + holiday run.
+    Computed in US/Eastern. If today is a trading day and today's
+    ``tick_local_time`` is still in the future → fire today. Otherwise
+    defer to :meth:`TradingCalendar.next_session_day_after` for the next
+    session date. The cache handles weekends, Alpaca holiday entries, and
+    rare multi-day closures uniformly — we do not run our own noon-ET
+    market-hours probe loop here.
     """
     current_et = current.astimezone(_US_EASTERN)
-    candidate_day = current_et.date()
-    candidate_local = datetime.combine(candidate_day, tick_local_time, tzinfo=_US_EASTERN)
-    if candidate_local <= current_et or not calendar.is_trading_day(candidate_day):
-        candidate_day += timedelta(days=1)
-        candidate_local = datetime.combine(candidate_day, tick_local_time, tzinfo=_US_EASTERN)
-
-    # Advance one day at a time until a trading day lands. Bounded loop —
-    # the longest US market holiday gap is ~4 days (e.g., Thanksgiving),
-    # so 14 iterations is comfortably above the worst case.
-    for _ in range(14):
-        if calendar.is_trading_day(candidate_local.date()):
-            return candidate_local.astimezone(UTC)
-        candidate_day += timedelta(days=1)
-        candidate_local = datetime.combine(candidate_day, tick_local_time, tzinfo=_US_EASTERN)
-    msg = (
-        f"borrow-accrual: could not find a trading day within 14 days of "
-        f"{current_et.date().isoformat()}; trading calendar may be broken"
-    )
-    raise RuntimeError(msg)
+    today_et = current_et.date()
+    today_tick = datetime.combine(today_et, tick_local_time, tzinfo=_US_EASTERN)
+    if today_tick > current_et and calendar.is_trading_day(today_et):
+        return today_tick.astimezone(UTC)
+    next_day = calendar.next_session_day_after(today_et)
+    next_tick = datetime.combine(next_day, tick_local_time, tzinfo=_US_EASTERN)
+    return next_tick.astimezone(UTC)
 
 
 __all__ = [
