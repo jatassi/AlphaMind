@@ -20,6 +20,7 @@ from datetime import UTC, date, datetime
 import pytest
 
 from alphamind._kernel.ids import PositionId, ThesisId, make_symbol
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.continuous_monitor.borrow_accrual.recompute import (
     compute_tick,
     today_cost_usd,
@@ -34,14 +35,13 @@ from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
     LocateStatus,
-    OptionsPositionDetails,
     OptionContractType,
     OptionGreeks,
+    OptionsPositionDetails,
     PositionFill,
     PositionRecord,
     PositionStatus,
 )
-from alphamind._kernel.money import money, price, signed_money
 
 _NOW = datetime(2026, 5, 27, 20, 0, tzinfo=UTC)  # 16:00 ET in summer (UTC-4)
 _INV = "inv-20260527T200000Z-deadbeef"
@@ -158,9 +158,7 @@ class TestComputeTickHappyPath:
         assert updated.details.accrued_borrow_cost_usd == pytest.approx(expected)
 
     def test_emits_one_activity_log_entry_with_full_payload(self) -> None:
-        position = _short_equity_position(
-            position_id="pos-1", ticker="ABCD", accrued=5.0
-        )
+        position = _short_equity_position(position_id="pos-1", ticker="ABCD", accrued=5.0)
         result = compute_tick(
             positions=(position,),
             close_prices={make_symbol("ABCD"): 50.0},
@@ -223,9 +221,7 @@ class TestComputeTickFiltering:
         base = _short_equity_position(position_id="pos-1", ticker="ABCD")
         from dataclasses import replace as _replace
 
-        closed = _replace(
-            base, status=PositionStatus.CLOSED, realized_pnl_to_date_usd=-12.34
-        )
+        closed = _replace(base, status=PositionStatus.CLOSED, realized_pnl_to_date_usd=-12.34)
         result = compute_tick(
             positions=(closed,),
             close_prices={},

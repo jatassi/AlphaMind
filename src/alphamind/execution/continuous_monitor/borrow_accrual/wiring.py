@@ -85,9 +85,7 @@ def register_borrow_accrual_task(
     resolver_factory = _resolver_factory(sync_session_factory)
     calendar = _calendar_adapter(calendar_cache)
 
-    async def _coro(
-        monitor_session: MonitorSession, config: ContinuousMonitorConfig
-    ) -> None:
+    async def _coro(monitor_session: MonitorSession, config: ContinuousMonitorConfig) -> None:
         await run_borrow_accrual_loop(
             monitor_session,
             config,

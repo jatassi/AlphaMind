@@ -36,6 +36,7 @@ from typing import Any
 
 import pytest
 from sqlalchemy import event, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import PositionId, make_symbol
@@ -299,9 +300,7 @@ class TestHappyPathTick:
 
         async with async_factory() as sess:
             row = (
-                await sess.execute(
-                    select(PositionRow).where(PositionRow.position_id == "pos-1")
-                )
+                await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
             ).scalar_one()
             record = position_row_to_record(row)
         assert isinstance(record.details, EquityPositionDetails)
@@ -371,9 +370,7 @@ class TestFiltering:
         self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         await _seed_process_lifetime(async_factory)
-        await _seed_position(
-            async_factory, _long_equity_record(position_id="pos-1", ticker="ABCD")
-        )
+        await _seed_position(async_factory, _long_equity_record(position_id="pos-1", ticker="ABCD"))
         # No ohlcv row needed — the LONG position must be skipped.
 
         await run_accrual_tick(
@@ -409,9 +406,7 @@ class TestFiltering:
         async with async_factory() as sess:
             entries = (await sess.execute(select(ActivityLogRow))).scalars().all()
             position_row = (
-                await sess.execute(
-                    select(PositionRow).where(PositionRow.position_id == "pos-1")
-                )
+                await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
             ).scalar_one()
         assert entries == []
         record = position_row_to_record(position_row)
@@ -447,9 +442,7 @@ class TestRollbackOnFailure:
         with pytest.raises(ValueError, match="EFGH"):
             await run_accrual_tick(
                 session_factory=async_factory,
-                borrow_cost_resolver_factory=_stub_resolver_factory(
-                    {"ABCD": 10.0, "EFGH": None}
-                ),
+                borrow_cost_resolver_factory=_stub_resolver_factory({"ABCD": 10.0, "EFGH": None}),
                 process_lifetime_id=_PROCESS_LIFETIME_ID,
                 now=_NOW,
             )
@@ -486,9 +479,7 @@ class TestRollbackOnFailure:
             invocations = (await sess.execute(select(InvocationRow))).scalars().all()
             entries = (await sess.execute(select(ActivityLogRow))).scalars().all()
             position_row = (
-                await sess.execute(
-                    select(PositionRow).where(PositionRow.position_id == "pos-1")
-                )
+                await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
             ).scalar_one()
         assert invocations == []
         assert entries == []
@@ -526,19 +517,18 @@ class TestEmitFailureAtomicity:
         await _seed_ohlcv(async_factory, ticker="ABCD", close=50.0)
         await _seed_ohlcv(async_factory, ticker="EFGH", close=50.0)
 
-        # Monkey-patch ``secrets.token_hex`` inside the recompute module so
-        # both per-position entries mint the same entry_id — the second
+        # Monkey-patch ``secrets.token_hex`` as seen by the recompute module
+        # so both per-position entries mint the same entry_id — the second
         # INSERT collides with the first's primary key.
-        from alphamind.execution.continuous_monitor.borrow_accrual import recompute
+        monkeypatch.setattr(
+            "alphamind.execution.continuous_monitor.borrow_accrual.recompute.secrets.token_hex",
+            lambda _n: "deadbeef",
+        )
 
-        monkeypatch.setattr(recompute.secrets, "token_hex", lambda _n: "deadbeef")
-
-        with pytest.raises(Exception):  # IntegrityError or wrapper  # noqa: BLE001 — broad on purpose; SQLAlchemy wraps it
+        with pytest.raises(IntegrityError):
             await run_accrual_tick(
                 session_factory=async_factory,
-                borrow_cost_resolver_factory=_stub_resolver_factory(
-                    {"ABCD": 10.0, "EFGH": 10.0}
-                ),
+                borrow_cost_resolver_factory=_stub_resolver_factory({"ABCD": 10.0, "EFGH": 10.0}),
                 process_lifetime_id=_PROCESS_LIFETIME_ID,
                 now=_NOW,
             )
@@ -567,7 +557,7 @@ class TestMultiPositionOneTransaction:
             await _seed_ohlcv(async_factory, ticker=ticker, close=50.0)
 
         # Track commits by listening to the engine's commit event.
-        engine = async_factory.kw["bind"]  # type: ignore[attr-defined]
+        engine = async_factory.kw["bind"]
         sync_engine = engine.sync_engine
         commit_count = [0]
 
@@ -605,7 +595,7 @@ class TestMultiPositionOneTransaction:
 class _AlwaysOpenCalendar:
     """Stub :class:`TradingCalendar` that treats every day as a trading day."""
 
-    def is_trading_day(self, day: date) -> bool:  # noqa: ARG002 — Protocol stub
+    def is_trading_day(self, day: date) -> bool:
         return True
 
 

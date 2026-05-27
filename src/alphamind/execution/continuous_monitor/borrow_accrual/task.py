@@ -91,9 +91,10 @@ MarketOpenPredicate = Callable[[datetime], bool]
 class TradingCalendar(Protocol):
     """Narrow surface the daily timer needs from the calendar cache.
 
-    A *trading day* is a Mon–Fri non-holiday session day. The supervisor
-    wires :meth:`alphamind.execution.venue_configuration.calendar_cache.TradingCalendarCache.is_market_open`
-    in by closure-binding a representative session-noon datetime.
+    A *trading day* is a Mon-Fri non-holiday session day. The wiring layer
+    adapts the monitor-wide ``TradingCalendarCache.is_market_open`` predicate
+    into this protocol by closure-binding a representative session-noon
+    datetime per probed date.
     """
 
     def is_trading_day(self, day: date) -> bool: ...
@@ -296,9 +297,7 @@ async def _read_latest_closes(
     return {make_symbol(str(ticker)): float(close) for ticker, close in rows}
 
 
-async def _persist_updated_position(
-    session: AsyncSession, updated: PositionRecord
-) -> None:
+async def _persist_updated_position(session: AsyncSession, updated: PositionRecord) -> None:
     """UPDATE one position row via the codec round-trip.
 
     Mirrors ``SqlGreeksWriter._load_row`` shape — fetch the row by id,
@@ -392,14 +391,10 @@ def _next_tick_utc(
     """
     current_et = current.astimezone(_US_EASTERN)
     candidate_day = current_et.date()
-    candidate_local = datetime.combine(
-        candidate_day, tick_local_time, tzinfo=_US_EASTERN
-    )
+    candidate_local = datetime.combine(candidate_day, tick_local_time, tzinfo=_US_EASTERN)
     if candidate_local <= current_et or not calendar.is_trading_day(candidate_day):
         candidate_day += timedelta(days=1)
-        candidate_local = datetime.combine(
-            candidate_day, tick_local_time, tzinfo=_US_EASTERN
-        )
+        candidate_local = datetime.combine(candidate_day, tick_local_time, tzinfo=_US_EASTERN)
 
     # Advance one day at a time until a trading day lands. Bounded loop —
     # the longest US market holiday gap is ~4 days (e.g., Thanksgiving),
@@ -408,9 +403,7 @@ def _next_tick_utc(
         if calendar.is_trading_day(candidate_local.date()):
             return candidate_local.astimezone(UTC)
         candidate_day += timedelta(days=1)
-        candidate_local = datetime.combine(
-            candidate_day, tick_local_time, tzinfo=_US_EASTERN
-        )
+        candidate_local = datetime.combine(candidate_day, tick_local_time, tzinfo=_US_EASTERN)
     msg = (
         f"borrow-accrual: could not find a trading day within 14 days of "
         f"{current_et.date().isoformat()}; trading calendar may be broken"

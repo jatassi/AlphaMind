@@ -93,9 +93,7 @@ class TestRegisterBorrowAccrualTask:
         async_factory: async_sessionmaker[AsyncSession],
         sync_factory: sessionmaker[Session],
     ) -> None:
-        supervisor = MonitorSupervisor(
-            session=_monitor_session(), config=_monitor_config()
-        )
+        supervisor = MonitorSupervisor(session=_monitor_session(), config=_monitor_config())
 
         class _StubCalendar:
             def is_market_open(self, _ts: datetime) -> bool:

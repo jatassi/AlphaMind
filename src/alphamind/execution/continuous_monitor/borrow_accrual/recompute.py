@@ -62,9 +62,7 @@ _TRADING_DAYS_PER_YEAR = 252
 _US_EASTERN = ZoneInfo("US/Eastern")
 
 
-def today_cost_usd(
-    *, share_count: float, close_price: float, annual_fee_pct: float
-) -> float:
+def today_cost_usd(*, share_count: float, close_price: float, annual_fee_pct: float) -> float:
     """Per-position one-day USD accrual.
 
     ``abs(share_count * close_price) * annual_fee_pct / 100 / 252``.
@@ -155,9 +153,7 @@ def compute_tick(
         )
         prior_accrued = details.accrued_borrow_cost_usd or 0.0
         new_accrued = prior_accrued + today
-        new_details = dataclasses.replace(
-            details, accrued_borrow_cost_usd=new_accrued
-        )
+        new_details = dataclasses.replace(details, accrued_borrow_cost_usd=new_accrued)
         new_record = dataclasses.replace(position, details=new_details)
         updated_positions.append(new_record)
 
