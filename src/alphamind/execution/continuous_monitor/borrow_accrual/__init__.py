@@ -22,7 +22,10 @@ from alphamind.execution.continuous_monitor.borrow_accrual.recompute import (
     today_cost_usd,
 )
 from alphamind.execution.continuous_monitor.borrow_accrual.task import (
+    BorrowCostResolverFactory,
+    TradingCalendar,
     run_accrual_tick,
+    run_borrow_accrual_loop,
 )
 from alphamind.execution.continuous_monitor.borrow_accrual.wiring import (
     register_borrow_accrual_task,
@@ -30,8 +33,11 @@ from alphamind.execution.continuous_monitor.borrow_accrual.wiring import (
 
 __all__ = [
     "AccrualTickResult",
+    "BorrowCostResolverFactory",
+    "TradingCalendar",
     "compute_tick",
     "register_borrow_accrual_task",
     "run_accrual_tick",
+    "run_borrow_accrual_loop",
     "today_cost_usd",
 ]
