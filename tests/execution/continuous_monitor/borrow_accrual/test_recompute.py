@@ -149,7 +149,7 @@ class TestComputeTickHappyPath:
         entry = result.activity_log_entries[0]
         assert entry.event_type == EventType.BORROW_COST_ACCRUED
         assert entry.event_group == EventGroup.CASH_AND_MARGIN
-        assert entry.source == EventSource.MARGIN_MONITOR
+        assert entry.source == EventSource.BORROW_ACCRUAL_MONITOR
         assert entry.invocation_id == _INV
         assert entry.position_id == "pos-1"
         assert isinstance(entry.detail, BorrowCostAccruedDetail)

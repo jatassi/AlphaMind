@@ -210,8 +210,11 @@ def _build_activity_log_entry(
     *Off-tick reads* note: the persisted accrual is a discrete EOD
     quantity keyed off the trading day).
 
-    Source is :attr:`EventSource.MARGIN_MONITOR` — the continuous monitor
-    owns the cash + margin event group's between-invocation emissions.
+    Source is :attr:`EventSource.BORROW_ACCRUAL_MONITOR` — the continuous
+    monitor's dedicated borrow-accrual sub-task. Using a dedicated source
+    keeps the strategist's source-classification logic from conflating
+    daily borrow accrual with margin-call signals
+    (``EventSource.MARGIN_MONITOR``).
     """
     suffix = secrets.token_hex(4)
     entry_id = f"mon-bra-{now.strftime('%Y%m%dT%H%M%S%fZ')}-{suffix}"
@@ -224,7 +227,7 @@ def _build_activity_log_entry(
         position_id=position.position_id,
         order_id=None,
         thesis_id=position.thesis_id,
-        source=EventSource.MARGIN_MONITOR,
+        source=EventSource.BORROW_ACCRUAL_MONITOR,
         detail=BorrowCostAccruedDetail(
             accrued_amount_usd=money(today_cost),
             cumulative_accrued_usd=money(cumulative),

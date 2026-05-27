@@ -209,6 +209,7 @@ class TestEnumMembers:
             "COMMAND_EXECUTOR",
             "BRACKET_MANAGER",
             "MARGIN_MONITOR",
+            "BORROW_ACCRUAL_MONITOR",
             "GUARDRAIL_LAYER",
             "CORPORATE_ACTION_PROCESSOR",
             "CONFIG_RELOAD",
