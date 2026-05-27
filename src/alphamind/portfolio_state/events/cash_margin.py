@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 from alphamind._kernel.money import Money, Price
 from alphamind.portfolio_state.events.types import (
@@ -83,6 +84,28 @@ class MarginLiquidationDetail:
     loss_usd: Money
 
 
+@dataclass(frozen=True, slots=True)
+class BorrowCostAccruedDetail:
+    """Detail payload for BORROW_COST_ACCRUED events.
+
+    Emitted once per OPEN SHORT-equity position per daily accrual tick by the
+    continuous monitor's borrow-accrual task. ``accrued_amount_usd`` is the
+    increment applied this tick; ``cumulative_accrued_usd`` is the running
+    total after this tick (mirrors the position's post-tick
+    ``accrued_borrow_cost_usd``). ``annual_fee_pct_used`` is the live resolver
+    rate the tick consumed (e.g., ``15.0`` for 15%/yr).
+    ``notional_usd_used`` is the live notional the accrual was computed
+    against (``abs(share_count × close_price)``). ``accrual_date`` is the
+    trading day the tick covers.
+    """
+
+    accrued_amount_usd: Money
+    cumulative_accrued_usd: Money
+    annual_fee_pct_used: float
+    notional_usd_used: Money
+    accrual_date: date
+
+
 _REGISTRY: list[tuple[EventType, type, EventGroup]] = [
     (EventType.CASH_DEBITED, CashDebitedDetail, EventGroup.CASH_AND_MARGIN),
     (EventType.CASH_CREDITED, CashCreditedDetail, EventGroup.CASH_AND_MARGIN),
@@ -99,10 +122,16 @@ _REGISTRY: list[tuple[EventType, type, EventGroup]] = [
         MarginLiquidationDetail,
         EventGroup.CASH_AND_MARGIN,
     ),
+    (
+        EventType.BORROW_COST_ACCRUED,
+        BorrowCostAccruedDetail,
+        EventGroup.CASH_AND_MARGIN,
+    ),
 ]
 
 
 __all__ = [
+    "BorrowCostAccruedDetail",
     "CapitalReleasedDetail",
     "CapitalReservedDetail",
     "CashCreditedDetail",
