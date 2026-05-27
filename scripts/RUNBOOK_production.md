@@ -244,9 +244,18 @@ set -a && source <(tr -d '\r' < .env) && set +a && \
         --reason "first-run bootstrap"
 ```
 
-Expected: one full invocation (~3–10 min wall-clock, longer than steady-state
-because the prompt cache is cold) followed by the process exiting 0. Both
-singletons committed to the DB. Confirm:
+Expected: one full invocation followed by the process exiting 0. Both
+singletons committed to the DB. Wall-clock is **~25–35 min** on a
+cold-cache cold-start — every SDK call pays first-fill `cache_write` cost
+(no warm prompt cache), the deterministic distillation step takes ~3–5 min
+against the full prod data layer, and at least one of the Sonnet phases
+(`adaptive` is the usual culprit) typically dominates at ~6–8 min. This
+is meaningfully slower than the steady-state ~60–180 s scheduled
+invocations document in § 4; budget accordingly and don't restart the
+process if it looks "stuck" inside that window — run the e2e progress
+monitor (`scripts/RUNBOOK_end_to_end_verification.md` § Monitoring
+progress mid-run) against the invocation's archive to see live phase
+transitions. Confirm:
 
 ```bash
 uv run python -c "

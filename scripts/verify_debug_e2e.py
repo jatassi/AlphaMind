@@ -562,7 +562,20 @@ def check_synthetic_portfolio_visibility(
     *,
     expected: PortfolioExpectations = SYNTHETIC_EXPECTATIONS,
 ) -> CheckResult:
-    """Assert the seeded debug DB carries the expected fixture shape."""
+    """Assert the seeded debug DB carries the expected fixture shape.
+
+    Counts only positions whose ``entry_timestamp`` is non-null (and theses
+    linked to such positions). The seeder writes ``entry_timestamp`` at seed
+    time on every fixture row, so seeded rows always match; PM-dispatched
+    OPEN commands write PENDING position skeletons with ``entry_timestamp
+    IS NULL`` (Phase 1 sets it on fill) and the log-only broker in debug-e2e
+    mode never produces a fill, so those skeletons would otherwise inflate
+    the count and falsely fail the check whenever the analyst proposes a
+    new trade. ``cash_ledger.current_cash_usd`` is left as a strict-equality
+    compare: PM dispatch moves capital to ``reserved_capital_usd``, not out
+    of ``current_cash_usd``, so the seeded value remains exact until a
+    real fill lands.
+    """
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
     missing_tables = [t for t in ("positions", "theses", "cash_ledger") if t not in existing_tables]
@@ -574,8 +587,16 @@ def check_synthetic_portfolio_visibility(
         )
 
     with engine.connect() as conn:
-        positions_count = conn.execute(text("SELECT COUNT(*) FROM positions")).scalar_one()
-        theses_count = conn.execute(text("SELECT COUNT(*) FROM theses")).scalar_one()
+        positions_count = conn.execute(
+            text("SELECT COUNT(*) FROM positions WHERE entry_timestamp IS NOT NULL")
+        ).scalar_one()
+        theses_count = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM theses t "
+                "JOIN positions p ON t.position_id = p.position_id "
+                "WHERE p.entry_timestamp IS NOT NULL"
+            )
+        ).scalar_one()
         cash_rows = conn.execute(text("SELECT current_cash_usd FROM cash_ledger")).all()
 
     if positions_count != expected.positions:

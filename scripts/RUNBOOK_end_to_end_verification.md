@@ -219,7 +219,13 @@ What to watch for in the archive after a green run:
   log-only broker; expect `agent_response.tool_calls` reflecting the
   OPEN command pipeline.
 - **`synthetic_portfolio` check** — reports
-  `positions=0, theses=0, cash_ledger.current_cash_usd=100000.0`.
+  `positions=0, theses=0, cash_ledger.current_cash_usd=100000.0`. The
+  positions / theses counts filter on `entry_timestamp IS NOT NULL` so
+  PENDING skeletons written by PM dispatches (which the log-only broker
+  never fills) are excluded — only the seeded fixture's rows count
+  toward the assertion. `current_cash_usd` stays exact because PM
+  dispatch reserves capital under `reserved_capital_usd`, not out of
+  `current_cash_usd`.
 
 Cost expectation is unchanged: same 9 SDK calls (3 domain researchers +
 qualitative + adaptive + synthesizer + analyst + strategist + PM)
@@ -433,11 +439,15 @@ What to watch for as events arrive:
   the SDK call returned an empty stream without raising. The harness
   records `success: false` in `analysis/<agent>/metadata.json`; the
   pipeline typically aborts shortly after on a downstream consumer.
-- **Long silence between events** — distillation is ~3–4 min (no SDK
+- **Long silence between events** — distillation is ~3–5 min (no SDK
   events, only `phase_start`/`phase_done`); each Sonnet researcher is
-  ~5–6 min; the strategist scenario is the typical long pole at decision
-  time. Silence beyond ~10 min during an active phase usually means the
-  SDK call has stalled — check the verify wrapper's captured stderr
+  ~5–6 min; `adaptive` is the most variable Sonnet phase and can stretch
+  to ~8 min on cold-cache runs. In default-fixture mode the strategist
+  is the typical long pole at decision time; under `--fresh-start` the
+  strategist degenerates to a ~30–60 s no-op (empty theses) and `adaptive`
+  becomes the dominant phase. Silence beyond ~10 min during an active
+  phase usually means the SDK call has stalled — check the verify
+  wrapper's captured stderr
   for `TimeoutFailure` from `_harness_core.invoke_sdk`.
 
 Three things worth doing this way rather than the more obvious `tail -F`:
@@ -559,9 +569,25 @@ Roughly 10–15% of the nominal weekly Sonnet cap and a smaller slice of
 the Opus cap per `docs/design/cost-and-rate-limit-modeling.md`. Don't
 re-run gratuitously.
 
-Wall-clock: ~5–15 minutes end-to-end; the strategist scenario is the
-typical long pole. See the archive's `progress.jsonl` for per-phase
-timings.
+Wall-clock varies sharply with cache state and seeded portfolio shape:
+
+- **Default fixture (`SYNTHETIC_PORTFOLIO`), cache-warm:** ~5–15 min
+  end-to-end. The strategist scenario (8 theses to assess) is the
+  typical long pole.
+- **`--fresh-start` (`FRESH_START_PORTFOLIO`), cache-cold:** ~25–35 min
+  end-to-end. The strategist degenerates to a ~30–60 s no-op (empty
+  theses), so it is no longer the long pole — `adaptive` and the three
+  domain researchers dominate, and the first-fill `cache_write_tokens`
+  on every SDK call adds several minutes of latency that the warm-cache
+  numbers above don't include. A recent ALP-618 run measured 29m 11s
+  total: distillation 4m 56s; parallel researchers 5–6.5 min (tech_semis
+  6m 28s the longest, paired with `qualitative` 5m 38s); `adaptive` 7m
+  58s; `synthesizer` 3m 10s; analyst/strategist parallel TaskGroup
+  3m 27s (analyst dominates; strategist 37 s); pm 2m 57s; phase2 29 ms.
+
+See the archive's `progress.jsonl` for per-phase timings on a specific
+invocation; budget your iteration cadence against the higher end of
+whichever bucket applies.
 
 ## Resuming a failed run
 
