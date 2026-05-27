@@ -99,6 +99,50 @@ gh pr checks <PR> --watch
 
 On a failed run, fetch logs via `gh run view <RUN_ID> --log-failed --job <JOB_ID>` (the failed-job ID is printed by `gh run watch`). `--log-failed` filters to just the failing job's output so you don't have to scroll through gigabytes of passing-test noise.
 
+### GitHub CI usage-limit fallback
+
+GitHub disables Actions runs when the account's billing fails or the spending limit is hit. When this happens, **every job in the run reports `conclusion: failure` with an empty `steps: []` array** (the jobs never actually started, so no steps exist), and `gh run view <RUN_ID>` prints the literal sentinel string:
+
+```
+The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings
+```
+
+Example: https://github.com/jatassi/AlphaMind/actions/runs/26486954374 — all three jobs (`bun lint + format-check + typecheck + test (frontend)`, `ruff + mypy + import-linter`, `pytest (windows)`) failed with empty step arrays and the sentinel above.
+
+To detect this programmatically before falling back:
+
+```bash
+gh run view <RUN_ID> 2>&1 | grep -q "The job was not started because recent account payments have failed or your spending limit needs to be increased" \
+  && echo "USAGE LIMIT — fall back to local CI" \
+  || echo "Real CI failure — debug normally"
+```
+
+If — and only if — the sentinel is present, GitHub CI is unavailable as the gate. Run the full CI chain locally, mirroring every step in `.github/workflows/ci.yml`:
+
+```bash
+# Python lint job (Linux in CI) — every step from the `lint` job
+uv sync
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
+uv run lint-imports
+
+# Python test job (Windows in CI) — single-threaded locally
+uv run pytest                 # NO -n auto — CI runs `-n auto`; local must NOT (run single-threaded)
+
+# Frontend job — ONLY required if the PR's diff touches src/alphamind/command_center/frontend/**
+#                (the `frontend` CI job has a path filter and skips on Python-only PRs).
+cd src/alphamind/command_center/frontend
+bun install --frozen-lockfile
+bun run lint                  # ESLint
+bun run format:check          # Prettier
+bun run typecheck             # tsc -b --noEmit
+bun run test                  # Vitest run mode
+cd -
+```
+
+Iterate until every step is green locally. Once everything passes, bypass GitHub CI and merge the PR (e.g., `gh pr merge --squash --admin <PR>`). This fallback applies **only** when the sentinel above is present — for any other CI failure (real test failure, infra flake, runner timeout, etc.), fix the underlying issue and let CI re-run as normal.
+
 ## Spawning Subagents
 
 - For mechanical changes, use Sonnet
