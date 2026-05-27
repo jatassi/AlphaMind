@@ -100,9 +100,11 @@ __all__ = [
 # investigation. ALP-650 then moved every LLM harness onto subprocess
 # isolation — each SDK call now runs in a fresh
 # ``python -m alphamind.analysis._sdk_subprocess_worker``, so the
-# in-process state degradation that motivated cap=1 cannot recur (no
-# worker makes more than one SDK call). Restoring 4 unblocks the
-# analysis-layer fan-out the runbook documents.
+# in-process state degradation that motivated cap=1 cannot recur:
+# corrective-retry harnesses may call ``invoke_sdk`` twice within one
+# worker, but those calls are strictly sequential, and no worker
+# overlaps SDK calls with itself. Restoring 4 unblocks the analysis-
+# layer fan-out the runbook documents.
 _MAX_CONCURRENT_SDK_CALLS = 4
 _sdk_call_semaphore: asyncio.Semaphore | None = None
 

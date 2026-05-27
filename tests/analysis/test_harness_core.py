@@ -1231,7 +1231,17 @@ async def test_sdk_call_semaphore_admits_analysis_layer_fanout(
     holders = [asyncio.create_task(semaphore.acquire()) for _ in range(4)]
     try:
         await asyncio.wait_for(asyncio.gather(*holders), timeout=1.0)
+        # All four permits are now held; the semaphore's internal counter
+        # should be exactly zero. Catches a future change that loosens the
+        # cap past the analysis fan-out's actual width (e.g. cap=5+ would
+        # still pass the wait_for check but the counter would be >0).
+        assert semaphore._value == 0
     finally:
+        # Cleanup contract: every acquired permit must be released exactly
+        # once, and every still-pending task must be cancelled. wait_for's
+        # timeout path leaves some tasks done-with-permit and some still
+        # pending — the per-task probe distinguishes them. Short-circuit
+        # AND skips ``.exception()`` on cancelled tasks (which would raise).
         for task in holders:
             if task.done() and not task.cancelled() and task.exception() is None:
                 semaphore.release()

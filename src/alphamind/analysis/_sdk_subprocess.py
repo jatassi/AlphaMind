@@ -236,7 +236,9 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
     """Spawn the worker subprocess under the parent's SDK-call semaphore.
 
     The semaphore is acquired before spawning ``claude.exe`` and released
-    after the subprocess exits. The cap is sized for the widest
+    after the subprocess exits. An upper cap exists so a parallel pipeline
+    cannot spawn more ``claude.exe`` instances than the OAuth admit-rate
+    and local CPU/memory can sustain. The cap is sized for the widest
     single-phase fan-out (analysis-layer: 3 sectors + qualitative = 4);
     see ``_harness_core._MAX_CONCURRENT_SDK_CALLS`` for the rationale and
     the ALP-702 history.
