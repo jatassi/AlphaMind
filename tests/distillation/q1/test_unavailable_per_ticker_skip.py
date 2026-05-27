@@ -15,6 +15,7 @@ half of the q1 stack (no SQLAlchemy, no Session).
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 
 from alphamind.distillation._calibration_core import CalibrationState
 from alphamind.distillation._repository import (
@@ -23,11 +24,17 @@ from alphamind.distillation._repository import (
     SectorClassificationRow,
     TickerBaselineRow,
 )
+from alphamind.distillation.output import OutputAudience
 from alphamind.distillation.q1._loaders import GapFillHistoryEntry
 from alphamind.distillation.q1.assemble import (
+    BLOCK_ID_PRICE_MOVE_ANOMALY,
+    _build_anomaly_block,
     _compute_gap_per_ticker,
     _compute_technicals_per_ticker,
     _compute_trend_state_per_ticker,
+    _new_accumulator,
+    _record_price_move_anomaly,
+    _record_volume_anomaly,
     _trend_state_payload_for_ticker,
 )
 
@@ -301,3 +308,178 @@ def test_gap_trend_state_technicals_all_skip_unavailable_ticker() -> None:
         )
         assert "APA" in payload, f"{name} per_ticker missing calibrated APA"
         assert "COP" in payload, f"{name} per_ticker missing calibrated COP"
+
+
+# ---------------------------------------------------------------------------
+# (d) price_move_anomaly + volume_anomaly: per-ticker suppress under UNAVAILABLE
+# ---------------------------------------------------------------------------
+#
+# ALP-704: the q1.price_move_anomaly / q1.volume_anomaly emission paths
+# previously fired a sector-level flag even when the underlying ticker's
+# baseline was ``unavailable``. ``AnomalyFlag.name`` is the rollup-block
+# constant ("price_move_anomaly" / "volume_anomaly") — no ticker bake-in —
+# so the rendered flag landed downstream with no attribution. The fix
+# mirrors the existing ALP-630 per-ticker skip pattern in
+# :func:`_compute_technicals_per_ticker` /
+# :func:`_trend_state_payload_for_ticker`.
+
+
+def _bars_with_terminal_anomaly(ticker: str, *, base_price: float = 100.0) -> list[DailyBarRow]:
+    """``_build_bars`` plus a +5.0 close jump on the terminal bar.
+
+    The base series gives ATR ≈ 2.0 (±1.0 high-low band, see ``_build_bars``);
+    the terminal jump shoves ``|price_move| / atr`` well above the 1.5 ATR
+    multiple threshold the tests pass, so the producer fires under any
+    non-suppressed code path.
+    """
+    bars = _build_bars(ticker, base_price=base_price)
+    final = bars[-1]
+    spiked_close = float(final.adj_close) + 5.0
+    bars[-1] = DailyBarRow(
+        ticker=final.ticker,
+        period_start=final.period_start,
+        adj_open=final.adj_open,
+        adj_high=max(float(final.adj_high), spiked_close),
+        adj_low=final.adj_low,
+        adj_close=spiked_close,
+        adj_volume=final.adj_volume,
+    )
+    return bars
+
+
+def test_record_price_move_anomaly_suppresses_flag_when_baseline_is_unavailable() -> None:
+    """A UNAVAILABLE baseline yields no flag, even when the move clears threshold.
+
+    Pins ALP-704 AC1 / AC2: q1.price_move_anomaly emits no flag for a
+    ticker whose ATR baseline is ``unavailable``. The terminal-anomaly bars
+    guarantee the multiple is well above the threshold so the test
+    distinguishes "skipped due to UNAVAILABLE" from "skipped due to no
+    detection" (the control test below proves the same bars fire under
+    CALIBRATED).
+    """
+    bars = _bars_with_terminal_anomaly("CTRA")
+    acc = _record_price_move_anomaly(
+        _new_accumulator(),
+        ticker="CTRA",
+        bars=bars,
+        baseline=_unavailable_atr_baseline("CTRA"),
+        atr_multiple_threshold=1.5,
+    )
+
+    assert acc.flags == [], (
+        f"UNAVAILABLE baseline must suppress flag emission; got flags={acc.flags}"
+    )
+    assert "CTRA" not in acc.per_ticker, (
+        f"UNAVAILABLE baseline must not record per_ticker entry; got keys {sorted(acc.per_ticker)}"
+    )
+
+
+def test_record_price_move_anomaly_suppresses_flag_when_baseline_is_missing() -> None:
+    """A missing baseline (None) is treated as UNAVAILABLE and yields no flag.
+
+    Per ALP-540, a missing baseline maps to :attr:`CalibrationState.UNAVAILABLE`
+    via :func:`_baseline_calibration_state`, so the same suppression path
+    applies.
+    """
+    bars = _bars_with_terminal_anomaly("CTRA")
+    acc = _record_price_move_anomaly(
+        _new_accumulator(),
+        ticker="CTRA",
+        bars=bars,
+        baseline=None,
+        atr_multiple_threshold=1.5,
+    )
+
+    assert acc.flags == []
+    assert "CTRA" not in acc.per_ticker
+
+
+def test_record_price_move_anomaly_still_fires_on_calibrated_baseline() -> None:
+    """Control: a CALIBRATED baseline with the same bars DOES fire a flag.
+
+    Without this companion, the suppression test could pass for the wrong
+    reason (e.g., the synthetic bars happen not to fire). Pinning the
+    fire-on-calibrated path here proves the baseline state is the
+    differentiator.
+    """
+    bars = _bars_with_terminal_anomaly("APA")
+    acc = _record_price_move_anomaly(
+        _new_accumulator(),
+        ticker="APA",
+        bars=bars,
+        baseline=_calibrated_atr_baseline("APA"),
+        atr_multiple_threshold=1.5,
+    )
+
+    assert len(acc.flags) == 1, f"expected one flag; got {acc.flags}"
+    assert acc.flags[0].name == "price_move_anomaly"
+    assert "APA" in acc.per_ticker
+
+
+def test_price_move_anomaly_block_keeps_calibrated_state_with_mixed_roster() -> None:
+    """A mixed CALIBRATED + UNAVAILABLE roster yields a CALIBRATED q1.price_move_anomaly block.
+
+    Pins the deliberate divergence from the ALP-630 technicals pattern: the
+    technicals block header reflects the FULL ticker roster (so it goes
+    UNAVAILABLE the moment any ticker in the sector has an unavailable
+    baseline), but anomaly blocks are sparse-by-design — only firing
+    tickers contribute, so the block header reflects only the survivors.
+    Pre-fix, an UNAVAILABLE ticker's flag would have poisoned the block to
+    UNAVAILABLE and the severity cap would have downgraded the legitimate
+    APA flag along with it. Post-fix, APA's flag retains its full severity
+    because the UNAVAILABLE ticker is suppressed before the block is built.
+    """
+    price_acc = _new_accumulator()
+    price_acc = _record_price_move_anomaly(
+        price_acc,
+        ticker="APA",
+        bars=_bars_with_terminal_anomaly("APA", base_price=80.0),
+        baseline=_calibrated_atr_baseline("APA"),
+        atr_multiple_threshold=1.5,
+    )
+    price_acc = _record_price_move_anomaly(
+        price_acc,
+        ticker="CTRA",
+        bars=_bars_with_terminal_anomaly("CTRA", base_price=90.0),
+        baseline=_unavailable_atr_baseline("CTRA"),
+        atr_multiple_threshold=1.5,
+    )
+
+    block = _build_anomaly_block(
+        block_id=BLOCK_ID_PRICE_MOVE_ANOMALY,
+        audience=frozenset({OutputAudience.SECTOR_ENERGY}),
+        accumulator=price_acc,
+        freshness_ts=datetime(2026, 5, 20, tzinfo=UTC),
+    )
+
+    assert block is not None
+    assert block.calibration_state is CalibrationState.CALIBRATED
+    assert block.bootstrap_reason is None
+    assert "APA" in block.payload["per_ticker"]
+    assert "CTRA" not in block.payload["per_ticker"]
+    assert len(block.anomaly_flags) == 1
+    assert block.anomaly_flags[0].severity == "investigate_now"
+
+
+def test_record_volume_anomaly_suppresses_flag_when_baseline_is_unavailable() -> None:
+    """Volume parity with price_move: UNAVAILABLE baseline emits no flag.
+
+    The volume rollup-flag is the same shape as price_move's
+    (``AnomalyFlag.name="volume_anomaly"`` carries no ticker), so an
+    UNAVAILABLE-baseline ticker firing it would land downstream with the
+    same attribution-less defect ALP-704 fixes for price_move. The today-
+    volume is far above the baseline so the producer fires under any non-
+    suppressed code path.
+    """
+    baseline = _unavailable_atr_baseline("CTRA")
+    acc = _record_volume_anomaly(
+        _new_accumulator(),
+        ticker="CTRA",
+        today_volume=1_000_000_000.0,
+        baseline=baseline,
+        baseline_state=CalibrationState.UNAVAILABLE,
+        sigma_threshold=2.5,
+    )
+
+    assert acc.flags == []
+    assert "CTRA" not in acc.per_ticker

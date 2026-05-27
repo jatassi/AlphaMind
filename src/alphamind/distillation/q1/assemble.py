@@ -701,7 +701,17 @@ def _record_volume_anomaly(
     baseline_state: CalibrationState,
     sigma_threshold: float,
 ) -> _AnomalyDetectionAccumulator:
-    """Run the volume-anomaly detection and fold the result into ``acc``."""
+    """Run the volume-anomaly detection and fold the result into ``acc``.
+
+    A flag emitted under an UNAVAILABLE baseline would carry no ticker
+    attribution at the rollup-renderer layer (``AnomalyFlag.name`` is the
+    block-level constant ``"volume_anomaly"``), so we suppress emission for
+    that ticker — paralleling :func:`_record_price_move_anomaly` and the
+    per-ticker gates in :func:`_compute_technicals_per_ticker` /
+    :func:`_trend_state_payload_for_ticker` (ALP-630, ALP-704).
+    """
+    if baseline_state is CalibrationState.UNAVAILABLE:
+        return acc
     if baseline.stdev <= 0.0:
         return acc
     flag = detect_volume_anomaly(
@@ -721,16 +731,6 @@ def _record_volume_anomaly(
         "severity": flag.severity,
     }
     if (
-        baseline_state is CalibrationState.UNAVAILABLE
-        and acc.block_state is not CalibrationState.UNAVAILABLE
-    ):
-        return _AnomalyDetectionAccumulator(
-            per_ticker=acc.per_ticker,
-            flags=acc.flags,
-            block_state=CalibrationState.UNAVAILABLE,
-            bootstrap_reason=_bootstrap_reason_for_baseline(baseline, kind="volume"),
-        )
-    if (
         baseline_state is CalibrationState.ACCUMULATING
         and acc.block_state is CalibrationState.CALIBRATED
     ):
@@ -749,10 +749,26 @@ def _record_price_move_anomaly(
     ticker: str,
     bars: Sequence[DailyBarRow],
     baseline: TickerBaselineRow | None,
-    fallback_state: CalibrationState,
     atr_multiple_threshold: float,
 ) -> _AnomalyDetectionAccumulator:
-    """Run the price-move anomaly detection and fold the result into ``acc``."""
+    """Run the price-move anomaly detection and fold the result into ``acc``.
+
+    A flag emitted under an UNAVAILABLE baseline would carry no ticker
+    attribution at the rollup-renderer layer (``AnomalyFlag.name`` is the
+    block-level constant ``"price_move_anomaly"``) and the underlying ATR
+    is itself untrustworthy, so we suppress emission for that ticker —
+    mirroring the per-ticker gates in :func:`_compute_technicals_per_ticker`
+    and :func:`_trend_state_payload_for_ticker` (ALP-630, ALP-704). Note
+    that anomaly blocks are sparse-by-design (they only emit when something
+    fires), so unlike the technicals path the block-level
+    ``calibration_state`` reflects the surviving firing tickers rather than
+    the full sector roster; the operator's data-health signal for an
+    UNAVAILABLE ticker lives on the (dense) technicals / trend_state blocks
+    that always derive their header state from :func:`_block_state_from_baselines`.
+    """
+    atr_state = _baseline_calibration_state(baseline)
+    if atr_state is CalibrationState.UNAVAILABLE:
+        return acc
     atr = compute_atr(
         [b.adj_high for b in bars],
         [b.adj_low for b in bars],
@@ -763,7 +779,6 @@ def _record_price_move_anomaly(
         return acc
     today_bar = bars[-_BASE_ONE]
     move = float(today_bar.adj_close) - float(bars[-_RETURN_MIN_LEN].adj_close)
-    atr_state = _baseline_calibration_state(baseline) if baseline is not None else fallback_state
     flag = detect_price_move_anomaly(
         price_move=move,
         atr=float(atr),
@@ -778,16 +793,6 @@ def _record_price_move_anomaly(
         "atr_multiple": float(flag.magnitude),
         "severity": flag.severity,
     }
-    if (
-        atr_state is CalibrationState.UNAVAILABLE
-        and acc.block_state is not CalibrationState.UNAVAILABLE
-    ):
-        return _AnomalyDetectionAccumulator(
-            per_ticker=acc.per_ticker,
-            flags=acc.flags,
-            block_state=CalibrationState.UNAVAILABLE,
-            bootstrap_reason=_bootstrap_reason_for_baseline(baseline, kind="atr"),
-        )
     if (
         atr_state is CalibrationState.ACCUMULATING
         and acc.block_state is CalibrationState.CALIBRATED
@@ -860,7 +865,6 @@ def _assemble_anomaly_blocks(
             ticker=ticker,
             bars=bars,
             baseline=baseline,
-            fallback_state=baseline_state,
             atr_multiple_threshold=atr_multiple,
         )
 
