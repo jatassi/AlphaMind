@@ -564,6 +564,12 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
             account_queries_factory=_account_queries_factory_from_debug_e2e(context),
             ca_queries_factory=_ca_queries_factory_from_debug_e2e(context),
         )
+        # ALP-717 — SHORT-equity entry fills consult the borrow-cost resolver
+        # to stamp borrow_rate_pct on the OPEN position. The resolver is also
+        # reused by the decision pipeline below; build it once before Phase 1
+        # so the same per-ticker latest-fee mapping serves both.
+        with context.sync_session_factory() as borrow_session:
+            borrow_cost_resolver = build_borrow_cost_resolver(borrow_session)
         phase1_summary = await process_unprocessed_fills(
             phase1_handle,
             phase1_inputs.ca_activities,
@@ -571,6 +577,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
             phase1_inputs.alpaca_account,
             market_inputs=phase1_inputs.market_inputs,
             config=state_persistence_config,
+            borrow_cost_resolver=borrow_cost_resolver,
         )
         await _update_row_phase1(
             phase1_handle,
@@ -623,11 +630,9 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     )
 
     pipeline_mode = PipelineMode.from_config_mode(runtime.active_mode)
-    # Snapshot-backed borrow-cost resolver: read the latest borrow_cost_daily
-    # fee per ticker once so the decision layer can price short-equity borrow
-    # accrual (ALP-586). Pure + total for the rest of the invocation.
-    with context.sync_session_factory() as borrow_session:
-        borrow_cost_resolver = build_borrow_cost_resolver(borrow_session)
+    # ``borrow_cost_resolver`` was built above (before Phase 1) and is reused
+    # here — the latest-fee-per-ticker mapping is pure + total for the rest of
+    # the invocation (ALP-586 / ALP-717).
     # ALP-711 — broker_dispatch inputs the PM submit_envelope wrapper needs to
     # dispatch accepted commands to Alpaca (see
     # ``execution.oms.broker_dispatch.dispatch_command_to_broker``). Production
