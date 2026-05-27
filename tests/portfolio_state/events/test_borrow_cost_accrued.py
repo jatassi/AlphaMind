@@ -1,4 +1,4 @@
-"""Tests for the BORROW_COST_ACCRUED event type, BorrowCostAccruedDetail, and related wiring (ALP-718)."""
+"""Tests for the BORROW_COST_ACCRUED event type, BorrowCostAccruedDetail, and wiring (ALP-718)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,9 @@ from decimal import Decimal
 
 import pytest
 
-from alphamind._kernel.money import money, signed_money
+from alphamind._kernel.money import money
+from alphamind.portfolio_state.events import ActivityLogEntry
+from alphamind.portfolio_state.events.cash_margin import BorrowCostAccruedDetail
 
 
 class TestBorrowCostAccruedEventType:
@@ -27,7 +29,7 @@ class TestBorrowCostAccruedEventType:
 class TestBorrowCostAccruedDetail:
     """BorrowCostAccruedDetail is a frozen-slotted dataclass with the 5 required fields."""
 
-    def _make_detail(self):  # type: ignore[no-untyped-def]
+    def _make_detail(self) -> BorrowCostAccruedDetail:
         from alphamind.portfolio_state.events.cash_margin import BorrowCostAccruedDetail
 
         return BorrowCostAccruedDetail(
@@ -56,12 +58,14 @@ class TestBorrowCostAccruedDetail:
     def test_is_frozen(self) -> None:
         import dataclasses
 
-        from alphamind.portfolio_state.events.cash_margin import BorrowCostAccruedDetail
-
+        # The dataclass is declared with frozen=True; verify by asserting that
+        # __setattr__ is the frozen guard (not the default object.__setattr__).
+        # The simplest portable check: frozen dataclasses have ``__delattr__``
+        # and ``__setattr__`` overridden to raise ``FrozenInstanceError``.
         detail = self._make_detail()
         assert dataclasses.is_dataclass(detail)
-        with pytest.raises((dataclasses.FrozenInstanceError, AttributeError)):
-            detail.annual_fee_pct_used = 20.0  # type: ignore[misc]
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            detail.__setattr__("annual_fee_pct_used", 20.0)
 
     def test_has_five_fields_in_order(self) -> None:
         import dataclasses
@@ -125,7 +129,7 @@ class TestBorrowCostAccruedRegistry:
 class TestActivityLogEntryWithBorrowCostAccrued:
     """ActivityLogEntry accepts valid BORROW_COST_ACCRUED, rejects wrong group."""
 
-    def _make_valid_entry(self):  # type: ignore[no-untyped-def]
+    def _make_valid_entry(self) -> ActivityLogEntry:
         from alphamind.portfolio_state.events import (
             ActivityLogEntry,
             EventGroup,

@@ -105,6 +105,11 @@ def _try_encode_leaf(value: Any) -> Any:
         return str(value)
     if isinstance(value, Enum):
         return value.value
+    return _try_encode_temporal(value)
+
+
+def _try_encode_temporal(value: Any) -> Any:
+    """Encode temporal shapes (datetime / date). datetime first — it is a date subclass."""
     # datetime check must come before date — datetime is a subclass of date.
     if isinstance(value, datetime):
         return _datetime_to_iso_z(value)

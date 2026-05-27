@@ -136,7 +136,7 @@ class TestInvocationRowBorrowAccrualTriggerSource:
     def test_insert_unrecognized_trigger_source_raises_integrity_error(
         self, session: Session
     ) -> None:
-        """AC: An unrecognized trigger_source still raises IntegrityError (constraint not loosened)."""
+        """AC: Unrecognized trigger_source raises IntegrityError (constraint not loosened)."""
         from alphamind.state.tables.invocations import InvocationRow
         from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
 

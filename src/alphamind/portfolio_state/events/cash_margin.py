@@ -95,7 +95,7 @@ class BorrowCostAccruedDetail:
     ``accrued_borrow_cost_usd``). ``annual_fee_pct_used`` is the live resolver
     rate the tick consumed (e.g., ``15.0`` for 15%/yr).
     ``notional_usd_used`` is the live notional the accrual was computed
-    against (``abs(share_count × close_price)``). ``accrual_date`` is the
+    against (``abs(share_count * close_price)``). ``accrual_date`` is the
     trading day the tick covers.
     """
 
