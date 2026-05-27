@@ -236,12 +236,10 @@ async def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
     """Spawn the worker subprocess under the parent's SDK-call semaphore.
 
     The semaphore is acquired before spawning ``claude.exe`` and released
-    after the subprocess exits. Without this gate, parallel callers (e.g.
-    the three domain-researcher tasks plus the in-parent
-    ``qualitative_researcher`` call running concurrently under the
-    analysis-pipeline ``TaskGroup``) would each spawn their own
-    ``claude.exe`` in parallel — the 4-way concurrency the original
-    in-process pipeline confirmed deterministically stalls.
+    after the subprocess exits. The cap is sized for the widest
+    single-phase fan-out (analysis-layer: 3 sectors + qualitative = 4);
+    see ``_harness_core._MAX_CONCURRENT_SDK_CALLS`` for the rationale and
+    the ALP-702 history.
 
     Wall-clock guard: the worker is killed and an :class:`SDKFailure` is
     raised if the subprocess exceeds ``latency_budget_seconds`` (from the

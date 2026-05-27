@@ -85,29 +85,25 @@ __all__ = [
 # Global cap on concurrent SDK calls
 # ---------------------------------------------------------------------------
 
-# The Claude Agent SDK's local CLI subprocess + per-agent MCP-server
-# proliferation produces a deterministic contention point at any
-# concurrency above one. Empirical findings (2026-05-18 debug-e2e runs):
-# - 4 concurrent (no cap): one agent deterministically stalls on the
-#   180s between-message watchdog twice in a row (376-378s wall clock).
-# - 4 concurrent with cap=3: still one of the three running agents
-#   deterministically stalls — the failing agent rotates run-to-run
-#   (energy in runs 1/2; tech_semis in run 3) but the count is always
-#   exactly one.
-# - 4 concurrent with cap=2: qualitative_researcher (no between-message
-#   watchdog) stalls 360s with zero output tokens, surfaces as
-#   "Invocation exceeded latency budget" rather than the watchdog path
-#   but with the same zero-token signature.
-# - 1 concurrent (isolation repro): same agent + same input succeeds
-#   in 222s.
-# Capping at one serializes the analysis-layer SDK fan-out, matching
-# the only configuration that has been observed to complete cleanly.
-# Wall-clock cost: the 4-way analysis fan-out runs as four sequential
-# waves of one — roughly 4x the parallel baseline (~20 min for the
-# analysis SDK calls against a ~5 min parallel baseline). Acceptable
-# for a debug verify gate; revisit if the underlying SDK + OAuth +
-# Windows + MCP stack tolerates higher concurrency in the future.
-_MAX_CONCURRENT_SDK_CALLS = 1
+# Sized to the widest single-phase fan-out today: ``domain_researchers``
+# (3 sectors) + ``qualitative`` overlap under one ``asyncio.TaskGroup``
+# for 4 concurrent SDK calls. ``analyst`` + ``strategist`` overlap for 2;
+# ``synthesizer`` / ``adaptive_researcher`` / ``portfolio_manager`` each
+# run solo.
+#
+# History (ALP-702): this was 1 on 2026-05-18 while diagnosing a
+# back-to-back-stall failure mode in which the SDK's second in-process
+# ``query()`` call would admit and then never stream
+# ``AssistantMessage`` content. The actual root cause was the
+# between-message stall watchdog firing falsely on Sonnet 4.6's silent
+# extended-thinking gaps; cap=1 was a defensive belt added during the
+# investigation. ALP-650 then moved every LLM harness onto subprocess
+# isolation — each SDK call now runs in a fresh
+# ``python -m alphamind.analysis._sdk_subprocess_worker``, so the
+# in-process state degradation that motivated cap=1 cannot recur (no
+# worker makes more than one SDK call). Restoring 4 unblocks the
+# analysis-layer fan-out the runbook documents.
+_MAX_CONCURRENT_SDK_CALLS = 4
 _sdk_call_semaphore: asyncio.Semaphore | None = None
 
 
