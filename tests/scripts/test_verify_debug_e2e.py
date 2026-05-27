@@ -1014,6 +1014,127 @@ def test_check_synthetic_portfolio_visibility_synthetic_rejects_fresh_start_db(
     assert "positions" in result.message.lower()
 
 
+def _add_pm_skeleton_position(session: Session, *, idx: int) -> None:
+    """Insert a PENDING position + linked ACTIVE thesis with ``entry_timestamp=NULL``.
+
+    Models the row shape ``_writeback_open`` produces when PM dispatches an
+    OPEN command to the log-only broker: the skeleton position lands in
+    PENDING status with a null ``entry_timestamp`` (Phase 1 would set it
+    on fill — but log-only never produces a fill, so it stays null forever).
+    The check must filter these out via the ``entry_timestamp IS NOT NULL``
+    predicate so it does not falsely fail any run where the analyst
+    proposes a new trade.
+    """
+    from alphamind.portfolio_state.records.positions import (
+        Direction,
+        InstrumentType,
+        PositionStatus,
+    )
+    from alphamind.portfolio_state.records.theses import ThesisRecordStatus
+    from alphamind.state.tables import PositionRow, ThesisRow
+
+    pid = f"pm-skel-pos-{idx:02d}"
+    tid = f"pm-skel-thesis-{idx:02d}"
+    session.add(
+        PositionRow(
+            position_id=pid,
+            thesis_id=tid,
+            bracket_id=None,
+            status=PositionStatus.PENDING.value,
+            direction=Direction.LONG.value,
+            entry_timestamp=None,
+            instrument_type=InstrumentType.EQUITY.value,
+            details_json=json.dumps(
+                {
+                    "instrument_type": InstrumentType.EQUITY.value,
+                    "ticker": f"NEW{idx}",
+                    "share_count": 0.0,
+                    "average_cost_basis_per_share": 0.0,
+                    "borrow_rate_pct": None,
+                    "locate_status": None,
+                    "margin_held_usd": None,
+                }
+            ),
+            execution_history_json="[]",
+            realized_pnl_to_date_usd=None,
+            corporate_action_adjustment_needed=0,
+            parent_position_id=None,
+            origin=None,
+        )
+    )
+    session.add(
+        ThesisRow(
+            thesis_id=tid,
+            position_id=pid,
+            status=ThesisRecordStatus.ACTIVE.value,
+            resolution_timestamp=None,
+            resolution_category=None,
+            summary=f"PM dispatch {idx}",
+            time_expectation_hours=24.0,
+            position_size_rationale=None,
+            generation_timestamp=datetime(2026, 5, 27, 3, 0, 0, tzinfo=UTC)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            narrative_json=json.dumps(
+                {
+                    "key_catalyst": f"PM dispatch {idx}",
+                    "age_hours": 0.0,
+                    "expected_resolution_at": "2026-05-28T03:00:00Z",
+                    "resolution_pnl_usd": None,
+                    "entry_fill_gap_usd": None,
+                    "components_metadata": {},
+                }
+            ),
+        )
+    )
+    session.commit()
+
+
+def test_check_synthetic_portfolio_visibility_ignores_pm_skeleton_rows_fresh_start(
+    verify_module: ModuleType, engine: Engine, session: Session
+) -> None:
+    """PM-dispatched PENDING skeletons must not count toward the fresh-start total.
+
+    Regression: when the analyst proposes new trades under ``--fresh-start``,
+    PM's ``_writeback_open`` writes one PENDING position + one ACTIVE thesis
+    per OPEN command (entry_timestamp left null until fill arrives, which
+    the log-only broker never produces). Before the fix the check counted
+    these via ``SELECT COUNT(*) FROM positions`` and failed every fresh-start
+    run with any analyst output. The check now filters on
+    ``entry_timestamp IS NOT NULL`` so only the seeded fixture's rows count.
+    """
+    _seed_empty_portfolio(session)
+    _add_pm_skeleton_position(session, idx=1)
+    _add_pm_skeleton_position(session, idx=2)
+
+    result = verify_module.check_synthetic_portfolio_visibility(
+        engine, expected=verify_module.FRESH_START_EXPECTATIONS
+    )
+    assert result.passed is True, result.message
+    assert "positions=0" in result.message
+    assert "theses=0" in result.message
+
+
+def test_check_synthetic_portfolio_visibility_ignores_pm_skeleton_rows_default(
+    verify_module: ModuleType, engine: Engine, session: Session
+) -> None:
+    """PM-dispatched PENDING skeletons must not count toward the default total either.
+
+    Same filter applies in default-fixture mode: the seeded 8 positions all
+    have non-null ``entry_timestamp`` (the seeder sets it at seed time), so
+    adding PM skeletons with null ``entry_timestamp`` must not bump the
+    count above 8.
+    """
+    _seed_synthetic_portfolio(session)
+    _add_pm_skeleton_position(session, idx=1)
+    _add_pm_skeleton_position(session, idx=2)
+
+    result = verify_module.check_synthetic_portfolio_visibility(engine)
+    assert result.passed is True, result.message
+    assert "positions=8" in result.message
+    assert "theses=8" in result.message
+
+
 # ---------------------------------------------------------------------------
 # check_no_alpaca
 # ---------------------------------------------------------------------------
