@@ -28,6 +28,8 @@ from alphamind.distillation.q1.assemble import (
     _compute_gap_per_ticker,
     _compute_technicals_per_ticker,
     _compute_trend_state_per_ticker,
+    _new_accumulator,
+    _record_price_move_anomaly,
     _trend_state_payload_for_ticker,
 )
 
@@ -301,3 +303,124 @@ def test_gap_trend_state_technicals_all_skip_unavailable_ticker() -> None:
         )
         assert "APA" in payload, f"{name} per_ticker missing calibrated APA"
         assert "COP" in payload, f"{name} per_ticker missing calibrated COP"
+
+
+# ---------------------------------------------------------------------------
+# (d) price_move_anomaly: per-ticker suppress under UNAVAILABLE baseline
+# ---------------------------------------------------------------------------
+#
+# ALP-704: the q1.price_move_anomaly emission path previously fired a sector-
+# level flag even when the underlying ticker's ATR baseline was
+# ``unavailable``. The rendered flag carried no ticker attribution
+# (``AnomalyFlag.name`` is constant ``"price_move_anomaly"`` for the rollup),
+# forcing downstream researchers to reverse-engineer attribution from
+# narrative context. The fix mirrors the existing ALP-630 per-ticker skip in
+# :func:`_compute_technicals_per_ticker` / :func:`_trend_state_payload_for_ticker`:
+# when the baseline is UNAVAILABLE, no flag is emitted for that ticker.
+
+
+def _bars_with_large_terminal_move(ticker: str, *, base_price: float = 100.0) -> list[DailyBarRow]:
+    """Bars that produce a price-move/ATR multiple far above the 1.5 threshold.
+
+    Days 1..N-1 carry a daily ±1.0 high-low band → ATR ≈ 1.0. The terminal
+    bar shifts the close by 5.0 from the prior bar, so
+    ``|price_move| / atr ≈ 5.0`` which clears any reasonable
+    ``price_move_atr_multiple`` threshold and fires the producer flag.
+    """
+    bars: list[DailyBarRow] = []
+    for d in range(1, _BAR_DAYS + 1):
+        close = base_price + (d * 0.01)
+        bars.append(
+            DailyBarRow(
+                ticker=ticker,
+                period_start=f"day-{d:04d}",
+                adj_open=close,
+                adj_high=close + 0.5,
+                adj_low=close - 0.5,
+                adj_close=close,
+                adj_volume=1_000_000,
+            )
+        )
+    final = bars[-1]
+    bars[-1] = DailyBarRow(
+        ticker=ticker,
+        period_start=final.period_start,
+        adj_open=final.adj_open,
+        adj_high=final.adj_close + 5.0,
+        adj_low=final.adj_low,
+        adj_close=final.adj_close + 5.0,
+        adj_volume=final.adj_volume,
+    )
+    return bars
+
+
+def test_record_price_move_anomaly_suppresses_flag_when_baseline_is_unavailable() -> None:
+    """A UNAVAILABLE baseline yields no flag, even when the move clears threshold.
+
+    Pins ALP-704 AC1 / AC2: q1.price_move_anomaly never emits a flag for a
+    ticker whose underlying ATR baseline is ``unavailable``. The synthetic
+    bars guarantee the multiple is well above the 1.5 threshold so the test
+    distinguishes "skipped due to UNAVAILABLE" from "skipped due to no
+    detection."
+    """
+    bars = _bars_with_large_terminal_move("CTRA")
+    acc = _record_price_move_anomaly(
+        _new_accumulator(),
+        ticker="CTRA",
+        bars=bars,
+        baseline=_unavailable_atr_baseline("CTRA"),
+        fallback_state=CalibrationState.UNAVAILABLE,
+        atr_multiple_threshold=1.5,
+    )
+
+    assert acc.flags == [], (
+        f"UNAVAILABLE baseline must suppress flag emission; got flags={acc.flags}"
+    )
+    assert "CTRA" not in acc.per_ticker, (
+        f"UNAVAILABLE baseline must not record per_ticker entry; got keys {sorted(acc.per_ticker)}"
+    )
+
+
+def test_record_price_move_anomaly_suppresses_flag_when_baseline_is_missing() -> None:
+    """A missing baseline (None) is treated as UNAVAILABLE and yields no flag.
+
+    Per ALP-540, a missing baseline maps to :attr:`CalibrationState.UNAVAILABLE`,
+    so the same suppression path applies. The caller passes ``fallback_state =
+    _baseline_calibration_state(None) = UNAVAILABLE`` when no baseline row
+    exists.
+    """
+    bars = _bars_with_large_terminal_move("CTRA")
+    acc = _record_price_move_anomaly(
+        _new_accumulator(),
+        ticker="CTRA",
+        bars=bars,
+        baseline=None,
+        fallback_state=CalibrationState.UNAVAILABLE,
+        atr_multiple_threshold=1.5,
+    )
+
+    assert acc.flags == []
+    assert "CTRA" not in acc.per_ticker
+
+
+def test_record_price_move_anomaly_still_fires_on_calibrated_baseline() -> None:
+    """Control: a CALIBRATED baseline with the same bars DOES fire a flag.
+
+    Without this companion test, the suppression test could pass for the
+    wrong reason (e.g., the synthetic bars happen not to fire). Pinning the
+    fire-on-calibrated path here proves the baseline state is the
+    differentiator.
+    """
+    bars = _bars_with_large_terminal_move("APA")
+    acc = _record_price_move_anomaly(
+        _new_accumulator(),
+        ticker="APA",
+        bars=bars,
+        baseline=_calibrated_atr_baseline("APA"),
+        fallback_state=CalibrationState.CALIBRATED,
+        atr_multiple_threshold=1.5,
+    )
+
+    assert len(acc.flags) == 1, f"expected one flag; got {acc.flags}"
+    assert acc.flags[0].name == "price_move_anomaly"
+    assert "APA" in acc.per_ticker

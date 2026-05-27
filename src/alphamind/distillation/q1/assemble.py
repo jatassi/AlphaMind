@@ -764,6 +764,14 @@ def _record_price_move_anomaly(
     today_bar = bars[-_BASE_ONE]
     move = float(today_bar.adj_close) - float(bars[-_RETURN_MIN_LEN].adj_close)
     atr_state = _baseline_calibration_state(baseline) if baseline is not None else fallback_state
+    if atr_state is CalibrationState.UNAVAILABLE:
+        # ALP-704: a flag emitted under an UNAVAILABLE baseline carries no ticker
+        # attribution at the rollup-renderer layer (AnomalyFlag.name is the
+        # block-level constant ``"price_move_anomaly"``) and the underlying ATR
+        # is itself untrustworthy, so suppress emission. Mirrors the per-ticker
+        # gate in :func:`_compute_technicals_per_ticker` and
+        # :func:`_trend_state_payload_for_ticker` (ALP-630).
+        return acc
     flag = detect_price_move_anomaly(
         price_move=move,
         atr=float(atr),
@@ -778,16 +786,6 @@ def _record_price_move_anomaly(
         "atr_multiple": float(flag.magnitude),
         "severity": flag.severity,
     }
-    if (
-        atr_state is CalibrationState.UNAVAILABLE
-        and acc.block_state is not CalibrationState.UNAVAILABLE
-    ):
-        return _AnomalyDetectionAccumulator(
-            per_ticker=acc.per_ticker,
-            flags=acc.flags,
-            block_state=CalibrationState.UNAVAILABLE,
-            bootstrap_reason=_bootstrap_reason_for_baseline(baseline, kind="atr"),
-        )
     if (
         atr_state is CalibrationState.ACCUMULATING
         and acc.block_state is CalibrationState.CALIBRATED
