@@ -83,7 +83,6 @@ sectors:
     - SLB
     - BKR
     - LNG
-    - CTRA
     - APA
 
 benchmarks:

@@ -170,7 +170,10 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # --fresh-start debug-e2e run caught the analyst hitting the per-response
     # cap with output_tokens=30400 across 15 turns; the resolved-config
     # snapshot carries the new budget verbatim.
-    expected = "01cf3ca54066a503e0901c49780bb1c72cdce1c4600dc0f4635ea602325cd681"
+    # Pin updated 2026-05-26 (CTRA removed from energy sector): CTRA was
+    # acquired by DVN on 2026-05-07 and delisted; ALP-584/585 closed the
+    # data-layer detection, this removes the stale entry from config/assets.yaml.
+    expected = "9862639948e5ca9005739ad723c79a9eac0804a265b672bba1d8720694936a40"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."
