@@ -872,7 +872,20 @@ def _apply_exit_fill(
     details: EquityPositionDetails,
     fill: FillRecord,
 ) -> PositionRecord:
-    """Sell-side fill: decrement quantity, compute realized P/L for the exited portion."""
+    """Exit fill: decrement quantity, compute direction-signed realized P/L
+    for the exited portion. On a cover-to-close fill (the cover that takes
+    ``share_count`` to zero on a SHORT position with a non-zero borrow
+    accumulator), additionally flush ``accrued_borrow_cost_usd`` into
+    realized P/L — short P/L is borrow-net.
+
+    Partial covers do NOT flush — the position stays OPEN and the
+    accumulator continues against the reduced notional from the next tick
+    onward. On the cover-to-close branch the accumulator on the new details
+    is PRESERVED as the lifetime borrow total (audit-trail readers consume
+    both ``accrued_borrow_cost_usd`` (lifetime borrow drag) and
+    ``realized_pnl_to_date_usd`` (borrow-net realized P/L) from the closed
+    position).
+    """
     qty_after = details.share_count - fill.fill_quantity
     if qty_after < -_QTY_EPSILON:
         msg = (
@@ -892,9 +905,17 @@ def _apply_exit_fill(
     direction_sign = Decimal(-1) if direction == Direction.SHORT else Decimal(1)
     fq = Decimal(str(fill.fill_quantity))
     realized_delta = float(pnl_per_share * fq * direction_sign)
-    cumulative_realized = (position.realized_pnl_to_date_usd or 0.0) + realized_delta
 
     closed = abs(qty_after) < _QTY_EPSILON
+    if closed and direction == Direction.SHORT and details.accrued_borrow_cost_usd:
+        # Cover-to-close on a SHORT with a non-zero accumulator: flush the
+        # lifetime borrow cost from realized P/L. Falsy zero short-circuits
+        # the branch — covers that close out a flat-borrow short skip the
+        # subtraction.
+        realized_delta -= details.accrued_borrow_cost_usd
+
+    cumulative_realized = (position.realized_pnl_to_date_usd or 0.0) + realized_delta
+
     new_details = dataclasses.replace(details, share_count=0.0 if closed else qty_after)
     new_history = (*position.execution_history, _position_fill_from_record(fill))
     if closed:

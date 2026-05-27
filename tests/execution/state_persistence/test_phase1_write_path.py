@@ -1725,6 +1725,108 @@ def test_entry_fill_long_with_none_resolver_succeeds() -> None:
     assert result.details.margin_held_usd is None
 
 
+def test_exit_fill_short_cover_to_close_flushes_accrued_borrow_into_pnl() -> None:
+    """Cover-to-close on an OPEN SHORT with ``accrued_borrow_cost_usd=5.0``:
+    entry $100, exit $90, qty 10 → realized_pnl = (100-90)*10 - 5 = 95.0.
+    Position transitions to CLOSED; accrued_borrow_cost_usd is preserved as
+    the lifetime borrow total (NOT zeroed out post-flush)."""
+    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+
+    position = _make_open_position(
+        direction=Direction.SHORT,
+        share_count=10.0,
+        average_cost_basis_per_share=100.0,
+        accrued_borrow_cost_usd=5.0,
+    )
+    fill = _make_fill_record(fill_quantity=10.0, fill_price=90.0)
+    result = _apply_fill_to_position(
+        position, fill, is_buy_side=True, borrow_cost_resolver=None
+    )
+    assert result.status == PositionStatus.CLOSED
+    # (entry - exit) * qty * direction_sign(SHORT) - accrued = (100-90)*10*1 - 5 = 95
+    assert result.realized_pnl_to_date_usd == pytest.approx(95.0)
+    assert isinstance(result.details, EquityPositionDetails)
+    # Lifetime borrow total is preserved post-flush (audit-trail readers
+    # consume both fields).
+    assert result.details.accrued_borrow_cost_usd == pytest.approx(5.0)
+
+
+def test_exit_fill_short_cover_to_close_with_zero_accrued_skips_flush() -> None:
+    """Cover-to-close on an OPEN SHORT with ``accrued_borrow_cost_usd=0.0``:
+    no subtraction (zero falsy short-circuits the flush branch); realized
+    P/L is ``(entry - exit) × qty`` only."""
+    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+
+    position = _make_open_position(
+        direction=Direction.SHORT,
+        share_count=10.0,
+        average_cost_basis_per_share=100.0,
+        accrued_borrow_cost_usd=0.0,
+    )
+    fill = _make_fill_record(fill_quantity=10.0, fill_price=90.0)
+    result = _apply_fill_to_position(
+        position, fill, is_buy_side=True, borrow_cost_resolver=None
+    )
+    assert result.status == PositionStatus.CLOSED
+    # (100 - 90) * 10 * 1 - 0 = 100
+    assert result.realized_pnl_to_date_usd == pytest.approx(100.0)
+    assert isinstance(result.details, EquityPositionDetails)
+    assert result.details.accrued_borrow_cost_usd == pytest.approx(0.0)
+
+
+def test_exit_fill_short_partial_cover_leaves_position_open_no_flush() -> None:
+    """Partial cover on an OPEN SHORT leaves the position OPEN,
+    ``accrued_borrow_cost_usd`` unchanged, and no borrow flush. The
+    direction sign still applies to the partial realized P/L delta."""
+    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+
+    position = _make_open_position(
+        direction=Direction.SHORT,
+        share_count=10.0,
+        average_cost_basis_per_share=100.0,
+        accrued_borrow_cost_usd=5.0,
+    )
+    fill = _make_fill_record(fill_quantity=4.0, fill_price=90.0)
+    result = _apply_fill_to_position(
+        position, fill, is_buy_side=True, borrow_cost_resolver=None
+    )
+    assert result.status == PositionStatus.OPEN
+    assert isinstance(result.details, EquityPositionDetails)
+    assert result.details.share_count == pytest.approx(6.0)
+    # SHORT direction sign: (100 - 90) * 4 * 1 = +40. No borrow flush.
+    assert result.realized_pnl_to_date_usd == pytest.approx(40.0)
+    # Accrued unchanged on partial cover.
+    assert result.details.accrued_borrow_cost_usd == pytest.approx(5.0)
+
+
+def test_add_fill_open_short_preserves_borrow_fields() -> None:
+    """ADD on an OPEN SHORT leaves ``borrow_rate_pct`` and
+    ``accrued_borrow_cost_usd`` unchanged — the accumulator continues
+    against the post-ADD combined notional from the next tick onward,
+    and the borrow rate is not re-stamped per the design doc."""
+    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+
+    position = _make_open_position(
+        direction=Direction.SHORT,
+        share_count=10.0,
+        average_cost_basis_per_share=100.0,
+        borrow_rate_pct=15.0,
+        accrued_borrow_cost_usd=3.5,
+    )
+    fill = _make_fill_record(fill_quantity=5.0, fill_price=110.0)
+    result = _apply_fill_to_position(
+        position, fill, is_buy_side=False, borrow_cost_resolver=None
+    )
+    assert result.status == PositionStatus.OPEN
+    assert isinstance(result.details, EquityPositionDetails)
+    # Weighted-average cost basis: (100*10 + 110*5) / 15 = 1550 / 15 = 103.333...
+    assert result.details.share_count == pytest.approx(15.0)
+    assert result.details.average_cost_basis_per_share == pytest.approx(1550.0 / 15.0)
+    # borrow_rate_pct and accrued_borrow_cost_usd are NOT mutated.
+    assert result.details.borrow_rate_pct == pytest.approx(15.0)
+    assert result.details.accrued_borrow_cost_usd == pytest.approx(3.5)
+
+
 async def test_phase1_stamps_completion_timestamp_on_invocation_row(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
