@@ -434,28 +434,24 @@ class TestOpenCommand:
                 thesis=_thesis(),
             )
 
-    def test_rejects_short_equity_instrument(self) -> None:
-        # ALP-644: short equity entry is not supported by Phase 1 write paths
-        # (no borrow-cost modeling on EquityPositionDetails, and
-        # _apply_fill_to_equity_position raises NotImplementedError on a
-        # sell-side PENDING fill). Reject upstream at the OMS command boundary
-        # so the LLM sees a structured ValidationError rather than a Phase 1
-        # hard-crash after the broker fills the order.
+    def test_allows_short_equity_instrument(self) -> None:
+        # ALP-717: short-equity OpenCommand construction is first-class once
+        # Phase 1 grows the SHORT entry-fill helper + borrow-cost modeling on
+        # EquityPositionDetails (Story 01). The OMS-boundary guard from
+        # ALP-644 is retired; SHORT equity now mirrors the existing
+        # SHORT-option allowance.
         short_equity = EquityInstrument(
             asset_type="equity", ticker=Symbol("AAPL"), direction="short"
         )
-        with pytest.raises((ValueError, TypeError)) as exc_info:
-            OpenCommand(
-                command_type="open",
-                instrument=short_equity,
-                entry_order=_entry_order_market(),
-                position_size=_position_size(),
-                target=_target_absolute(),
-                invalidation_legs=(_price_leg(),),
-                thesis=_thesis(),
-            )
-        msg = str(exc_info.value)
-        assert "short" in msg.lower() and "equity" in msg.lower()
+        OpenCommand(
+            command_type="open",
+            instrument=short_equity,
+            entry_order=_entry_order_market(),
+            position_size=_position_size(),
+            target=_target_absolute(),
+            invalidation_legs=(_price_leg(),),
+            thesis=_thesis(),
+        )
 
     def test_allows_short_option_instrument(self) -> None:
         # The short-equity restriction must not regress single-leg short options,
