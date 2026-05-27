@@ -447,6 +447,12 @@ def test_decision_not_execution_contract_with_composition_root_exception() -> No
     # only (``dispatch -> order_modify``, ``persist -> oms.broker_dispatch``,
     # ``server -> broker_adapter``, ``server -> oms.broker_dispatch``) no
     # longer register as graph edges and are absent from this baseline.
+    # ALP-711 added two runtime edges from ``server.build_broker_routing_kwargs``
+    # — the helper lazy-imports ``AlpacaClientFactory`` + ``AccountStateQueries``
+    # inside its function body so the PM subprocess worker can reconstruct the
+    # live ``TradingClient`` from the picklable ``(venue_config, execution_mode,
+    # execution_config)`` triple. Same composition-root carve-out as the
+    # ``dispatch`` entries (submit_envelope/ is the PM MCP composition root).
     pkg = "alphamind.decision.portfolio_manager.submit_envelope"
     expected_edges = {
         f"{pkg}.dispatch -> alphamind.execution.broker_adapter",
@@ -455,6 +461,8 @@ def test_decision_not_execution_contract_with_composition_root_exception() -> No
         f"{pkg}.dispatch -> alphamind.execution.oms.broker_dispatch",
         f"{pkg}.persist -> alphamind.execution.write_paths.phase2",
         f"{pkg}.process -> alphamind.execution.oms.command_ids",
+        f"{pkg}.server -> alphamind.execution.broker_adapter.client_factory",
+        f"{pkg}.server -> alphamind.execution.broker_adapter.queries",
         "alphamind.state.config -> alphamind.execution.corporate_actions.config",
     }
     assert set(ignored) == expected_edges, (
