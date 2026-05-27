@@ -129,6 +129,16 @@ from alphamind.risk_guardrails.state_delivery.config import (
     StateDeliveryConfig,
     load_state_delivery_config,
 )
+from alphamind.scheduler.control.events import SSEEventEmitter
+from alphamind.scheduler.control.models import (
+    InvocationEndedEvent,
+    InvocationStartedEvent,
+    PhaseTransitionEvent,
+)
+from alphamind.scheduler.control.sse_progress_bridge import (
+    PipelineSSEProgressBridge,
+    make_latency_budget_lookup,
+)
 from alphamind.scheduler.invocation import insert_invocation_record
 from alphamind.scheduler.phase1_inputs import gather_phase1_inputs
 from alphamind.scheduler.phase2_dispatch import (
@@ -438,6 +448,42 @@ def _price_provider_from_phase1(
 # ---------------------------------------------------------------------------
 
 
+_SCHEMA_RUN_TYPE_BY_FIRING_RUN_TYPE: dict[RunType, str] = {
+    RunType.market_hours_rolling: "market_hours_rolling",
+    RunType.off_hours_rolling: "off_hours_rolling",
+    RunType.pre_open: "pre_open",
+    RunType.pre_close: "pre_close",
+    RunType.emergency: "emergency",
+}
+
+
+def _emit_phase_transition(
+    emitter: SSEEventEmitter | None,
+    *,
+    invocation_id: str,
+    phase: str,
+    now: datetime,
+) -> None:
+    """Best-effort SSE phase-transition emit (ALP-720).
+
+    No-op when ``emitter`` is ``None`` (test path / debug-e2e harness).
+    Errors are logged + swallowed so a broken emit never crashes the
+    invocation hot path.
+    """
+    if emitter is None:
+        return
+    try:
+        emitter.emit(
+            PhaseTransitionEvent(
+                invocation_id=invocation_id,
+                phase=phase,  # type: ignore[arg-type]
+                phase_started_at=now,
+            )
+        )
+    except Exception:
+        log.exception("SSE phase_transition emit failed phase=%s", phase)
+
+
 async def run_invocation(  # noqa: PLR0915 — composition root sequences every phase in one frame; per-phase extraction would multiply the call-site surface without simplifying any single concern.
     *,
     context: RunInvocationContext,
@@ -446,6 +492,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     trigger_reason: str,
     firing_run_type: RunType,
     now: datetime,
+    sse_emitter: SSEEventEmitter | None = None,
 ) -> InvocationSummary:
     """Drive one pipeline invocation through the design's three-transaction model.
 
@@ -529,11 +576,49 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     # ALP-501) populate ``debug_e2e.emitter_factory`` so the JSONL
     # emitter (story 02c / ALP-499) opens a fresh log under the
     # invocation's archive directory.
-    progress: ProgressEmitter = (
+    inner_progress: ProgressEmitter = (
         context.debug_e2e.emitter_factory(invocation_id, now)
         if context.debug_e2e is not None
         else NOOP_PROGRESS_EMITTER
     )
+    # ALP-720 — when an SSE emitter is supplied (production daemon path),
+    # wrap the inner ProgressEmitter in :class:`PipelineSSEProgressBridge`
+    # so the harness's ``agent_request`` / ``agent_response`` callbacks
+    # also emit schema-shaped ``agent_started`` / ``agent_succeeded`` SSE
+    # events. The bridge defers to the inner emitter for the existing
+    # debug-e2e JSONL write so both observability paths stay live.
+    progress: ProgressEmitter
+    if sse_emitter is not None:
+        # The resolved agents map is keyed by the ``AgentName`` enum; the
+        # bridge's lookup operates on string keys (the harness emits the
+        # agent name as the enum's string value), so normalize at the seam.
+        agents_by_name = {
+            name.value: cfg for name, cfg in pipeline_config.resolved.agents.agents.items()
+        }
+        progress = PipelineSSEProgressBridge(
+            emitter=sse_emitter,
+            invocation_id=invocation_id,
+            latency_budget_lookup=make_latency_budget_lookup(agents_by_name),
+            inner=inner_progress,
+        )
+    else:
+        progress = inner_progress
+
+    # ALP-720 — operator-console observability of the invocation lifecycle.
+    # The schema's invocation_started event fires first; phase transitions
+    # follow as we enter each phase; invocation_ended fires at the bottom
+    # (or in the exception handler on failure paths).
+    if sse_emitter is not None:
+        try:
+            sse_emitter.emit(
+                InvocationStartedEvent(
+                    invocation_id=invocation_id,
+                    run_type=_SCHEMA_RUN_TYPE_BY_FIRING_RUN_TYPE[firing_run_type],  # type: ignore[arg-type]
+                    started_at=now,
+                )
+            )
+        except Exception:
+            log.exception("SSE invocation_started emit failed")
 
     # Compose the current invocation's active_risk_parameters from the resolved fold.
     active_risk_parameters = build_active_risk_parameters(
@@ -542,6 +627,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     )
 
     # Step 3 — Phase 1 transaction.
+    _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="collect", now=now)
     progress.phase_start("phase1")
     async with session_factory() as session:
         phase1_handle = InvocationHandle(session=session, invocation_id=invocation_id)
@@ -588,6 +674,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     progress.phase_done("phase1", fills_processed=phase1_summary.fills_processed)
 
     # Step 4 — Between-phase snapshot read.
+    _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="distill", now=now)
     progress.phase_start("snapshot_assembly")
     sector_resolver = build_sector_resolver(pipeline_config.resolved)
     assembled, snapshot_repository = _assemble_phase1_snapshot(
@@ -605,6 +692,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     progress.phase_done("snapshot_assembly")
 
     # Step 5 — Read-only analysis + decision pipelines.
+    _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="analyze", now=now)
     analysis_result = await _run_analysis(
         invocation_id=invocation_id,
         sync_session_factory=context.sync_session_factory,
@@ -672,9 +760,11 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         execution_mode=execution_mode if broker_routing_active else None,
         execution_config=pipeline_config.loaded.execution if broker_routing_active else None,
     )
+    _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="decide", now=now)
     decision_result = await run_decision_pipeline(**decision_kwargs, progress=progress)
 
     # Step 6 — Phase 2.
+    _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="execute", now=now)
     progress.phase_start("phase2")
     phase2_summary = await dispatch_phase2(
         session_factory=session_factory,
@@ -688,6 +778,18 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         await stamp_phase_completion(phase2_handle, column="phase2_completed_at")
         await session.commit()
     progress.phase_done("phase2", commands_submitted=phase2_summary.commands_submitted)
+
+    if sse_emitter is not None:
+        try:
+            sse_emitter.emit(
+                InvocationEndedEvent(
+                    invocation_id=invocation_id,
+                    status="completed",
+                    commands_issued=phase2_summary.commands_submitted,
+                )
+            )
+        except Exception:
+            log.exception("SSE invocation_ended emit failed")
 
     duration = time.monotonic() - start_perf
     return InvocationSummary(
