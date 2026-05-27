@@ -144,7 +144,27 @@ class PositionFill:
 
 @dataclass(frozen=True, slots=True)
 class EquityPositionDetails:
-    """Equity position details; short-only fields are None for long positions."""
+    """Equity position details; short-only fields are None for long positions.
+
+    Field semantics for the short-only fields:
+
+    * ``borrow_rate_pct`` — the broker's borrow rate (annualized %) stamped at
+      entry. Not updated on ADD fills; the borrow-accrual monitor reads the
+      live rate from broker each tick to compute accrual. The stamped value is
+      a snapshot of the rate at the first entry fill.
+    * ``accrued_borrow_cost_usd`` — running borrow accumulator. Updated only by
+      the borrow-accrual monitor (tick-based recomputation against the live
+      broker rate); the write-path preserves it verbatim on ADD fills.
+    * ``locate_status`` — borrow locate state (LOCATED / AT_RISK_OF_RECALL).
+      Preserved verbatim on ADD fills; updated only by the breach/locate
+      monitor when broker indicates recall risk.
+    * ``margin_held_usd`` — **entry-stamp Reg T initial margin**, captured at
+      first entry as ``qty × entry_price × 0.50``. NOT updated on ADD fills —
+      readers needing live required margin should compute
+      ``qty × current_price × 0.50`` from ``share_count`` and the live close.
+      This field is a frozen entry snapshot, useful for audit/attribution; it
+      is not the broker's current required margin.
+    """
 
     ticker: Symbol
     share_count: float

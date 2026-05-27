@@ -1807,6 +1807,41 @@ def test_add_fill_open_short_preserves_borrow_fields() -> None:
     assert result.details.accrued_borrow_cost_usd == pytest.approx(3.5)
 
 
+def test_add_fill_open_short_preserves_margin_held_usd_entry_snapshot() -> None:
+    """ADD on an OPEN SHORT leaves ``margin_held_usd`` unchanged — the field
+    is the Reg T initial margin stamped at entry (``qty × entry_price ×
+    0.50``), not a live required-margin recomputation.
+
+    Per the design doc + ``EquityPositionDetails`` docstring, readers needing
+    the current required margin should compute it on the fly from
+    ``share_count`` and the live close. The persistent field is a frozen
+    entry snapshot for audit / attribution; ADD fills must NOT mutate it.
+
+    This test pins that semantic: with a position whose ``margin_held_usd``
+    captures the entry-stamp value (10 * 100 * 0.50 = 500), an ADD of 5
+    shares at 110 must leave the field at 500 — even though the share count
+    grows to 15 and the average cost shifts.
+    """
+    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+
+    entry_margin_held = 10.0 * 100.0 * 0.50  # 500.0 — Reg T stamp at entry
+    position = _make_open_position(
+        direction=Direction.SHORT,
+        share_count=10.0,
+        average_cost_basis_per_share=100.0,
+        margin_held_usd=entry_margin_held,
+    )
+    fill = _make_fill_record(fill_quantity=5.0, fill_price=110.0)
+    result = _apply_fill_to_position(position, fill, is_buy_side=False, borrow_cost_resolver=None)
+    assert result.status == PositionStatus.OPEN
+    assert isinstance(result.details, EquityPositionDetails)
+    # margin_held_usd is preserved verbatim — NOT recomputed against the
+    # post-ADD share count or the new fill price.
+    assert result.details.margin_held_usd == pytest.approx(entry_margin_held)
+    # locate_status — also preserved verbatim on ADD (sanity check).
+    assert result.details.locate_status == LocateStatus.LOCATED
+
+
 async def test_phase1_stamps_completion_timestamp_on_invocation_row(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
