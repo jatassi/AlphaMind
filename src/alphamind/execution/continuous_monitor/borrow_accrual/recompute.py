@@ -47,11 +47,9 @@ from alphamind.portfolio_state.events.activity_log import (
     EventType,
 )
 from alphamind.portfolio_state.records.positions import (
-    Direction,
     EquityPositionDetails,
-    InstrumentType,
     PositionRecord,
-    PositionStatus,
+    is_open_short_equity,
 )
 from alphamind.risk_guardrails.borrow_cost import daily_borrow_cost_usd
 
@@ -169,26 +167,11 @@ def compute_tick(
 # ---------------------------------------------------------------------------
 
 
-def is_open_short_equity(position: PositionRecord) -> bool:
-    """Predicate: is *position* in scope for the borrow-accrual tick?
-
-    A position accrues borrow iff it is currently OPEN, has direction
-    SHORT, and is an equity instrument. Strategies (direction None) and
-    options never accrue equity borrow.
-
-    Canonical home is the kernel: the shell (``task.py``) imports this
-    name to filter what it hands the kernel, and the kernel re-uses it
-    internally to skip non-scope positions defensively.
-    """
-    return (
-        position.status == PositionStatus.OPEN
-        and position.direction == Direction.SHORT
-        and position.instrument_type == InstrumentType.EQUITY
-    )
-
-
-# Backwards-compatible alias for the prior private name retained within
-# this module's own call sites.
+# Backwards-compatible alias retained within this module's own call sites.
+# The canonical predicate lives at
+# :func:`alphamind.portfolio_state.records.positions.is_open_short_equity`;
+# re-exported through ``__all__`` below so existing importers (and the shell
+# at ``task.py``) keep working.
 _is_open_short_equity = is_open_short_equity
 
 

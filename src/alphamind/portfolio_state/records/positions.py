@@ -373,3 +373,28 @@ def position_direction(record: PositionRecord) -> Direction | None:
     ``PositionView`` calls ``position_direction(view.record)``.
     """
     return record.direction
+
+
+def is_open_short_equity(record: PositionRecord) -> bool:
+    """Predicate: is *record* an OPEN SHORT EQUITY position?
+
+    True iff all three clauses hold:
+
+    * ``status == OPEN`` — PENDING and CLOSED positions are out of scope.
+    * ``direction == SHORT`` — LONG and strategy (None) directions are out.
+    * ``isinstance(details, EquityPositionDetails)`` — options and strategy
+      payloads never carry equity borrow.
+
+    This predicate has no kernel- or execution-specific dependency; it's a
+    pure ``PositionRecord`` shape check. It lives here next to
+    :class:`PositionRecord` so any layer (state-persistence, snapshot
+    assembly, breach monitor, borrow-accrual kernel) can reuse it without
+    cross-layer imports. The borrow-accrual kernel
+    (``alphamind.execution.continuous_monitor.borrow_accrual.recompute``)
+    re-exports it for backwards compatibility.
+    """
+    return (
+        record.status == PositionStatus.OPEN
+        and record.direction == Direction.SHORT
+        and isinstance(record.details, EquityPositionDetails)
+    )
