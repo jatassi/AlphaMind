@@ -105,7 +105,12 @@ agents:
   tech_semis_researcher:
     model: claude-sonnet-4-6
     prompt: prompts/analysis/tech_semis_researcher.md
-    latency_budget_seconds: 600
+    # 2026-05-27: bumped 600→900 after deterministic tech_semis timeouts on
+    # the first-time production bootstrap. Bundles have grown from ~58k to
+    # ~70k chars as the collector accumulated data; the heaviest researcher
+    # consistently overruns the 600s budget. Underlying bundle-size drift
+    # tracked separately.
+    latency_budget_seconds: 900
     context_token_budget: 8000
     # Sonnet 4.6 extended thinking dominates output; observed actuals across
     # recent end-to-end runs range 8.5K–24.7K across the three sectors
@@ -118,7 +123,8 @@ agents:
   financials_researcher:
     model: claude-sonnet-4-6
     prompt: prompts/analysis/financials_researcher.md
-    latency_budget_seconds: 600
+    # 2026-05-27: bumped 600→900 for parity with tech_semis (see comment there).
+    latency_budget_seconds: 900
     context_token_budget: 8000
     # Sonnet 4.6 extended thinking dominates output; observed actuals across
     # recent end-to-end runs range 8.5K–24.7K across the three sectors
@@ -131,7 +137,8 @@ agents:
   energy_researcher:
     model: claude-sonnet-4-6
     prompt: prompts/analysis/energy_researcher.md
-    latency_budget_seconds: 600
+    # 2026-05-27: bumped 600→900 for parity with tech_semis (see comment there).
+    latency_budget_seconds: 900
     context_token_budget: 8000
     # Sonnet 4.6 extended thinking dominates output; observed actuals across
     # recent end-to-end runs range 8.5K–24.7K across the three sectors
@@ -149,7 +156,9 @@ agents:
     # prior 360s sat inside that healthy range and intermittently killed
     # sound calls mid-think (surfacing as a zero-token TimeoutFailure).
     # Raised to 600s for parity with the sector researchers and real headroom.
-    latency_budget_seconds: 600
+    # 2026-05-27: further bumped to 900s for parity after sector researchers
+    # were raised; same bundle-growth motivation.
+    latency_budget_seconds: 900
     context_token_budget: 8000
     # Sonnet 4.6 emits ~4400 tokens of extended thinking before brief text;
     # cap covers thinking + the design-doc 300–600 brief target. Post-ALP-288
