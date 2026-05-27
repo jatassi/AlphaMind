@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -290,6 +290,7 @@ def _make_validation_state(
     *,
     config: LibraryConfig | None = None,
     snapshot: PortfolioStateSnapshot | None = None,
+    borrow_cost_resolver: Callable[[str], float | None] | None = None,
 ) -> ValidationToolState:
     cfg = config or _config()
     return ValidationToolState(
@@ -301,6 +302,7 @@ def _make_validation_state(
         library_config=cfg,
         library_market=_market(),
         sector_resolver=_sector_resolver,
+        borrow_cost_resolver=borrow_cost_resolver,
         accumulated_deltas=(),
     )
 
@@ -646,6 +648,7 @@ def _build_state_and_server(
     extra_pending_order_assessments: tuple[WrappedPendingOrderAssessment, ...] = (),
     extra_positions: tuple[Any, ...] = (),
     extra_ref_ids: tuple[str, ...] = (),
+    borrow_cost_resolver: Callable[[str], float | None] | None = None,
 ) -> tuple[Any, Any, Any]:
     """Construct a SubmitEnvelopeState + factory output for tests.
 
@@ -664,7 +667,11 @@ def _build_state_and_server(
     )
 
     cfg = config or _config()
-    validation_state = _make_validation_state(config=cfg, snapshot=snapshot)
+    validation_state = _make_validation_state(
+        config=cfg,
+        snapshot=snapshot,
+        borrow_cost_resolver=borrow_cost_resolver,
+    )
 
     # Default pre-processor records.
     recs: list[WrappedRecommendation] = list(extra_recommendations)
@@ -1168,17 +1175,27 @@ async def test_layer_1_no_longer_rejects_short_equity_open_command() -> None:
     validation. The OMS-boundary guard from ALP-644 was retired once Phase 1
     grew direction-aware fill integration (Story 02) and the four short-only
     fields on ``EquityPositionDetails`` (Story 01). The envelope parses
-    cleanly; any downstream rejection comes from Layer-2/3 invariants or
-    portfolio-state validation, not from the deleted Layer-1 guard."""
+    cleanly through Layer-1 and reaches Layer-2/3 — when routing + risk
+    invariants are satisfied (as in this fixture, which wires the analyst
+    envelope into the pre-processor bundle), the command is accepted; the
+    cumulative state advances; and neither the failed_submission_log
+    (Layer-1 forensics) nor a Layer-1 short-equity rejection appears."""
     from alphamind.decision.portfolio_manager.submit_envelope import get_failed_submission_log
-
-    get_state, server, _ = _build_state_and_server()
 
     # Build a fully-shaped LONG-equity envelope, then flip the embedded OPEN
     # command's instrument direction to SHORT — exercises Layer-1 parsing
-    # from the wire-format edge.
-    envelope_dict = _make_analyst_envelope().model_dump(mode="json")
+    # from the wire-format edge. Wire the envelope into the routing fixture
+    # so it reaches Layer-2/3 cleanly (no fabricated routing rejection); wire
+    # a borrow_cost_resolver so the SHORT-equity guardrail (ALP-712) has the
+    # data it needs to validate.
+    envelope = _make_analyst_envelope()
+    envelope_dict = envelope.model_dump(mode="json")
     envelope_dict["commands"][0]["instrument"]["direction"] = "short"
+
+    get_state, server, _ = _build_state_and_server(
+        envelope_for_routing=envelope,
+        borrow_cost_resolver=lambda _ticker: 0.50,
+    )
 
     text, is_error = await _invoke_mcp_tool(server, "submit_envelope", envelope_dict)
     assert not is_error, text
@@ -1186,24 +1203,30 @@ async def test_layer_1_no_longer_rejects_short_equity_open_command() -> None:
     payload = json.loads(text)
     assert payload["envelope_id"] == "ENV-REC-1"
     assert len(payload["submission_results"]) == 1
-    # The Layer-1 short-equity rejection is gone — no schema_invariant
-    # rejection naming "short" / "equity", and no entry in the
-    # failed_submission_log surfaces from Layer-1 parsing.
     result = payload["submission_results"][0]
-    if result["status"] == "rejected":
-        rejection_payload = result.get("rejection_payload") or {}
-        rules_breached = rejection_payload.get("rules_breached", [])
-        # If a Layer-2/3 rejection fires (e.g. recommendation-routing mismatch
-        # in the fixture's source_recommendation_id wiring), it must NOT be
-        # the deleted Layer-1 short-equity schema_invariant.
-        for rule in rules_breached:
-            suggestion = (rejection_payload.get("suggested_modification") or "").lower()
-            assert not (rule.get("rule") == "schema_invariant" and "short" in suggestion)
-    # Layer-1 parsing did not log a failure for "short equity" specifically.
+
+    # Unconditional: the new contract says SHORT EQUITY must reach Layer-2/3
+    # cleanly. With routing wired, the command is accepted end-to-end.
+    assert result["status"] == "accepted", (
+        f"Expected SHORT EQUITY OPEN to be accepted post-ALP-717; "
+        f"got status={result['status']!r}, rejection={result.get('rejection_payload')!r}"
+    )
+    assert result["acknowledgment"] is not None
+    assert result["rejection_payload"] is None
+
+    # Layer-1 forensics log MUST be empty — no Layer-1 short-equity rejection
+    # surfaces (the guard was retired). This is the load-bearing invariant
+    # the original ALP-644 guard would have violated.
     failed_log = get_failed_submission_log(get_state())
-    for entry in failed_log:
-        repr_lower = entry.validation_error_repr.lower()
-        assert not ("short" in repr_lower and "equity" in repr_lower)
+    assert len(failed_log) == 0, (
+        f"Expected zero Layer-1 failures; got {[e.validation_error_repr for e in failed_log]!r}"
+    )
+
+    # Parsed submission_log records the call (one accepted submission).
+    assert len(get_state().submission_log) == 1
+    # Cumulative state advances — the SHORT proposal reached the
+    # validation cell, exactly as a LONG would.
+    assert len(get_state().validation_state.accumulated_deltas) == 1
 
 
 @pytest.mark.asyncio
