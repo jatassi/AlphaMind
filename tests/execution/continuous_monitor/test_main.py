@@ -237,3 +237,48 @@ def test_main_shares_trigger_id_generator_across_breach_loop_and_bracket_stops(
     assert bracket_trigger_ids is not None
     # The same instance is threaded to both — not two independent generators.
     assert breach_trigger_ids is bracket_trigger_ids
+
+
+def test_main_writes_pip_freeze_snapshot_under_monkeypatched_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _silent_logger: None,
+) -> None:
+    """Regression — ``_default_archive_root()`` resolves at call time, not import.
+
+    Prior to the fix, ``_DEFAULT_ARCHIVE_ROOT`` was evaluated at module
+    import via ``Path.home() / "AlphaMind" / "archive"``. Tests that
+    ``monkeypatch.setenv("HOME", tmp_path)`` did so *after* import, so
+    ``record_process_lifetime`` wrote ``pip_freeze.txt`` snapshots to the
+    developer's real home directory. The fix moves the lookup inside
+    ``_run_daemon`` so the monkeypatched ``HOME`` is honored.
+    """
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("ALPACA_PAPER_KEY", "test-key")
+    monkeypatch.setenv("ALPACA_PAPER_SECRET", "test-secret")
+    _ensure_db_schema(tmp_path)
+
+    async def _no_op_run(self: object) -> None:
+        del self
+
+    with mock.patch(
+        "alphamind.execution.continuous_monitor.__main__.MonitorSupervisor.run",
+        _no_op_run,
+    ):
+        monitor_main(["run", "--mode", "paper"])
+
+    archive_root = tmp_path / "AlphaMind" / "archive"
+    assert archive_root.exists(), (
+        f"archive root not created under monkeypatched HOME: {archive_root}"
+    )
+    # ``record_process_lifetime`` writes ``pip_freeze.txt`` under
+    # ``<archive_root>/process_lifetimes/<id>/`` — at least one entry should
+    # exist after the monitor's startup commit.
+    process_lifetimes_dir = archive_root / "process_lifetimes"
+    assert process_lifetimes_dir.exists()
+    snapshots = list(process_lifetimes_dir.rglob("pip_freeze.txt"))
+    assert snapshots, (
+        f"no pip_freeze.txt snapshot was written under {process_lifetimes_dir}; "
+        f"the lookup likely still resolves to the developer's real HOME"
+    )

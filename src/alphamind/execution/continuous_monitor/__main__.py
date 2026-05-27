@@ -159,7 +159,10 @@ _BREACH_BEHAVIOR_CONFIG_PATH = _CONFIG_DIR / "breach_behavior.yaml"
 _EXECUTION_CONFIG_PATH = _CONFIG_DIR / "execution.yaml"
 # Same default the scheduler uses (``alphamind.scheduler.__main__``) so the
 # pip-freeze + process-lifetime snapshots land in the canonical archive root.
-_DEFAULT_ARCHIVE_ROOT = Path.home() / "AlphaMind" / "archive"
+# Resolved lazily inside ``_run_daemon`` so tests that ``monkeypatch.setenv``
+# ``HOME`` after import don't get the developer's real home directory.
+def _default_archive_root() -> Path:
+    return Path.home() / "AlphaMind" / "archive"
 _MAIN_CONFIG_PATH = _CONFIG_DIR / "main.yaml"
 
 # ALP-530 — refresh cadence for the shared realized-vol map. The distillation
@@ -369,11 +372,12 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     # ALP-719 — the borrow-accrual tick inserts its own ``InvocationRow`` per
     # tick, FK-referencing a ``process_lifetimes`` row owned by this monitor
     # process. Mirrors the scheduler's startup record_process_lifetime call.
-    _DEFAULT_ARCHIVE_ROOT.mkdir(parents=True, exist_ok=True)
+    archive_root = _default_archive_root()
+    archive_root.mkdir(parents=True, exist_ok=True)
     process_lifetime_id = await record_process_lifetime(
         session_factory=db_session_factory,
         process_role="monitor",
-        archive_root=_DEFAULT_ARCHIVE_ROOT,
+        archive_root=archive_root,
     )
     open_positions_reader = SqlOpenPositionsReader(db_session_factory)
     # One ``AccountStateQueries`` + one ``TradingCalendarCache`` are shared
