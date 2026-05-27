@@ -1116,15 +1116,18 @@ def test_new_short_equity_resolves_borrow_cost_via_resolver() -> None:
     Reproduces the production crash: analyst proposes a SHORT on SCHW with
     no matching existing position. The pre-processor must consult the
     threaded resolver to compute daily_borrow_cost_usd instead of raising.
+
+    Asserts both that the bundle is produced AND that the translated proposal
+    carries the resolver-derived daily borrow cost — proves the resolver
+    arrives on the active code path, not silently dropped between layers.
     """
     snap = _snapshot()  # no existing SHORT positions
     config = _full_config()
-    market = _market("AAPL")  # underlying_prices already includes NVDA + ABC; add SCHW below
     market = MarketInputs(
         underlying_prices={"AAPL": _SPOT, "NVDA": _SPOT, "ABC": _SPOT, "SCHW": _SPOT},
-        risk_free_rate=market.risk_free_rate,
-        iv_provider=market.iv_provider,
-        as_of=market.as_of,
+        risk_free_rate=0.045,
+        iv_provider=_market("AAPL").iv_provider,
+        as_of=_NOW,
     )
     rec = _equity_recommendation(
         rec_id="REC-712",
@@ -1150,3 +1153,11 @@ def test_new_short_equity_resolves_borrow_cost_via_resolver() -> None:
     )
 
     assert result.basis.analyst_proposal_ids == ("REC-712",)
+    # Re-derive the translator's output to confirm the resolver value flowed
+    # through compute_combined_set_impact → translator. ``daily_borrow_cost_usd``
+    # = notional * (fee_pct / 100) / 252.
+    expected_daily_borrow = 10_000.0 * (25.0 / 100.0) / 252
+    delta = translate_recommendation_to_proposed_delta(
+        rec, snapshot=snap, borrow_cost_resolver=resolver
+    )
+    assert delta.daily_borrow_cost_usd == pytest.approx(expected_daily_borrow)

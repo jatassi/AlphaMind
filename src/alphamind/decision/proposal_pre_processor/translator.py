@@ -8,8 +8,9 @@ guardrail check (story 03 consumes the translated deltas).
 A ``borrow_cost_resolver`` (annualized fee_pct per ticker, the same callable
 the validation tool consumes) may be threaded through to convert a new SHORT
 EQUITY recommendation's notional into a one-day USD accrual. The resolver is
-optional — the caller is the decision pipeline runner, which always has it
-in scope (ALP-712).
+optional; when absent or when it returns ``None`` for a ticker that has no
+matching existing SHORT EQUITY position, the translator raises
+``TranslatorError`` (ALP-712).
 """
 
 from __future__ import annotations
@@ -292,10 +293,13 @@ def _resolve_borrow_cost_for_recommendation(
     other instrument shape):
 
     1. **Fast path.** If ``snapshot.existing_positions`` already holds a
-       SHORT EQUITY position on the same ticker, return its persisted
-       ``daily_borrow_cost_usd`` directly — the daily accrual was computed
-       when the position was opened and stored on the existing position
-       (ALP-712: this is the original behavior).
+       SHORT EQUITY position on the same ticker AND that position carries a
+       non-``None`` ``daily_borrow_cost_usd``, return it directly — the daily
+       accrual was computed at snapshot-assembly time and stored on the
+       existing position. A matching position with ``daily_borrow_cost_usd
+       is None`` (the snapshot assembler emits ``None`` when its own resolver
+       had no row for the ticker — see ``library_snapshot.py``) falls through
+       to the resolver path so a current rate can be tried before raising.
     2. **Resolver fallback.** A *new* short on a ticker has no existing
        position, so consult ``borrow_cost_resolver`` (the same callable the
        validation tool consumed when validating the analyst's proposal). The
@@ -323,6 +327,7 @@ def _resolve_borrow_cost_for_recommendation(
             pos.underlying == ticker
             and pos.direction is Direction.SHORT
             and pos.asset_type is AssetType.EQUITY
+            and pos.daily_borrow_cost_usd is not None
         ):
             return pos.daily_borrow_cost_usd
 

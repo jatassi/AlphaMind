@@ -45,6 +45,7 @@ from alphamind.decision.proposal_pre_processor import (
     run_proposal_pre_processor,
 )
 from alphamind.decision.proposal_pre_processor.models import AnalystSideConflict
+from alphamind.decision.proposal_pre_processor.translator import TranslatorError
 from alphamind.decision.strategist.models import (
     AddParameters,
     CloseParameters,
@@ -1109,6 +1110,10 @@ def test_borrow_cost_resolver_threaded_for_new_short_equity() -> None:
     and the pipeline never reaches the PM. With the resolver threaded the
     bundle is produced and the SHORT recommendation appears in the analyst
     section.
+
+    Also asserts the negative case: omitting the resolver kwarg from the same
+    call still raises ``TranslatorError`` (proves the kwarg is on the active
+    code path, not silently dropped between layers).
     """
     rec = _equity_recommendation(
         rec_id="REC-712",
@@ -1135,3 +1140,15 @@ def test_borrow_cost_resolver_threaded_for_new_short_equity() -> None:
     assert bundle.analyst_section.recommendations is not None
     assert len(bundle.analyst_section.recommendations) == 1
     assert bundle.analyst_section.recommendations[0].recommendation.recommendation_id == "REC-712"
+
+    # Negative case: omitting the resolver re-introduces the original crash.
+    with pytest.raises(TranslatorError, match=r"borrow cost unavailable.*MSFT"):
+        run_proposal_pre_processor(
+            analyst_output=_analyst_output(recommendations=(rec,)),
+            strategist_output=_strategist_output(),
+            snapshot=_snapshot(),
+            library_config=_library_config(),
+            market=_market("MSFT"),
+            snapshot_timestamp=_NOW,
+            timestamp=_FINAL,
+        )

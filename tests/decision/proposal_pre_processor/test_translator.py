@@ -440,6 +440,68 @@ def test_short_equity_new_position_uses_resolver_for_borrow_cost() -> None:
     assert delta.direction == Direction.SHORT
 
 
+def test_short_equity_resolver_returns_none_raises_translator_error() -> None:
+    """ALP-712: resolver returns None → fail-hard with the clearer error message.
+
+    Covers the upstream-contract-violation branch (the analyst's validation
+    tool should have rejected this proposal as UNAVAILABLE upstream).
+    """
+    snap = _snapshot()  # empty existing_positions
+    rec = _equity_recommendation(
+        rec_id="REC-713",
+        underlying=Symbol("XYZ"),
+        sector="tech",
+        direction="short",
+    )
+
+    def resolver_no_data(ticker: str) -> float | None:
+        return None
+
+    with pytest.raises(TranslatorError, match=r"borrow cost unavailable.*XYZ"):
+        translate_recommendation_to_proposed_delta(
+            rec, snapshot=snap, borrow_cost_resolver=resolver_no_data
+        )
+
+
+def test_short_equity_existing_position_with_none_borrow_falls_through_to_resolver() -> None:
+    """ALP-712: a matching existing position with daily_borrow_cost_usd=None must
+    not short-circuit the resolver fallback.
+
+    ``library_snapshot.py`` emits ``daily_borrow_cost_usd=None`` on the
+    ExistingPosition whenever its own borrow_cost_resolver had no row for the
+    ticker at snapshot-assembly time. Returning that ``None`` directly would
+    re-introduce the bug ALP-712 fixed (the downstream library's
+    ``_check_short_borrow_cost`` rejects ``daily_borrow_cost_usd=None`` on
+    SHORT EQUITY OPEN/ADD). The translator must consult the resolver before
+    giving up.
+    """
+    existing = _existing_equity(
+        position_id=PositionId("POS-STALE-SHORT"),
+        underlying=Symbol("LMN"),
+        sector="tech",
+        direction=Direction.SHORT,
+        daily_borrow_cost_usd=None,  # snapshot assembler couldn't resolve at the time
+    )
+    snap = _snapshot(existing_positions={"POS-STALE-SHORT": existing})
+    rec = _equity_recommendation(
+        rec_id="REC-714",
+        underlying=Symbol("LMN"),
+        sector="tech",
+        direction="short",
+        dollar_value=8_000.0,
+    )
+
+    def resolver(ticker: str) -> float | None:
+        return 30.0 if ticker == "LMN" else None  # rate is now available
+
+    delta = translate_recommendation_to_proposed_delta(
+        rec, snapshot=snap, borrow_cost_resolver=resolver
+    )
+
+    expected = 8_000.0 * (30.0 / 100.0) / 252
+    assert delta.daily_borrow_cost_usd == pytest.approx(expected)
+
+
 # ===========================================================================
 # AC-6: reserves_capital from entry order type
 # ===========================================================================
