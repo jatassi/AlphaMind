@@ -399,7 +399,7 @@ def test_short_equity_with_snapshot_picks_up_borrow_cost() -> None:
 
 
 def test_short_equity_no_snapshot_raises_translator_error() -> None:
-    """AC-5: SHORT EQUITY with no matching short in snapshot raises TranslatorError."""
+    """AC-5: SHORT EQUITY with no matching short and no resolver raises TranslatorError."""
     snap = _snapshot()  # empty existing_positions
     rec = _equity_recommendation(
         rec_id="REC-11",
@@ -409,6 +409,35 @@ def test_short_equity_no_snapshot_raises_translator_error() -> None:
     )
     with pytest.raises(TranslatorError, match="borrow cost unavailable"):
         translate_recommendation_to_proposed_delta(rec, snapshot=snap)
+
+
+def test_short_equity_new_position_uses_resolver_for_borrow_cost() -> None:
+    """ALP-712: a new SHORT EQUITY (no existing position) computes borrow cost via the resolver.
+
+    The resolver returns an annualized fee_pct from ``borrow_cost_daily``; the
+    translator converts it to a daily USD accrual against the proposal notional
+    via the same formula validation_tool uses (``daily_borrow_cost_usd``).
+    """
+    snap = _snapshot()  # empty existing_positions
+    rec = _equity_recommendation(
+        rec_id="REC-712",
+        underlying=Symbol("SCHW"),
+        sector="financials",
+        direction="short",
+        dollar_value=10_000.0,
+    )
+
+    def resolver(ticker: str) -> float | None:
+        return 15.0 if ticker == "SCHW" else None  # 15.0% annualized fee
+
+    delta = translate_recommendation_to_proposed_delta(
+        rec, snapshot=snap, borrow_cost_resolver=resolver
+    )
+
+    # daily = notional * (fee_pct / 100) / 252 trading days
+    expected = 10_000.0 * (15.0 / 100.0) / 252
+    assert delta.daily_borrow_cost_usd == pytest.approx(expected)
+    assert delta.direction == Direction.SHORT
 
 
 # ===========================================================================

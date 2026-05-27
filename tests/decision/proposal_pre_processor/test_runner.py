@@ -1094,3 +1094,44 @@ def test_add_action_yields_entry_vs_add_conflict() -> None:
     assert bundle.analyst_section.recommendations is not None
     conflicts = bundle.analyst_section.recommendations[0].pre_processor_annotations.conflicts
     assert any(c.conflict_type == ConflictType.entry_vs_add for c in conflicts)
+
+
+# ===========================================================================
+# ALP-712: borrow_cost_resolver wired through to the combined-set translator
+# ===========================================================================
+
+
+def test_borrow_cost_resolver_threaded_for_new_short_equity() -> None:
+    """ALP-712: runner threads borrow_cost_resolver so a new SHORT EQUITY doesn't crash.
+
+    Reproduces the production crash on SCHW: analyst proposes a new SHORT with
+    no matching existing position; without the resolver the translator raises
+    and the pipeline never reaches the PM. With the resolver threaded the
+    bundle is produced and the SHORT recommendation appears in the analyst
+    section.
+    """
+    rec = _equity_recommendation(
+        rec_id="REC-712",
+        underlying=Symbol("MSFT"),
+        direction="short",
+        quantity=50.0,
+        dollar_value=7_500.0,
+    )
+
+    def resolver(ticker: str) -> float | None:
+        return 20.0 if ticker == "MSFT" else None
+
+    bundle = run_proposal_pre_processor(
+        analyst_output=_analyst_output(recommendations=(rec,)),
+        strategist_output=_strategist_output(),
+        snapshot=_snapshot(),
+        library_config=_library_config(),
+        market=_market("MSFT"),
+        snapshot_timestamp=_NOW,
+        timestamp=_FINAL,
+        borrow_cost_resolver=resolver,
+    )
+
+    assert bundle.analyst_section.recommendations is not None
+    assert len(bundle.analyst_section.recommendations) == 1
+    assert bundle.analyst_section.recommendations[0].recommendation.recommendation_id == "REC-712"

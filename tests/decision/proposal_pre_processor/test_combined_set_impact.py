@@ -1103,3 +1103,50 @@ def test_holistic_contributors_pattern_falls_back_for_non_holistic_rules() -> No
     by_id = {c.proposal_id: c.contribution for c in breach.contributors}
     assert "REC-1" in by_id
     assert abs(by_id["REC-1"] - 15.0) < 0.5
+
+
+# ===========================================================================
+# ALP-712: borrow_cost_resolver threaded through for new SHORT EQUITY
+# ===========================================================================
+
+
+def test_new_short_equity_resolves_borrow_cost_via_resolver() -> None:
+    """ALP-712: a new SHORT EQUITY recommendation succeeds via the resolver.
+
+    Reproduces the production crash: analyst proposes a SHORT on SCHW with
+    no matching existing position. The pre-processor must consult the
+    threaded resolver to compute daily_borrow_cost_usd instead of raising.
+    """
+    snap = _snapshot()  # no existing SHORT positions
+    config = _full_config()
+    market = _market("AAPL")  # underlying_prices already includes NVDA + ABC; add SCHW below
+    market = MarketInputs(
+        underlying_prices={"AAPL": _SPOT, "NVDA": _SPOT, "ABC": _SPOT, "SCHW": _SPOT},
+        risk_free_rate=market.risk_free_rate,
+        iv_provider=market.iv_provider,
+        as_of=market.as_of,
+    )
+    rec = _equity_recommendation(
+        rec_id="REC-712",
+        underlying="SCHW",
+        sector="financials",
+        direction="short",
+        quantity=100.0,
+        dollar_value=10_000.0,
+    )
+
+    def resolver(ticker: str) -> float | None:
+        return 25.0 if ticker == "SCHW" else None
+
+    result = compute_combined_set_impact(
+        recommendations=(rec,),
+        non_hold_position_assessments=(),
+        snapshot=snap,
+        library_config=config,
+        market=market,
+        snapshot_timestamp=_NOW,
+        strategist_holds_excluded_count=0,
+        borrow_cost_resolver=resolver,
+    )
+
+    assert result.basis.analyst_proposal_ids == ("REC-712",)

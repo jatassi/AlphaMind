@@ -11,6 +11,7 @@ both call this function.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 
 from alphamind.decision.analyst.models import AnalystOutput, Recommendation
@@ -60,6 +61,7 @@ def run_proposal_pre_processor(
     market: MarketInputs,
     snapshot_timestamp: datetime,
     timestamp: datetime,
+    borrow_cost_resolver: Callable[[str], float | None] | None = None,
 ) -> ProposalPreProcessorBundle:
     """Compute the proposal pre-processor bundle.
 
@@ -69,6 +71,12 @@ def run_proposal_pre_processor(
     used, the snapshot's effective timestamp (for §1.A basis), and the
     bundle's finalization timestamp (for the bundle envelope's ``timestamp``
     field).
+
+    ``borrow_cost_resolver`` is the ticker → annualized-fee_pct callable
+    threaded by the decision-layer pipeline; it is consulted by
+    :func:`compute_combined_set_impact` only for new SHORT EQUITY
+    recommendations (no matching existing position in the snapshot)
+    (ALP-712).
 
     Pure: same inputs produce identical bundle output. No clock reads, no
     UUID generation, no I/O.
@@ -97,6 +105,7 @@ def run_proposal_pre_processor(
             strategist_holds_excluded_count=(
                 len(strategist_output.position_assessments) - len(non_hold_position_assessments)
             ),
+            borrow_cost_resolver=borrow_cost_resolver,
         ),
         conviction_distribution=compute_conviction_distribution(recommendations),
         book_health_summary=compute_book_health_summary(strategist_output.position_assessments),

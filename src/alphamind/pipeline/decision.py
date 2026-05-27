@@ -670,6 +670,9 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
         progress.phase_done("strategist")
 
     # 7. Run proposal pre-processor — pure (no I/O, no clock reads).
+    # ALP-712: thread borrow_cost_resolver so new SHORT EQUITY recommendations
+    # (no matching existing position) can derive daily_borrow_cost_usd from
+    # the ``borrow_cost_daily`` store instead of crashing the pipeline.
     progress.phase_start("pre_processor")
     pre_processor_bundle = run_proposal_pre_processor(
         analyst_output=analyst_result.output,
@@ -679,6 +682,7 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
         market=library_market,
         snapshot_timestamp=pydantic_snapshot.snapshot_assembled_at,
         timestamp=timestamp,
+        borrow_cost_resolver=borrow_cost_resolver,
     )
     progress.phase_done("pre_processor")
 
