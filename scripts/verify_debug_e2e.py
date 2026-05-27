@@ -1341,10 +1341,14 @@ def _format_inflow_sentiment_line(sentiment: dict[str, Any]) -> str:
         if window_start is not None and window_end is not None
         else "(no inter-baseline window)"
     )
-    articles = int(sentiment.get("articles_in_window", 0))
-    scored = int(sentiment.get("scored_articles_in_window", 0))
-    populated = int(sentiment.get("calibrated_tickers_with_populated_secondary", 0))
-    total = int(sentiment.get("calibrated_tickers_total", 0))
+    # ``int(d.get(k, 0))`` raises TypeError on stored ``null``; ``or 0``
+    # collapses both missing-key and explicit-``null`` to ``0`` so a
+    # malformed payload degrades gracefully instead of crashing the whole
+    # DATA HEALTH render.
+    articles = int(sentiment.get("articles_in_window") or 0)
+    scored = int(sentiment.get("scored_articles_in_window") or 0)
+    populated = int(sentiment.get("calibrated_tickers_with_populated_secondary") or 0)
+    total = int(sentiment.get("calibrated_tickers_total") or 0)
     return (
         f"  INFLOW (sentiment) — window: {window_text}  "
         f"articles_in_window={articles}  scored={scored}  "
@@ -1385,9 +1389,24 @@ def format_data_health_block(snapshot: dict[str, Any]) -> str:
         lines.append(f"  (unrecognized snapshot schema_version={version!r})")
         return "\n".join(lines)
 
-    calibrated = int(summary.get("calibrated", 0))
-    accumulating = int(summary.get("accumulating", 0))
-    unavailable = int(summary.get("unavailable", 0))
+    # ALP-709 collision guard: with both ``SCHEMA_VERSION`` and
+    # ``OPERATOR_SUMMARY_SCHEMA_VERSION`` now equal to ``"2"``, the version
+    # field alone no longer distinguishes the internal-shape from the
+    # operator-shape payload. Internal payloads carry ``summary.by_state``
+    # / ``summary.total_blocks``; operator payloads carry flat per-state
+    # counts. If the internal shape lands at the operator path the
+    # ``summary.get("calibrated", 0)`` reads below would silently render
+    # zeros — exactly the failure the original V1-vs-V2 guard prevented.
+    if "by_state" in summary or "total_blocks" in summary:
+        lines.append(
+            "  (unrecognized snapshot — appears to be internal-shape "
+            "(by_state/total_blocks present))"
+        )
+        return "\n".join(lines)
+
+    calibrated = int(summary.get("calibrated") or 0)
+    accumulating = int(summary.get("accumulating") or 0)
+    unavailable = int(summary.get("unavailable") or 0)
     lines.append(
         f"  calibrated={calibrated}  accumulating={accumulating}  unavailable={unavailable}"
     )

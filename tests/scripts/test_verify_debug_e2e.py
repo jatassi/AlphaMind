@@ -1603,6 +1603,60 @@ def test_format_data_health_inflow_section_omitted_when_key_missing(
     assert "INFLOW (sentiment)" not in rendered
 
 
+def test_format_data_health_rejects_internal_shape_payload(
+    verify_module: ModuleType,
+) -> None:
+    """ALP-709 collision guard: an internal-shape payload (carrying
+    ``summary.by_state`` / ``summary.total_blocks``) accidentally landing
+    at the operator path renders as the internal-shape warning, not silent
+    zeros. Both ``SCHEMA_VERSION`` and ``OPERATOR_SUMMARY_SCHEMA_VERSION``
+    are now ``"2"`` so the version field alone no longer disambiguates.
+    """
+    internal_shape = {
+        "schema_version": "2",
+        "summary": {
+            "total_blocks": 3,
+            "by_state": {"calibrated": 1, "accumulating": 2, "unavailable": 0},
+            "by_audience": {},
+            "by_block_kind": {},
+        },
+        "accumulating_reasons": {"q1.foo": "bar"},
+        "unavailable_reasons": {},
+    }
+    rendered = verify_module.format_data_health_block(internal_shape)
+    assert "internal-shape" in rendered
+    assert "calibrated=0" not in rendered
+
+
+def test_format_data_health_tolerates_null_count_values(
+    verify_module: ModuleType,
+) -> None:
+    """A V2 snapshot carrying explicit JSON ``null`` for an inflow count
+    field (manual edit, partial write, future writer bug) renders the
+    field as ``0`` rather than crashing the whole DATA HEALTH block.
+    """
+    payload = {
+        "schema_version": "2",
+        "summary": {"calibrated": 5, "accumulating": 0, "unavailable": 0},
+        "unavailable": [],
+        "accumulating": [],
+        "inflow_metrics": {
+            "sentiment": {
+                "window_start": "2026-05-26T20:40:25Z",
+                "window_end": "2026-05-26T21:01:53Z",
+                "articles_in_window": None,
+                "scored_articles_in_window": None,
+                "calibrated_tickers_total": 5,
+                "calibrated_tickers_with_populated_secondary": None,
+            }
+        },
+    }
+    rendered = verify_module.format_data_health_block(payload)
+    assert "articles_in_window=0" in rendered
+    assert "scored=0" in rendered
+    assert "populated_secondary=0/5" in rendered
+
+
 def test_format_data_health_inflow_section_handles_null_window(
     verify_module: ModuleType,
 ) -> None:

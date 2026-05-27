@@ -48,7 +48,6 @@ import time
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from functools import partial
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
@@ -1380,13 +1379,11 @@ async def run_external_distillation(
         ticker_scope=ticker_scope,
     )
     await asyncio.to_thread(
-        partial(
-            write_operator_data_health_summary,
-            outputs,
-            invocation_id,
-            archive_root,
-            sentiment_inflow=sentiment_inflow,
-        )
+        write_operator_data_health_summary,
+        outputs,
+        invocation_id,
+        archive_root,
+        sentiment_inflow=sentiment_inflow,
     )
     logger.info(
         "phase 6 (archive write) complete: dir=%s elapsed=%.3fs",

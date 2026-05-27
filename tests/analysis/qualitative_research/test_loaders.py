@@ -2351,6 +2351,93 @@ class TestComputeSentimentInflowMetrics:
         assert metrics.window_start is None
         assert metrics.window_end is None
 
+    def test_single_baseline_ticker_counts_toward_total_but_not_populated(
+        self, session: Session
+    ) -> None:
+        """First-calibration tickers have a single baseline row, so no
+        inter-baseline window exists for them. They count toward
+        ``calibrated_tickers_total`` (the operator's headline denominator)
+        but can never increment ``calibrated_tickers_with_populated_secondary``
+        — the docstring promises this and the operator's "% populated"
+        reading depends on it.
+        """
+        in_window_iso = (AS_OF - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_ticker(session, "FRESH")
+        # Single calibrated baseline — no prior row.
+        _add_sentiment_baseline(
+            session, "FRESH", mean=0.1, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        # Articles published recently — irrelevant since this ticker has
+        # no window.
+        _add_news_article(
+            session,
+            article_id="fresh-1",
+            ticker="FRESH",
+            published_at=in_window_iso,
+            vendor_sentiment_score=0.5,
+        )
+        session.commit()
+
+        metrics = compute_sentiment_inflow_metrics(session, as_of=AS_OF)
+        assert metrics.calibrated_tickers_total == 1
+        assert metrics.calibrated_tickers_with_populated_secondary == 0
+        assert metrics.window_start is None  # no two-baseline ticker
+        assert metrics.articles_in_window == 0
+
+    def test_divergent_windows_sum_inflow_pick_dominant_bucket(self, session: Session) -> None:
+        """When refresh desync produces two distinct ``(prior, latest)``
+        buckets, the helper sums articles across both buckets and reports
+        the larger bucket's window edges (tiebreaker: latest
+        ``latest_as_of``).
+        """
+        # Two windows: NVDA on window A (prior_a → as_of), JPM + AAPL on
+        # window B (prior_b → as_of). Window B has the larger bucket.
+        prior_a = (AS_OF - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        prior_b = (AS_OF - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        article_a = (AS_OF - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        article_b = (AS_OF - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=prior_a
+        )
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        _add_news_article(
+            session,
+            article_id="nvda-a",
+            ticker="NVDA",
+            published_at=article_a,
+            vendor_sentiment_score=0.4,
+        )
+
+        for ticker in ("JPM", "AAPL"):
+            _add_ticker(session, ticker, sector="financials")
+            _add_sentiment_baseline(
+                session, ticker, mean=0.0, stdev=0.2, n_observations=100, as_of_str=prior_b
+            )
+            _add_sentiment_baseline(
+                session, ticker, mean=0.0, stdev=0.2, n_observations=100, as_of_str=_ISO
+            )
+            _add_news_article(
+                session,
+                article_id=f"{ticker.lower()}-b",
+                ticker=ticker,
+                published_at=article_b,
+                vendor_sentiment_score=-0.1,
+            )
+        session.commit()
+
+        metrics = compute_sentiment_inflow_metrics(session, as_of=AS_OF)
+        # 1 NVDA article in window A + 2 JPM/AAPL articles in window B.
+        assert metrics.articles_in_window == 3
+        assert metrics.scored_articles_in_window == 3
+        # Bucket B has 2 tickers vs A's 1 — dominant window is B.
+        assert metrics.window_start == AS_OF - timedelta(days=7)
+        assert metrics.calibrated_tickers_total == 3
+        assert metrics.calibrated_tickers_with_populated_secondary == 3
+
     def test_ticker_scope_restricts_cohort(self, session: Session) -> None:
         """``ticker_scope`` filters the calibrated set the same way the
         loader does — totals reflect only in-scope tickers.

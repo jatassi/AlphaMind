@@ -16,7 +16,10 @@ Coverage map per the story scope:
 - Empty-input: zero-block fixture produces ``total_blocks = 0`` and empty
   by-* dicts.
 - Bootstrap-reason capture and unavailable-reason capture.
-- ``schema_version`` field is present and equal to ``"1"``.
+- Internal ``schema_version`` is ``"2"`` (bumped in ALP-540); the
+  operator-facing summary writer's ``OPERATOR_SUMMARY_SCHEMA_VERSION`` is
+  separately tested under "Operator data-health V2" below (bumped in
+  ALP-709).
 - Directory creation: the writer creates missing parents.
 """
 

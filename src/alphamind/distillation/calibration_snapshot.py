@@ -257,17 +257,18 @@ def _operator_summary_payload(
 ) -> dict[str, Any]:
     """Build the operator-facing data-health summary payload.
 
-    Shape (per ALP-540 § Layer 2):
+    Shape (V2 per ALP-709; ALP-540 originated the V1 shape this extends):
 
     .. code-block:: json
 
         {
-          "schema_version": "1",
+          "schema_version": "2",
           "invocation_id": "...",
           "as_of": "...",
           "summary": {"calibrated": N, "accumulating": M, "unavailable": K},
           "unavailable": [{"module": "<block_id>", "reason": "..."}, ...],
-          "accumulating": [{"module": "<block_id>", "reason": "..."}, ...]
+          "accumulating": [{"module": "<block_id>", "reason": "..."}, ...],
+          "inflow_metrics": {"sentiment": {...}}   // ALP-709, optional
         }
 
     The per-block lists are emitted in block-id-sorted order. Both
@@ -275,7 +276,11 @@ def _operator_summary_payload(
     ``reason`` — the strawman fields ``since`` / ``eta_calibrated_at``
     require historical state the orchestrator doesn't currently track,
     and the reason text already encodes the ``observations < required``
-    delta for accumulating series.
+    delta for accumulating series. The ``inflow_metrics`` key is sibling
+    to ``summary`` (not nested under it) so future inflow surfaces
+    (news-price divergence, prediction-market inflow) extend by adding
+    siblings to ``sentiment``; it is OMITTED entirely when the caller
+    doesn't plumb metrics, and the renderer tolerates absence.
     """
     sorted_blocks = sorted(outputs.all_blocks, key=lambda b: b.block_id)
 
