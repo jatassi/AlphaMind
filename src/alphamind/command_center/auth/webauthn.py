@@ -515,7 +515,7 @@ class RealWebauthnVerifier:
         # boundary so we ship raw bytes from here on.
         credential_dict: dict[str, object] = {
             "id": response.credential_id,
-            "rawId": _b64url_encode(response.credential_id.encode("ascii")),
+            "rawId": response.credential_id,
             "response": {
                 "clientDataJSON": _b64url_encode(response.client_data_json),
                 "attestationObject": _b64url_encode(response.attestation_object),
@@ -582,7 +582,7 @@ class RealWebauthnVerifier:
             response_subobj["userHandle"] = _b64url_encode(response.user_handle)
         credential_dict: dict[str, object] = {
             "id": response.credential_id,
-            "rawId": _b64url_encode(response.credential_id.encode("ascii")),
+            "rawId": response.credential_id,
             "response": response_subobj,
             "type": "public-key",
         }

@@ -24,6 +24,7 @@ from alphamind.command_center.auth.webauthn import (
     AuthenticationOptions,
     AuthenticationResponse,
     InMemoryWebauthnVerifier,
+    RealWebauthnVerifier,
     RegistrationOptions,
     RegistrationResponse,
     VerifiedAuthentication,
@@ -212,3 +213,77 @@ class TestInMemoryVerifyAuthenticationResponse:
             stored_sign_count=0,
         )
         assert verified.new_sign_count == 0
+
+
+# ---------------------------------------------------------------------------
+# RealWebauthnVerifier seam tests (ALP-723 regression guard)
+# These directly exercise the py-webauthn translation layer that the
+# InMemory fake never touches. The double-base64url rawId bug only
+# manifested here.
+# ---------------------------------------------------------------------------
+
+
+class TestRealWebauthnVerifierRawIdEncoding:
+    """Guard against re-introducing the ALP-723 double-encoding of rawId.
+
+    The ``credential_id`` in RegistrationResponse/AuthenticationResponse
+    (and thus the value from the SPA) is *already* base64url. Both "id"
+    and "rawId" passed to py-webauthn must be identical strings.
+    """
+
+    def test_registration_does_not_double_encode_raw_id(self) -> None:
+        verifier = RealWebauthnVerifier(
+            relying_party_id="localhost",
+            relying_party_name="Test RP",
+            expected_origin="http://localhost:8080",
+        )
+        options = verifier.generate_registration_options(
+            user_id=b"test-operator",
+            user_name="test",
+            existing_credentials=(),
+        )
+        # Dummy blobs suffice: id/rawId check is first in py-webauthn.
+        response = RegistrationResponse(
+            credential_id=webauthn_credential_id("cred-723"),
+            client_data_json=b"{}",
+            attestation_object=b"{}",
+            transports=(),
+        )
+        try:
+            verifier.verify_registration_response(options=options, response=response)
+        except Exception as exc:
+            msg = str(exc)
+            assert "id and raw_id were not equivalent" not in msg, (
+                "ALP-723 regression: rawId double-encoded on registration path"
+            )
+            # Any later error (bad dummy clientDataJSON etc.) is fine;
+            # reaching here means the rawId seam passed.
+
+    def test_authentication_does_not_double_encode_raw_id(self) -> None:
+        verifier = RealWebauthnVerifier(
+            relying_party_id="localhost",
+            relying_party_name="Test RP",
+            expected_origin="http://localhost:8080",
+        )
+        cred = webauthn_credential_id("cred-723")
+        options = verifier.generate_authentication_options(allow_credentials=(cred,))
+        response = AuthenticationResponse(
+            credential_id=cred,
+            client_data_json=b"{}",
+            authenticator_data=b"{}",
+            signature=b"{}",
+            new_sign_count=1,
+        )
+        try:
+            verifier.verify_authentication_response(
+                options=options,
+                response=response,
+                stored_public_key=b"fake-pk-for-test",
+                stored_sign_count=0,
+            )
+        except Exception as exc:
+            msg = str(exc)
+            assert "id and raw_id were not equivalent" not in msg, (
+                "ALP-723 regression: rawId double-encoded on authentication path"
+            )
+            # Any later error is fine for the seam test.
