@@ -7,8 +7,9 @@ implementations:
   tests. Returns canned challenges and accepts any response whose
   ``credential_id`` matches.
 * :class:`RealWebauthnVerifier` — wraps the four ``py_webauthn`` calls.
-  Not exercised here; the verify script (story 07) exercises real
-  ``py_webauthn`` against a real authenticator.
+  The py-webauthn translation seam (rawId / credential dict construction)
+  is exercised by the new seam tests; full ceremonies against real
+  authenticators remain the verify script's (story 07) responsibility.
 
 The Protocol's I/O types are frozen dataclasses (P5: Pydantic at
 boundaries only); the FastAPI request / response models in

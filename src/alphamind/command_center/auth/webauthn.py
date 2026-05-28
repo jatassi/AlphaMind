@@ -8,8 +8,10 @@ in-memory fakes").
 Three shapes:
 
 * :class:`WebauthnVerifier` — the Protocol the route layer consumes.
-* :class:`RealWebauthnVerifier` — wraps ``py_webauthn``. Exercised end-
-  to-end ONLY by the verify script (story 07).
+* :class:`RealWebauthnVerifier` — wraps ``py_webauthn``. The py-webauthn
+  translation seam (credential dict construction) is exercised by unit
+  tests; full end-to-end ceremonies against real authenticators remain
+  the verify script's (story 07) responsibility.
 * :class:`InMemoryWebauthnVerifier` — deterministic fake used by unit
   tests. Generates a fresh random challenge per call; the verify path
   accepts any response whose credential is in the allow-list. Replay-

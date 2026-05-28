@@ -7,8 +7,9 @@ Public re-exports for downstream consumers:
 
 * :class:`WebauthnVerifier` — Protocol the route layer consumes.
 * :class:`InMemoryWebauthnVerifier` — deterministic fake for unit tests.
-* :class:`RealWebauthnVerifier` — wraps ``py_webauthn`` (exercised only
-  by the verify script, story 07).
+* :class:`RealWebauthnVerifier` — wraps ``py_webauthn`` (the py-webauthn
+  translation seam is unit-tested; full ceremonies with real authenticators
+  are the verify script's responsibility, story 07).
 * :func:`current_session` — FastAPI ``Depends`` returning the validated
   :class:`OperatorSessionId` for the presented session cookie. Raises
   ``HTTPException(401)`` on any rejection path.
