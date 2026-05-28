@@ -1,0 +1,20 @@
+[permission]
+allow = [
+    "WebFetch(domain:pypi.org)",
+    "WebFetch(domain:apscheduler.readthedocs.io)",
+    "Bash(uv run *)",
+    "mcp__linear-server__get_issue",
+    "mcp__linear-server__list_issues",
+    "mcp__linear-server__save_issue",
+]
+
+[paths]
+extra_skill_dirs = ["/Users/jatassi/Git/AlphaMind/.claude/skills"]
+
+[mcp_servers.shadcn]
+command = "npx"
+args = [
+    "shadcn@latest",
+    "mcp",
+]
+enabled = true
