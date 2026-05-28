@@ -13,6 +13,11 @@ Story 04d (ALP-670) extends:
 * The mount is skipped when ``COMMAND_CENTER_DEV_MODE`` is set.
 * The mount fail-closes when ``dist_path`` doesn't exist.
 
+ALP-722 extends the contract: when the mount is active, deep SPA routes
+(``/login``, ``/register``, any TanStack client route) receive ``index.html``
+(200 text/html) via an explicit 404 fallback handler; API/auth/events paths
+continue to 404 as JSON.
+
 The healthz probe is the manual-smoke target named in the story AC:
 ``curl http://127.0.0.1:8080/healthz`` returns 200.
 """
@@ -319,7 +324,8 @@ def configs_with_dist(tmp_path: Path) -> Path:
     dist = tmp_path / "dist"
     dist.mkdir()
     (dist / "index.html").write_text(
-        "<!doctype html><html><body>SPA</body></html>", encoding="utf-8"
+        '<!doctype html><html><body><div id="root"></div>SPA</body></html>',
+        encoding="utf-8",
     )
     cc_yaml = tmp_path / "command-center.yaml"
     cc_yaml.write_text(
@@ -345,14 +351,17 @@ monitor:
 
 
 class TestStaticFilesMount:
-    """Story 04d (ALP-670) — StaticFiles mount lifecycle.
+    """Story 04d (ALP-670) + ALP-722 — StaticFiles mount + SPA fallback lifecycle.
 
-    Three configurations:
+    Three configurations (mount behavior):
     * Happy path — dist exists, dev mode off → mount registered, serves
-      index.html on unmatched paths.
+      index.html on unmatched paths + deep SPA routes via fallback handler.
     * Missing dist — directory doesn't exist → mount skipped, daemon still
       runs (API surface remains usable).
     * Dev mode active — env var set → mount skipped regardless of dist.
+
+    ALP-722 adds: the 404 fallback only applies to GET client routes; API,
+    auth, events, asset, and non-GET paths still receive proper 404/405 JSON.
     """
 
     def test_mount_registered_when_dist_exists(self, configs_with_dist: Path) -> None:
@@ -367,8 +376,10 @@ class TestStaticFilesMount:
         assert mounts[0].name == "frontend"
 
     def test_mount_serves_index_html(self, configs_with_dist: Path) -> None:
-        """SPA fallback: an unmatched path serves index.html (TanStack Router
-        client-side routes resolve once the bundle hydrates)."""
+        """SPA fallback (ALP-722): even deep routes like /login serve index.html
+        (the html=True on StaticFiles only handled directory requests; the added
+        404 handler supplies the shell for TanStack Router paths).
+        """
         config_dir = configs_with_dist
         app = build_app(
             command_center_config=load_command_center_config(config_dir),
@@ -420,3 +431,86 @@ class TestStaticFilesMount:
         )
         mounts = [r for r in app.routes if isinstance(r, Mount)]
         assert mounts == [], f"expected dev mode active for value {truthy!r}, found {mounts}"
+
+    def test_deep_spa_routes_serve_index_html(self, configs_with_dist: Path) -> None:
+        """ALP-722: client-side routes (e.g. /login after 401 hard-redirect) must serve
+        the SPA shell (text/html + index.html content) instead of 404 JSON. This is the
+        regression the StaticFiles(html=True) alone did not catch.
+        """
+        config_dir = configs_with_dist
+        app = build_app(
+            command_center_config=load_command_center_config(config_dir),
+            security_config=load_security_config(config_dir),
+            alerts_config=load_alerts_config(config_dir),
+        )
+        with TestClient(app) as client:
+            response = client.get("/login")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/html")
+        assert "SPA" in response.text
+
+    def test_deep_spa_routes_include_root_div(self, configs_with_dist: Path) -> None:
+        """ALP-722 AC: the served shell must contain the real SPA's <div id="root"> marker
+        so that the React hydrate can find its mount point (exact text from index.html).
+        """
+        config_dir = configs_with_dist
+        app = build_app(
+            command_center_config=load_command_center_config(config_dir),
+            security_config=load_security_config(config_dir),
+            alerts_config=load_alerts_config(config_dir),
+        )
+        with TestClient(app) as client:
+            # /register is another deep route mentioned in symptom + AC
+            response = client.get("/register")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/html")
+        assert '<div id="root"></div>' in response.text
+
+    def test_api_and_auth_paths_still_404_as_json(self, configs_with_dist: Path) -> None:
+        """ALP-722 AC: unknown API, auth, events, healthz paths must still 404 with
+        application/json (no false-positive SPA HTML fallback that would mask real errors).
+        """
+        config_dir = configs_with_dist
+        app = build_app(
+            command_center_config=load_command_center_config(config_dir),
+            security_config=load_security_config(config_dir),
+            alerts_config=load_alerts_config(config_dir),
+        )
+        with TestClient(app) as client:
+            for bad_path in ("/api/nonexistent", "/auth/foo", "/events/unknown", "/healthz/extra"):
+                r = client.get(bad_path)
+                assert r.status_code == 404, f"{bad_path} should 404"
+                assert r.headers.get("content-type", "").startswith("application/json")
+
+    def test_non_get_methods_do_not_spa_fallback(self, configs_with_dist: Path) -> None:
+        """ALP-722 AC: POST/PUT etc to unknown paths must not receive HTML fallback
+        (only GET client routes are eligible for SPA shell).
+        """
+        config_dir = configs_with_dist
+        app = build_app(
+            command_center_config=load_command_center_config(config_dir),
+            security_config=load_security_config(config_dir),
+            alerts_config=load_alerts_config(config_dir),
+        )
+        with TestClient(app) as client:
+            r = client.post("/some/spa/route")
+            # Either 404 or 405 (mount/router rejects); either way not 200 HTML.
+            assert r.status_code in (404, 405)
+            # If 404, must be JSON not HTML.
+            if r.status_code == 404:
+                assert r.headers.get("content-type", "").startswith("application/json")
+
+    def test_missing_assets_still_404_not_html(self, configs_with_dist: Path) -> None:
+        """ALP-722 AC: a missing bundle chunk (/assets/missing.js) must 404 (so browser
+        can detect broken deploy) rather than receiving the index.html shell.
+        """
+        config_dir = configs_with_dist
+        app = build_app(
+            command_center_config=load_command_center_config(config_dir),
+            security_config=load_security_config(config_dir),
+            alerts_config=load_alerts_config(config_dir),
+        )
+        with TestClient(app) as client:
+            r = client.get("/assets/missing.js")
+            assert r.status_code == 404
+            assert r.headers.get("content-type", "").startswith("application/json")
