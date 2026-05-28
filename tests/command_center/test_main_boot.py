@@ -24,6 +24,7 @@ import pytest
 
 from alphamind.command_center.__main__ import _run_uvicorn_task
 from alphamind.command_center.app import build_app
+from alphamind.command_center.auth.webauthn import RealWebauthnVerifier
 from alphamind.command_center.config import (
     load_alerts_config,
     load_command_center_config,
@@ -56,6 +57,46 @@ def per_test_config_dir(tmp_path: Path) -> Path:
     cc_yaml.write_text(
         f"""bind:
   host: "127.0.0.1"
+  port: 8080
+db:
+  alphamind_db_path: '{db}'
+frontend:
+  dist_path: "src/alphamind/command_center/frontend/dist"
+pipeline:
+  control_url: "http://127.0.0.1:8765"
+  events_url: "http://127.0.0.1:8765"
+monitor:
+  control_url: "http://127.0.0.1:8766"
+  events_url: "http://127.0.0.1:8766"
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "security.yaml").write_bytes((repo_config / "security.yaml").read_bytes())
+    (tmp_path / "alerts.yaml").write_bytes((repo_config / "alerts.yaml").read_bytes())
+    return tmp_path
+
+
+@pytest.fixture
+def lan_access_per_test_config_dir(tmp_path: Path) -> Path:
+    """Per-test config dir with explicit LAN access: block (ALP-730 03d).
+
+    Exercises resolver + access block through the exact build_app calls
+    performed by the boot path in __main__._run (and by the other tests
+    in this file). Provides the boot coverage + 03a suggestion interaction
+    surface (LAN config present when first-boot token + future suggestion
+    emission logic run).
+    """
+    repo_config = Path(__file__).parents[2] / "config"
+    db = tmp_path / "test.db"
+    db.touch()
+    cc_yaml = tmp_path / "command-center.yaml"
+    cc_yaml.write_text(
+        f"""bind:
+  host: "192.168.1.123"
+  port: 8080
+access:
+  scheme: "http"
+  host: "testlan.local"
   port: 8080
 db:
   alphamind_db_path: '{db}'
@@ -221,3 +262,23 @@ class TestUvicornBoot:
         assert "events_pipeline_consumer" in names
         assert "events_monitor_consumer" in names
         assert "alerts_engine" in names
+
+    def test_build_app_with_lan_access_block_in_boot_config(
+        self, lan_access_per_test_config_dir: Path
+    ) -> None:
+        """ALP-730 (03d): LAN access block config loads and wires resolver
+        correctly in the build_app shape used by _run boot path.
+
+        Covers full resolver (with access) + boot interaction surface for
+        03a first-boot suggestion (which will run after token mint when
+        non-loopback bind detected on fresh LAN installs).
+        """
+        app = build_app(
+            command_center_config=load_command_center_config(lan_access_per_test_config_dir),
+            security_config=load_security_config(lan_access_per_test_config_dir),
+            alerts_config=load_alerts_config(lan_access_per_test_config_dir),
+        )
+        verifier = app.state.webauthn_verifier
+        assert isinstance(verifier, RealWebauthnVerifier)
+        assert verifier._expected_origin == "http://testlan.local:8080"
+        assert app.state.cookies_secure is False

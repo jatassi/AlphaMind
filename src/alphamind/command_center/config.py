@@ -4,9 +4,11 @@ Three models map 1:1 to three YAML files under ``config/``:
 
 * :class:`CommandCenterConfig` ← ``config/command-center.yaml`` —
   bind host / port + DB path + frontend dist path + (ALP-725) the new
-  ``access:`` block (public origin decoupled from bind for LAN/WebAuthn).
+  ``access:`` block (public origin decoupled from bind for LAN/WebAuthn
+  per the ALP-724 plan; see RUNBOOK for LAN recipe).
 * :class:`SecurityConfig` ← ``config/security.yaml`` — session cookie /
-  CSRF cookie / WebAuthn relying-party settings + (ALP-725) ``cookies_secure``.
+  CSRF cookie / WebAuthn relying-party settings + (ALP-725) ``cookies_secure``
+  (tied to the access origin scheme).
 * :class:`AlertsConfig` ← ``config/alerts.yaml`` — alert rule list +
   notification channel registry. Story 05a populates the rule list;
   story 02 ships an empty list as the loader-validation seam.
@@ -105,11 +107,16 @@ __all__ = [
 class BindConfig(BaseModel):
     """``bind`` block — host + port the Uvicorn server listens on.
 
-    ``host`` is ``127.0.0.1`` in v1 (loopback-only per the parent issue's
-    pre-resolved B); the operator can switch to a LAN IP for off-machine
-    access by editing the YAML. The VPS Caddy + WireGuard remote-access
-    wiring is deferred to a separate operator-handover follow-on per
-    pre-resolved B.
+    ``host`` defaults to ``127.0.0.1`` for v1 zero-config loopback installs.
+    For LAN access from other machines on the same network, the bind can be
+    widened (0.0.0.0 or the host LAN IP) independently of the public origin
+    thanks to the ``access:`` block (see :class:`AccessConfig`). See the
+    RUNBOOK_command_center.md § "LAN access (local network)" for the
+    supported recipe (hostname choice via mDNS/hosts-file, exact YAML edits,
+    restart, re-enrollment on rpId change, firewall note). The old assumption
+    that editing bind.host alone suffices for LAN is superseded by the
+    access: decoupling (ALP-725/ALP-726). The full remote (VPS Caddy +
+    WireGuard) path remains a future operator-handover story.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -137,8 +144,12 @@ class AccessConfig(BaseModel):
 
     Zero-config backward compat: old ``command-center.yaml`` files that omit the
     ``access:`` block entirely continue to load; they receive a localhost-derived
-    default (http://localhost:8080) suitable for unmodified v1 installs. Widened
-    binds and explicit validation live in later stories in the tree.
+    default (http://localhost:8080) suitable for unmodified v1 installs. For
+    LAN usage, supply an explicit ``access:`` block (see RUNBOOK_command_center.md
+    § "LAN access (local network)" for the exact recipe, hostname choice,
+    re-enrollment steps, and firewall guidance). Widened binds are supported
+    when paired with the access: origin (the mixed case emits a startup
+    warning directing the operator to the RUNBOOK).
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -291,14 +302,18 @@ class WebauthnConfig(BaseModel):
     """``webauthn`` block — relying-party settings.
 
     The relying-party ID is the hostname the operator authenticates
-    against (``localhost`` for v1 loopback; ``commandcenter.atassi.org``
-    after the remote-access follow-on lands). The relying-party name
-    is the user-facing string the browser's passkey UI displays.
+    against. For v1 loopback it is ``localhost``; for LAN access (ALP-724)
+    it must exactly match the ``access.host`` you chose in
+    command-center.yaml (e.g. ``alphamind.local`` via mDNS or hosts-file).
+    After the future remote-access story it will be your public domain
+    (e.g. ``commandcenter.atassi.org``). The relying-party name is the
+    user-facing string the browser's passkey UI displays.
 
     ``relying_party_id`` is DEPLOY_TIME — the WebAuthn verifier is
     constructed at lifespan startup against this hostname; an in-flight
     edit only takes effect after a process restart (already-issued
-    passkeys remain bound to the previous hostname).
+    passkeys remain bound to the previous hostname). Changing the rpId
+    therefore requires re-enrollment; see RUNBOOK § LAN access.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -324,6 +339,8 @@ class SecurityConfig(BaseModel):
     # cookies_secure controls the Secure attribute on cookies issued by the
     # auth layer. Marked DEPLOY_TIME per the LAN plan (affects cookie policy
     # surface; the editor will badge it appropriately via the Annotated metadata).
+    # False for http://localhost or http LAN installs; true when the public
+    # origin declared in access: is https (LAN https or future remote).
     cookies_secure: Annotated[bool, ReloadPolicy.DEPLOY_TIME] = False
 
 

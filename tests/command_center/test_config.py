@@ -274,6 +274,57 @@ access:
         assert cfg.access.host == "alphamind.local"
         assert cfg.access.port == 8080
 
+    def test_load_cc_with_access_port_null_http(self, tmp_path: Path) -> None:
+        # ALP-730 (03d): edge case port omitted (null) in access block for LAN http
+        cc_content = """\
+bind:
+  host: "192.168.1.99"
+  port: 8080
+db:
+  alphamind_db_path: "/tmp/db.db"
+frontend:
+  dist_path: "dist"
+pipeline:
+  control_url: "http://127.0.0.1:8765"
+  events_url: "http://127.0.0.1:8765"
+monitor:
+  control_url: "http://127.0.0.1:8766"
+  events_url: "http://127.0.0.1:8766"
+access:
+  scheme: "http"
+  host: "lan.example"
+"""
+        (tmp_path / "command-center.yaml").write_text(cc_content, encoding="utf-8")
+        cfg = load_command_center_config(tmp_path)
+        assert cfg.access.scheme == "http"
+        assert cfg.access.host == "lan.example"
+        assert cfg.access.port is None
+
+    def test_load_cc_with_access_port_null_https(self, tmp_path: Path) -> None:
+        # ALP-730 (03d): edge case port null + https (resolver will pick 443)
+        cc_content = """\
+bind:
+  host: "10.0.0.50"
+  port: 8443
+db:
+  alphamind_db_path: "/tmp/db.db"
+frontend:
+  dist_path: "dist"
+pipeline:
+  control_url: "http://127.0.0.1:8765"
+  events_url: "http://127.0.0.1:8765"
+monitor:
+  control_url: "http://127.0.0.1:8766"
+  events_url: "http://127.0.0.1:8766"
+access:
+  scheme: "https"
+  host: "secure.lan"
+"""
+        (tmp_path / "command-center.yaml").write_text(cc_content, encoding="utf-8")
+        cfg = load_command_center_config(tmp_path)
+        assert cfg.access.scheme == "https"
+        assert cfg.access.port is None
+
 
 class TestSecurityConfigCookiesSecure:
     """Tests for cookies_secure addition to SecurityConfig (ALP-725)."""

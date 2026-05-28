@@ -668,3 +668,102 @@ webauthn:
         )
         assert msg in caplog.text
         assert "access: block" in caplog.text or "RUNBOOK" in caplog.text
+
+    def test_resolver_port_none_http_defaults_to_80(self, tmp_path: Path) -> None:
+        """ALP-730 (03d) edge: access port=None for http -> resolver yields :80 (scheme default)."""
+        config_dir, _, _ = self._write_lan_configs(
+            tmp_path,
+            bind_host="192.168.1.77",
+            access_scheme="http",
+            access_host="myhost.local",
+            access_port=None,
+            rp_id="myhost.local",
+        )
+        cc_cfg = load_command_center_config(config_dir)
+        sec_cfg = load_security_config(config_dir)
+        alerts_cfg = load_alerts_config(config_dir)
+
+        app = build_app(
+            command_center_config=cc_cfg,
+            security_config=sec_cfg,
+            alerts_config=alerts_cfg,
+        )
+        verifier = app.state.webauthn_verifier
+        assert isinstance(verifier, RealWebauthnVerifier)
+        assert verifier._expected_origin == "http://myhost.local:80"
+
+    def test_resolver_port_none_https_defaults_to_443(self, tmp_path: Path) -> None:
+        """ALP-730 (03d) edge: access port=None for https -> resolver yields :443."""
+        config_dir, _, _ = self._write_lan_configs(
+            tmp_path,
+            bind_host="10.0.0.5",
+            access_scheme="https",
+            access_host="secure.local",
+            access_port=None,
+            rp_id="secure.local",
+        )
+        cc_cfg = load_command_center_config(config_dir)
+        sec_cfg = load_security_config(config_dir)
+        alerts_cfg = load_alerts_config(config_dir)
+
+        app = build_app(
+            command_center_config=cc_cfg,
+            security_config=sec_cfg,
+            alerts_config=alerts_cfg,
+        )
+        verifier = app.state.webauthn_verifier
+        assert isinstance(verifier, RealWebauthnVerifier)
+        assert verifier._expected_origin == "https://secure.local:443"
+
+    def test_no_warning_when_access_host_is_non_localhostish(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """ALP-730 (03d) + LAN regression: widened bind + proper LAN
+        access host produces no mixed warning.
+        """
+        config_dir, _, _ = self._write_lan_configs(
+            tmp_path,
+            bind_host="0.0.0.0",
+            access_host="alphamind.local",
+            access_port=8080,
+            rp_id="alphamind.local",
+        )
+        cc_cfg = load_command_center_config(config_dir)
+
+        caplog.set_level(logging.WARNING, logger="alphamind.command_center.__main__")
+        _warn_if_mixed_lan_bind_and_access(cc_cfg)
+
+        assert "still looks localhost-ish" not in caplog.text
+        assert "bind.host=0.0.0.0" not in caplog.text
+
+    def test_lan_config_with_access_block_exercises_full_resolver_path(
+        self, tmp_path: Path
+    ) -> None:
+        """ALP-730 (03d): explicit LAN access block (non-default) through
+        build_app (resolver + cookies_secure wiring).
+
+        Boot-adjacent shape; coverage point for 03a suggestion interaction
+        (LAN detection + access block in same _run sequence around token).
+        """
+        config_dir, _, _ = self._write_lan_configs(
+            tmp_path,
+            bind_host="192.168.1.42",
+            access_scheme="http",
+            access_host="operator.lan",
+            access_port=8080,
+            rp_id="operator.lan",
+        )
+        cc_cfg = load_command_center_config(config_dir)
+        sec_cfg = load_security_config(config_dir)
+        alerts_cfg = load_alerts_config(config_dir)
+
+        app = build_app(
+            command_center_config=cc_cfg,
+            security_config=sec_cfg,
+            alerts_config=alerts_cfg,
+        )
+        verifier = app.state.webauthn_verifier
+        assert isinstance(verifier, RealWebauthnVerifier)
+        assert verifier._expected_origin == "http://operator.lan:8080"
+        # cookies_secure from security (ALP-725) still flows
+        assert app.state.cookies_secure is False

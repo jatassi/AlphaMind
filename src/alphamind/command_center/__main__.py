@@ -40,9 +40,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import socket
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from textwrap import dedent
 
 import uvicorn
 from dotenv import load_dotenv
@@ -113,6 +115,7 @@ async def _maybe_emit_setup_token(
     gate: SetupTokenGate,
     cc_writer_factory: async_sessionmaker[AsyncSession],
     logger: logging.Logger,
+    bind_host: str | None = None,  # ALP-727: for LAN suggestion (non-local + zero creds)
 ) -> str | None:
     """Mint (and log) the one-time setup token iff this is a fresh install (zero credentials).
 
@@ -120,6 +123,12 @@ async def _maybe_emit_setup_token(
     gate is present on ``app.state`` and we can resolve the DB path from
     the loaded command-center config. A transient factory is used only for
     the count; the lifespan owns the real engine + canonical factory.
+
+    ALP-727 (03a): when ``existing == 0`` (mint path) *and* ``bind_host`` is
+    non-local (not in 127.0.0.1 / ::1 / localhost), emit the exact multi-line
+    LAN hostname suggestion block (with socket.gethostname()-derived suggestion,
+    copy-paste YAML for access: + webauthn.relying_party_id, and RUNBOOK pointer)
+    immediately after the "command_center setup token: ..." line.
 
     Returns the minted token (for tests to assert against ``gate._token``)
     or None when credentials already exist.
@@ -130,6 +139,28 @@ async def _maybe_emit_setup_token(
     if existing == 0:
         token = gate.mint()
         logger.info("command_center setup token: %s", token)
+        # ALP-727: first-boot LAN suggestion only on non-local bind (zero creds already true here)
+        if bind_host is not None and bind_host not in ("127.0.0.1", "::1", "localhost"):
+            hn = socket.gethostname()
+            suggested = f"{hn}.local"
+            block = dedent(
+                f"""\
+
+LAN / hostname suggestion for passkey support:
+  Edit config/command-center.yaml:
+    access:
+      scheme: "http"
+      host: "{suggested}"     # or .local/hosts alias (socket.gethostname() == '{hn}')
+      port: 8080
+  Edit config/security.yaml:
+    webauthn:
+      relying_party_id: "{suggested}"
+      ...
+  Then restart. You will need to re-enroll passkeys (rpId change).
+  See RUNBOOK_command_center.md § LAN access for the full recipe.
+"""
+            ).strip()
+            logger.info(block)
         return token
     logger.info(
         "command_center setup token: not minted (%d existing credentials)",
@@ -218,6 +249,8 @@ async def _run(config: CommandCenterConfig) -> None:
         # created inside the FastAPI lifespan. The else branch logs explicitly
         # on re-boots of credentialed installs so operators aren't confused
         # by a "minted" line that can never be consumed.
+        # ALP-727: pass bind_host so _maybe can emit the LAN hostname suggestion
+        # block (after the token line) exactly on non-local first-boot case.
         db_path = app.state.command_center_config.db.alphamind_db_path
         cc_writer_boot = build_cc_writer_session_factory(db_path)
         try:
@@ -225,6 +258,7 @@ async def _run(config: CommandCenterConfig) -> None:
                 gate=app.state.setup_token_gate,
                 cc_writer_factory=cc_writer_boot,
                 logger=log,
+                bind_host=config.bind.host,
             )
         except Exception:
             # Token mint is a first-launch UX convenience (per RUNBOOKs).

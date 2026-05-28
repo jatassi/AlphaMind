@@ -1,10 +1,26 @@
 # Command center backend configuration — load via CommandCenterConfig.
 # See src/alphamind/command_center/config.py for the model + per-field docs.
 bind:
-  host: "127.0.0.1"           # loopback-only in v1 (parent issue pre-resolved B);
-                              # operator can switch to a LAN IP for off-machine
-                              # access by editing this value.
+  host: "127.0.0.1"           # loopback for v1 zero-config installs. For LAN access
+                              # from other machines, widen this (0.0.0.0 or the
+                              # trading machine's LAN IP) together with the
+                              # `access:` block below. See RUNBOOK_command_center.md
+                              # § "LAN access (local network)" for the supported
+                              # recipe (hostname choice, exact YAML, re-enroll,
+                              # firewall). The old direct "switch to LAN IP" path
+                              # is superseded by the access: decoupling (ALP-725).
   port: 8080
+
+# access:                     # Public browser-visible origin (ALP-725 / LAN plan).
+#   scheme: "http"            # "http" for typical LAN (no TLS); "https" if you
+#   host: "alphamind.local"   # terminate TLS locally. The hostname operators
+#   port: 8080                # type in the browser + WebAuthn rpId. mDNS *.local
+#                             # or hosts-file entry. Must match
+#                             # security.yaml.webauthn.relying_party_id.
+#                             # See RUNBOOK for full LAN steps + hostname
+#                             # suggestion. Omitting the block preserves v1
+#                             # localhost defaults (zero-config compat).
+
 db:
   alphamind_db_path: "%USERPROFILE%/AlphaMind/data/alphamind.db"
 frontend:
