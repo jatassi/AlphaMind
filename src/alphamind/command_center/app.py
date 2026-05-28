@@ -33,10 +33,11 @@ module currently composes:
   dashboard, regime timeline, calibration mix via
   :func:`alphamind.command_center.views.risk.build_risk_router`.
 * ``/`` static mount — serves the Vite-built SPA bundle from
-  ``config.frontend.dist_path`` (story 04c). Mounted LAST so
-  ``/api/*`` routes match first; skipped in dev mode (when
-  ``COMMAND_CENTER_DEV_MODE`` is truthy) and when the bundle is
-  absent.
+  ``config.frontend.dist_path`` (story 04c / ALP-670). Mounted LAST so
+  ``/api/*`` routes match first. Deep SPA routes (``/login`` etc.) receive
+  ``index.html`` via an explicit 404 fallback handler (ALP-722). Skipped in
+  dev mode (when ``COMMAND_CENTER_DEV_MODE`` is truthy) and when the bundle
+  is absent.
 
 Documented include points for future stories:
 
@@ -77,9 +78,12 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from starlette.exceptions import HTTPException
+from starlette.responses import Response
 
 from alphamind.command_center.alerts.channels.discord import (
     DiscordChannel,
@@ -934,21 +938,20 @@ def build_app(  # noqa: PLR0913, PLR0915 — composition root wires four overrid
 def _maybe_mount_frontend(app: FastAPI, *, command_center_config: CommandCenterConfig) -> None:
     """Mount ``StaticFiles`` at ``/`` serving the Vite-built SPA, if appropriate.
 
-    The mount lives LAST in the route table — FastAPI's matching tries
-    registered routes first, and the StaticFiles mount at ``/`` with
-    ``html=True`` catches every unmatched path and serves ``index.html``
-    (TanStack Router's client-side SPA fallback).
+    The mount lives LAST in the route table so API routers win. Because
+    Starlette's ``StaticFiles(html=True)`` only serves ``index.html`` for
+    directory-style requests (``/``, ``/foo/``), deep SPA routes (``/login``,
+    ``/register``, ``/history/<id>``, any TanStack Router client route) 404
+    unless we install an explicit fallback.
 
-    Two skip-paths fail-closed without crashing the daemon:
+    After mounting, we register a 404 exception handler that serves
+    ``index.html`` for any non-API, non-asset GET that the mount rejected.
+    API surfaces (``/api/*``, ``/auth/*``, ``/events``, ``/healthz`` etc.)
+    and non-GET methods continue to 404/405 cleanly as JSON (or method not
+    allowed).
 
-    * **Dev mode.** ``COMMAND_CENTER_DEV_MODE`` env var is truthy — the
-      operator runs Vite alongside FastAPI; the SPA is served by Vite, not
-      by FastAPI. Skipping the mount avoids needing a built ``dist/`` for
-      dev iteration.
-    * **Missing dist directory.** The configured ``dist_path`` doesn't
-      resolve to an existing directory (developer hasn't run
-      ``bun run build`` yet). Logs a warning and continues — the API
-      surface still works; only the SPA fallback is unavailable.
+    The fallback is skipped in dev mode or when ``dist_path`` is absent
+    (same fail-closed policy as the mount itself).
     """
     if _dev_mode_active():
         log.info(
@@ -966,3 +969,31 @@ def _maybe_mount_frontend(app: FastAPI, *, command_center_config: CommandCenterC
         )
         return
     app.mount("/", StaticFiles(directory=dist_path, html=True), name="frontend")
+
+    # ALP-722: explicit SPA fallback for client-side routes. Registered only
+    # when we actually mounted a dist/, so the closed-over dist_path is valid.
+    api_prefixes = (
+        "/api/",
+        "/auth/",
+        "/events",
+        "/healthz",
+        "/openapi.json",
+        "/docs",
+        "/redoc",
+        "/assets/",
+        "/vite.svg",
+    )
+
+    async def spa_fallback(request: Request, exc: Exception) -> Response:
+        path = request.url.path
+        if any(path.startswith(p) for p in api_prefixes) or request.method != "GET":
+            # Real API/asset 404 or non-GET — preserve any custom detail the
+            # original route raised (history "not found", alerts, etc.).
+            if isinstance(exc, HTTPException) and exc.detail is not None:
+                detail = exc.detail
+            else:
+                detail = "Not Found"
+            return JSONResponse({"detail": detail}, status_code=404)
+        return FileResponse(dist_path / "index.html")
+
+    app.add_exception_handler(404, spa_fallback)
