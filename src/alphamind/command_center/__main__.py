@@ -38,6 +38,7 @@ Per the parent-issue architectural invariants:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import sys
 from collections.abc import Sequence
@@ -189,11 +190,25 @@ async def _run(config: CommandCenterConfig) -> None:
         # by a "minted" line that can never be consumed.
         db_path = app.state.command_center_config.db.alphamind_db_path
         cc_writer_boot = build_cc_writer_session_factory(db_path)
-        await _maybe_emit_setup_token(
-            gate=app.state.setup_token_gate,
-            cc_writer_factory=cc_writer_boot,
-            logger=log,
-        )
+        try:
+            await _maybe_emit_setup_token(
+                gate=app.state.setup_token_gate,
+                cc_writer_factory=cc_writer_boot,
+                logger=log,
+            )
+        except Exception:
+            # Token mint is a first-launch UX convenience (per RUNBOOKs).
+            # Do not hard-fail the entire daemon if the count or mint path
+            # encounters a transient error (e.g. brief DB lock). The operator
+            # can still use the verify script or a manual token if needed.
+            log.exception("ALP-721: setup token mint path failed; continuing boot")
+        finally:
+            # Hygiene: match the explicit dispose discipline used by the
+            # lifespan for all engines it constructs (F6). The boot factory
+            # is used only for the one-time count decision.
+            boot_engine = cc_writer_boot.kw["bind"]
+            with contextlib.suppress(Exception):
+                await boot_engine.dispose()
 
         supervisor = CommandCenterSupervisor(
             session=session,
