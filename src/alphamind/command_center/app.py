@@ -80,10 +80,10 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
-from starlette.responses import Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.exceptions import HTTPException
+from starlette.responses import Response
 
 from alphamind.command_center.alerts.channels.discord import (
     DiscordChannel,
@@ -984,11 +984,16 @@ def _maybe_mount_frontend(app: FastAPI, *, command_center_config: CommandCenterC
         "/vite.svg",
     )
 
-    async def spa_fallback(request: Request, _exc: Exception) -> Response:
+    async def spa_fallback(request: Request, exc: Exception) -> Response:
         path = request.url.path
         if any(path.startswith(p) for p in api_prefixes) or request.method != "GET":
-            # Real API/asset 404 or non-GET — do not hijack with HTML.
-            return JSONResponse({"detail": "Not Found"}, status_code=404)
+            # Real API/asset 404 or non-GET — preserve any custom detail the
+            # original route raised (history "not found", alerts, etc.).
+            if isinstance(exc, HTTPException) and exc.detail is not None:
+                detail = exc.detail
+            else:
+                detail = "Not Found"
+            return JSONResponse({"detail": detail}, status_code=404)
         return FileResponse(dist_path / "index.html")
 
     app.add_exception_handler(404, spa_fallback)
