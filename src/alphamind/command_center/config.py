@@ -3,9 +3,12 @@
 Three models map 1:1 to three YAML files under ``config/``:
 
 * :class:`CommandCenterConfig` ← ``config/command-center.yaml`` —
-  bind host / port + DB path + frontend dist path.
+  bind host / port + DB path + frontend dist path + (ALP-725) the new
+  ``access:`` block (public origin decoupled from bind for LAN/WebAuthn
+  per the ALP-724 plan; see RUNBOOK for LAN recipe).
 * :class:`SecurityConfig` ← ``config/security.yaml`` — session cookie /
-  CSRF cookie / WebAuthn relying-party settings.
+  CSRF cookie / WebAuthn relying-party settings + (ALP-725) ``cookies_secure``
+  (tied to the access origin scheme).
 * :class:`AlertsConfig` ← ``config/alerts.yaml`` — alert rule list +
   notification channel registry. Story 05a populates the rule list;
   story 02 ships an empty list as the loader-validation seam.
@@ -31,7 +34,7 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -74,6 +77,7 @@ class ControlHint(Enum):
 
 
 __all__ = [
+    "AccessConfig",
     "AlertRuleSpec",
     "AlertsChannels",
     "AlertsConfig",
@@ -103,17 +107,65 @@ __all__ = [
 class BindConfig(BaseModel):
     """``bind`` block — host + port the Uvicorn server listens on.
 
-    ``host`` is ``127.0.0.1`` in v1 (loopback-only per the parent issue's
-    pre-resolved B); the operator can switch to a LAN IP for off-machine
-    access by editing the YAML. The VPS Caddy + WireGuard remote-access
-    wiring is deferred to a separate operator-handover follow-on per
-    pre-resolved B.
+    ``host`` defaults to ``127.0.0.1`` for v1 zero-config loopback installs.
+    For LAN access from other machines on the same network, the bind can be
+    widened (0.0.0.0 or the host LAN IP) independently of the public origin
+    thanks to the ``access:`` block (see :class:`AccessConfig`). See the
+    RUNBOOK_command_center.md § "LAN access (local network)" for the
+    supported recipe (hostname choice via mDNS/hosts-file, exact YAML edits,
+    restart, re-enrollment on rpId change, firewall note). The old assumption
+    that editing bind.host alone suffices for LAN is superseded by the
+    access: decoupling (ALP-725/ALP-726). The full remote (VPS Caddy +
+    WireGuard) path remains a future operator-handover story.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     host: str = Field(min_length=1)
     port: int = Field(ge=1, le=65535)
+
+
+class AccessConfig(BaseModel):
+    """``access`` block — public browser-visible origin (scheme + host + port).
+
+    Decouples the internal Uvicorn ``bind`` socket (the address the server
+    actually listens on) from the origin the browser and WebAuthn ceremonies
+    see. Per the ALP-724 LAN access plan (story 01 / ALP-725):
+
+    * ``scheme``: "http" (typical for LAN) or "https".
+    * ``host``: the hostname operators type in the browser (e.g. "alphamind.local"
+      or a hosts-file entry). This becomes the WebAuthn rpId.
+    * ``port``: explicit port or null for the scheme's well-known default (80/443).
+      For the v1 default of 8080 (and other non-standard ports) the operator
+      must specify the value explicitly.
+
+    The whole block is ``DEPLOY_TIME`` because it influences construction of the
+    WebAuthn verifier and the cookie Secure flag at process start.
+
+    Zero-config backward compat: old ``command-center.yaml`` files that omit the
+    ``access:`` block entirely continue to load; they receive a localhost-derived
+    default (http://localhost:8080) suitable for unmodified v1 installs.
+
+    Important interaction: when the ``access:`` key is omitted, the default
+    always uses port 8080 regardless of any custom ``bind.port`` value in the
+    same YAML. Operators who customize ``bind.port`` away from 8080 **must**
+    supply an explicit ``access:`` block with a matching ``port`` (otherwise
+    WebAuthn ``expected_origin`` and cookie behavior will be wrong). The
+    historical "derive everything from bind" behavior only exists for the
+    exact v1 shipped configuration.
+
+    For LAN usage, supply an explicit ``access:`` block (see
+    RUNBOOK_command_center.md § "LAN access (local network)" for the exact
+    recipe, hostname choice, re-enrollment steps, and firewall guidance).
+    Widened binds are supported when paired with the access: origin (the mixed
+    case emits a startup warning directing the operator to the RUNBOOK).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    scheme: Literal["http", "https"] = "http"
+    host: str = Field(min_length=1, default="localhost")
+    port: int | None = Field(default=None, ge=1, le=65535)
 
 
 class DbConfig(BaseModel):
@@ -200,6 +252,19 @@ class CommandCenterConfig(BaseModel):
     frontend: FrontendConfig
     pipeline: PipelineUpstreamConfig
     monitor: MonitorUpstreamConfig
+    # ``access`` block (ALP-725 / 01 of LAN plan): the public origin the
+    # browser uses. Decouples from ``bind`` for WebAuthn rpId/origin and
+    # cookie flags. Annotated at the container so the config editor framework
+    # (and reload_policy_of) surfaces DEPLOY_TIME badges on the whole block
+    # and its leaves.
+    #
+    # Default factory supplies v1 localhost:8080 compat when the key is absent.
+    # See AccessConfig docstring for the critical interaction with custom
+    # bind.port (operators who change bind.port must supply an explicit access
+    # block).
+    access: Annotated[AccessConfig, ReloadPolicy.DEPLOY_TIME] = Field(
+        default_factory=lambda: AccessConfig(scheme="http", host="localhost", port=8080)
+    )
 
 
 def load_command_center_config(config_dir: Path) -> CommandCenterConfig:
@@ -250,14 +315,18 @@ class WebauthnConfig(BaseModel):
     """``webauthn`` block — relying-party settings.
 
     The relying-party ID is the hostname the operator authenticates
-    against (``localhost`` for v1 loopback; ``commandcenter.atassi.org``
-    after the remote-access follow-on lands). The relying-party name
-    is the user-facing string the browser's passkey UI displays.
+    against. For v1 loopback it is ``localhost``; for LAN access (ALP-724)
+    it must exactly match the ``access.host`` you chose in
+    command-center.yaml (e.g. ``alphamind.local`` via mDNS or hosts-file).
+    After the future remote-access story it will be your public domain
+    (e.g. ``commandcenter.atassi.org``). The relying-party name is the
+    user-facing string the browser's passkey UI displays.
 
     ``relying_party_id`` is DEPLOY_TIME — the WebAuthn verifier is
     constructed at lifespan startup against this hostname; an in-flight
     edit only takes effect after a process restart (already-issued
-    passkeys remain bound to the previous hostname).
+    passkeys remain bound to the previous hostname). Changing the rpId
+    therefore requires re-enrollment; see RUNBOOK § LAN access.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -267,13 +336,25 @@ class WebauthnConfig(BaseModel):
 
 
 class SecurityConfig(BaseModel):
-    """Top-level ``security.yaml`` model."""
+    """Top-level ``security.yaml`` model.
+
+    (ALP-725) Added ``cookies_secure`` (DEPLOY_TIME) so the Secure flag on
+    session/CSRF cookies can be driven from config rather than only test
+    overrides. False for v1 localhost HTTP installs; True when the public
+    origin is https (LAN or future remote).
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     session: SessionConfig
     csrf: CsrfConfig
     webauthn: WebauthnConfig
+    # cookies_secure controls the Secure attribute on cookies issued by the
+    # auth layer. Marked DEPLOY_TIME per the LAN plan (affects cookie policy
+    # surface; the editor will badge it appropriately via the Annotated metadata).
+    # False for http://localhost or http LAN installs; true when the public
+    # origin declared in access: is https (LAN https or future remote).
+    cookies_secure: Annotated[bool, ReloadPolicy.DEPLOY_TIME] = False
 
 
 def load_security_config(config_dir: Path) -> SecurityConfig:

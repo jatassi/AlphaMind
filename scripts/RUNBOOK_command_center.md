@@ -3,8 +3,9 @@
 Operator workflow for the AlphaMind command center — the operator-facing web
 application running alongside the pipeline scheduler + continuous monitor on
 the trading machine. Covers initial bring-up, day-to-day operations, passkey
-management, troubleshooting, recovery, and the operator handover for the
-deferred remote-access work tree.
+management, troubleshooting, recovery, and LAN access configuration
+(ALP-724/ALP-728). The full remote (VPS Caddy + WireGuard) path remains a
+future operator-handover story (see design doc and the LAN section below).
 
 The command center is the third long-running AlphaMind daemon (after the
 pipeline scheduler and the continuous monitor); the three are loosely coupled
@@ -185,10 +186,10 @@ Exit code 0 confirms readiness. Any FAIL line short-circuits to exit code 1.
 
 ### Accessing the UI
 
-`http://127.0.0.1:8080/` from a browser on the same machine. Loopback only
-in v1 — the VPS Caddy + WireGuard remote-access path is deferred (§ Operator
-handover note). For day-to-day operations on the trading machine, the
-operator logs in via RDP / console and uses the browser there.
+- From the trading machine itself: `http://127.0.0.1:8080/` (or `http://localhost:8080/`).
+- From other machines on the same LAN: use the hostname declared in the `access:` block (e.g. `http://alphamind.local:8080/`). See the dedicated § LAN access (local network) below for the full supported recipe (hostname choice via mDNS vs hosts-file, the two YAML edits, restart, re-enrollment, firewall steps, and verification).
+
+The full remote (internet) path via VPS Caddy + WireGuard remains deferred to a future story (see design doc § Access surfaces and the old "Operator handover note" content now superseded by the LAN section). For day-to-day on the trading machine, RDP/console + localhost still works; LAN extends it without RDP.
 
 ### Restarting the service
 
@@ -408,30 +409,162 @@ This is intentionally hands-on — the command center has no remote-recovery
 path because the threat model assumes a compromised remote attacker should
 NOT be able to reset auth from outside.
 
-## Operator handover note — VPS Caddy + WireGuard deferred
+## LAN access (local network)
 
-The v1 design ships loopback-only — the FastAPI app binds to `127.0.0.1`,
-and the only way to reach it is to be logged into the trading machine via
-RDP / console. The design doc § Remote access enumerates the future shape:
+The `access:` block (ALP-725) + aligned `webauthn.relying_party_id` makes LAN
+(same-network, no VPN) access a fully supported configuration. The browser
+and WebAuthn ceremonies see the public origin you declare in `access:`; the
+internal `bind` socket (Uvicorn listen address) is decoupled and can be
+widened independently. This is the supported stepping-stone between pure
+localhost loopback and the future full remote (VPS Caddy + WireGuard) path
+described in the design doc § Access surfaces.
 
-- **VPS Caddy reverse proxy.** A Caddy instance on a VPS terminates TLS,
-  authenticates the WireGuard tunnel's origin, and forwards `/api/*`,
-  `/auth/*`, `/api/events` to the command center over the tunnel.
-- **WireGuard tunnel.** Trading machine → VPS, single peer, key-pinned.
-- **`security.yaml.webauthn.relying_party_id` adjusted** to the operator
-  domain so passkey origin checks accept the VPS-hosted URL.
-- **`AuthOverrides.cookies_secure=True`** flipped on (HTTPS-only flag now
-  truthy).
+Hostname choice is operator freedom (per approved LAN plan §10): any name
+resolvable from your client machines to the trading machine's LAN IP. No
+hard-coded allow-list on the server.
 
-Implementation is tracked as a future story (no ticket yet — file one when
-the operator needs remote access). Until then:
+### Exact recipe (hostname, two YAML edits, restart, re-enroll, firewall, verify)
 
-- Do NOT bind to `0.0.0.0` thinking that suffices. WebAuthn origin checks
-  pin the relying party to the configured host; binding wider just exposes
-  the API to the LAN without auth working.
-- Do NOT proxy through a generic forwarder (e.g. ssh -L 8080). The CSRF
-  double-submit cookie check fails because the cookie was issued for the
-  loopback origin.
-- The deferred work is small (Caddy config + WireGuard install + the two
-  config flips) but cross-cuts security review; treat it as its own work
-  tree when scheduled.
+1. **Choose a hostname** (mDNS vs hosts-file).
+
+   - **mDNS (easiest on small LANs):** `alphamind.local` (or your choice).
+     macOS: Bonjour built-in. Linux: install `avahi-daemon`. Windows:
+     Bonjour Print Services for mDNS or fall back to hosts-file.
+   - **Hosts-file (universal fallback):** On *every* client machine you
+     will browse from, add an entry (as Administrator/root):
+
+     ```
+     192.168.1.42 alphamind.local
+     ```
+
+     (Replace with the trading machine's actual LAN IP; pin via DHCP
+     reservation for stability.)
+
+2. **Edit `config/command-center.yaml`** (on the trading machine, repo root).
+
+   Widen bind for off-machine reach + add the `access:` block:
+
+   ```yaml
+   bind:
+     host: "0.0.0.0"        # or the LAN IP e.g. "192.168.1.42"
+     port: 8080
+   # ... db / frontend / pipeline / monitor keys unchanged ...
+   access:
+     scheme: "http"         # "http" for plain LAN; "https" only if you
+     host: "alphamind.local"  # terminate TLS locally on the trading machine
+     port: 8080             # explicit for non-80/443 ports
+   ```
+
+3. **Edit `config/security.yaml`** (keep rpId in sync; required for passkeys):
+
+   ```yaml
+   webauthn:
+     relying_party_id: "alphamind.local"  # MUST match access.host exactly
+     relying_party_name: "AlphaMind Command Center"
+   # cookies_secure: false   # leave false for http LAN; true only for https
+   ```
+
+4. **Restart the service** (DEPLOY_TIME fields: access block + webauthn + bind).
+
+   ```powershell
+   nssm restart AlphaMindCommandCenter
+   # (or systemctl restart, launchctl, etc.)
+   ```
+
+5. **Re-enroll passkeys** (rpId change invalidates prior credentials).
+
+   Existing passkeys registered against `localhost` will not assert
+   successfully against the new origin. Use the credential reset flow
+   (§ Recovery → Credential reset): stop service, delete
+   `webauthn_credentials` + `operator_sessions` rows, restart (token
+   re-mints), then from a *LAN client browser* open
+   `http://alphamind.local:8080/`, paste the fresh setup token, and
+   complete registration.
+
+   Once one credential for the new rpId exists, the in-session "Add a
+   passkey" flow works for backups/cross-device without the token.
+
+6. **Firewall note (RUNBOOK-only per plan §10).**
+
+   The trading machine's OS firewall must permit inbound TCP from your
+   LAN subnet to the bind port. This is *not* configured in AlphaMind YAML
+   or code — handle it on the host:
+
+   - **Windows Firewall:** Inbound rule for TCP 8080, scope limited to
+     LAN subnet (or "Allow" if you trust the LAN).
+   - **Linux (ufw example):** `sudo ufw allow from 192.168.1.0/24 to any port 8080 proto tcp`
+   - **macOS:** System Settings → Network → Firewall → allow the Python/Uvicorn
+     process or open the port for LAN clients.
+
+   The prod-machine operator handles any interactive OS prompts.
+
+7. **Verification steps** (matches plan §9 criteria; follow mentally or on
+   your LAN).
+
+   - On the trading machine, tail the log and confirm no mixed-bind
+     WARNING (or that it correctly directs you here if you left
+     `access.host` as localhost while widening bind).
+   - From a different machine on the LAN, browse to the new URL
+     (e.g. `http://alphamind.local:8080/`). No certificate errors (http).
+   - First-launch or post-reset: setup token prompt appears; paste from
+     trading-machine log.
+   - Passkey registration + login succeeds end-to-end.
+   - Dashboard renders, control verbs work, SSE events flow, no console
+     errors about origin / CSRF / cookie.
+   - Run `scripts/verify_command_center.py` locally on the trading
+     machine (it continues to use loopback for its internal checks) — all
+     PASS.
+   - Reboot / restart service; confirm the LAN URL still works after.
+
+If the mixed-bind warning fires on startup it explicitly says "Edit the
+access: block ... see RUNBOOK_command_center.md for LAN setup."
+
+### Hostname suggestion block (example output)
+
+03a will emit a helpful block on first-boot (or when `count_credentials == 0`
+and non-loopback bind detected). Example (for operator familiarity):
+
+```
+command_center setup token: <URL-safe random string>
+
+LAN access suggestion (ALP-724 plan):
+  bind.host is not loopback. For LAN clients + working passkeys:
+    1. Pick hostname (mDNS "alphamind.local" or hosts-file entry on clients)
+    2. In command-center.yaml add:
+         access:
+           scheme: "http"
+           host: "alphamind.local"
+           port: 8080
+    3. In security.yaml align:
+         webauthn:
+           relying_party_id: "alphamind.local"
+    4. Restart service; re-enroll via setup token from LAN URL
+    5. Firewall: allow LAN subnet → :8080
+  Full recipe + troubleshooting: RUNBOOK_command_center.md § "LAN access (local network)"
+```
+
+(The exact emission logic and wording land in 03a; docs here describe the
+approved shape.)
+
+### Forward pointer to remote
+
+The VPS Caddy + WireGuard full remote story (public internet access without
+being on the LAN) is unchanged and still future work. When scheduled it will
+reuse the exact same `access:` + `webauthn.relying_party_id` + `cookies_secure`
+pattern, just with a public hostname and TLS termination at the VPS. The LAN
+recipe above is the supported path today for off-machine access within the
+house / office.
+
+See also:
+- `docs/design/command-center.md` § Access surfaces (updated)
+- `src/alphamind/command_center/config.py` (AccessConfig, BindConfig,
+  WebauthnConfig docstrings)
+- `config/command-center.yaml` and `config/security.yaml` (example comments)
+
+This section replaces the prior "Operator handover note — VPS Caddy + WireGuard
+deferred" (which contained the old "Do NOT bind wider" language). All such
+warnings are now removed or positively contextualized with the "here is how"
+recipe above (per ACs and approved LAN plan §5 Phase 2 docs, §8 story 03b).
+
+(The top-level intro paragraph was also refreshed to reference the new LAN
+configuration story rather than the old deferred handover note.)

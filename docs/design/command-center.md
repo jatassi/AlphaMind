@@ -742,7 +742,16 @@ Sessions are time-limited; duration is configured in `config/security.yaml`. No 
 
 ### Access surfaces
 
-**Local access.** From the trading machine, the command center is reachable on `localhost` at its bound port. Still subject to passkey authentication.
+**Local access (loopback).** From the trading machine itself, the command center is reachable on `localhost` (or `127.0.0.1`) at its bound port. Still subject to passkey authentication. This is the zero-config v1 default.
+
+**LAN access (local network).** Supported stepping stone between pure localhost and the future full remote Caddy path. The `access:` block in `command-center.yaml` (scheme + host + port) declares the public browser-visible origin, decoupled from the internal `bind` socket. The `access.host` becomes the WebAuthn rpId and the origin for cookies / origin checks. Typical LAN pattern:
+
+- Widen `bind.host` to `0.0.0.0` (or the trading machine's LAN IP) so other machines can connect.
+- Set `access:` to e.g. `scheme: "http"`, `host: "alphamind.local"` (mDNS or hosts-file entry on client browsers), `port: 8080`.
+- Align `security.yaml.webauthn.relying_party_id` to the same hostname.
+- Restart (DEPLOY_TIME), re-enroll passkeys (rpId change invalidates prior credentials), and open the firewall on the trading machine for the LAN subnet to the port.
+
+Full recipe, hostname choice (mDNS vs hosts-file), exact YAML, verification steps, and the first-boot hostname suggestion block live in `scripts/RUNBOOK_command_center.md` § "LAN access (local network)". Operator freely chooses any resolvable LAN hostname; no server-side allow-list. See also `src/alphamind/command_center/config.py` (AccessConfig + BindConfig) and the ALP-724 plan.
 
 **Remote access.** The trading machine joins the operator's existing VPS WireGuard hub (`wg0`, `10.8.0.0/24`) as a new peer. The command center backend binds to the trading machine's WG IP. The VPS Caddy reverse proxy adds a site block for the chosen subdomain of `atassi.org` that proxies over the WG tunnel:
 

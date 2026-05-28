@@ -24,13 +24,16 @@ The healthz probe is the manual-smoke target named in the story AC:
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
 from fastapi.routing import Mount
 from fastapi.testclient import TestClient
 
+from alphamind.command_center.__main__ import _warn_if_mixed_lan_bind_and_access
 from alphamind.command_center.app import build_app
+from alphamind.command_center.auth.webauthn import RealWebauthnVerifier
 from alphamind.command_center.config import (
     load_alerts_config,
     load_command_center_config,
@@ -514,3 +517,255 @@ class TestStaticFilesMount:
             r = client.get("/assets/missing.js")
             assert r.status_code == 404
             assert r.headers.get("content-type", "").startswith("application/json")
+
+
+# ---------------------------------------------------------------------------
+# ALP-726 (02 of ALP-724 LAN access): TDD tests for re-wired WebAuthn origin
+# resolution from access block + cookies_secure from SecurityConfig + startup
+# warning for mixed widened-bind + localhost-ish access host.
+# Existing localhost behavior must be unchanged.
+# ---------------------------------------------------------------------------
+
+
+class TestLanAccessWebauthnResolverAndWarning:
+    """ALP-726 ACs 1,3,4,5: LAN access block drives expected_origin (scheme+host+port);
+    pure localhost (no access key) preserves historical http://localhost:8080;
+    warning logged (via direct helper for caplog in scoped test) on mixed case;
+    all prior wiring tests remain green for localhost.
+    """
+
+    def _write_lan_configs(
+        self,
+        tmp_path: Path,
+        *,
+        bind_host: str = "127.0.0.1",
+        access_scheme: str = "http",
+        access_host: str = "localhost",
+        access_port: int | None = 8080,
+        rp_id: str = "localhost",
+    ) -> tuple[Path, Path, Path]:
+        """Write minimal per-test YAMLs (no access key when caller passes default)."""
+        repo_config = Path(__file__).parents[2] / "config"
+        db = tmp_path / "test.db"
+        db.touch()
+        dist = tmp_path / "no-dist"
+        dist.mkdir(exist_ok=True)
+
+        access_block = ""
+        if not (access_host == "localhost" and access_port == 8080 and rp_id == "localhost"):
+            # include explicit access for LAN cases
+            port_str = f"  port: {access_port}" if access_port is not None else ""
+            access_block = f"""access:
+  scheme: "{access_scheme}"
+  host: "{access_host}"
+{port_str}
+"""
+
+        cc_yaml = tmp_path / "command-center.yaml"
+        cc_yaml.write_text(
+            f"""bind:
+  host: "{bind_host}"
+  port: 8080
+{access_block}db:
+  alphamind_db_path: '{db}'
+frontend:
+  dist_path: '{dist}'
+pipeline:
+  control_url: "http://127.0.0.1:8765"
+  events_url: "http://127.0.0.1:8765"
+monitor:
+  control_url: "http://127.0.0.1:8766"
+  events_url: "http://127.0.0.1:8766"
+""",
+            encoding="utf-8",
+        )
+        sec_yaml = tmp_path / "security.yaml"
+        sec_yaml.write_text(
+            f"""session:
+  duration_hours: 12
+  cookie_name: "cc_session"
+csrf:
+  cookie_name: "cc_csrf"
+webauthn:
+  relying_party_id: "{rp_id}"
+  relying_party_name: "AlphaMind Command Center"
+""",
+            encoding="utf-8",
+        )
+        (tmp_path / "alerts.yaml").write_bytes((repo_config / "alerts.yaml").read_bytes())
+        return tmp_path, db, dist
+
+    def test_resolver_uses_access_for_expected_origin(self, tmp_path: Path) -> None:
+        """AC1 + AC5: LAN-style access block yields correct scheme://host:port origin
+        (rp_id still sourced from security config).
+        """
+        config_dir, _, _ = self._write_lan_configs(
+            tmp_path,
+            bind_host="192.168.1.50",
+            access_scheme="http",
+            access_host="alphamind.local",
+            access_port=8080,
+            rp_id="alphamind.local",
+        )
+        cc_cfg = load_command_center_config(config_dir)
+        sec_cfg = load_security_config(config_dir)
+        alerts_cfg = load_alerts_config(config_dir)
+
+        app = build_app(
+            command_center_config=cc_cfg,
+            security_config=sec_cfg,
+            alerts_config=alerts_cfg,
+        )
+        verifier = app.state.webauthn_verifier
+        assert isinstance(verifier, RealWebauthnVerifier)
+        assert verifier._expected_origin == "http://alphamind.local:8080"
+        assert verifier._relying_party_id == "alphamind.local"
+
+    def test_localhost_no_access_block_preserves_historical_origin(self, tmp_path: Path) -> None:
+        """AC4: omitted access: key + loopback bind still produces historical
+        http://localhost:8080 exactly (zero behavior change for v1 installs).
+        """
+        config_dir, _, _ = self._write_lan_configs(
+            tmp_path,
+            bind_host="127.0.0.1",
+            access_host="localhost",
+            access_port=8080,
+            rp_id="localhost",
+        )
+        cc_cfg = load_command_center_config(config_dir)
+        sec_cfg = load_security_config(config_dir)
+        alerts_cfg = load_alerts_config(config_dir)
+
+        app = build_app(
+            command_center_config=cc_cfg,
+            security_config=sec_cfg,
+            alerts_config=alerts_cfg,
+        )
+        verifier = app.state.webauthn_verifier
+        assert isinstance(verifier, RealWebauthnVerifier)
+        assert verifier._expected_origin == "http://localhost:8080"
+
+    def test_warning_for_mixed_widened_bind_local_access(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """AC3: widened bind + localhost-ish access -> clear WARNING from helper
+        (exercised directly + caplog, per ALP-721 pattern).
+        """
+        config_dir, _, _ = self._write_lan_configs(
+            tmp_path,
+            bind_host="0.0.0.0",
+            access_host="localhost",
+            access_port=8080,
+            rp_id="localhost",
+        )
+        cc_cfg = load_command_center_config(config_dir)
+
+        caplog.set_level(logging.WARNING, logger="alphamind.command_center.__main__")
+        _warn_if_mixed_lan_bind_and_access(cc_cfg)
+
+        msg = (
+            "bind.host=0.0.0.0 is not loopback but access.host=localhost still looks localhost-ish"
+        )
+        assert msg in caplog.text
+        assert "access: block" in caplog.text or "RUNBOOK" in caplog.text
+
+    def test_resolver_port_none_http_omits_default_port(self, tmp_path: Path) -> None:
+        """ALP-730 (03d) + RFC 6454: access port=None for http yields origin without port
+        (browsers omit default ports in clientDataJSON / WebAuthn).
+        """
+        config_dir, _, _ = self._write_lan_configs(
+            tmp_path,
+            bind_host="192.168.1.77",
+            access_scheme="http",
+            access_host="myhost.local",
+            access_port=None,
+            rp_id="myhost.local",
+        )
+        cc_cfg = load_command_center_config(config_dir)
+        sec_cfg = load_security_config(config_dir)
+        alerts_cfg = load_alerts_config(config_dir)
+
+        app = build_app(
+            command_center_config=cc_cfg,
+            security_config=sec_cfg,
+            alerts_config=alerts_cfg,
+        )
+        verifier = app.state.webauthn_verifier
+        assert isinstance(verifier, RealWebauthnVerifier)
+        assert verifier._expected_origin == "http://myhost.local"
+
+    def test_resolver_port_none_https_omits_default_port(self, tmp_path: Path) -> None:
+        """ALP-730 (03d) + RFC 6454: access port=None for https yields origin without port."""
+        config_dir, _, _ = self._write_lan_configs(
+            tmp_path,
+            bind_host="10.0.0.5",
+            access_scheme="https",
+            access_host="secure.local",
+            access_port=None,
+            rp_id="secure.local",
+        )
+        cc_cfg = load_command_center_config(config_dir)
+        sec_cfg = load_security_config(config_dir)
+        alerts_cfg = load_alerts_config(config_dir)
+
+        app = build_app(
+            command_center_config=cc_cfg,
+            security_config=sec_cfg,
+            alerts_config=alerts_cfg,
+        )
+        verifier = app.state.webauthn_verifier
+        assert isinstance(verifier, RealWebauthnVerifier)
+        assert verifier._expected_origin == "https://secure.local"
+
+    def test_no_warning_when_access_host_is_non_localhostish(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """ALP-730 (03d) + LAN regression: widened bind + proper LAN
+        access host produces no mixed warning.
+        """
+        config_dir, _, _ = self._write_lan_configs(
+            tmp_path,
+            bind_host="0.0.0.0",
+            access_host="alphamind.local",
+            access_port=8080,
+            rp_id="alphamind.local",
+        )
+        cc_cfg = load_command_center_config(config_dir)
+
+        caplog.set_level(logging.WARNING, logger="alphamind.command_center.__main__")
+        _warn_if_mixed_lan_bind_and_access(cc_cfg)
+
+        assert "still looks localhost-ish" not in caplog.text
+        assert "bind.host=0.0.0.0" not in caplog.text
+
+    def test_lan_config_with_access_block_exercises_full_resolver_path(
+        self, tmp_path: Path
+    ) -> None:
+        """ALP-730 (03d): explicit LAN access block (non-default) through
+        build_app (resolver + cookies_secure wiring).
+
+        Boot-adjacent shape; coverage point for 03a suggestion interaction
+        (LAN detection + access block in same _run sequence around token).
+        """
+        config_dir, _, _ = self._write_lan_configs(
+            tmp_path,
+            bind_host="192.168.1.42",
+            access_scheme="http",
+            access_host="operator.lan",
+            access_port=8080,
+            rp_id="operator.lan",
+        )
+        cc_cfg = load_command_center_config(config_dir)
+        sec_cfg = load_security_config(config_dir)
+        alerts_cfg = load_alerts_config(config_dir)
+
+        app = build_app(
+            command_center_config=cc_cfg,
+            security_config=sec_cfg,
+            alerts_config=alerts_cfg,
+        )
+        verifier = app.state.webauthn_verifier
+        assert isinstance(verifier, RealWebauthnVerifier)
+        assert verifier._expected_origin == "http://operator.lan:8080"
+        # cookies_secure from security (ALP-725) still flows
+        assert app.state.cookies_secure is False

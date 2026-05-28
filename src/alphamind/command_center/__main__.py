@@ -40,9 +40,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import socket
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from textwrap import dedent
 
 import uvicorn
 from dotenv import load_dotenv
@@ -113,6 +115,8 @@ async def _maybe_emit_setup_token(
     gate: SetupTokenGate,
     cc_writer_factory: async_sessionmaker[AsyncSession],
     logger: logging.Logger,
+    bind_host: str | None = None,  # ALP-727: for LAN suggestion (non-local + zero creds)
+    bind_port: int = 8080,  # ALP-727 review follow-up: use the actual port in the hint
 ) -> str | None:
     """Mint (and log) the one-time setup token iff this is a fresh install (zero credentials).
 
@@ -120,6 +124,12 @@ async def _maybe_emit_setup_token(
     gate is present on ``app.state`` and we can resolve the DB path from
     the loaded command-center config. A transient factory is used only for
     the count; the lifespan owns the real engine + canonical factory.
+
+    ALP-727 (03a): when ``existing == 0`` (mint path) *and* ``bind_host`` is
+    non-local, emit the exact multi-line LAN hostname suggestion block (with
+    socket.gethostname()-derived suggestion, copy-paste YAML for access: +
+    webauthn.relying_party_id using the actual ``bind_port``, and RUNBOOK
+    pointer) immediately after the "command_center setup token: ..." line.
 
     Returns the minted token (for tests to assert against ``gate._token``)
     or None when credentials already exist.
@@ -130,12 +140,86 @@ async def _maybe_emit_setup_token(
     if existing == 0:
         token = gate.mint()
         logger.info("command_center setup token: %s", token)
+        # ALP-727: first-boot LAN suggestion only on non-local bind (zero creds already true here)
+        if bind_host is not None and not _is_loopbackish(bind_host):
+            hn = socket.gethostname()
+            suggested = f"{hn}.local"
+            block = dedent(
+                f"""\
+
+LAN / hostname suggestion for passkey support:
+  Edit config/command-center.yaml:
+    access:
+      scheme: "http"
+      host: "{suggested}"     # or .local/hosts alias (socket.gethostname() == '{hn}')
+      port: {bind_port}
+  Edit config/security.yaml:
+    webauthn:
+      relying_party_id: "{suggested}"
+      ...
+  Then restart. You will need to re-enroll passkeys (rpId change).
+  See RUNBOOK_command_center.md § LAN access for the full recipe.
+"""
+            ).strip()
+            logger.info(block)
         return token
     logger.info(
         "command_center setup token: not minted (%d existing credentials)",
         existing,
     )
     return None
+
+
+def _is_loopbackish(host: str | None) -> bool:
+    """True for the common loopback forms (including bare 'localhost').
+
+    Used by both the mixed-bind warning (ALP-726) and the first-boot LAN
+    suggestion (ALP-727) so the set of 'local' addresses stays in one place.
+    """
+    if not host:
+        return False
+    h = host.lower().strip()
+    return h in {"127.0.0.1", "::1", "localhost"} or h.startswith("127.0.0.")
+
+
+def _warn_if_mixed_lan_bind_and_access(config: CommandCenterConfig) -> None:
+    """ALP-726: emit one-time startup WARNING when bind widened but access host still localhost-ish.
+
+    This is the validation warning from the approved LAN plan (§8 story 02).
+    Emitted early in the _run boot path (near first-boot setup-token logging)
+    so operators see it on `python -m alphamind.command_center` before Uvicorn binds.
+    Directs to the access: block (and RUNBOOK) rather than silently producing
+    broken WebAuthn origins / cookie flags.
+
+    Tests exercise via direct call + caplog (mirrors _maybe_emit_setup_token pattern).
+    """
+    bind_host = config.bind.host
+    access = config.access
+    if not _is_loopbackish(bind_host):
+        ah = access.host.lower().strip()
+        is_localhostish = _is_loopbackish(ah) or ah.startswith("127.0.0.")
+        if is_localhostish:
+            log.warning(
+                "command_center: bind.host=%s is not loopback but access.host=%s "
+                "still looks localhost-ish. Edit the access: block (scheme + host + port) "
+                "in command-center.yaml and align webauthn.relying_party_id in security.yaml; "
+                "see RUNBOOK_command_center.md for LAN setup.",
+                bind_host,
+                access.host,
+            )
+
+    # Review follow-up (ALP-724): if someone has an old-style YAML (no access key)
+    # that also customizes bind.port away from 8080, the default_factory will
+    # still produce :8080 in the origin. Warn once so they know to supply the block.
+    if access.host == "localhost" and access.port == 8080 and config.bind.port != 8080:
+        log.warning(
+            "command_center: bind.port=%s but no explicit access: block was supplied. "
+            "The default origin will be http://localhost:8080 (not port %s). "
+            "Supply an explicit access: block with a matching port to keep WebAuthn "
+            "and cookies correct. See RUNBOOK_command_center.md § LAN access.",
+            config.bind.port,
+            config.bind.port,
+        )
 
 
 async def _run(config: CommandCenterConfig) -> None:
@@ -147,6 +231,9 @@ async def _run(config: CommandCenterConfig) -> None:
     """
     archive_root = _DEFAULT_ARCHIVE_ROOT
     archive_root.mkdir(parents=True, exist_ok=True)
+
+    # ALP-726: mixed bind/access validation warning (early, before engines or build_app).
+    _warn_if_mixed_lan_bind_and_access(config)
 
     async with engine_pair_context() as engines:
         process_lifetime_id = await record_process_lifetime(
@@ -188,6 +275,8 @@ async def _run(config: CommandCenterConfig) -> None:
         # created inside the FastAPI lifespan. The else branch logs explicitly
         # on re-boots of credentialed installs so operators aren't confused
         # by a "minted" line that can never be consumed.
+        # ALP-727: pass bind_host so _maybe can emit the LAN hostname suggestion
+        # block (after the token line) exactly on non-local first-boot case.
         db_path = app.state.command_center_config.db.alphamind_db_path
         cc_writer_boot = build_cc_writer_session_factory(db_path)
         try:
@@ -195,6 +284,8 @@ async def _run(config: CommandCenterConfig) -> None:
                 gate=app.state.setup_token_gate,
                 cc_writer_factory=cc_writer_boot,
                 logger=log,
+                bind_host=config.bind.host,
+                bind_port=config.bind.port,
             )
         except Exception:
             # Token mint is a first-launch UX convenience (per RUNBOOKs).

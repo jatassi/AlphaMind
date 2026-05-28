@@ -103,6 +103,82 @@ class TestMaybeEmitSetupToken:
         with pytest.raises(SetupTokenAlreadyConsumedError):
             gate.mint()
 
+    async def test_emits_lan_hostname_suggestion_on_nonlocal_bind_zero_creds(
+        self, cc_factory: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """ALP-727 AC1+AC2+AC4: non-local bind + zero creds → mints token then emits the exact LAN suggestion block (after token line) containing hostname suggestion, YAML snippets, RUNBOOK ptr, and socket.gethostname() mention."""  # noqa: E501
+        gate = SetupTokenGate()
+        caplog.set_level(logging.INFO, logger="alphamind.command_center.__main__")
+
+        token = await _maybe_emit_setup_token(
+            gate=gate,
+            cc_writer_factory=cc_factory,
+            logger=logging.getLogger("alphamind.command_center.__main__"),
+            bind_host="192.168.1.100",
+        )
+
+        assert token is not None
+        assert f"command_center setup token: {token}" in caplog.text
+        # Suggestion appears after the token line (same caplog.text sequence)
+        token_pos = caplog.text.find(f"command_center setup token: {token}")
+        sugg_pos = caplog.text.find("LAN / hostname suggestion for passkey support:")
+        assert token_pos != -1
+        assert sugg_pos != -1
+        assert token_pos < sugg_pos
+        # Exact block contents per story (AC1, AC2)
+        assert "Edit config/command-center.yaml:" in caplog.text
+        assert 'scheme: "http"' in caplog.text
+        assert 'host: "' in caplog.text and ".local" in caplog.text
+        assert "Edit config/security.yaml:" in caplog.text
+        assert 'relying_party_id: "' in caplog.text
+        assert "socket.gethostname() ==" in caplog.text  # derives realistic suggestion
+        assert "RUNBOOK_command_center.md § LAN access for the full recipe." in caplog.text
+
+    async def test_no_lan_suggestion_on_localhost_bind(
+        self, cc_factory: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """ALP-727 AC3: localhost bind (even with zero creds) → no LAN suggestion block emitted."""
+        gate = SetupTokenGate()
+        caplog.set_level(logging.INFO, logger="alphamind.command_center.__main__")
+
+        token = await _maybe_emit_setup_token(
+            gate=gate,
+            cc_writer_factory=cc_factory,
+            logger=logging.getLogger("alphamind.command_center.__main__"),
+            bind_host="127.0.0.1",
+        )
+
+        assert token is not None
+        assert f"command_center setup token: {token}" in caplog.text
+        assert "LAN / hostname suggestion for passkey support:" not in caplog.text
+
+    async def test_no_lan_suggestion_when_credentials_exist_even_on_nonlocal_bind(
+        self, cc_factory: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """ALP-727 AC3: creds exist + non-local bind → no suggestion (and no mint)."""
+        rec = WebauthnCredentialRecord(
+            credential_id=WebauthnCredentialId("seed-lan-1"),
+            public_key="fake-pubkey-base64url",
+            sign_count=0,
+            transports="",
+            created_at="2026-05-28T00:00:00Z",
+        )
+        await insert_credential(cc_factory, rec)
+
+        gate = SetupTokenGate()
+        caplog.set_level(logging.INFO, logger="alphamind.command_center.__main__")
+
+        token = await _maybe_emit_setup_token(
+            gate=gate,
+            cc_writer_factory=cc_factory,
+            logger=logging.getLogger("alphamind.command_center.__main__"),
+            bind_host="10.0.0.5",
+        )
+
+        assert token is None
+        assert "LAN / hostname suggestion for passkey support:" not in caplog.text
+        assert "command_center setup token: not minted" in caplog.text
+
 
 # NOTE: A full ``_run`` boot smoke test is omitted. ``_run`` hard-codes
 # loads from the repo ``_CONFIG_DIR`` for security/alerts, writes a
