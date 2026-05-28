@@ -138,6 +138,33 @@ async def _maybe_emit_setup_token(
     return None
 
 
+def _warn_if_mixed_lan_bind_and_access(config: CommandCenterConfig) -> None:
+    """ALP-726: emit one-time startup WARNING when bind widened but access host still localhost-ish.
+
+    This is the validation warning from the approved LAN plan (§8 story 02).
+    Emitted early in the _run boot path (near first-boot setup-token logging)
+    so operators see it on `python -m alphamind.command_center` before Uvicorn binds.
+    Directs to the access: block (and RUNBOOK) rather than silently producing
+    broken WebAuthn origins / cookie flags.
+
+    Tests exercise via direct call + caplog (mirrors _maybe_emit_setup_token pattern).
+    """
+    bind_host = config.bind.host
+    access = config.access
+    if bind_host not in ("127.0.0.1", "::1"):
+        ah = (access.host or "").lower().strip()
+        is_localhostish = ah in {"localhost", "127.0.0.1", "::1"} or ah.startswith("127.0.0.")
+        if is_localhostish:
+            log.warning(
+                "command_center: bind.host=%s is not loopback but access.host=%s "
+                "still looks localhost-ish. Edit the access: block (scheme + host + port) "
+                "in command-center.yaml and align webauthn.relying_party_id in security.yaml; "
+                "see RUNBOOK_command_center.md for LAN setup.",
+                bind_host,
+                access.host,
+            )
+
+
 async def _run(config: CommandCenterConfig) -> None:
     """Run the command-center daemon under the supervisor.
 
@@ -147,6 +174,9 @@ async def _run(config: CommandCenterConfig) -> None:
     """
     archive_root = _DEFAULT_ARCHIVE_ROOT
     archive_root.mkdir(parents=True, exist_ok=True)
+
+    # ALP-726: mixed bind/access validation warning (early, before engines or build_app).
+    _warn_if_mixed_lan_bind_and_access(config)
 
     async with engine_pair_context() as engines:
         process_lifetime_id = await record_process_lifetime(

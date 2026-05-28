@@ -197,7 +197,11 @@ class AuthOverrides:
       ``os.environ[COMMAND_CENTER_SESSION_SECRET]`` decoded as UTF-8
       bytes, or a fresh random secret if the env var is absent.
     * ``cookies_secure``: set the ``Secure`` flag on issued cookies.
-      Defaults to ``False`` for v1 loopback (HTTPS-only flag).
+      ``None`` (default) means use the value from the loaded
+      :class:`SecurityConfig.cookies_secure` (ALP-725/726). An explicit
+      ``bool`` forces the value (used by tests that need to override the
+      config for a particular scenario). Production callers never pass
+      AuthOverrides and therefore always get the config-driven value.
     * ``clock``: optional callable returning the current UTC datetime.
       Used by auth dependencies for session-expiry checks. Defaults to
       ``lambda: datetime.now(UTC)``.
@@ -206,7 +210,7 @@ class AuthOverrides:
     webauthn_verifier: WebauthnVerifier | None = None
     setup_token_gate: SetupTokenGate | None = None
     session_signing_secret: bytes | None = None
-    cookies_secure: bool = False
+    cookies_secure: bool | None = None
     clock: Callable[[], datetime] | None = field(default=None)
 
 
@@ -333,15 +337,24 @@ def _resolve_webauthn_verifier(
 ) -> WebauthnVerifier:
     """Resolve the WebAuthn relying-party verifier.
 
-    Falls back to :class:`RealWebauthnVerifier` constructed against the
-    loopback origin (host:port from the cc config + RP id from
-    security config). The remote-access follow-on switches the origin
-    via :class:`SecurityConfig.webauthn` edits.
+    When an explicit override is supplied (tests), use it. Otherwise
+    construct RealWebauthnVerifier using rp id/name from SecurityConfig
+    (unchanged) but with expected_origin derived from the access block
+    (ALP-725/726): scheme + host + resolved port (explicit or scheme default
+    80/443). The default_factory on CommandCenterConfig.access ensures that
+    yamls omitting the access: key continue to produce the historical
+    http://localhost:8080 origin for 100% backward compat.
     """
     if overrides.webauthn_verifier is not None:
         return overrides.webauthn_verifier
-    port = command_center_config.bind.port
-    expected_origin = f"http://{security_config.webauthn.relying_party_id}:{port}"
+
+    access = command_center_config.access
+    if access.port is not None:
+        origin_port = access.port
+    else:
+        origin_port = 443 if access.scheme == "https" else 80
+    expected_origin = f"{access.scheme}://{access.host}:{origin_port}"
+
     return RealWebauthnVerifier(
         relying_party_id=security_config.webauthn.relying_party_id,
         relying_party_name=security_config.webauthn.relying_party_name,
@@ -714,8 +727,9 @@ def build_app(  # noqa: PLR0913, PLR0915 — composition root wires four overrid
     auth_overrides:
         Optional :class:`AuthOverrides` bundle for test / deploy-time
         injection of the auth collaborators (WebAuthn verifier, setup-
-        token gate, session signing secret, cookie ``Secure`` flag,
-        clock). Production callers leave this ``None``; tests pass an
+        token gate, session signing secret, cookie ``Secure`` flag via
+        explicit bool or None=use-SecurityConfig, clock). Production
+        callers leave this ``None``; tests pass an
         :class:`InMemoryWebauthnVerifier` + fixed signing secret +
         frozen clock to make the auth flow deterministic. See
         :class:`AuthOverrides` for the per-field semantics.
@@ -789,7 +803,14 @@ def build_app(  # noqa: PLR0913, PLR0915 — composition root wires four overrid
         overrides, command_center_config=command_center_config, security_config=security_config
     )
     app.state.setup_token_gate = overrides.setup_token_gate or SetupTokenGate()
-    app.state.cookies_secure = overrides.cookies_secure
+    # ALP-726: cookies_secure comes from SecurityConfig (post-01) unless an
+    # explicit override bool was supplied (for tests). This makes the flag
+    # production-configurable while preserving the override seam.
+    app.state.cookies_secure = (
+        overrides.cookies_secure
+        if overrides.cookies_secure is not None
+        else security_config.cookies_secure
+    )
     app.state.clock = (
         overrides.clock if overrides.clock is not None else (lambda: datetime.now(UTC))
     )
