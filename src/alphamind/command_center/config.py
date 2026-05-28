@@ -3,9 +3,10 @@
 Three models map 1:1 to three YAML files under ``config/``:
 
 * :class:`CommandCenterConfig` ← ``config/command-center.yaml`` —
-  bind host / port + DB path + frontend dist path.
+  bind host / port + DB path + frontend dist path + (ALP-725) the new
+  ``access:`` block (public origin decoupled from bind for LAN/WebAuthn).
 * :class:`SecurityConfig` ← ``config/security.yaml`` — session cookie /
-  CSRF cookie / WebAuthn relying-party settings.
+  CSRF cookie / WebAuthn relying-party settings + (ALP-725) ``cookies_secure``.
 * :class:`AlertsConfig` ← ``config/alerts.yaml`` — alert rule list +
   notification channel registry. Story 05a populates the rule list;
   story 02 ships an empty list as the loader-validation seam.
@@ -31,7 +32,7 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -74,6 +75,7 @@ class ControlHint(Enum):
 
 
 __all__ = [
+    "AccessConfig",
     "AlertRuleSpec",
     "AlertsChannels",
     "AlertsConfig",
@@ -114,6 +116,36 @@ class BindConfig(BaseModel):
 
     host: str = Field(min_length=1)
     port: int = Field(ge=1, le=65535)
+
+
+class AccessConfig(BaseModel):
+    """``access`` block — public browser-visible origin (scheme + host + port).
+
+    Decouples the internal Uvicorn ``bind`` socket (the address the server
+    actually listens on) from the origin the browser and WebAuthn ceremonies
+    see. Per the ALP-724 LAN access plan (story 01 / ALP-725):
+
+    * ``scheme``: "http" (typical for LAN) or "https".
+    * ``host``: the hostname operators type in the browser (e.g. "alphamind.local"
+      or a hosts-file entry). This becomes the WebAuthn rpId.
+    * ``port``: explicit port or null for the scheme's well-known default (80/443).
+      For the v1 default of 8080 (and other non-standard ports) the operator
+      must specify the value explicitly.
+
+    The whole block is ``DEPLOY_TIME`` because it influences construction of the
+    WebAuthn verifier and the cookie Secure flag at process start.
+
+    Zero-config backward compat: old ``command-center.yaml`` files that omit the
+    ``access:`` block entirely continue to load; they receive a localhost-derived
+    default (http://localhost:8080) suitable for unmodified v1 installs. Widened
+    binds and explicit validation live in later stories in the tree.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    scheme: Literal["http", "https"] = "http"
+    host: str = Field(min_length=1, default="localhost")
+    port: int | None = Field(default=None, ge=1, le=65535)
 
 
 class DbConfig(BaseModel):
@@ -200,6 +232,15 @@ class CommandCenterConfig(BaseModel):
     frontend: FrontendConfig
     pipeline: PipelineUpstreamConfig
     monitor: MonitorUpstreamConfig
+    # ``access`` block (ALP-725 / 01 of LAN plan): the public origin the
+    # browser uses. Decouples from ``bind`` for WebAuthn rpId/origin and
+    # cookie flags. Annotated at the container so the config editor framework
+    # (and reload_policy_of) surfaces DEPLOY_TIME badges on the whole block
+    # and its leaves. Default factory supplies v1 localhost compat when the
+    # key is absent from YAML (see AccessConfig docstring).
+    access: Annotated[AccessConfig, ReloadPolicy.DEPLOY_TIME] = Field(
+        default_factory=lambda: AccessConfig(scheme="http", host="localhost", port=8080)
+    )
 
 
 def load_command_center_config(config_dir: Path) -> CommandCenterConfig:
@@ -267,13 +308,23 @@ class WebauthnConfig(BaseModel):
 
 
 class SecurityConfig(BaseModel):
-    """Top-level ``security.yaml`` model."""
+    """Top-level ``security.yaml`` model.
+
+    (ALP-725) Added ``cookies_secure`` (DEPLOY_TIME) so the Secure flag on
+    session/CSRF cookies can be driven from config rather than only test
+    overrides. False for v1 localhost HTTP installs; True when the public
+    origin is https (LAN or future remote).
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     session: SessionConfig
     csrf: CsrfConfig
     webauthn: WebauthnConfig
+    # cookies_secure controls the Secure attribute on cookies issued by the
+    # auth layer. Marked DEPLOY_TIME per the LAN plan (affects cookie policy
+    # surface; the editor will badge it appropriately via the Annotated metadata).
+    cookies_secure: Annotated[bool, ReloadPolicy.DEPLOY_TIME] = False
 
 
 def load_security_config(config_dir: Path) -> SecurityConfig:
