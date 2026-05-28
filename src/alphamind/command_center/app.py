@@ -1011,7 +1011,7 @@ def _maybe_mount_frontend(app: FastAPI, *, command_center_config: CommandCenterC
         "/vite.svg",
     )
 
-    async def spa_fallback(request: Request, exc: Exception) -> Response:
+    def spa_fallback(request: Request, exc: Exception) -> Response:
         path = request.url.path
         if any(path.startswith(p) for p in api_prefixes) or request.method != "GET":
             # Real API/asset 404 or non-GET — preserve any custom detail the
