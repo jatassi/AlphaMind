@@ -46,8 +46,10 @@ from pathlib import Path
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.command_center.app import build_app
+from alphamind.command_center.auth.setup_token import SetupTokenGate
 from alphamind.command_center.config import (
     CommandCenterConfig,
     load_alerts_config,
@@ -55,6 +57,7 @@ from alphamind.command_center.config import (
     load_security_config,
 )
 from alphamind.command_center.logging_setup import configure_command_center_logging
+from alphamind.command_center.persistence.session import build_cc_writer_session_factory
 from alphamind.command_center.session import ProcessSession, new_session
 from alphamind.command_center.supervisor import CommandCenterSupervisor
 from alphamind.persistence.session import engine_pair_context
@@ -104,6 +107,36 @@ async def _run_uvicorn_task(
         raise
 
 
+async def _maybe_emit_setup_token(
+    *,
+    gate: SetupTokenGate,
+    cc_writer_factory: async_sessionmaker[AsyncSession],
+    logger: logging.Logger,
+) -> str | None:
+    """Mint (and log) the one-time setup token iff this is a fresh install (zero credentials).
+
+    Called from the production ``_run`` path after ``build_app`` so the
+    gate is present on ``app.state`` and we can resolve the DB path from
+    the loaded command-center config. A transient factory is used only for
+    the count; the lifespan owns the real engine + canonical factory.
+
+    Returns the minted token (for tests to assert against ``gate._token``)
+    or None when credentials already exist.
+    """
+    from alphamind.command_center.auth.repository import count_credentials
+
+    existing = await count_credentials(cc_writer_factory)
+    if existing == 0:
+        token = gate.mint()
+        logger.info("command_center setup token: %s", token)
+        return token
+    logger.info(
+        "command_center setup token: not minted (%d existing credentials)",
+        existing,
+    )
+    return None
+
+
 async def _run(config: CommandCenterConfig) -> None:
     """Run the command-center daemon under the supervisor.
 
@@ -146,6 +179,20 @@ async def _run(config: CommandCenterConfig) -> None:
             production_session_factory=engines.async_session_factory,
             process_lifetime_id=process_lifetime_id,
             config_dir=_CONFIG_DIR,
+        )
+
+        # ALP-721: first-launch setup token mint + log (only when zero
+        # webauthn_credentials). Uses a transient cc_writer factory for the
+        # count decision; the canonical one (with owned engine lifetime) is
+        # created inside the FastAPI lifespan. The else branch logs explicitly
+        # on re-boots of credentialed installs so operators aren't confused
+        # by a "minted" line that can never be consumed.
+        db_path = app.state.command_center_config.db.alphamind_db_path
+        cc_writer_boot = build_cc_writer_session_factory(db_path)
+        await _maybe_emit_setup_token(
+            gate=app.state.setup_token_gate,
+            cc_writer_factory=cc_writer_boot,
+            logger=log,
         )
 
         supervisor = CommandCenterSupervisor(
