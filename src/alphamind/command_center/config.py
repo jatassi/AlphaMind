@@ -144,12 +144,21 @@ class AccessConfig(BaseModel):
 
     Zero-config backward compat: old ``command-center.yaml`` files that omit the
     ``access:`` block entirely continue to load; they receive a localhost-derived
-    default (http://localhost:8080) suitable for unmodified v1 installs. For
-    LAN usage, supply an explicit ``access:`` block (see RUNBOOK_command_center.md
-    § "LAN access (local network)" for the exact recipe, hostname choice,
-    re-enrollment steps, and firewall guidance). Widened binds are supported
-    when paired with the access: origin (the mixed case emits a startup
-    warning directing the operator to the RUNBOOK).
+    default (http://localhost:8080) suitable for unmodified v1 installs.
+
+    Important interaction: when the ``access:`` key is omitted, the default
+    always uses port 8080 regardless of any custom ``bind.port`` value in the
+    same YAML. Operators who customize ``bind.port`` away from 8080 **must**
+    supply an explicit ``access:`` block with a matching ``port`` (otherwise
+    WebAuthn ``expected_origin`` and cookie behavior will be wrong). The
+    historical "derive everything from bind" behavior only exists for the
+    exact v1 shipped configuration.
+
+    For LAN usage, supply an explicit ``access:`` block (see
+    RUNBOOK_command_center.md § "LAN access (local network)" for the exact
+    recipe, hostname choice, re-enrollment steps, and firewall guidance).
+    Widened binds are supported when paired with the access: origin (the mixed
+    case emits a startup warning directing the operator to the RUNBOOK).
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -247,8 +256,12 @@ class CommandCenterConfig(BaseModel):
     # browser uses. Decouples from ``bind`` for WebAuthn rpId/origin and
     # cookie flags. Annotated at the container so the config editor framework
     # (and reload_policy_of) surfaces DEPLOY_TIME badges on the whole block
-    # and its leaves. Default factory supplies v1 localhost compat when the
-    # key is absent from YAML (see AccessConfig docstring).
+    # and its leaves.
+    #
+    # Default factory supplies v1 localhost:8080 compat when the key is absent.
+    # See AccessConfig docstring for the critical interaction with custom
+    # bind.port (operators who change bind.port must supply an explicit access
+    # block).
     access: Annotated[AccessConfig, ReloadPolicy.DEPLOY_TIME] = Field(
         default_factory=lambda: AccessConfig(scheme="http", host="localhost", port=8080)
     )

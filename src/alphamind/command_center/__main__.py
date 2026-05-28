@@ -116,6 +116,7 @@ async def _maybe_emit_setup_token(
     cc_writer_factory: async_sessionmaker[AsyncSession],
     logger: logging.Logger,
     bind_host: str | None = None,  # ALP-727: for LAN suggestion (non-local + zero creds)
+    bind_port: int = 8080,  # ALP-727 review follow-up: use the actual port in the hint
 ) -> str | None:
     """Mint (and log) the one-time setup token iff this is a fresh install (zero credentials).
 
@@ -125,10 +126,10 @@ async def _maybe_emit_setup_token(
     the count; the lifespan owns the real engine + canonical factory.
 
     ALP-727 (03a): when ``existing == 0`` (mint path) *and* ``bind_host`` is
-    non-local (not in 127.0.0.1 / ::1 / localhost), emit the exact multi-line
-    LAN hostname suggestion block (with socket.gethostname()-derived suggestion,
-    copy-paste YAML for access: + webauthn.relying_party_id, and RUNBOOK pointer)
-    immediately after the "command_center setup token: ..." line.
+    non-local, emit the exact multi-line LAN hostname suggestion block (with
+    socket.gethostname()-derived suggestion, copy-paste YAML for access: +
+    webauthn.relying_party_id using the actual ``bind_port``, and RUNBOOK
+    pointer) immediately after the "command_center setup token: ..." line.
 
     Returns the minted token (for tests to assert against ``gate._token``)
     or None when credentials already exist.
@@ -140,7 +141,7 @@ async def _maybe_emit_setup_token(
         token = gate.mint()
         logger.info("command_center setup token: %s", token)
         # ALP-727: first-boot LAN suggestion only on non-local bind (zero creds already true here)
-        if bind_host is not None and bind_host not in ("127.0.0.1", "::1", "localhost"):
+        if bind_host is not None and not _is_loopbackish(bind_host):
             hn = socket.gethostname()
             suggested = f"{hn}.local"
             block = dedent(
@@ -151,7 +152,7 @@ LAN / hostname suggestion for passkey support:
     access:
       scheme: "http"
       host: "{suggested}"     # or .local/hosts alias (socket.gethostname() == '{hn}')
-      port: 8080
+      port: {bind_port}
   Edit config/security.yaml:
     webauthn:
       relying_party_id: "{suggested}"
@@ -169,6 +170,18 @@ LAN / hostname suggestion for passkey support:
     return None
 
 
+def _is_loopbackish(host: str | None) -> bool:
+    """True for the common loopback forms (including bare 'localhost').
+
+    Used by both the mixed-bind warning (ALP-726) and the first-boot LAN
+    suggestion (ALP-727) so the set of 'local' addresses stays in one place.
+    """
+    if not host:
+        return False
+    h = host.lower().strip()
+    return h in {"127.0.0.1", "::1", "localhost"} or h.startswith("127.0.0.")
+
+
 def _warn_if_mixed_lan_bind_and_access(config: CommandCenterConfig) -> None:
     """ALP-726: emit one-time startup WARNING when bind widened but access host still localhost-ish.
 
@@ -182,9 +195,9 @@ def _warn_if_mixed_lan_bind_and_access(config: CommandCenterConfig) -> None:
     """
     bind_host = config.bind.host
     access = config.access
-    if bind_host not in ("127.0.0.1", "::1"):
-        ah = (access.host or "").lower().strip()
-        is_localhostish = ah in {"localhost", "127.0.0.1", "::1"} or ah.startswith("127.0.0.")
+    if not _is_loopbackish(bind_host):
+        ah = access.host.lower().strip()
+        is_localhostish = _is_loopbackish(ah) or ah.startswith("127.0.0.")
         if is_localhostish:
             log.warning(
                 "command_center: bind.host=%s is not loopback but access.host=%s "
@@ -194,6 +207,19 @@ def _warn_if_mixed_lan_bind_and_access(config: CommandCenterConfig) -> None:
                 bind_host,
                 access.host,
             )
+
+    # Review follow-up (ALP-724): if someone has an old-style YAML (no access key)
+    # that also customizes bind.port away from 8080, the default_factory will
+    # still produce :8080 in the origin. Warn once so they know to supply the block.
+    if access.host == "localhost" and access.port == 8080 and config.bind.port != 8080:
+        log.warning(
+            "command_center: bind.port=%s but no explicit access: block was supplied. "
+            "The default origin will be http://localhost:8080 (not port %s). "
+            "Supply an explicit access: block with a matching port to keep WebAuthn "
+            "and cookies correct. See RUNBOOK_command_center.md § LAN access.",
+            config.bind.port,
+            config.bind.port,
+        )
 
 
 async def _run(config: CommandCenterConfig) -> None:
@@ -259,6 +285,7 @@ async def _run(config: CommandCenterConfig) -> None:
                 cc_writer_factory=cc_writer_boot,
                 logger=log,
                 bind_host=config.bind.host,
+                bind_port=config.bind.port,
             )
         except Exception:
             # Token mint is a first-launch UX convenience (per RUNBOOKs).

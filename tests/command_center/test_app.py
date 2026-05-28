@@ -669,8 +669,10 @@ webauthn:
         assert msg in caplog.text
         assert "access: block" in caplog.text or "RUNBOOK" in caplog.text
 
-    def test_resolver_port_none_http_defaults_to_80(self, tmp_path: Path) -> None:
-        """ALP-730 (03d) edge: access port=None for http -> resolver yields :80 (scheme default)."""
+    def test_resolver_port_none_http_omits_default_port(self, tmp_path: Path) -> None:
+        """ALP-730 (03d) + RFC 6454: access port=None for http yields origin without port
+        (browsers omit default ports in clientDataJSON / WebAuthn).
+        """
         config_dir, _, _ = self._write_lan_configs(
             tmp_path,
             bind_host="192.168.1.77",
@@ -690,10 +692,10 @@ webauthn:
         )
         verifier = app.state.webauthn_verifier
         assert isinstance(verifier, RealWebauthnVerifier)
-        assert verifier._expected_origin == "http://myhost.local:80"
+        assert verifier._expected_origin == "http://myhost.local"
 
-    def test_resolver_port_none_https_defaults_to_443(self, tmp_path: Path) -> None:
-        """ALP-730 (03d) edge: access port=None for https -> resolver yields :443."""
+    def test_resolver_port_none_https_omits_default_port(self, tmp_path: Path) -> None:
+        """ALP-730 (03d) + RFC 6454: access port=None for https yields origin without port."""
         config_dir, _, _ = self._write_lan_configs(
             tmp_path,
             bind_host="10.0.0.5",
@@ -713,7 +715,7 @@ webauthn:
         )
         verifier = app.state.webauthn_verifier
         assert isinstance(verifier, RealWebauthnVerifier)
-        assert verifier._expected_origin == "https://secure.local:443"
+        assert verifier._expected_origin == "https://secure.local"
 
     def test_no_warning_when_access_host_is_non_localhostish(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

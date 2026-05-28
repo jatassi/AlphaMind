@@ -340,20 +340,26 @@ def _resolve_webauthn_verifier(
     When an explicit override is supplied (tests), use it. Otherwise
     construct RealWebauthnVerifier using rp id/name from SecurityConfig
     (unchanged) but with expected_origin derived from the access block
-    (ALP-725/726): scheme + host + resolved port (explicit or scheme default
-    80/443). The default_factory on CommandCenterConfig.access ensures that
-    yamls omitting the access: key continue to produce the historical
-    http://localhost:8080 origin for 100% backward compat.
+    (ALP-725/726).
+
+    Per RFC 6454, default ports are omitted from the serialized origin
+    (browsers do this in clientDataJSON). We only emit ``:port`` when an
+    explicit non-default port was supplied. The default_factory on
+    CommandCenterConfig.access ensures that yamls omitting the access: key
+    continue to produce the historical http://localhost:8080 origin for
+    100% backward compat (non-default ports require an explicit access block).
     """
     if overrides.webauthn_verifier is not None:
         return overrides.webauthn_verifier
 
     access = command_center_config.access
+    # RFC 6454: default ports (80 for http, 443 for https) are omitted from the
+    # origin string that browsers put in clientDataJSON / WebAuthn assertions.
+    # Only include an explicit port when one was supplied (and is non-default).
     if access.port is not None:
-        origin_port = access.port
+        expected_origin = f"{access.scheme}://{access.host}:{access.port}"
     else:
-        origin_port = 443 if access.scheme == "https" else 80
-    expected_origin = f"{access.scheme}://{access.host}:{origin_port}"
+        expected_origin = f"{access.scheme}://{access.host}"
 
     return RealWebauthnVerifier(
         relying_party_id=security_config.webauthn.relying_party_id,
