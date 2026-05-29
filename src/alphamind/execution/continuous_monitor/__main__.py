@@ -99,6 +99,9 @@ from alphamind.execution.continuous_monitor.emergency_trigger import (
 from alphamind.execution.continuous_monitor.emergency_trigger.margin_call_observer import (
     AccountQueriesProtocol,
 )
+from alphamind.execution.continuous_monitor.entry_window import (
+    register_entry_window_watcher_task,
+)
 from alphamind.execution.continuous_monitor.fill_stream_consumer import EnrichmentCallable
 from alphamind.execution.continuous_monitor.greeks_refresh import (
     register_greeks_refresh_task,
@@ -525,6 +528,13 @@ async def _run_daemon(*, mode: MonitorMode) -> None:  # noqa: PLR0915 — compos
             execution_config=execution_config,
         ),
         trigger_ids=trigger_ids,
+    )
+    # ALP-737 — auto-cancel PENDING_ENTRY brackets past their entry_window_deadline.
+    register_entry_window_watcher_task(
+        supervisor,
+        session_factory=db_session_factory,
+        client_factory=client_factory,
+        execution_config=execution_config,
     )
 
     # ALP-720 — control surface task: /control/* verbs + /events SSE.

@@ -183,12 +183,14 @@ async def _writeback_open(
     bracket = _build_pending_bracket(
         bracket_id=ids["bracket_id"],
         position_id=ids["position_id"],
-        ticker=ticker,
         entry_order_id=ids["entry_order_id"],
         target=command.target,
         target_order_id=target_order_id,
         invalidation_leg_orders=tuple(invalidation_leg_orders),
         instrument=command.instrument,
+        entry_window_deadline=(
+            command.entry_window.deadline if command.entry_window is not None else None
+        ),
     )
     entry_order = _build_entry_order_from_command(
         order_id=ids["entry_order_id"],
@@ -835,12 +837,12 @@ def _build_pending_bracket(
     *,
     bracket_id: str,
     position_id: str,
-    ticker: str,
     entry_order_id: str,
     target: Target,
     target_order_id: str,
     invalidation_leg_orders: tuple[tuple[InvalidationLeg, str | None], ...],
     instrument: EquityInstrument | OptionInstrument | StrategyInstrument,
+    entry_window_deadline: datetime | None,
 ) -> BracketRecord:
     """Build a PENDING_ENTRY bracket.
 
@@ -848,12 +850,19 @@ def _build_pending_bracket(
     entry. The bracket record carries no creation timestamp; per-leg
     submission timestamps live on the broker orders.
 
+    ``entry_window_deadline`` is the analyst's patient-entry deadline threaded
+    from ``command.entry_window`` (ALP-737); ``None`` when the recommendation
+    carried no window. The continuous monitor auto-cancels a still-
+    ``PENDING_ENTRY`` entry once ``now() > entry_window_deadline`` per the
+    ``BracketRecord`` lifecycle contract (``orders.py``).
+
     For a :class:`StrategyInstrument`, the take-profit leg is P/L-anchored
     (see :func:`_strategy_target_to_bracket_leg`) — it references the
     strategy's net P/L, not a single-sided underlying-price threshold. For
     equity / single-leg options the take-profit keeps its plain
     underlying-price :class:`PriceTrigger` (see :func:`_target_to_bracket_leg`).
     """
+    ticker = _instrument_ticker_key(instrument)
     if isinstance(instrument, StrategyInstrument):
         target_leg = _strategy_target_to_bracket_leg(
             leg_id=f"{bracket_id}-leg-target",
@@ -887,5 +896,5 @@ def _build_pending_bracket(
         protective_legs=(target_leg, *invalidation_legs),
         modification_history=(),
         corporate_action_cancellation_reason=None,
-        entry_window_deadline=None,
+        entry_window_deadline=entry_window_deadline,
     )

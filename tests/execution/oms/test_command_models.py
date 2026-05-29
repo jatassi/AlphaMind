@@ -37,6 +37,7 @@ from alphamind.commands.command_models import (
     CancelCommand,
     CloseCommand,
     EntryOrder,
+    EntryWindow,
     EquityInstrument,
     EventCondition,
     EventLeg,
@@ -353,11 +354,69 @@ class TestInvalidationLegs:
 # ---------------------------------------------------------------------------
 
 
+class TestEntryWindow:
+    def test_constructs_with_required_fields(self) -> None:
+        # Mirrors the analyst Recommendation.entry_window shape (deadline +
+        # decay_type + rationale) so the PM copies it through verbatim — the
+        # ALP-737 "map, not strip" reconciliation with ALP-736.
+        window = EntryWindow(
+            deadline=datetime(2026, 5, 29, 17, 30, tzinfo=UTC),
+            decay_type="gradual",
+            rationale="shorting into an active relief bounce; 24-hour gradual decay",
+        )
+        assert window.deadline == datetime(2026, 5, 29, 17, 30, tzinfo=UTC)
+        assert window.decay_type == "gradual"
+
+    def test_rejects_naive_deadline(self) -> None:
+        with pytest.raises((ValueError, TypeError)) as exc_info:
+            EntryWindow(
+                deadline=datetime(2026, 5, 29, 17, 30),  # noqa: DTZ001 — intentionally naive
+                decay_type="binary",
+                rationale="catalyst at the open",
+            )
+        assert "tz-aware" in str(exc_info.value)
+
+    def test_rejects_empty_rationale(self) -> None:
+        with pytest.raises((ValueError, TypeError)):
+            EntryWindow(
+                deadline=datetime(2026, 5, 29, 17, 30, tzinfo=UTC),
+                decay_type="binary",
+                rationale="",
+            )
+
+
 class TestOpenCommand:
     def test_constructs_happy_path(self) -> None:
         cmd = _open_command()
         assert cmd.command_type == "open"
         assert cmd.command_id is None
+
+    def test_entry_window_defaults_to_none(self) -> None:
+        # An OPEN command without a window is the common case; the field is
+        # optional and absent by default.
+        assert _open_command().entry_window is None
+
+    def test_accepts_entry_window(self) -> None:
+        # ALP-737: OpenCommand now carries the analyst's entry_window so the
+        # patient-limit deadline survives the PM authoring boundary instead of
+        # being rejected by extra="forbid" (ALP-736's MRVL loss).
+        window = EntryWindow(
+            deadline=datetime(2026, 5, 29, 17, 30, tzinfo=UTC),
+            decay_type="gradual",
+            rationale="overnight gap retest window",
+        )
+        cmd = OpenCommand(
+            command_type="open",
+            instrument=_equity_instrument(),
+            entry_order=_entry_order_market(),
+            position_size=_position_size(),
+            target=_target_absolute(),
+            invalidation_legs=(_price_leg(),),
+            thesis=_thesis(),
+            entry_window=window,
+        )
+        assert cmd.entry_window is not None
+        assert cmd.entry_window.deadline == datetime(2026, 5, 29, 17, 30, tzinfo=UTC)
 
     def test_rejects_no_hard_legs(self) -> None:
         # Soft-only invalidation_legs (event leg) → reject.
