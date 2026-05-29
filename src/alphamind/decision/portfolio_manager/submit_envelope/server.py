@@ -414,7 +414,12 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
 
     # Step 3: process embedded commands. Capture the validation-state cell as
     # it stood on envelope entry so Step 4.5 can rebuild it against the final
-    # (post-broker-routing) outcome (ALP-743).
+    # (post-broker-routing) outcome (ALP-743). Between Step 3 and Step 4.5
+    # ``state.validation_state`` carries the Step-3 advances for every
+    # guardrail-PASS command, including ones broker routing will reject — any
+    # step inserted in that window that reads ``validation_state`` would observe
+    # that pre-reconciliation (phantom-inflated) cell, so read it only after
+    # Step 4.5.
     entry_validation_state = state.validation_state
     submission_results, state, credited_deltas = _process_commands(
         envelope,

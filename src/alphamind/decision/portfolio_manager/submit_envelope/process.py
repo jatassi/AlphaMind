@@ -457,11 +457,25 @@ def _reconcile_validation_state(
     status. When no command flipped — the fixture-only path with no broker
     routing — this reproduces the threaded end-state exactly, so it is safe to
     apply unconditionally.
+
+    Survivors are re-indexed to a contiguous ``proposal_index`` run as they are
+    re-applied. Each delta's ``proposal_index`` was frozen during Step 3 from
+    the cumulative length at validation time; dropping a non-last command would
+    otherwise leave a gap, and the next command credited in the invocation
+    (``proposal_index = len(accumulated_deltas) + 1``) could then collide with a
+    surviving delta's frozen index — two accumulated deltas sharing an index
+    surface as duplicate ``prior_{index}`` proposal ids and a guardrail-library
+    ``LibraryInputError`` on the next projection. Re-indexing restores the
+    monotonic-contiguous invariant the append-only Step-3 path maintained.
     """
     reconciled = entry_validation_state
+    next_index = len(entry_validation_state.accumulated_deltas) + 1
     for result, delta in zip(submission_results, credited_deltas, strict=True):
         if delta is not None and result.status == "accepted":
-            reconciled = reconciled.with_accepted_proposal(delta)
+            reconciled = reconciled.with_accepted_proposal(
+                delta.model_copy(update={"proposal_index": next_index})
+            )
+            next_index += 1
     return dataclasses.replace(state, validation_state=reconciled)
 
 

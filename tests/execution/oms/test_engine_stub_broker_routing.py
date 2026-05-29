@@ -1482,6 +1482,158 @@ async def test_broker_rejected_short_does_not_overreject_resized_retry() -> None
     assert state.validation_state.accumulated_deltas == ()
 
 
+class _SelectiveBrokerDispatch:
+    """A ``BrokerDispatch`` that rejects commands whose underlying is targeted
+    and accepts the rest with a synthetic broker ack.
+
+    Lets a multi-command envelope flip a *non-last* command to rejected while a
+    later command stays accepted — the reconciliation path where a dropped
+    delta leaves a gap and a kept delta retains its (higher) Step-3 index.
+    """
+
+    def __init__(self, reject_underlyings: frozenset[str]) -> None:
+        self._reject = reject_underlyings
+
+    async def __call__(self, command: Any, *, client_order_id: str, **context: Any) -> Any:
+        from alphamind.execution.broker_adapter import (
+            EquitySubmission,
+            GatewaySubmissionFailed,
+            Submitted,
+        )
+        from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
+
+        underlying = getattr(command.instrument, "ticker", None) or getattr(
+            command.instrument, "underlying", None
+        )
+        if underlying in self._reject:
+            return GatewaySubmissionFailed(
+                reason="forced rejection for test",
+                attempt_count=1,
+                last_error_class="ConnectError",
+            )
+        oid = AlpacaOrderId(str(uuid.uuid4()))
+        return Submitted(
+            payload=BrokerDispatchResult(
+                alpaca_order_id=oid,
+                client_order_id=ClientOrderId(client_order_id),
+                status="accepted",
+                order_class="simple",
+                payload_kind="equity",
+                raw_submission=EquitySubmission(
+                    alpaca_order_id=oid,
+                    client_order_id=ClientOrderId(client_order_id),
+                    status="accepted",
+                    order_class="simple",
+                ),
+            ),
+            attempt_count=1,
+        )
+
+
+async def test_reconcile_reindexes_survivors_so_later_envelope_does_not_collide() -> None:
+    """ALP-743 regression: dropping a non-last command and keeping a later one
+    must re-index the survivors contiguously, so a subsequent command credited
+    in the same invocation can't reuse a kept delta's index.
+
+    Each accumulated ProjectedDelta carries a ``proposal_index`` frozen at
+    Step-3 validation time. If reconciliation kept the survivors' original
+    indices, dropping a middle command would leave a gap — and the next command
+    (``proposal_index = len(accumulated_deltas) + 1``) would collide with a
+    survivor's frozen index. Two accumulated deltas sharing an index surface as
+    duplicate ``prior_{index}`` proposal ids and crash the next projection with
+    a guardrail-library ``LibraryInputError``. With re-indexing the indices stay
+    contiguous and the later envelope projects cleanly.
+    """
+    from alphamind.decision.portfolio_manager.submit_envelope import (
+        _handle_submit_envelope,
+        build_initial_submit_envelope_state,
+    )
+    from alphamind.execution.broker_adapter import AccountStateQueries
+    from tests.execution.oms.test_submit_envelope_mcp import (
+        _DEFAULT_ACTIVE_SECTORS,
+        _make_bundle,
+        _make_pm_view,
+        _make_strategist_envelope,
+        _make_validation_state,
+        _open_command,
+        _position_assessment_stub,
+        _position_view,
+        _retrieval_store,
+        _sector_resolver,
+    )
+
+    validation_state = _make_validation_state()
+    state = build_initial_submit_envelope_state(
+        invocation_id=validation_state.invocation_id,
+        starting_validation_state=validation_state,
+    )
+    # POS-NVDA-001 is the position each strategist envelope assesses; the OPENs
+    # inside are new exposure (small, under every cap → all PASS guardrails).
+    bundle = _make_bundle(
+        position_assessments=(
+            _position_assessment_stub("SA-1"),
+            _position_assessment_stub("SA-2"),
+        ),
+    )
+    pm_view = _make_pm_view(positions=(_position_view("POS-NVDA-001"),))
+    # Reject ABC — the *middle* command of envelope A — so a gap opens between
+    # the kept first (NVDA) and last (XOM) commands.
+    dispatch = _SelectiveBrokerDispatch(reject_underlyings=frozenset({"ABC"}))
+
+    async def _submit(env: Any, st: Any) -> Any:
+        _response, new_state = await _handle_submit_envelope(
+            env.model_dump(mode="json"),
+            state=st,
+            retrieval_store=_retrieval_store(),
+            pre_processor_bundle=bundle,
+            pm_view=pm_view,
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            halt_mode=False,
+            sector_resolver=_sector_resolver,
+            state_persistence_config=_make_state_persistence_config(),
+            invocation_handle=None,
+            client=MagicMock(),
+            queries=MagicMock(spec=AccountStateQueries),
+            execution_config=_default_execution_config(),
+            broker_dispatch=dispatch,
+        )
+        return new_state
+
+    # Envelope A: NVDA (kept), ABC (broker-rejected), XOM (kept).
+    env_a = _make_strategist_envelope(
+        envelope_id="ENV-SA-1",
+        source_recommendation_id="SA-1",
+        commands=(
+            _open_command(underlying="NVDA"),
+            _open_command(underlying="ABC"),
+            _open_command(underlying="XOM"),
+        ),
+    )
+    state = await _submit(env_a, state)
+
+    deltas = state.validation_state.accumulated_deltas
+    # Only the two broker-accepted commands survive, re-indexed 1, 2 — the
+    # dropped ABC leaves no gap.
+    assert tuple(d.instrument.ticker for d in deltas) == ("NVDA", "XOM")
+    assert tuple(d.proposal_index for d in deltas) == (1, 2)
+
+    # Envelope B: two AAPL OPENs in the same invocation. Without re-indexing the
+    # first would be credited proposal_index=3 (colliding with XOM's frozen 3),
+    # and the second command's projection would raise LibraryInputError on the
+    # duplicate prior_3 id. With re-indexing it projects cleanly.
+    env_b = _make_strategist_envelope(
+        envelope_id="ENV-SA-2",
+        source_recommendation_id="SA-2",
+        commands=(_open_command(underlying="AAPL"), _open_command(underlying="AAPL")),
+    )
+    state = await _submit(env_b, state)
+
+    results_b = state.submission_log[1].submission_results
+    assert [r.status for r in results_b] == ["accepted", "accepted"]
+    final = state.validation_state.accumulated_deltas
+    assert tuple(d.proposal_index for d in final) == (1, 2, 3, 4)
+
+
 # ---------------------------------------------------------------------------
 # _engine_close_dispatch_kwargs — engine-CLOSE on options / strategy positions
 # is no longer blocked behind a hardcoded NotImplementedError. The helper
