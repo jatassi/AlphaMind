@@ -23,7 +23,7 @@ implementations through the same seam. Retires the module-level
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -43,6 +43,10 @@ from alphamind.execution.broker_adapter.client_factory import (
 from alphamind.execution.broker_adapter.corporate_actions_queries import (
     CorporateActionsQueries,
 )
+from alphamind.execution.broker_adapter.entry_pricing import (
+    BatchQuoteSource,
+    TouchQuote,
+)
 from alphamind.execution.broker_adapter.protocols import (
     AccountStateQueriesP,
     CorporateActionsQueriesP,
@@ -52,6 +56,7 @@ from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
 )
+from alphamind.execution.broker_adapter.quotes import AlpacaQuoteSource
 from alphamind.execution.corporate_actions.config import CorporateActionsConfig
 from alphamind.execution.corporate_actions.fetcher import (
     fetch_unprocessed_ca_activities,
@@ -74,6 +79,7 @@ from alphamind.state.invocation_context.context import (
 
 _AccountQueriesFactory = Callable[[VenueConfig, ExecutionMode], AccountStateQueriesP]
 _CorporateActionsQueriesFactory = Callable[[VenueConfig, ExecutionMode], CorporateActionsQueriesP]
+_QuoteSourceFactory = Callable[[VenueConfig, ExecutionMode], BatchQuoteSource]
 
 __all__ = ["Phase1Inputs", "gather_phase1_inputs"]
 
@@ -136,6 +142,22 @@ class Phase1Inputs:
     staleness_flag: bool
 
 
+def _alpaca_client_factory(
+    venue_config: VenueConfig, execution_mode: ExecutionMode
+) -> AlpacaClientFactory:
+    """Resolve the venue config + execution mode into an ``AlpacaClientFactory``.
+
+    The single source of the ``ExecutionMode`` → paper/live mapping shared by the
+    three default Alpaca-backed factories below; each builds a different client
+    off the returned factory. Raises ``RuntimeError`` (from the factory's
+    constructor) when the mode's credentials are unset.
+    """
+    mode_literal: ClientFactoryExecutionMode = (
+        "live" if execution_mode is ExecutionMode.live else "paper"
+    )
+    return AlpacaClientFactory(venue_config, mode=mode_literal)
+
+
 def _default_account_queries_factory(
     venue_config: VenueConfig, execution_mode: ExecutionMode
 ) -> AccountStateQueriesP:
@@ -144,10 +166,7 @@ def _default_account_queries_factory(
     Used when ``gather_phase1_inputs`` is called without an
     ``account_queries_factory`` kwarg (the production daemon path).
     """
-    mode_literal: ClientFactoryExecutionMode = (
-        "live" if execution_mode is ExecutionMode.live else "paper"
-    )
-    factory = AlpacaClientFactory(venue_config, mode=mode_literal)
+    factory = _alpaca_client_factory(venue_config, execution_mode)
     return AccountStateQueries(factory.build_trading_client())
 
 
@@ -159,11 +178,24 @@ def _default_ca_queries_factory(
     Used when ``gather_phase1_inputs`` is called without a
     ``ca_queries_factory`` kwarg (the production daemon path).
     """
-    mode_literal: ClientFactoryExecutionMode = (
-        "live" if execution_mode is ExecutionMode.live else "paper"
-    )
-    factory = AlpacaClientFactory(venue_config, mode=mode_literal)
+    factory = _alpaca_client_factory(venue_config, execution_mode)
     return CorporateActionsQueries(factory.build_corporate_actions_client())
+
+
+def _default_quote_source_factory(
+    venue_config: VenueConfig, execution_mode: ExecutionMode
+) -> BatchQuoteSource:
+    """Default Alpaca-backed batch quote source construction (ALP-753).
+
+    Mirrors the client wiring ``submit_envelope.server.build_broker_routing_kwargs``
+    uses for the marketable-entry rewrite: an :class:`AlpacaQuoteSource` over a
+    fresh ``StockHistoricalDataClient`` (both default to ``DataFeed.IEX``, so the
+    phase-1 reference anchor and the submission-time repricer read the same feed).
+    Used when ``gather_phase1_inputs`` is called without a ``quote_source_factory``
+    kwarg (the production daemon path).
+    """
+    factory = _alpaca_client_factory(venue_config, execution_mode)
+    return AlpacaQuoteSource(factory.build_stock_data_client())
 
 
 def _position_lookup_from_positions(
@@ -289,6 +321,110 @@ async def _read_active_universe_prices(
     return {str(ticker): float(close) for ticker, close in rows}
 
 
+async def _read_active_universe_tickers(session: AsyncSession) -> tuple[str, ...]:
+    """Every ``is_active==1`` ticker in ``asset_universe`` (ALP-753).
+
+    The batch live-quote anchor fetches a quote for the whole active set —
+    including tickers with no recorded bar yet — so an active candidate gets a
+    live mid even when :func:`_read_active_universe_prices` would have returned
+    nothing for it. This is the same ``is_active==1`` predicate that function's
+    join applies; the two reads share the Phase 1 transaction.
+    """
+    stmt = select(AssetUniverse.ticker).where(AssetUniverse.is_active == 1)
+    rows = (await session.execute(stmt)).scalars().all()
+    return tuple(str(ticker) for ticker in rows)
+
+
+def _merge_quote_and_bar_prices(
+    *,
+    active_tickers: Sequence[str],
+    bar_prices: Mapping[str, float],
+    quotes: Mapping[str, TouchQuote],
+) -> dict[str, float]:
+    """Active-universe reference price per ticker: live quote mid primary, bar fallback.
+
+    ALP-753 — for each active ticker the freshest-possible deterministic anchor
+    is the phase-1 live quote **mid** ``(bid + ask) / 2`` when a usable two-sided
+    quote was captured; otherwise the ticker falls back to the freshest recorded
+    bar's ``unadj_close`` (the :func:`_read_active_universe_prices` result). A
+    ticker with neither a quote nor a bar is omitted (the validation tool's
+    ``UNAVAILABLE`` path, unchanged from ALP-587). The mid mirrors the held
+    path's single ``current_price``; the count of bar fallbacks is logged for
+    observability. When ``quotes`` is empty (the degraded path) this reproduces
+    the pure bar-based layer exactly.
+    """
+    universe_prices: dict[str, float] = {}
+    quoted_count = 0
+    fallback_count = 0
+    for ticker in active_tickers:
+        quote = quotes.get(ticker)
+        if quote is not None:
+            universe_prices[ticker] = float(quote.mid)
+            quoted_count += 1
+            continue
+        bar_close = bar_prices.get(ticker)
+        if bar_close is not None:
+            universe_prices[ticker] = bar_close
+            fallback_count += 1
+    total = len(active_tickers)
+    # Report three disjoint counts (live / bar-fallback / unpriced) rather than a
+    # single "N/M fell back" line: the unpriced tickers (no quote AND no bar) are
+    # absent from universe_prices and surface as the validation tool's UNAVAILABLE,
+    # so folding them into a fallback denominator would hide that coverage gap.
+    log.info(
+        "phase1_inputs: active-universe reference prices for %d active ticker(s) — "
+        "%d via live quote, %d via recorded-bar fallback (no live quote), "
+        "%d unpriced (no quote and no recorded bar)",
+        total,
+        quoted_count,
+        fallback_count,
+        total - quoted_count - fallback_count,
+    )
+    return universe_prices
+
+
+async def _gather_universe_reference_prices(
+    *,
+    session: AsyncSession,
+    as_of: datetime,
+    quote_factory: _QuoteSourceFactory,
+    venue_config: VenueConfig,
+    execution_mode: ExecutionMode,
+) -> tuple[dict[str, float], bool]:
+    """Active-universe reference prices + a degraded flag (ALP-753).
+
+    Reads the freshest recorded bar per active ticker and the full active set,
+    captures one batch live quote for that set, and merges them (quote mid
+    primary, recorded bar fallback). Returns ``(universe_prices, degraded)``;
+    ``degraded`` is ``True`` when the batch fetch raised ``RuntimeError`` and the
+    layer fell back wholesale to recorded bars — the caller flips
+    ``staleness_flag`` (parent decision H). The invocation never aborts.
+    """
+    bar_prices = await _read_active_universe_prices(session, as_of=as_of)
+    active_tickers = await _read_active_universe_tickers(session)
+    quotes: Mapping[str, TouchQuote] = {}
+    degraded = False
+    if active_tickers:
+        try:
+            quote_source = quote_factory(venue_config, execution_mode)
+            quotes = await quote_source.latest_quotes(active_tickers)
+        except RuntimeError as exc:
+            log.warning(
+                "phase1_inputs: batch live-quote fetch failed (%s); degrading "
+                "active-universe reference layer to recorded bars",
+                exc,
+            )
+            # `quotes` is still the empty map from above (latest_quotes raised
+            # before binding it), so the merge below falls back wholesale to bars.
+            degraded = True
+    universe_prices = _merge_quote_and_bar_prices(
+        active_tickers=active_tickers,
+        bar_prices=bar_prices,
+        quotes=quotes,
+    )
+    return universe_prices, degraded
+
+
 def _build_market_inputs(
     *,
     positions: tuple[PositionSnapshot, ...],
@@ -339,13 +475,15 @@ async def gather_phase1_inputs(
     sync_session_factory: sessionmaker[Session],
     account_queries_factory: _AccountQueriesFactory | None = None,
     ca_queries_factory: _CorporateActionsQueriesFactory | None = None,
+    quote_source_factory: _QuoteSourceFactory | None = None,
 ) -> Phase1Inputs:
     """Assemble the Phase 1 input bundle for ``process_unprocessed_fills``.
 
     Calls the broker adapter for account + positions, the v1beta1 fetcher
-    for CA activities, the macro table for the risk-free rate, and
-    ``ohlcv_bars`` for the active-universe EOD closes that price the
-    decision agents' validation tool (ALP-587). Each broker call is
+    for CA activities, the macro table for the risk-free rate, ``ohlcv_bars``
+    for the active-universe recorded closes, and a single batch live-quote
+    snapshot for the active universe (ALP-753) that anchors each candidate on
+    the freshest-possible deterministic price. Each broker call is
     independently wrapped: a ``RuntimeError`` from any sub-fetch degrades
     the corresponding field to a no-op default and flips
     ``staleness_flag`` to ``True``; the function never raises.
@@ -354,14 +492,16 @@ async def gather_phase1_inputs(
     fetcher needs to consult the CA integration ledger. Macro-table reads
     join the same transaction so the snapshot is internally consistent.
 
-    ``account_queries_factory`` / ``ca_queries_factory`` are optional
-    Protocol-typed seams (ALP-494). When ``None`` (the production daemon
-    path), the inline Alpaca-backed defaults run. Story 02b's log-only
-    queries and the test suite pass their own factory to substitute the
-    real broker without monkey-patching.
+    ``account_queries_factory`` / ``ca_queries_factory`` /
+    ``quote_source_factory`` are optional Protocol-typed seams (ALP-494 /
+    ALP-753). When ``None`` (the production daemon path), the inline
+    Alpaca-backed defaults run. Story 02b's log-only queries and the test
+    suite pass their own factory to substitute the real broker without
+    monkey-patching.
     """
     account_factory = account_queries_factory or _default_account_queries_factory
     ca_factory = ca_queries_factory or _default_ca_queries_factory
+    quote_factory = quote_source_factory or _default_quote_source_factory
 
     staleness_flag = False
 
@@ -442,7 +582,19 @@ async def gather_phase1_inputs(
         tickers=tuple(pos.symbol for pos in positions),
     )
 
-    universe_prices = await _read_active_universe_prices(handle.session, as_of=as_of)
+    # ALP-587 / ALP-747 recorded-bar layer + ALP-753 batch live-quote anchor:
+    # each active-universe ticker is anchored on its freshest-possible live quote
+    # mid, falling back to its recorded bar. A batch-fetch RuntimeError degrades
+    # the whole layer to bars and flips staleness_flag (parent decision H).
+    universe_prices, universe_degraded = await _gather_universe_reference_prices(
+        session=handle.session,
+        as_of=as_of,
+        quote_factory=quote_factory,
+        venue_config=venue_config,
+        execution_mode=execution_mode,
+    )
+    if universe_degraded:
+        staleness_flag = True
 
     # ALP-642 — wrap the per-underlying realized-vol scalars into the
     # provider's RealizedVolEntry shape once, then hand the SQL-backed

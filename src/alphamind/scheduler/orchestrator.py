@@ -426,6 +426,24 @@ def _ca_queries_factory_from_debug_e2e(
     return lambda _venue, _mode: debug_settings.ca_queries
 
 
+def _quote_source_factory_from_debug_e2e(
+    context: RunInvocationContext,
+) -> Any:
+    """``BatchQuoteSource`` factory derived from ``context.debug_e2e`` (ALP-753).
+
+    Mirrors :func:`_account_queries_factory_from_debug_e2e`; ``None`` on the
+    production path (``gather_phase1_inputs`` builds the Alpaca-backed batch
+    quote source), the bundle's log-only quote source on debug-e2e. Without this
+    the debug-e2e run would fall through to the default factory and fire a live
+    Alpaca quote request for the whole active universe — breaking the harness's
+    offline, deterministic contract.
+    """
+    debug_settings = context.debug_e2e
+    if debug_settings is None:
+        return None
+    return lambda _venue, _mode: debug_settings.quote_source
+
+
 def _price_provider_from_phase1(
     market_inputs: MarketInputs,
 ) -> StubCurrentPriceProvider:
@@ -651,6 +669,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
             sync_session_factory=context.sync_session_factory,
             account_queries_factory=_account_queries_factory_from_debug_e2e(context),
             ca_queries_factory=_ca_queries_factory_from_debug_e2e(context),
+            quote_source_factory=_quote_source_factory_from_debug_e2e(context),
         )
         # ALP-717 — SHORT-equity entry fills consult the borrow-cost resolver
         # to stamp borrow_rate_pct on the OPEN position. The resolver is also

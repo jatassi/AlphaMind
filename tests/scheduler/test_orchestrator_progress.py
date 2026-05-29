@@ -58,6 +58,7 @@ from alphamind.persistence.session import (
 )
 from alphamind.scheduler.debug_e2e.broker import (
     LogOnlyAccountStateQueries,
+    LogOnlyBatchQuoteSource,
     LogOnlyCorporateActionsQueries,
 )
 from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
@@ -209,6 +210,7 @@ def _make_context(
         debug_e2e=DebugE2ESettings(
             account_queries=LogOnlyAccountStateQueries(SYNTHETIC_PORTFOLIO),
             ca_queries=LogOnlyCorporateActionsQueries(),
+            quote_source=LogOnlyBatchQuoteSource(),
             emitter_factory=_factory,
         ),
     )

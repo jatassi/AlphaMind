@@ -304,7 +304,7 @@ def _check_conviction_band_deviation(
 
 
 # ---------------------------------------------------------------------------
-# Layer-2 (j)-(k) — bracket price coherence vs the latest recorded close (ALP-742)
+# Layer-2 (j)-(k) — bracket price coherence vs the phase-1 reference price (ALP-742)
 # ---------------------------------------------------------------------------
 
 
@@ -318,12 +318,13 @@ def _live_equity_close(rec: Recommendation, underlying_prices: Mapping[str, floa
     tool already returns ``UNAVAILABLE`` for unpriced tickers upstream).
 
     The value is the guardrail library's ``MarketInputs.underlying_prices`` entry
-    — the freshest ``ohlcv_bars`` close the system holds for the ticker: a live
-    broker quote for a held name, the freshest recorded bar of any timeframe
-    (an intraday 15min/1h/4h close that supersedes the lagging daily close on a
-    fast move, per ALP-747) for an unheld candidate. It is the same price
-    substrate the analyst's own inputs are built from, so a coherent bracket the
-    analyst draws against its inputs stays coherent here.
+    — the freshest reference price the system holds for the ticker: a live broker
+    ``current_price`` for a held name, and for an unheld candidate a phase-1 batch
+    live-quote mid when one was captured (ALP-753), else the freshest recorded
+    ``ohlcv_bars`` close of any timeframe (an intraday 15min/1h/4h close that
+    supersedes the lagging daily close on a fast move, per ALP-747). It is the
+    same price substrate the analyst's own inputs are built from, so a coherent
+    bracket the analyst draws against its inputs stays coherent here.
     """
     if not isinstance(rec.instrument, InstrumentEquity):
         return None
@@ -409,7 +410,7 @@ def _check_bracket_directional_coherence(
             rule="bracket_directional_coherence",
             message=(
                 f"short {rec.recommendation_id}: target {target} must be below the entry "
-                f"reference {base} (latest recorded close {live}); a short profits as price falls"
+                f"reference {base} (phase-1 reference price {live}); a short profits as price falls"
             ),
         )
     elif not is_short and target <= base:
@@ -418,7 +419,7 @@ def _check_bracket_directional_coherence(
             rule="bracket_directional_coherence",
             message=(
                 f"long {rec.recommendation_id}: target {target} must be above the entry "
-                f"reference {base} (latest recorded close {live}); a long profits as price rises"
+                f"reference {base} (phase-1 reference price {live}); a long profits as price rises"
             ),
         )
 
@@ -430,7 +431,7 @@ def _check_bracket_directional_coherence(
             rule="bracket_directional_coherence",
             message=(
                 f"short {rec.recommendation_id}: protective stop {stop} must be above the "
-                f"entry reference {base} (latest recorded close {live}); a short is stopped "
+                f"entry reference {base} (phase-1 reference price {live}); a short is stopped "
                 "out as price rises"
             ),
         )
@@ -440,7 +441,7 @@ def _check_bracket_directional_coherence(
             rule="bracket_directional_coherence",
             message=(
                 f"long {rec.recommendation_id}: protective stop {stop} must be below the "
-                f"entry reference {base} (latest recorded close {live}); a long is stopped "
+                f"entry reference {base} (phase-1 reference price {live}); a long is stopped "
                 "out as price falls"
             ),
         )
@@ -479,12 +480,13 @@ def _check_reference_price_staleness(
     underlying_prices: Mapping[str, float],
     tolerance_pct: float,
 ) -> Iterable[ValidationError]:
-    """(k) The analyst's entry anchor must be within tolerance of the latest close.
+    """(k) The analyst's entry anchor must be within tolerance of the reference price.
 
     Catches calibration drift the directional check can miss: a bracket whose
-    target/stop happen to straddle the latest close can still have been *sized*
+    target/stop happen to straddle the reference price can still have been *sized*
     against a stale reference, mis-stating notional and risk. Drift beyond
-    ``tolerance_pct`` of the latest ``ohlcv_bars`` close is flagged for redraft
+    ``tolerance_pct`` of the phase-1 reference price (a live batch-quote mid when
+    available, else the freshest ``ohlcv_bars`` close) is flagged for redraft
     (the recurring 3+-cycle pattern the PM narrative named on 2026-05-29).
 
     Scoped to equity entries that fill at the live quote (see
@@ -504,7 +506,7 @@ def _check_reference_price_staleness(
             rule="reference_price_staleness",
             message=(
                 f"{rec.recommendation_id}: entry anchor {anchor:.4f} is {drift_pct:.1f}% from "
-                f"the latest recorded close {live} (tolerance {tolerance_pct}%); the bracket "
+                f"the phase-1 reference price {live} (tolerance {tolerance_pct}%); the bracket "
                 "was sized against a stale price — re-anchor entry/target/stop to the "
                 "current price"
             ),

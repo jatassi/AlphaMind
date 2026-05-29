@@ -23,6 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from alphamind.execution.broker_adapter.entry_pricing import BatchQuoteSource
 from alphamind.execution.broker_adapter.protocols import (
     AccountStateQueriesP,
     CorporateActionsQueriesP,
@@ -50,9 +51,13 @@ class DebugE2ESettings:
     (P3 — no parallel boolean flag). The orchestrator inspects each
     field in turn:
 
-    * ``account_queries`` / ``ca_queries`` substitute the Alpaca-backed
-      broker-adapter classes ``gather_phase1_inputs`` would otherwise
-      construct.
+    * ``account_queries`` / ``ca_queries`` / ``quote_source`` substitute the
+      Alpaca-backed broker-adapter classes ``gather_phase1_inputs`` would
+      otherwise construct. ``quote_source`` (ALP-753) is the log-only batch
+      quote source: it returns no live quotes so the active-universe reference
+      layer falls back to the seeded bars, keeping the debug-e2e run offline and
+      deterministic (without it, the gatherer's default factory would fire a
+      live Alpaca quote request for the whole active universe).
     * ``emitter_factory`` is invoked once per invocation with
       ``(invocation_id, as_of)`` so the JSONL emitter (story 02c) can open
       a fresh log file under the date-partitioned invocation archive
@@ -70,6 +75,7 @@ class DebugE2ESettings:
 
     account_queries: AccountStateQueriesP
     ca_queries: CorporateActionsQueriesP
+    quote_source: BatchQuoteSource
     emitter_factory: Callable[[str, datetime], ProgressEmitter]
     resume_context: ResumeContext | None = None
 
@@ -105,6 +111,7 @@ def configure_debug_e2e(
     from alphamind._kernel.archive_layout import invocation_archive_dir
     from alphamind.scheduler.debug_e2e.broker import (
         LogOnlyAccountStateQueries,
+        LogOnlyBatchQuoteSource,
         LogOnlyCorporateActionsQueries,
     )
     from alphamind.scheduler.debug_e2e.jsonl_emitter import JsonlProgressEmitter
@@ -121,6 +128,7 @@ def configure_debug_e2e(
     return DebugE2ESettings(
         account_queries=LogOnlyAccountStateQueries(portfolio),
         ca_queries=LogOnlyCorporateActionsQueries(),
+        quote_source=LogOnlyBatchQuoteSource(),
         emitter_factory=make_emitter,
         resume_context=resume_context,
     )

@@ -10,7 +10,7 @@ any broker-side failure degrades the bundle (returning no-op defaults +
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -29,6 +29,7 @@ from alphamind.config.models.venue import (
     SessionWindow,
     VenueConfig,
 )
+from alphamind.execution.broker_adapter.entry_pricing import TouchQuote
 from alphamind.execution.broker_adapter.queries import (
     AccountStateQueries,
     PositionSnapshot,
@@ -223,6 +224,44 @@ class _StubCorporateActionsQueries:
         types: tuple[CorporateActionsType, ...] | None = None,
     ) -> tuple[CorporateAction, ...]:
         return ()
+
+
+class _StubQuoteSource:
+    """Batch quote source stand-in for ``AlpacaQuoteSource`` (ALP-753).
+
+    Returns the configured touch for each requested symbol present in the map
+    (others are dropped, mirroring the missing/one-sided/zero semantics), or
+    raises ``RuntimeError`` to exercise the universe-layer degradation path.
+    """
+
+    def __init__(
+        self,
+        quotes: Mapping[str, TouchQuote] | None = None,
+        *,
+        raises: bool = False,
+    ) -> None:
+        self._quotes = dict(quotes or {})
+        self._raises = raises
+        self.requested: list[str] = []
+
+    async def latest_quotes(self, symbols: Sequence[str]) -> Mapping[str, TouchQuote]:
+        self.requested = list(symbols)
+        if self._raises:
+            msg = "stub batch latest-quote failure"
+            raise RuntimeError(msg)
+        return {sym: self._quotes[sym] for sym in symbols if sym in self._quotes}
+
+
+def _no_quotes_factory(
+    venue_config: VenueConfig, execution_mode: ExecutionMode
+) -> _StubQuoteSource:
+    """A quote-source factory that returns no live quotes (pure bar-based layer).
+
+    Injected into integration tests written for the bar-based path so the
+    default Alpaca factory's real network fetch is never reached.
+    """
+    del venue_config, execution_mode
+    return _StubQuoteSource({})
 
 
 async def _open_phase1_handle(
@@ -447,6 +486,50 @@ class TestReadActiveUniversePrices:
             prices = await module._read_active_universe_prices(session, as_of=_NOW)
 
         assert prices == {"FRESH": 20.0}
+
+
+class TestMergeQuoteAndBarPrices:
+    """``_merge_quote_and_bar_prices`` — live quote mid primary, recorded bar fallback.
+
+    ALP-753: every active-universe ticker is anchored on its phase-1 live quote
+    mid when one is available, falling back to the freshest recorded bar's
+    ``unadj_close`` otherwise; a ticker with neither is omitted entirely.
+    """
+
+    def test_quote_mid_primary_bar_fallback_quote_wins_neither_absent(self) -> None:
+        from alphamind.scheduler import phase1_inputs as module
+
+        active_tickers = ("AAA", "BBB", "CCC", "DDD")
+        quotes = {
+            # AAA: quote only -> mid (10.00 + 10.04) / 2 = 10.02
+            "AAA": TouchQuote(bid=price("10.00"), ask=price("10.04")),
+            # CCC: quote present even though a bar exists -> quote mid wins
+            "CCC": TouchQuote(bid=price("99.98"), ask=price("100.02")),
+        }
+        # BBB: bar only -> fallback. CCC: bar present but overridden by quote.
+        bar_prices = {"BBB": 48.5, "CCC": 12.0}
+
+        merged = module._merge_quote_and_bar_prices(
+            active_tickers=active_tickers,
+            bar_prices=bar_prices,
+            quotes=quotes,
+        )
+
+        assert merged == {"AAA": 10.02, "BBB": 48.5, "CCC": 100.0}
+        assert "DDD" not in merged  # neither quote nor bar
+
+    def test_no_quotes_degrades_to_pure_bar_layer(self) -> None:
+        """An empty quote map (the degraded path) reproduces the bar-based
+        layer exactly: every active ticker with a bar keeps its close."""
+        from alphamind.scheduler import phase1_inputs as module
+
+        merged = module._merge_quote_and_bar_prices(
+            active_tickers=("AAA", "BBB"),
+            bar_prices={"AAA": 47.0, "BBB": 48.5},
+            quotes={},
+        )
+
+        assert merged == {"AAA": 47.0, "BBB": 48.5}
 
 
 class TestBuildMarketInputs:
@@ -697,6 +780,7 @@ class TestGatherPhase1Inputs:
                     account=_make_account_snapshot(), positions=positions
                 ),
                 ca_queries_factory=lambda v, m: _StubCorporateActionsQueries(),
+                quote_source_factory=_no_quotes_factory,
             )
         finally:
             await session.close()
@@ -759,6 +843,7 @@ class TestGatherPhase1Inputs:
                     account=_make_account_snapshot(), positions=positions
                 ),
                 ca_queries_factory=lambda v, m: _StubCorporateActionsQueries(),
+                quote_source_factory=_no_quotes_factory,
             )
         finally:
             await session.close()
@@ -805,8 +890,174 @@ class TestGatherPhase1Inputs:
                     account=_make_account_snapshot(), positions=positions
                 ),
                 ca_queries_factory=lambda v, m: _StubCorporateActionsQueries(),
+                quote_source_factory=_no_quotes_factory,
             )
         finally:
             await session.close()
 
+        assert dict(inputs.market_inputs.underlying_prices)["AAPL"] == 175.0
+
+    async def test_unheld_candidate_anchors_on_live_quote_mid_else_bar(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        sync_session_factory: sessionmaker[Session],
+        env_path: Path,
+        archive_root: Path,
+    ) -> None:
+        """ALP-753 — an unheld active-universe ticker with a live quote anchors on
+        the captured quote **mid** (not its recorded bar); a ticker with no live
+        quote falls back to its freshest recorded bar's ``unadj_close``."""
+        from alphamind.scheduler import phase1_inputs as module
+
+        async with async_factory() as seed_session:
+            seed_session.add_all([_make_universe_row("ORCL"), _make_universe_row("CSCO")])
+            await seed_session.flush()
+            seed_session.add_all(
+                [
+                    # ORCL: stale daily bar; a fresh quote must win over it.
+                    _make_ohlcv_bar(
+                        "ORCL", period_start="2026-05-07T13:00:00+00:00", unadj_close=204.0
+                    ),
+                    # CSCO: only a bar, no quote -> falls back to the bar.
+                    _make_ohlcv_bar(
+                        "CSCO", period_start="2026-05-07T13:00:00+00:00", unadj_close=48.5
+                    ),
+                ]
+            )
+            await seed_session.commit()
+
+        # ORCL has a live quote (mid 226.10); CSCO has none -> bar fallback.
+        quote_source = _StubQuoteSource(
+            {"ORCL": TouchQuote(bid=price("226.00"), ask=price("226.20"))}
+        )
+
+        session, handle = await _open_phase1_handle(
+            async_factory=async_factory,
+            env_path=env_path,
+            archive_root=archive_root,
+        )
+        try:
+            inputs = await module.gather_phase1_inputs(
+                handle=handle,
+                venue_config=_make_venue_config(),
+                execution_mode=ExecutionMode.paper,
+                as_of=_NOW,
+                sync_session_factory=sync_session_factory,
+                account_queries_factory=lambda v, m: _StubQueries(
+                    account=_make_account_snapshot(), positions=()
+                ),
+                ca_queries_factory=lambda v, m: _StubCorporateActionsQueries(),
+                quote_source_factory=lambda v, m: quote_source,
+            )
+        finally:
+            await session.close()
+
+        prices = dict(inputs.market_inputs.underlying_prices)
+        assert prices["ORCL"] == 226.10  # quote mid, not the 204.0 recorded bar
+        assert prices["CSCO"] == 48.5  # no quote -> recorded-bar fallback
+        assert inputs.staleness_flag is False
+        # The whole active set was batch-fetched in one go.
+        assert sorted(quote_source.requested) == ["CSCO", "ORCL"]
+
+    async def test_quote_source_runtimeerror_degrades_universe_to_bars(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        sync_session_factory: sessionmaker[Session],
+        env_path: Path,
+        archive_root: Path,
+    ) -> None:
+        """ALP-753 — a broker-side failure of the batch fetch degrades the entire
+        universe layer to recorded bars and sets ``staleness_flag``; the
+        invocation never aborts."""
+        from alphamind.scheduler import phase1_inputs as module
+
+        async with async_factory() as seed_session:
+            seed_session.add_all([_make_universe_row("ORCL"), _make_universe_row("CSCO")])
+            await seed_session.flush()
+            seed_session.add_all(
+                [
+                    _make_ohlcv_bar(
+                        "ORCL", period_start="2026-05-07T13:00:00+00:00", unadj_close=204.0
+                    ),
+                    _make_ohlcv_bar(
+                        "CSCO", period_start="2026-05-07T13:00:00+00:00", unadj_close=48.5
+                    ),
+                ]
+            )
+            await seed_session.commit()
+
+        session, handle = await _open_phase1_handle(
+            async_factory=async_factory,
+            env_path=env_path,
+            archive_root=archive_root,
+        )
+        try:
+            inputs = await module.gather_phase1_inputs(
+                handle=handle,
+                venue_config=_make_venue_config(),
+                execution_mode=ExecutionMode.paper,
+                as_of=_NOW,
+                sync_session_factory=sync_session_factory,
+                account_queries_factory=lambda v, m: _StubQueries(
+                    account=_make_account_snapshot(), positions=()
+                ),
+                ca_queries_factory=lambda v, m: _StubCorporateActionsQueries(),
+                quote_source_factory=lambda v, m: _StubQuoteSource(raises=True),
+            )
+        finally:
+            await session.close()
+
+        prices = dict(inputs.market_inputs.underlying_prices)
+        assert prices == {"ORCL": 204.0, "CSCO": 48.5}  # both fell back to bars
+        assert inputs.staleness_flag is True
+
+    async def test_held_position_price_wins_over_live_quote_mid(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        sync_session_factory: sessionmaker[Session],
+        env_path: Path,
+        archive_root: Path,
+    ) -> None:
+        """ALP-753 — the held-position overlay still wins on overlap: a held
+        ticker keeps its broker ``current_price`` even when a phase-1 live quote
+        mid is captured for it in the universe layer."""
+        from alphamind.scheduler import phase1_inputs as module
+
+        positions = (_make_position_snapshot("AAPL", 175.0),)
+
+        async with async_factory() as seed_session:
+            seed_session.add(_make_universe_row("AAPL"))
+            await seed_session.flush()
+            seed_session.add(
+                _make_ohlcv_bar("AAPL", period_start="2026-05-07T13:00:00+00:00", unadj_close=999.0)
+            )
+            await seed_session.commit()
+
+        # A live quote for AAPL (mid 210.05) that the held overlay must beat.
+        quote_source = _StubQuoteSource(
+            {"AAPL": TouchQuote(bid=price("210.00"), ask=price("210.10"))}
+        )
+
+        session, handle = await _open_phase1_handle(
+            async_factory=async_factory,
+            env_path=env_path,
+            archive_root=archive_root,
+        )
+        try:
+            inputs = await module.gather_phase1_inputs(
+                handle=handle,
+                venue_config=_make_venue_config(),
+                execution_mode=ExecutionMode.paper,
+                as_of=_NOW,
+                sync_session_factory=sync_session_factory,
+                account_queries_factory=lambda v, m: _StubQueries(
+                    account=_make_account_snapshot(), positions=positions
+                ),
+                ca_queries_factory=lambda v, m: _StubCorporateActionsQueries(),
+                quote_source_factory=lambda v, m: quote_source,
+            )
+        finally:
+            await session.close()
+
+        # Held current_price (175.0) beats both the quote mid (210.05) and bar (999.0).
         assert dict(inputs.market_inputs.underlying_prices)["AAPL"] == 175.0

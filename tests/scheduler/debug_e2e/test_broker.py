@@ -21,6 +21,7 @@ from datetime import date
 import pytest
 
 from alphamind._kernel.ids import Symbol
+from alphamind.execution.broker_adapter.entry_pricing import BatchQuoteSource
 from alphamind.execution.broker_adapter.protocols import (
     AccountStateQueriesP,
     CorporateActionsQueriesP,
@@ -31,6 +32,7 @@ from alphamind.execution.broker_adapter.queries import (
 )
 from alphamind.scheduler.debug_e2e.broker import (
     LogOnlyAccountStateQueries,
+    LogOnlyBatchQuoteSource,
     LogOnlyCorporateActionsQueries,
 )
 from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
@@ -48,6 +50,29 @@ class TestProtocolSatisfaction:
     def test_log_only_corporate_actions_queries_satisfies_protocol(self) -> None:
         queries = LogOnlyCorporateActionsQueries()
         assert isinstance(queries, CorporateActionsQueriesP)
+
+    def test_log_only_batch_quote_source_satisfies_protocol(self) -> None:
+        assert isinstance(LogOnlyBatchQuoteSource(), BatchQuoteSource)
+
+
+class TestLogOnlyBatchQuoteSource:
+    """``LogOnlyBatchQuoteSource`` returns no live quotes (ALP-753).
+
+    Debug-e2e stays offline: the phase-1 reference layer falls back to the
+    seeded bars for every active ticker rather than firing a live Alpaca fetch.
+    """
+
+    def test_latest_quotes_returns_empty_offline(self) -> None:
+        result = asyncio.run(LogOnlyBatchQuoteSource().latest_quotes(["AAPL", "MSFT"]))
+        assert result == {}
+
+    def test_logs_call_with_debug_e2e_prefix(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.INFO, logger="alphamind.scheduler.debug_e2e.broker"):
+            asyncio.run(LogOnlyBatchQuoteSource().latest_quotes(["AAPL", "MSFT"]))
+        assert any(
+            "[debug_e2e] LogOnlyBatchQuoteSource.latest_quotes" in rec.message
+            for rec in caplog.records
+        )
 
 
 # ---------------------------------------------------------------------------

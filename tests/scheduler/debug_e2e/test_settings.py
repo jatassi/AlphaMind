@@ -39,6 +39,7 @@ def test_debug_e2e_settings_is_frozen_and_slotted() -> None:
     settings = DebugE2ESettings(
         account_queries=object(),  # type: ignore[arg-type]
         ca_queries=object(),  # type: ignore[arg-type]
+        quote_source=object(),  # type: ignore[arg-type]
         emitter_factory=lambda _id, _dt: object(),  # type: ignore[arg-type,return-value]
     )
 
@@ -52,21 +53,22 @@ def test_debug_e2e_settings_is_frozen_and_slotted() -> None:
     with pytest.raises((AttributeError, TypeError, FrozenInstanceError)):
         settings.unknown_field = "x"  # type: ignore[attr-defined]
 
-    # Confirm slots are declared — ``__slots__`` lists the four fields
-    # (ALP-693 added ``resume_context``) and ``__dict__`` is absent on
-    # instances.
+    # Confirm slots are declared — ``__slots__`` lists the five fields
+    # (ALP-693 added ``resume_context``; ALP-753 added ``quote_source``) and
+    # ``__dict__`` is absent on instances.
     assert hasattr(type(settings), "__slots__")
     assert not hasattr(settings, "__dict__")
 
 
-def test_debug_e2e_settings_has_four_named_fields() -> None:
-    """:class:`DebugE2ESettings` declares exactly the four story-named fields.
+def test_debug_e2e_settings_has_five_named_fields() -> None:
+    """:class:`DebugE2ESettings` declares exactly the five story-named fields.
 
-    The first three originate in story ALP-500 (03). The fourth
-    (``resume_context``) was added in story ALP-693 to carry the
-    ``--resume-from`` inputs through to stories 04a / 04b's
-    pipeline-composition runners; it defaults to ``None`` so existing
-    constructors keep parsing.
+    ``account_queries`` / ``ca_queries`` / ``emitter_factory`` originate in
+    story ALP-500 (03). ``quote_source`` was added in ALP-753 so the debug-e2e
+    run substitutes an offline batch quote source (no live Alpaca fetch).
+    ``resume_context`` was added in story ALP-693 to carry the ``--resume-from``
+    inputs through to stories 04a / 04b's pipeline-composition runners; it
+    defaults to ``None`` so existing constructors keep parsing.
     """
     from alphamind.scheduler.debug_e2e.settings import DebugE2ESettings
 
@@ -74,6 +76,7 @@ def test_debug_e2e_settings_has_four_named_fields() -> None:
     assert field_names == (
         "account_queries",
         "ca_queries",
+        "quote_source",
         "emitter_factory",
         "resume_context",
     )

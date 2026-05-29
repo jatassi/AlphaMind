@@ -296,6 +296,7 @@ def _patch_debug_e2e_heavy_setup_for_resume(
     from alphamind.scheduler.debug_e2e import settings as settings_module
     from alphamind.scheduler.debug_e2e.broker import (
         LogOnlyAccountStateQueries,
+        LogOnlyBatchQuoteSource,
         LogOnlyCorporateActionsQueries,
     )
     from tests.scheduler.test_progress import RecordingProgressEmitter
@@ -333,6 +334,7 @@ def _patch_debug_e2e_heavy_setup_for_resume(
         return settings_module.DebugE2ESettings(
             account_queries=LogOnlyAccountStateQueries(portfolio),
             ca_queries=LogOnlyCorporateActionsQueries(),
+            quote_source=LogOnlyBatchQuoteSource(),
             emitter_factory=lambda _invocation_id, _as_of: shared_recorder,
             resume_context=resume_context,
         )
