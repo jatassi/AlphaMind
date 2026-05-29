@@ -89,6 +89,7 @@ from alphamind.execution.continuous_monitor.control.verbs import (
     PositionState,
 )
 from alphamind.execution.continuous_monitor.control.wiring import (
+    make_breach_loop_health_emit,
     wrap_fill_enrichment_with_emit,
     wrap_on_immediate_breach,
 )
@@ -863,6 +864,14 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
         else dispatcher.handle_immediate_breach
     )
 
+    # ALP-732 — surface sustained breach-loop failure as a monitor health
+    # signal on the SSE ``/events`` stream. When the HTTP surface is degraded
+    # (no emitter) the loop still escalates via its loud degraded/recovered
+    # logging; ``on_health_signal`` is simply left at the loop's no-op default.
+    on_health_signal = (
+        make_breach_loop_health_emit(emitter=sse_emitter) if sse_emitter is not None else None
+    )
+
     register_breach_loop_task(
         supervisor,
         repository=breach_loop_repository,
@@ -878,6 +887,7 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
         on_immediate_breach=on_immediate_breach,
         on_emergency_input=on_emergency_input,
         activity_log_sink=_activity_log_sink,
+        on_health_signal=on_health_signal,
     )
 
 

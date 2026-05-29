@@ -180,3 +180,32 @@ class TestEmittedEvent:
         evt = EmittedEvent(name="heartbeat", payload={"timestamp": "2026-05-26T00:00:00Z"})
         assert evt.name == "heartbeat"
         assert evt.payload["timestamp"] == "2026-05-26T00:00:00Z"
+
+
+@pytest.mark.asyncio
+class TestBreachLoopHealthEvents:
+    """Breach-loop sustained-failure health surfacing (ALP-732)."""
+
+    async def test_degraded_emits_event_and_sets_flag(self) -> None:
+        emitter = SSEEventEmitter()
+        assert emitter.is_breach_loop_degraded() is False
+        async with emitter.subscribe() as queue:
+            emitter.emit_breach_loop_degraded(
+                consecutive_failures=3, last_error="RuntimeError('x')"
+            )
+            event = await asyncio.wait_for(queue.get(), timeout=0.5)
+        assert event.name == "breach_loop_degraded"
+        assert event.payload["consecutive_failures"] == 3
+        assert event.payload["last_error"] == "RuntimeError('x')"
+        assert emitter.is_breach_loop_degraded() is True
+
+    async def test_recovered_emits_event_and_clears_flag(self) -> None:
+        emitter = SSEEventEmitter()
+        async with emitter.subscribe() as queue:
+            emitter.emit_breach_loop_degraded(consecutive_failures=4, last_error="boom")
+            await asyncio.wait_for(queue.get(), timeout=0.5)
+            emitter.emit_breach_loop_recovered(consecutive_failures=4)
+            event = await asyncio.wait_for(queue.get(), timeout=0.5)
+        assert event.name == "breach_loop_recovered"
+        assert event.payload["consecutive_failures"] == 4
+        assert emitter.is_breach_loop_degraded() is False

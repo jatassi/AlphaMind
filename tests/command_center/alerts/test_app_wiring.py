@@ -74,7 +74,7 @@ def test_lifespan_constructs_alert_engine(
     with TestClient(app):
         engine = app.state.alert_engine
         assert isinstance(engine, AlertEngine)
-        assert len(engine.rules) == 17
+        assert len(engine.rules) == 18
 
 
 def test_alerts_overrides_threads_rules_through(
@@ -131,7 +131,7 @@ def test_disabled_when_yaml_has_zero_rules(
 ) -> None:
     """When no rules are configured, the engine resolves to None."""
     # Override alerts_overrides.rules with an empty tuple; bind_rules_from_config
-    # would still produce 17 (defaults), so we test the AlertsOverrides path
+    # would still produce 18 (defaults), so we test the AlertsOverrides path
     # by passing rules=() directly.
     config_dir, _ = configs
     app = build_app(

@@ -23,6 +23,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from alphamind.execution.continuous_monitor.breach_loop.result import (
+    BreachLoopHealthSignal,
     BreachLoopResult,
     RuleEvaluation,
 )
@@ -89,6 +90,35 @@ def make_deferred_breach_emit_for_breach_loop(
             )
         except Exception:
             log.exception("SSE emit_breach_detected (deferred) failed; continuing")
+
+    return _emit
+
+
+def make_breach_loop_health_emit(
+    *,
+    emitter: SSEEventEmitter,
+) -> Callable[[BreachLoopHealthSignal], None]:
+    """Return the breach loop's ``on_health_signal`` sink (ALP-732 Gap 2).
+
+    Maps each :class:`BreachLoopHealthSignal` transition onto the SSE
+    ``breach_loop_degraded`` / ``breach_loop_recovered`` events (and flips the
+    emitter's health flag), so a silently-failing breach loop becomes visible
+    on the monitor's ``/events`` stream. Synchronous — the SSE fan-out is a
+    non-blocking ``put_nowait``. The emit is guarded: an SSE failure must not
+    propagate back into the loop's per-tick supervisor.
+    """
+
+    def _emit(signal: BreachLoopHealthSignal) -> None:
+        try:
+            if signal.degraded:
+                emitter.emit_breach_loop_degraded(
+                    consecutive_failures=signal.consecutive_failures,
+                    last_error=signal.last_error or "unknown",
+                )
+            else:
+                emitter.emit_breach_loop_recovered(consecutive_failures=signal.consecutive_failures)
+        except Exception:
+            log.exception("SSE emit breach_loop health signal failed; continuing")
 
     return _emit
 
@@ -221,6 +251,7 @@ def make_greeks_refresh_emit(
 
 
 __all__ = [
+    "make_breach_loop_health_emit",
     "make_deferred_breach_emit_for_breach_loop",
     "make_greeks_refresh_emit",
     "wrap_emergency_activity_log_writer",

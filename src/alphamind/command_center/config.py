@@ -407,7 +407,7 @@ class AlertRuleSpec(BaseModel):
 
     The four fields match the YAML row shape:
 
-    * ``name`` — names one of the 17 default rule names (validated as
+    * ``name`` — names one of the default rule names (validated as
       a member of the registry at engine construction in
       :func:`alphamind.command_center.alerts.config.bind_rules_from_config`).
     * ``severity`` — Critical / Important / Operational tier.
@@ -428,7 +428,7 @@ class AlertRuleSpec(BaseModel):
 class AlertsConfig(BaseModel):
     """Top-level ``alerts.yaml`` model.
 
-    The ``rules`` list carries the operator-edited overlay over the 17
+    The ``rules`` list carries the operator-edited overlay over the
     default rules (story 05a populates the shipped values). Typed as
     ``list[AlertRuleSpec]`` so the config editor's
     :class:`ObjectArrayTableEditor` receives typed column metadata

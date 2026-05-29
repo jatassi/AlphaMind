@@ -34,10 +34,15 @@ from alphamind.execution.broker_adapter import (
 from alphamind.execution.broker_adapter.client_factory import ExecutionMode
 from alphamind.execution.continuous_monitor.fill_stream_consumer.translation import (
     fill_report_to_fill_record,
+    order_id_for_report,
+    terminal_order_status_for,
 )
 from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
+)
+from alphamind.execution.write_paths.order_status_sync import (
+    sync_terminal_order_status,
 )
 from alphamind.state.records import FillRecord
 from alphamind.state.tables.fill_records import FillRecordRow
@@ -185,12 +190,58 @@ async def _persist_one(
         report.fill_timestamp.isoformat(),
     )
     if record is None:
+        await _sync_terminal_status_if_any(report, session_factory=session_factory)
         return
     if enrichment_callable is not None:
         record = await enrichment_callable(record)
     async with session_factory() as db:
         await append_fill_record(db, record)
         await db.commit()
+
+
+async def _sync_terminal_status_if_any(
+    report: FillReport,
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Reflect a broker terminal non-fill event in ``orders.status`` (ALP-739).
+
+    ``canceled`` / ``expired`` events append no fill but must update the local
+    order row — otherwise an accepted entry that expires / cancels unfilled
+    stays ``PENDING`` and the ``entry_no_fill`` alert never fires. Every other
+    non-fill event (``new`` / ``replaced`` / …) carries no terminal
+    disposition and no-ops here. Its own short-lived transaction, mirroring
+    the per-fill write.
+
+    Scoped to **zero-fill** terminals (``cumulative_filled_quantity == 0``): a
+    partially-filled-then-terminal order is left to the fill path + Phase 1,
+    which own ``filled_quantity`` and integrate the partials. Stamping a
+    terminal status here for a partially-filled order would (a) read
+    ``filled_quantity == 0`` until Phase 1 catches up and fire a false
+    no-fill alert, and (b) be reverted to ``PARTIALLY_FILLED`` by Phase 1's
+    fill integration anyway. The no-fill case is the one the fill path does
+    not cover, so it is the only one this sync owns.
+    """
+    terminal_status = terminal_order_status_for(report)
+    if terminal_status is None:
+        return
+    if report.cumulative_filled_quantity > 0:
+        return
+    order_id = order_id_for_report(report)
+    async with session_factory() as db:
+        transitioned = await sync_terminal_order_status(
+            db,
+            order_id=order_id,
+            terminal_status=terminal_status,
+            observed_at=datetime.now(UTC),
+        )
+        await db.commit()
+    if transitioned:
+        log.info(
+            "synced terminal order status: order_id=%s status=%s",
+            order_id,
+            terminal_status.value,
+        )
 
 
 async def _replay_recovery(

@@ -12,8 +12,8 @@ Three primitives:
   bundle (fire-or-not plus a debounce-keying-handle plus the context
   payload the persistence row carries).
 * :class:`AlertRule` — frozen dataclass tying a condition to a severity,
-  debounce window, channel list, and a stable rule name. The 17 default
-  rules per the design doc's table land in :mod:`.conditions` and bind
+  debounce window, channel list, and a stable rule name. The default
+  rules land in :mod:`.conditions` and bind
   via :func:`build_default_rules`.
 
 Per ALP-128 invariants:

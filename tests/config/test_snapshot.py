@@ -181,11 +181,16 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # ALP-718 added borrow_accrual_tick_local_time: "16:00" to
     # config/continuous_monitor.yaml and ContinuousMonitorConfig, shifting the
     # resolved-config canonical bytes.
+    # Pin updated 2026-05-28 (breach_loop_consecutive_failure_alert_threshold, ALP-732):
+    # ALP-732 added breach_loop_consecutive_failure_alert_threshold: 3 to
+    # config/continuous_monitor.yaml and ContinuousMonitorConfig (sustained
+    # breach-loop-failure escalation), shifting the resolved-config canonical bytes.
     # Pin updated 2026-05-28 (entry_window_evaluation_cadence_seconds knob, ALP-737):
     # ALP-737 added entry_window_evaluation_cadence_seconds: 60.0 to
     # config/continuous_monitor.yaml and ContinuousMonitorConfig (the entry-window
-    # expiry watcher's cadence), shifting the resolved-config canonical bytes.
-    expected = "7c35ccd85a719c3390a4916355bc689827599261d45cd266c12ba7d1b20fcc46"
+    # expiry watcher's cadence); this value is the combined hash with ALP-732's
+    # knob present after the merge into main.
+    expected = "0613a138c7dea3b665ed9dd00aab736e394326aaf4adaf3368d8ef33f12b22b4"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

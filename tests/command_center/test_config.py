@@ -134,14 +134,16 @@ class TestAlertsConfig:
 
     def test_rules_populated_with_default_set(self, config_dir: Path) -> None:
         config = load_alerts_config(config_dir)
-        # Story 05a populated the rule list with the 17 default rules.
-        # Story 06b typed the rows as :class:`AlertRuleSpec`; access via
-        # attribute rather than the previous ``.get('name')`` dict path.
-        assert len(config.rules) == 17
+        # Story 05a populated the rule list with the 17 default rules; ALP-739
+        # added entry_no_fill as the 18th. Story 06b typed the rows as
+        # :class:`AlertRuleSpec`; access via attribute rather than the previous
+        # ``.get('name')`` dict path.
+        assert len(config.rules) == 18
         names = [row.name for row in config.rules]
         assert "pipeline_aborted" in names
         assert "monitor_websocket_disconnected" in names
         assert "thesis_resolved" in names
+        assert "entry_no_fill" in names
 
     def test_discord_webhook_url_env_present(self, config_dir: Path) -> None:
         config = load_alerts_config(config_dir)

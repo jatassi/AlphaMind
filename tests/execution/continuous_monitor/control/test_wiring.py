@@ -17,10 +17,12 @@ import pytest
 
 from alphamind.config.models.guardrails import BreachResponse
 from alphamind.execution.continuous_monitor.breach_loop.result import (
+    BreachLoopHealthSignal,
     RuleEvaluation,
 )
 from alphamind.execution.continuous_monitor.control.events import SSEEventEmitter
 from alphamind.execution.continuous_monitor.control.wiring import (
+    make_breach_loop_health_emit,
     make_deferred_breach_emit_for_breach_loop,
     make_greeks_refresh_emit,
     wrap_emergency_activity_log_writer,
@@ -211,3 +213,46 @@ class TestMakeGreeksRefreshEmit:
             event = await asyncio.wait_for(queue.get(), timeout=0.5)
         assert event.name == "greeks_refreshed"
         assert event.payload["underlying"] == "AAPL"
+
+
+@pytest.mark.asyncio
+class TestMakeBreachLoopHealthEmit:
+    """ALP-732 — the loop's ``on_health_signal`` sink emits the right SSE event."""
+
+    async def test_degraded_signal_emits_breach_loop_degraded(self) -> None:
+        emitter = SSEEventEmitter()
+        emit = make_breach_loop_health_emit(emitter=emitter)
+        async with emitter.subscribe() as queue:
+            emit(
+                BreachLoopHealthSignal(
+                    degraded=True, consecutive_failures=3, last_error="RuntimeError('x')"
+                )
+            )
+            event = await asyncio.wait_for(queue.get(), timeout=0.5)
+        assert event.name == "breach_loop_degraded"
+        assert event.payload["consecutive_failures"] == 3
+        assert event.payload["last_error"] == "RuntimeError('x')"
+        assert emitter.is_breach_loop_degraded() is True
+
+    async def test_recovered_signal_emits_breach_loop_recovered(self) -> None:
+        emitter = SSEEventEmitter()
+        emit = make_breach_loop_health_emit(emitter=emitter)
+        async with emitter.subscribe() as queue:
+            emit(BreachLoopHealthSignal(degraded=True, consecutive_failures=2, last_error="boom"))
+            await asyncio.wait_for(queue.get(), timeout=0.5)
+            emit(BreachLoopHealthSignal(degraded=False, consecutive_failures=2, last_error=None))
+            event = await asyncio.wait_for(queue.get(), timeout=0.5)
+        assert event.name == "breach_loop_recovered"
+        assert event.payload["consecutive_failures"] == 2
+        assert emitter.is_breach_loop_degraded() is False
+
+    async def test_degraded_with_none_error_falls_back_to_unknown(self) -> None:
+        # ``last_error`` is None only on recovery, but the degraded branch
+        # defends against a None by substituting "unknown" so the
+        # min_length=1 model field never rejects.
+        emitter = SSEEventEmitter()
+        emit = make_breach_loop_health_emit(emitter=emitter)
+        async with emitter.subscribe() as queue:
+            emit(BreachLoopHealthSignal(degraded=True, consecutive_failures=1, last_error=None))
+            event = await asyncio.wait_for(queue.get(), timeout=0.5)
+        assert event.payload["last_error"] == "unknown"

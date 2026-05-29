@@ -186,18 +186,19 @@ def test_l4_broad_except_count_below_audit_baseline(antipattern_findings: Script
     # boundaries). All audited at PR #209 final-state review; per-site
     # audit to drive the ceiling back down is tracked as a Command
     # Center post-merge cleanup item.
-    # Ceiling raised from 55 to 56 (2026-05-28, ALP-737 entry-window watcher):
-    # the new continuous-monitor task adds three warranted broad excepts —
-    # (1) the per-bracket catch and (2) the run-forever loop backstop in
-    # entry_window/task.py (both mirror bracket_stops' resilience: re-raise
-    # CancelledError, log + continue so one bad bracket / cycle never stalls
-    # the monitor), and (3) the broker-error classification in
-    # entry_window/wiring.py (AlpacaEntryCancel mirrors submit_engine_envelope's
-    # _dispatch_engine_close: wide catch → classify_alpaca_error, re-raising any
-    # non-broker exception). Each carries an inline rationale comment.
-    assert l4 <= 56, (
+    # Ceiling raised from 55 to 58 (2026-05-28): +3 from ALP-737's entry-window
+    # watcher and +2 from ALP-732's breach-loop failure handling (merged into
+    # main in parallel). ALP-737's three: (1) the per-bracket catch and (2) the
+    # run-forever loop backstop in entry_window/task.py (both mirror
+    # bracket_stops' resilience: re-raise CancelledError, log + continue so one
+    # bad bracket / cycle never stalls the monitor), and (3) the broker-error
+    # classification in entry_window/wiring.py (AlpacaEntryCancel mirrors
+    # submit_engine_envelope's _dispatch_engine_close: wide catch →
+    # classify_alpaca_error, re-raising any non-broker exception). Each carries
+    # an inline rationale comment.
+    assert l4 <= 58, (
         f"L4 (broad except) count drift: {l4}. Post-ALP-737 "
-        f"ceiling is 56. If this count climbs above 56, audit each new "
+        f"ceiling is 58. If this count climbs above 58, audit each new "
         f"handler against ALP-480's warranted-residue list."
     )
 

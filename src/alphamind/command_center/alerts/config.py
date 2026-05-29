@@ -15,7 +15,7 @@ Per-rule YAML row shape:
       debounce_minutes: 15
       channels: [in_app, discord]
 
-* ``name`` MUST match one of the 17 default rule names. The 17 names
+* ``name`` MUST match one of the default rule names. The names
   are derived from :func:`build_default_rules`'s output so the YAML can
   never reference a name the engine doesn't know about.
 * ``severity`` MUST match a :class:`AlertSeverity` member.
@@ -88,7 +88,7 @@ def bind_rules_from_config(
     3. Call :func:`build_default_rules` with the overrides — the factory
        owns the predicate identities, the YAML only owns tunables.
     4. Reject unknown rule names — every YAML entry MUST map onto one
-       of the 17 default rule names.
+       of the default rule names.
     """
     # ``AlertsConfig.rules`` is now typed ``list[AlertRuleSpec]`` (story
     # 06b), so the rows already passed name / debounce / channels parse

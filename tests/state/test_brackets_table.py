@@ -14,6 +14,7 @@ Covers:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
@@ -50,6 +51,7 @@ from alphamind.state.tables.brackets import BracketRow
 from alphamind.state.tables.brackets_codec import (
     record_to_rows,
     rows_to_record,
+    rows_to_records_isolated,
 )
 
 # ---------------------------------------------------------------------------
@@ -504,3 +506,54 @@ class TestBracketCodecRoundTrip:
         assert rehydrated == original
         assert rehydrated.entry_window_deadline == _T1
         assert rehydrated.corporate_action_cancellation_reason == "symbol delisted"
+
+
+# ---------------------------------------------------------------------------
+# Per-bracket isolation (ALP-732) — shared by the breach-loop + bracket-stop
+# loaders, so its skip-and-surface contract is pinned once here.
+# ---------------------------------------------------------------------------
+
+
+def _rows_for(record: BracketRecord) -> tuple[BracketRow, list[BracketLegRow]]:
+    bracket_row, leg_rows = record_to_rows(record)
+    return bracket_row, list(leg_rows)
+
+
+class TestRowsToRecordsIsolated:
+    def test_all_readable_returns_every_bracket_in_order(self) -> None:
+        b1, legs1 = _rows_for(_three_leg_bracket(bracket_id="brk1", position_id="pos1"))
+        b2, legs2 = _rows_for(_three_leg_bracket(bracket_id="brk2", position_id="pos2"))
+        result = rows_to_records_isolated([b1, b2], {"brk1": legs1, "brk2": legs2})
+        assert tuple(r.bracket_id for r in result) == ("brk1", "brk2")
+
+    def test_one_unreadable_bracket_is_skipped_and_surfaced(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        good, good_legs = _rows_for(_three_leg_bracket(bracket_id="brk-good", position_id="pos-g"))
+        bad, bad_legs = _rows_for(_three_leg_bracket(bracket_id="brk-bad", position_id="pos-b"))
+        # ALP-731 corruption: DISSOLVED bracket whose legs are not all CANCELLED
+        # → BracketRecord.__post_init__ raises ValueError on reconstruction.
+        bad.status = BracketStatus.DISSOLVED.value
+
+        with caplog.at_level(logging.ERROR):
+            result = rows_to_records_isolated(
+                [good, bad], {"brk-good": good_legs, "brk-bad": bad_legs}
+            )
+
+        assert tuple(r.bracket_id for r in result) == ("brk-good",)
+        skip_logs = [r for r in caplog.records if "brk-bad" in r.getMessage()]
+        assert skip_logs and skip_logs[0].levelno == logging.ERROR
+        assert "pos-b" in skip_logs[0].getMessage()
+
+    def test_non_value_error_propagates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A genuine codec bug (anything other than the ValueError corruption
+        # signature) must fail loudly, not be silently swallowed as a bad row —
+        # otherwise it would drop brackets every tick while looking healthy.
+        b1, legs1 = _rows_for(_three_leg_bracket(bracket_id="brk1", position_id="pos1"))
+
+        def _boom(*_args: object, **_kwargs: object) -> BracketRecord:
+            raise RuntimeError("codec regression")
+
+        monkeypatch.setattr("alphamind.state.tables.brackets_codec.rows_to_record", _boom)
+        with pytest.raises(RuntimeError, match="codec regression"):
+            rows_to_records_isolated([b1], {"brk1": legs1})

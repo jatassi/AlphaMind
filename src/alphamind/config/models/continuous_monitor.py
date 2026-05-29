@@ -30,6 +30,10 @@ pre-resolved decision (E):
 * ``control_port`` — loopback TCP port the FastAPI ``/control`` + ``/events``
   surface (story 01c / ALP-665) binds to. Defaults to ``8766`` per the
   story; operator may override per-environment.
+* ``breach_loop_consecutive_failure_alert_threshold`` — number of consecutive
+  failed breach-loop ticks before the loop emits a degraded health signal
+  (ALP-732). Reset on the first successful tick, so a silently-failing breach
+  loop becomes visible instead of looking healthy on the process surfaces.
 
 This file is loaded directly by ``alphamind.config.load`` and surfaced on
 ``ResolvedConfig.continuous_monitor``; the resolver does not cascade it
@@ -62,6 +66,14 @@ class ContinuousMonitorConfig(BaseModel):
     max_reconnect_attempts: int = Field(ge=1)
     supervisor_shutdown_timeout_seconds: int = Field(ge=1)
     control_port: int = Field(default=8766, ge=1, le=65535)
+    breach_loop_consecutive_failure_alert_threshold: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Consecutive failed breach-loop ticks before a degraded operator "
+            "health signal fires; cleared on the first successful tick (ALP-732)."
+        ),
+    )
     borrow_accrual_tick_local_time: str = Field(
         default="16:00",
         description=(
