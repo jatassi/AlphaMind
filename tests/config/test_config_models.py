@@ -253,12 +253,13 @@ def test_assets_models_are_frozen() -> None:
 # ---------------------------------------------------------------------------
 
 
+# Tier B schedule (ALP-745): four scheduled triggers, each at a distinct
+# minute. ``off_hours_rolling`` / ``weekend_saturday`` remain valid run types
+# (enum members + overlay files retained) but are deliberately unscheduled.
 _EXPECTED_TRIGGER_KEYS = {
-    "market_hours_rolling",
-    "off_hours_rolling",
     "pre_open",
+    "market_hours_rolling",
     "pre_close",
-    "weekend_saturday",
     "weekend_sunday",
 }
 
@@ -275,7 +276,7 @@ def _valid_scheduler_raw() -> dict[str, object]:
     }
 
 
-def test_scheduler_yaml_parses_and_exposes_six_trigger_keys() -> None:
+def test_scheduler_yaml_parses_and_exposes_tier_b_trigger_keys() -> None:
     from alphamind.config.models import SchedulerConfig
 
     data = load_yaml(CONFIG_DIR / "scheduler.yaml")
