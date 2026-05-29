@@ -24,6 +24,8 @@ from alphamind._kernel.money import price
 from alphamind.execution.broker_adapter import FillReport
 from alphamind.execution.continuous_monitor.fill_stream_consumer import (
     fill_report_to_fill_record,
+    order_id_for_report,
+    terminal_order_status_for,
 )
 from alphamind.portfolio_state.records.orders import OrderStatus
 from alphamind.state.records import (
@@ -265,3 +267,38 @@ class TestIdempotency:
         rec_b = fill_report_to_fill_record(report_b)
         assert rec_a is not None and rec_b is not None
         assert rec_a.fill_id == rec_b.fill_id
+
+
+class TestTerminalOrderStatusFor:
+    """``terminal_order_status_for`` — ALP-739 terminal non-fill mapping."""
+
+    def test_canceled_maps_to_cancelled(self) -> None:
+        report = _equity_fill_report(event_type="canceled", fill_price=None, fill_quantity=None)
+        assert terminal_order_status_for(report) is OrderStatus.CANCELLED
+
+    def test_expired_maps_to_expired(self) -> None:
+        report = _equity_fill_report(event_type="expired", fill_price=None, fill_quantity=None)
+        assert terminal_order_status_for(report) is OrderStatus.EXPIRED
+
+    @pytest.mark.parametrize(
+        "event_type",
+        ["filled", "partially_filled", "new", "replaced", "rejected", "done_for_day"],
+    )
+    def test_non_terminal_events_map_to_none(self, event_type: str) -> None:
+        # Fill-bearing and other non-terminal-disposition events carry no
+        # terminal-unfilled status this path acts on. ``rejected`` is
+        # deliberately excluded — a rejected order was never accepted.
+        report = _equity_fill_report(event_type=event_type)
+        assert terminal_order_status_for(report) is None
+
+
+class TestOrderIdForReport:
+    """``order_id_for_report`` — parent-aware order-id resolution."""
+
+    def test_equity_uses_client_order_id(self) -> None:
+        report = _equity_fill_report(client_order_id="oms-entry-1", parent_client_order_id=None)
+        assert order_id_for_report(report) == "oms-entry-1"
+
+    def test_mleg_leg_child_uses_parent_client_order_id(self) -> None:
+        report = _equity_fill_report(client_order_id="leg-1", parent_client_order_id="strategy-1")
+        assert order_id_for_report(report) == "strategy-1"

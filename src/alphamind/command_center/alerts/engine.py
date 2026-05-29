@@ -485,7 +485,7 @@ class AlertEngine:
         Caller holds :attr:`_debounce_lock`. The walk is restricted to
         entries belonging to one rule per call so the critical section
         stays bounded — PipelineAbortedCondition's per-invocation
-        debounce key (one entry per ~200 invocations/day across 17 rules)
+        debounce key (one entry per ~200 invocations/day across the rule set)
         would otherwise accumulate monotonically.
         """
         window = self._debounce_windows.get(rule_name)

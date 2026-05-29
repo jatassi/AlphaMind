@@ -1,7 +1,7 @@
 # Alerts configuration — load via AlertsConfig.
 # See src/alphamind/command_center/config.py for the model + per-field docs.
-# Story 05a (ALP-671) — 17 default rules per the design doc § Alerting —
-# Default rule set. Rules whose upstream emit point does not yet exist
+# Story 05a (ALP-671) — 17 default rules per the design doc § Alerting,
+# plus entry_no_fill (ALP-739). Default rule set. Rules whose upstream emit point does not yet exist
 # in this work tree's scope are still registered; the alert engine logs
 # a single startup WARNING per dormant rule.
 #
@@ -70,6 +70,10 @@ rules:
   - name: data_directory_disk_pressure
     severity: important
     debounce_minutes: 360
+    channels: [in_app, discord]
+  - name: entry_no_fill
+    severity: important
+    debounce_minutes: 15
     channels: [in_app, discord]
 
   # Operational tier — in-app banner only.

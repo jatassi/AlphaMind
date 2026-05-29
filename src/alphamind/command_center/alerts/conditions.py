@@ -1,7 +1,11 @@
-"""The 17 default alert condition predicates (story 05a / ALP-671).
+"""The default alert condition predicates (story 05a / ALP-671).
 
 One predicate class per rule in :doc:`docs/design/command-center.md`
-§ Alerting — Default rule set. Predicates fall into three categories:
+§ Alerting — Default rule set. The 17 design-doc rules plus
+``entry_no_fill`` (ALP-739), an 18th rule added after the original table
+to alert on an accepted entry order that reaches a terminal state
+(EXPIRED / CANCELLED) with zero fills. Predicates fall into three
+categories:
 
 * **Event-driven, live.** Consumes a :class:`CombinedEvent` straight off
   the multiplexer's publish callback (e.g. ``pipeline_aborted`` watches
@@ -37,6 +41,7 @@ Per the architectural invariants:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
 from collections.abc import Mapping
@@ -72,6 +77,7 @@ __all__ = [
     "DataDirectoryDiskPressureCondition",
     "DormantCondition",
     "DrawdownTierCrossedCondition",
+    "EntryNoFillCondition",
     "HaltModeEnteredCondition",
     "HardBlockGuardrailRejectionCondition",
     "ImportantApiFailureCondition",
@@ -112,6 +118,7 @@ _RULE_PROFILE_BOUNDARY_CROSSED: Final = alert_rule_name("profile_boundary_crosse
 _RULE_OPTIONAL_DATA_CATEGORY_SKIPPED: Final = alert_rule_name("optional_data_category_skipped")
 _RULE_COMMAND_ABANDONED: Final = alert_rule_name("command_abandoned")
 _RULE_THESIS_RESOLVED: Final = alert_rule_name("thesis_resolved")
+_RULE_ENTRY_NO_FILL: Final = alert_rule_name("entry_no_fill")
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +144,7 @@ DEFAULT_DEBOUNCE_WINDOWS: Final[Mapping[AlertRuleName, timedelta]] = {
     _RULE_OPTIONAL_DATA_CATEGORY_SKIPPED: timedelta(minutes=30),
     _RULE_COMMAND_ABANDONED: timedelta(minutes=15),
     _RULE_THESIS_RESOLVED: timedelta(minutes=15),
+    _RULE_ENTRY_NO_FILL: timedelta(minutes=15),
 }
 """Per-rule debounce window defaults.
 
@@ -555,6 +563,187 @@ class ThesisResolvedCondition:
                 "entry_at": str(entry_at),
                 "thesis_id": str(thesis_id) if thesis_id is not None else "",
             },
+        )
+
+
+_ENTRY_NO_FILL_REASONS: Final[Mapping[str, str]] = {
+    "EXPIRED": "expired",
+    "CANCELLED": "cancelled-superseded",
+}
+"""``orders.status`` → operator-facing reason for the no-fill alert.
+
+An accepted entry that never filled is terminal for one of two reasons:
+the broker let it ``EXPIRED`` (time-in-force lapsed unfilled), or it was
+``CANCELLED`` — typically because a re-priced replacement superseded it or
+the bracket was dissolved. Both surface in the alert context so the
+operator can tell a stale resting limit from a deliberate teardown.
+"""
+
+
+_ENTRY_NO_FILL_MAX_ROWS: Final = 100
+"""Safety cap on rows the no-fill predicate aggregates per evaluation.
+
+A defensive bound only — at AlphaMind's throughput (single-digit entries/day)
+the terminal-unfilled-in-window set is a handful. The rows are ordered
+most-recent-first, so a (never-expected) truncation keeps the newest entries
+and the most-recent order id used as the debounce key.
+"""
+
+
+def _ticker_from_instrument_spec_json(spec_json: str) -> str:
+    """Best-effort ticker/underlying out of an ``instrument_spec_json`` blob.
+
+    Equity specs carry ``ticker``; options carry ``underlying``; strategy
+    specs carry per-leg ``underlying`` (the first leg is reported). A
+    malformed / unrecognised blob yields ``""`` so the alert still fires
+    with the rest of its context rather than crashing the engine tick.
+
+    Deliberately lenient rather than reusing ``orders_codec`` (which
+    fail-closes — raises on an unknown discriminator): an alert-engine tick
+    must never crash on a surprising row, so this fails open.
+    """
+    try:
+        payload = json.loads(spec_json)
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    ticker = payload.get("ticker") or payload.get("underlying")
+    if isinstance(ticker, str):
+        return ticker
+    legs = payload.get("legs")
+    if isinstance(legs, list) and legs and isinstance(legs[0], dict):
+        leg_underlying = legs[0].get("underlying")
+        if isinstance(leg_underlying, str):
+            return leg_underlying
+    return ""
+
+
+def _limit_price_from_price_parameters_json(price_parameters_json: str) -> str:
+    """Render the ``limit_price`` out of a ``price_parameters_json`` blob.
+
+    The value is a Decimal-as-string (post-ALP-660) or a JSON number
+    (legacy rows); both stringify cleanly. A market order (no limit) or a
+    malformed blob yields ``""``.
+    """
+    try:
+        payload = json.loads(price_parameters_json)
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    limit = payload.get("limit_price")
+    return "" if limit is None else str(limit)
+
+
+@dataclass(frozen=True, slots=True)
+class EntryNoFillCondition:
+    """Rule 18 — accepted entries reached a terminal state with zero fills.
+
+    State-polling: queries ``orders`` via the foreign reader for *every*
+    entry-role order (``ENTRY`` or ``ADD_ENTRY``) whose ``status`` is
+    terminal-unfilled (``EXPIRED`` / ``CANCELLED``) with
+    ``filled_quantity == 0`` and a ``last_update_timestamp`` inside the
+    lookback window, and fires one alert that lists them all.
+
+    **Why aggregate rather than one alert per order.** The engine emits at
+    most one :class:`AlertConditionResult` per evaluation, so a
+    most-recent-only ``LIMIT 1`` query would let a single order mask all its
+    peers: a basket of DAY limit entries that all expire together at the 4 pm
+    close (exactly the zero-fill-day scenario this rule targets) would
+    surface only the newest. Instead the predicate returns the full set in
+    ``context["entries"]`` and debounces on the *most-recent* order id — so a
+    newly-terminal entry (newer ``last_update_timestamp``) yields a fresh
+    debounce key and re-fires with the running tally, while the set merely
+    shrinking as rows age out of the window does not (the most-recent id is
+    the last to age out, so its key stays debounced until the set empties).
+
+    The lookback equals the rule's debounce window (threaded in at
+    construction), so a row is observable only while debounce holds and the
+    two cannot silently desync under a YAML ``debounce_minutes`` override.
+    ``last_update_timestamp`` is stamped at *observation* time by the
+    terminal-status sync (not the broker event time), so a status synced
+    late — e.g. recovered after a monitor outage, the ZS case in ALP-739 —
+    still lands inside the window and fires.
+
+    No-fill counterpart to ``command_abandoned`` (rule 16; ALP-739 flagged
+    the overlap to check): that fires when a *PM command* is rolled back
+    after exhausting Phase 2 retries; this fires when an *accepted entry
+    order* the OMS submitted to the broker expires/cancels having never
+    filled. Distinct upstreams, distinct debounce keys — no double alert.
+
+    The terminal status reaches ``orders.status`` via the fill-stream
+    consumer's terminal-status sync (``sync_terminal_order_status``), which
+    is scoped to zero-fill terminals; this predicate fires *because* that
+    sync landed, wiring ALP-739's "reflect terminal broker statuses locally"
+    and "alert on a no-fill entry" criteria through the same column.
+    """
+
+    name: AlertRuleName = _RULE_ENTRY_NO_FILL
+    lookback: timedelta = timedelta(minutes=15)
+
+    async def evaluate(
+        self,
+        *,
+        event: CombinedEvent | None,
+        state: AlertEvaluatorState,
+    ) -> AlertConditionResult:
+        del event
+        factory = _factory_or_none(state)
+        if factory is None:
+            return AlertConditionResult(fired=False)
+        cutoff = (state.now - self.lookback).isoformat()
+        from alphamind.portfolio_state.records.orders import OrderRole, OrderStatus
+        from alphamind.state.tables.orders import OrderRow
+
+        entry_roles = (OrderRole.ENTRY.value, OrderRole.ADD_ENTRY.value)
+        terminal_unfilled = (OrderStatus.EXPIRED.value, OrderStatus.CANCELLED.value)
+        async with factory() as session:
+            result = await session.execute(
+                select(
+                    OrderRow.order_id,
+                    OrderRow.status,
+                    OrderRow.instrument_spec_json,
+                    OrderRow.price_parameters_json,
+                    OrderRow.duration,
+                    OrderRow.last_update_timestamp,
+                )
+                .where(
+                    OrderRow.order_role.in_(entry_roles),
+                    OrderRow.status.in_(terminal_unfilled),
+                    OrderRow.filled_quantity == 0,
+                    OrderRow.last_update_timestamp >= cutoff,
+                )
+                .order_by(OrderRow.last_update_timestamp.desc())
+                .limit(_ENTRY_NO_FILL_MAX_ROWS)
+            )
+            rows = result.mappings().all()
+        if not rows:
+            return AlertConditionResult(fired=False)
+        entries = [
+            {
+                "order_id": str(row["order_id"]),
+                "ticker": _ticker_from_instrument_spec_json(str(row["instrument_spec_json"])),
+                "limit_price": _limit_price_from_price_parameters_json(
+                    str(row["price_parameters_json"])
+                ),
+                "time_in_force": str(row["duration"]),
+                "reason": _ENTRY_NO_FILL_REASONS.get(str(row["status"]), str(row["status"])),
+                "status": str(row["status"]),
+                "last_update_timestamp": str(row["last_update_timestamp"]),
+            }
+            for row in rows
+        ]
+        # Rows are ordered most-recent-first; debounce on the newest order id
+        # so a fresh terminal entry re-fires the running tally while a set
+        # that only shrinks (rows aging out) stays debounced.
+        context = {
+            "count": len(entries),
+            "order_ids": [entry["order_id"] for entry in entries],
+            "entries": entries,
+        }
+        return AlertConditionResult(
+            fired=True, debounce_key=entries[0]["order_id"], context=context
         )
 
 
@@ -1023,7 +1212,7 @@ def build_default_rules(
     severity_overrides: Mapping[AlertRuleName, AlertSeverity] | None = None,
     channel_overrides: Mapping[AlertRuleName, tuple[str, ...]] | None = None,
 ) -> tuple[AlertRule, ...]:
-    """Construct the 17 default :class:`AlertRule` instances.
+    """Construct the 18 default :class:`AlertRule` instances.
 
     The YAML loader binds to this factory and renders the rule list onto
     the engine at startup. Operator-edited per-rule overrides flow
@@ -1199,9 +1388,21 @@ def build_default_rules(
             channels=_channels(_RULE_THESIS_RESOLVED, operational_channels),
             condition=ThesisResolvedCondition(),
         ),
+        # ALP-739 — added after the design doc's original 17-rule table. A
+        # zero-fill day must not be invisible, so this rides the important
+        # tier (in_app + discord) rather than operational (in_app only).
+        AlertRule(
+            name=_RULE_ENTRY_NO_FILL,
+            severity=_severity(_RULE_ENTRY_NO_FILL, AlertSeverity.IMPORTANT),
+            debounce_window=_debounce(_RULE_ENTRY_NO_FILL),
+            channels=_channels(_RULE_ENTRY_NO_FILL, important_channels),
+            # Lookback tracks the resolved debounce window (incl. any YAML
+            # override) so the poll window and debounce can't silently desync.
+            condition=EntryNoFillCondition(lookback=_debounce(_RULE_ENTRY_NO_FILL)),
+        ),
     ]
-    if len(rules) != 17:  # pragma: no cover — defensive
-        msg = f"build_default_rules: expected 17 rules, got {len(rules)}"
+    if len(rules) != 18:  # pragma: no cover — defensive
+        msg = f"build_default_rules: expected 18 rules, got {len(rules)}"
         raise RuntimeError(msg)
     return tuple(rules)
 
