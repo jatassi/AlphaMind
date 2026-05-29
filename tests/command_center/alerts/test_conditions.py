@@ -496,11 +496,14 @@ class TestEntryNoFillCondition:
         result = await cond.evaluate(event=None, state=state)
         assert result.fired is True
         assert result.debounce_key == "ord-expired"
-        assert result.context["ticker"] == "SCHW"
-        assert result.context["limit_price"] == "61.50"
-        assert result.context["time_in_force"] == "DAY"
-        assert result.context["reason"] == "expired"
-        assert result.context["status"] == "EXPIRED"
+        assert result.context["count"] == 1
+        assert result.context["order_ids"] == ["ord-expired"]
+        (entry,) = result.context["entries"]
+        assert entry["ticker"] == "SCHW"
+        assert entry["limit_price"] == "61.50"
+        assert entry["time_in_force"] == "DAY"
+        assert entry["reason"] == "expired"
+        assert entry["status"] == "EXPIRED"
 
     @pytest.mark.asyncio
     async def test_fires_on_cancelled_entry_zero_fill(
@@ -518,7 +521,7 @@ class TestEntryNoFillCondition:
         state = AlertEvaluatorState(now=_NOW, foreign_reader_factory=state_factory)
         result = await cond.evaluate(event=None, state=state)
         assert result.fired is True
-        assert result.context["reason"] == "cancelled-superseded"
+        assert result.context["entries"][0]["reason"] == "cancelled-superseded"
 
     @pytest.mark.asyncio
     async def test_options_entry_reports_underlying_as_ticker(
@@ -541,7 +544,7 @@ class TestEntryNoFillCondition:
         state = AlertEvaluatorState(now=_NOW, foreign_reader_factory=state_factory)
         result = await cond.evaluate(event=None, state=state)
         assert result.fired is True
-        assert result.context["ticker"] == "AAPL"
+        assert result.context["entries"][0]["ticker"] == "AAPL"
 
     @pytest.mark.asyncio
     async def test_does_not_fire_when_partially_filled(
@@ -618,6 +621,80 @@ class TestEntryNoFillCondition:
         state = AlertEvaluatorState(now=_NOW)
         result = await cond.evaluate(event=None, state=state)
         assert result.fired is False
+
+    @pytest.mark.asyncio
+    async def test_aggregates_multiple_concurrent_no_fill_entries(
+        self,
+        state_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        # The zero-fill-day scenario: a basket of DAY entries all terminal in
+        # the same window. A LIMIT-1 query would mask all but the newest; the
+        # aggregate surfaces every one and debounces on the most-recent id.
+        await _seed_order(
+            state_factory,
+            order_id="ord-schw",
+            order_role="ENTRY",
+            status="CANCELLED",
+            last_update_timestamp="2026-05-26T11:55:00+00:00",
+            instrument_spec_json='{"instrument_type": "EQUITY", "ticker": "SCHW"}',
+        )
+        await _seed_order(
+            state_factory,
+            order_id="ord-zs",
+            order_role="ENTRY",
+            status="EXPIRED",
+            last_update_timestamp="2026-05-26T11:58:00+00:00",  # most recent
+            instrument_spec_json='{"instrument_type": "EQUITY", "ticker": "ZS"}',
+        )
+        cond = EntryNoFillCondition()
+        state = AlertEvaluatorState(now=_NOW, foreign_reader_factory=state_factory)
+        result = await cond.evaluate(event=None, state=state)
+        assert result.fired is True
+        assert result.context["count"] == 2
+        assert set(result.context["order_ids"]) == {"ord-schw", "ord-zs"}
+        tickers = {entry["ticker"] for entry in result.context["entries"]}
+        assert tickers == {"SCHW", "ZS"}
+        # Debounce key is the most-recent order so a newer terminal entry
+        # re-fires while a shrinking set stays debounced.
+        assert result.debounce_key == "ord-zs"
+
+    @pytest.mark.asyncio
+    async def test_fires_on_add_entry_role(
+        self,
+        state_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await _seed_order(
+            state_factory,
+            order_id="ord-add",
+            order_role="ADD_ENTRY",
+            status="EXPIRED",
+            last_update_timestamp="2026-05-26T11:58:00+00:00",
+        )
+        cond = EntryNoFillCondition()
+        state = AlertEvaluatorState(now=_NOW, foreign_reader_factory=state_factory)
+        result = await cond.evaluate(event=None, state=state)
+        assert result.fired is True
+        assert result.context["order_ids"] == ["ord-add"]
+
+    @pytest.mark.asyncio
+    async def test_lookback_tracks_configured_window(
+        self,
+        state_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        # A row 8 min old fires under the default 15-min lookback but not under
+        # a 5-min lookback threaded from a debounce override — proving the
+        # window is configurable and can't silently desync from debounce.
+        await _seed_order(
+            state_factory,
+            order_id="ord-8min",
+            order_role="ENTRY",
+            status="EXPIRED",
+            last_update_timestamp="2026-05-26T11:52:00+00:00",  # 8 min before _NOW
+        )
+        state = AlertEvaluatorState(now=_NOW, foreign_reader_factory=state_factory)
+        assert (await EntryNoFillCondition().evaluate(event=None, state=state)).fired is True
+        narrow = EntryNoFillCondition(lookback=timedelta(minutes=5))
+        assert (await narrow.evaluate(event=None, state=state)).fired is False
 
 
 @pytest.fixture(autouse=True)

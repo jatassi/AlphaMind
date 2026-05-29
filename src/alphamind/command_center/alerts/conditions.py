@@ -580,6 +580,16 @@ operator can tell a stale resting limit from a deliberate teardown.
 """
 
 
+_ENTRY_NO_FILL_MAX_ROWS: Final = 100
+"""Safety cap on rows the no-fill predicate aggregates per evaluation.
+
+A defensive bound only — at AlphaMind's throughput (single-digit entries/day)
+the terminal-unfilled-in-window set is a handful. The rows are ordered
+most-recent-first, so a (never-expected) truncation keeps the newest entries
+and the most-recent order id used as the debounce key.
+"""
+
+
 def _ticker_from_instrument_spec_json(spec_json: str) -> str:
     """Best-effort ticker/underlying out of an ``instrument_spec_json`` blob.
 
@@ -587,6 +597,10 @@ def _ticker_from_instrument_spec_json(spec_json: str) -> str:
     specs carry per-leg ``underlying`` (the first leg is reported). A
     malformed / unrecognised blob yields ``""`` so the alert still fires
     with the rest of its context rather than crashing the engine tick.
+
+    Deliberately lenient rather than reusing ``orders_codec`` (which
+    fail-closes — raises on an unknown discriminator): an alert-engine tick
+    must never crash on a surprising row, so this fails open.
     """
     try:
         payload = json.loads(spec_json)
@@ -624,32 +638,49 @@ def _limit_price_from_price_parameters_json(price_parameters_json: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class EntryNoFillCondition:
-    """Rule 18 — accepted entry reached a terminal state with zero fills.
+    """Rule 18 — accepted entries reached a terminal state with zero fills.
 
-    State-polling: queries ``orders`` via the foreign reader for the most
-    recent ENTRY-role order whose ``status`` is terminal-unfilled
-    (``EXPIRED`` / ``CANCELLED``) with ``filled_quantity == 0`` and a
-    ``last_update_timestamp`` inside the lookback window. The window
-    matches the rule's debounce so a row is observable only while the
-    debounce suppresses re-fires — the alert fires exactly once per order.
+    State-polling: queries ``orders`` via the foreign reader for *every*
+    entry-role order (``ENTRY`` or ``ADD_ENTRY``) whose ``status`` is
+    terminal-unfilled (``EXPIRED`` / ``CANCELLED``) with
+    ``filled_quantity == 0`` and a ``last_update_timestamp`` inside the
+    lookback window, and fires one alert that lists them all.
 
-    This rule is the no-fill counterpart to ``command_abandoned`` (rule
-    16, ALP-739 scope flagged the overlap to check): ``command_abandoned``
-    fires when a *PM command* is rolled back after exhausting Phase 2
-    retries; this fires when an *accepted entry order* the OMS actually
-    submitted to the broker expires/cancels having never filled. Distinct
-    upstreams (PM-decision rollback vs. broker terminal disposition),
-    distinct debounce keys (command entry id vs. order id) — no double
-    alert on the same event.
+    **Why aggregate rather than one alert per order.** The engine emits at
+    most one :class:`AlertConditionResult` per evaluation, so a
+    most-recent-only ``LIMIT 1`` query would let a single order mask all its
+    peers: a basket of DAY limit entries that all expire together at the 4 pm
+    close (exactly the zero-fill-day scenario this rule targets) would
+    surface only the newest. Instead the predicate returns the full set in
+    ``context["entries"]`` and debounces on the *most-recent* order id — so a
+    newly-terminal entry (newer ``last_update_timestamp``) yields a fresh
+    debounce key and re-fires with the running tally, while the set merely
+    shrinking as rows age out of the window does not (the most-recent id is
+    the last to age out, so its key stays debounced until the set empties).
+
+    The lookback equals the rule's debounce window (threaded in at
+    construction), so a row is observable only while debounce holds and the
+    two cannot silently desync under a YAML ``debounce_minutes`` override.
+    ``last_update_timestamp`` is stamped at *observation* time by the
+    terminal-status sync (not the broker event time), so a status synced
+    late — e.g. recovered after a monitor outage, the ZS case in ALP-739 —
+    still lands inside the window and fires.
+
+    No-fill counterpart to ``command_abandoned`` (rule 16; ALP-739 flagged
+    the overlap to check): that fires when a *PM command* is rolled back
+    after exhausting Phase 2 retries; this fires when an *accepted entry
+    order* the OMS submitted to the broker expires/cancels having never
+    filled. Distinct upstreams, distinct debounce keys — no double alert.
 
     The terminal status reaches ``orders.status`` via the fill-stream
-    consumer's terminal-status sync (``sync_terminal_order_status``); this
-    predicate fires *because* that sync landed, which is also why
-    ALP-739's "reflect terminal broker statuses locally" and "alert on a
-    no-fill entry" criteria are wired through the same column.
+    consumer's terminal-status sync (``sync_terminal_order_status``), which
+    is scoped to zero-fill terminals; this predicate fires *because* that
+    sync landed, wiring ALP-739's "reflect terminal broker statuses locally"
+    and "alert on a no-fill entry" criteria through the same column.
     """
 
     name: AlertRuleName = _RULE_ENTRY_NO_FILL
+    lookback: timedelta = timedelta(minutes=15)
 
     async def evaluate(
         self,
@@ -661,19 +692,14 @@ class EntryNoFillCondition:
         factory = _factory_or_none(state)
         if factory is None:
             return AlertConditionResult(fired=False)
-        # Lookback mirrors the rule's 15-min debounce window: a row matches
-        # the predicate only while debounce holds, so the alert fires once
-        # per order. ``last_update_timestamp`` is stamped at *observation*
-        # time by the terminal-status sync (not the broker event time), so
-        # a status synced late — e.g. recovered after a monitor outage, the
-        # ZS case in ALP-739 — still lands inside the window and fires.
-        cutoff = (state.now - timedelta(minutes=15)).isoformat()
+        cutoff = (state.now - self.lookback).isoformat()
         from alphamind.portfolio_state.records.orders import OrderRole, OrderStatus
         from alphamind.state.tables.orders import OrderRow
 
+        entry_roles = (OrderRole.ENTRY.value, OrderRole.ADD_ENTRY.value)
         terminal_unfilled = (OrderStatus.EXPIRED.value, OrderStatus.CANCELLED.value)
         async with factory() as session:
-            row = await session.execute(
+            result = await session.execute(
                 select(
                     OrderRow.order_id,
                     OrderRow.status,
@@ -683,28 +709,42 @@ class EntryNoFillCondition:
                     OrderRow.last_update_timestamp,
                 )
                 .where(
-                    OrderRow.order_role == OrderRole.ENTRY.value,
+                    OrderRow.order_role.in_(entry_roles),
                     OrderRow.status.in_(terminal_unfilled),
                     OrderRow.filled_quantity == 0,
                     OrderRow.last_update_timestamp >= cutoff,
                 )
                 .order_by(OrderRow.last_update_timestamp.desc())
-                .limit(1)
+                .limit(_ENTRY_NO_FILL_MAX_ROWS)
             )
-            picked = row.first()
-        if picked is None:
+            rows = result.mappings().all()
+        if not rows:
             return AlertConditionResult(fired=False)
-        order_id, status, spec_json, price_json, duration, last_update = picked
+        entries = [
+            {
+                "order_id": str(row["order_id"]),
+                "ticker": _ticker_from_instrument_spec_json(str(row["instrument_spec_json"])),
+                "limit_price": _limit_price_from_price_parameters_json(
+                    str(row["price_parameters_json"])
+                ),
+                "time_in_force": str(row["duration"]),
+                "reason": _ENTRY_NO_FILL_REASONS.get(str(row["status"]), str(row["status"])),
+                "status": str(row["status"]),
+                "last_update_timestamp": str(row["last_update_timestamp"]),
+            }
+            for row in rows
+        ]
+        # Rows are ordered most-recent-first; debounce on the newest order id
+        # so a fresh terminal entry re-fires the running tally while a set
+        # that only shrinks (rows aging out) stays debounced.
         context = {
-            "order_id": str(order_id),
-            "ticker": _ticker_from_instrument_spec_json(str(spec_json)),
-            "limit_price": _limit_price_from_price_parameters_json(str(price_json)),
-            "time_in_force": str(duration),
-            "reason": _ENTRY_NO_FILL_REASONS.get(str(status), str(status)),
-            "status": str(status),
-            "last_update_timestamp": str(last_update),
+            "count": len(entries),
+            "order_ids": [entry["order_id"] for entry in entries],
+            "entries": entries,
         }
-        return AlertConditionResult(fired=True, debounce_key=str(order_id), context=context)
+        return AlertConditionResult(
+            fired=True, debounce_key=entries[0]["order_id"], context=context
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1356,7 +1396,9 @@ def build_default_rules(
             severity=_severity(_RULE_ENTRY_NO_FILL, AlertSeverity.IMPORTANT),
             debounce_window=_debounce(_RULE_ENTRY_NO_FILL),
             channels=_channels(_RULE_ENTRY_NO_FILL, important_channels),
-            condition=EntryNoFillCondition(),
+            # Lookback tracks the resolved debounce window (incl. any YAML
+            # override) so the poll window and debounce can't silently desync.
+            condition=EntryNoFillCondition(lookback=_debounce(_RULE_ENTRY_NO_FILL)),
         ),
     ]
     if len(rules) != 18:  # pragma: no cover — defensive

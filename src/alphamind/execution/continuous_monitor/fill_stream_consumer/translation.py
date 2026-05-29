@@ -48,7 +48,10 @@ _FILL_EVENT_TO_ORDER_STATUS: Final[dict[str, OrderStatus]] = {
 # expires/cancels unfilled stays ``PENDING`` in local state (the ZS row in
 # ALP-739) and the no-fill alert never fires. ``rejected`` is deliberately
 # absent: a rejected order was never accepted by the broker, a distinct
-# failure mode outside this no-fill path's scope.
+# failure mode outside this no-fill path's scope. ``done_for_day`` is also
+# absent: it is non-terminal (a GTC order "done for the day" resumes the next
+# session), so mapping it to a terminal status would falsely retire a live
+# order.
 _TERMINAL_NON_FILL_EVENT_TO_STATUS: Final[dict[str, OrderStatus]] = {
     "canceled": OrderStatus.CANCELLED,
     "expired": OrderStatus.EXPIRED,
@@ -92,7 +95,7 @@ def fill_report_to_fill_record(report: FillReport) -> FillRecord | None:
     # ``gateway_reference`` for reconciliation. For equity / single-leg
     # options, ``parent_client_order_id`` is ``None`` and the report's own
     # ``client_order_id`` is the OMS order id.
-    order_id = report.parent_client_order_id or report.client_order_id
+    order_id = order_id_for_report(report)
     alpaca_ref = report.alpaca_order_id
 
     fill_id = _derive_fill_id(

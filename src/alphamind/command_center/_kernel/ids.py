@@ -159,8 +159,9 @@ def alert_rule_name(value: str) -> AlertRuleName:
     """Construct an :class:`AlertRuleName`. Rejects empty input only.
 
     Rule names come from the operator-edited ``config/alerts.yaml`` (story
-    05a populates the default 17 rules); the YAML schema validates the
-    full vocabulary. This constructor is the boundary on the DB read path.
+    05a populates the default rule set; ALP-739 added entry_no_fill); the
+    YAML schema validates the full vocabulary. This constructor is the
+    boundary on the DB read path.
     """
     if not value:
         msg = f"alert_rule_name must be non-empty; got {value!r}"

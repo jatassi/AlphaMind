@@ -55,7 +55,7 @@ from alphamind.persistence.session import (
 )
 from alphamind.state.tables.fill_records import FillRecordRow
 from alphamind.state.tables.orders import OrderRow
-from tests.state._fk_substrate import seed_position_cluster
+from tests.state._fk_substrate import seed_position_cluster, stub_order_row
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -856,3 +856,75 @@ class TestTerminalStatusSync:
         assert status == "EXPIRED"
         # A terminal non-fill event appends no fill_records row.
         assert await _read_fill_records(session_factory) == []
+
+    async def test_partial_fill_then_expire_does_not_sync(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        # A partially-filled-then-expired entry must NOT be stamped terminal
+        # here: orders.filled_quantity is Phase-1-lagged, so doing so would
+        # transiently read filled_quantity==0 and fire a false no-fill alert.
+        # The sync is gated on the broker-authoritative cumulative fill.
+        await _set_order_status(session_factory, order_id="order-1", status="PENDING")
+        # A second PENDING entry expires cleanly (zero fill) and acts as a
+        # processing barrier: once it syncs, the earlier event is fully drained.
+        async with session_factory() as db:
+            db.add(stub_order_row("order-2", "bracket-1", status="PENDING"))
+            await db.commit()
+
+        stream = _FakeStream()
+        queries = _FakeAccountStateQueries()
+        task = asyncio.create_task(
+            run_fill_stream_consumer(
+                _session(),
+                _config(),
+                **_build_run_kwargs(session_factory, stream, queries),
+            )
+        )
+
+        await _wait_for_handler(stream)
+        # order-1: expired with a non-zero cumulative fill → gated out.
+        await stream.inject(
+            _trade_update(
+                event="expired",
+                order=_build_order(
+                    client_order_id="order-1",
+                    qty="10",
+                    filled_qty="3",
+                    status=AlpacaOrderStatus.EXPIRED,
+                ),
+            )
+        )
+        # order-2: clean zero-fill expire → syncs (the barrier).
+        await stream.inject(
+            _trade_update(
+                event="expired",
+                order=_build_order(
+                    client_order_id="order-2",
+                    qty="1",
+                    filled_qty="0",
+                    status=AlpacaOrderStatus.EXPIRED,
+                ),
+            )
+        )
+
+        barrier = await _wait_for_order_status(
+            session_factory, order_id="order-2", expected="EXPIRED"
+        )
+
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert barrier == "EXPIRED"
+        # order-1 was processed before the barrier and left untouched.
+        order_1_status, _ = await _status_and_ts(session_factory, "order-1")
+        assert order_1_status == "PENDING"
+
+
+async def _status_and_ts(
+    session_factory: async_sessionmaker[AsyncSession], order_id: str
+) -> tuple[str, str]:
+    async with session_factory() as session:
+        row = await session.get(OrderRow, order_id)
+        assert row is not None
+        return row.status, row.last_update_timestamp

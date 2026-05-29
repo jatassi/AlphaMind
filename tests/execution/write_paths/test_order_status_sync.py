@@ -127,10 +127,13 @@ async def test_pending_entry_transitions_to_cancelled(
     assert status == "CANCELLED"
 
 
-async def test_partially_filled_order_transitions(
+async def test_partially_filled_order_is_not_transitioned(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    # PARTIALLY_FILLED is non-terminal, so a subsequent cancel transitions it.
+    # The consumer gates this path on cumulative_filled_quantity == 0, so a
+    # partially-filled order never reaches the helper; the PENDING-only guard
+    # is the defense-in-depth backstop, leaving the row untouched (the fill
+    # path + Phase 1 own a partially-filled order's status).
     await _seed(
         session_factory,
         _order_row(order_id="ord-2", status="PARTIALLY_FILLED", filled_quantity=3.0),
@@ -138,9 +141,9 @@ async def test_partially_filled_order_transitions(
     transitioned = await _sync(
         session_factory, order_id="ord-2", terminal_status=OrderStatus.CANCELLED
     )
-    assert transitioned is True
+    assert transitioned is False
     status, _ = await _status_and_ts(session_factory, "ord-2")
-    assert status == "CANCELLED"
+    assert status == "PARTIALLY_FILLED"
 
 
 async def test_filled_order_is_not_clobbered(

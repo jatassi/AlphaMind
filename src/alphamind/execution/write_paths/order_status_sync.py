@@ -25,15 +25,16 @@ from alphamind.state.tables.orders import OrderRow
 
 log = logging.getLogger(__name__)
 
-# Only these statuses may transition to a terminal non-fill status. Guarding
-# on the source status keeps a late ``canceled`` event — e.g. an OCO sibling
-# cancel that arrives after the entry already FILLED — from clobbering a
-# terminal fill outcome. Re-processing the same event (live + recovery
-# overlap) is therefore idempotent: the second pass finds a terminal status
-# and no-ops, so ``last_update_timestamp`` is not bumped twice.
-_TRANSITIONABLE_FROM: frozenset[str] = frozenset(
-    {OrderStatus.PENDING.value, OrderStatus.PARTIALLY_FILLED.value}
-)
+# A zero-fill terminal sync only ever applies to a PENDING order: the consumer
+# gates this path on ``cumulative_filled_quantity == 0`` (see the caller
+# ``_sync_terminal_status_if_any``), and a zero-fill order has never been
+# advanced past PENDING by Phase 1's fill integration. Restricting the source
+# state to PENDING makes the contract exact and the write idempotent — a
+# re-processed terminal event (live + recovery overlap) finds a non-PENDING
+# status and no-ops, so ``last_update_timestamp`` is not bumped twice. (A
+# partially-filled order is handled by the fill path + Phase 1, not here, so
+# there is no "don't clobber a FILLED status" case for this guard to defend.)
+_TRANSITIONABLE_FROM: frozenset[str] = frozenset({OrderStatus.PENDING.value})
 
 
 async def sync_terminal_order_status(
@@ -45,10 +46,10 @@ async def sync_terminal_order_status(
 ) -> bool:
     """Stamp *order_id*'s ``orders.status`` to a terminal non-fill value.
 
-    Transitions only from a non-terminal status (``PENDING`` /
-    ``PARTIALLY_FILLED``); a no-op (returns ``False``) when the order is
-    unknown or already terminal. ``last_update_timestamp`` is set to
-    *observed_at* — the moment the monitor recorded the transition, not the
+    Transitions only from ``PENDING`` (the sole state a zero-fill order can be
+    in — see ``_TRANSITIONABLE_FROM``); a no-op (returns ``False``) when the
+    order is unknown or already past PENDING. ``last_update_timestamp`` is set
+    to *observed_at* — the moment the monitor recorded the transition, not the
     broker event time — so the ``entry_no_fill`` alert's lookback window
     catches a status synced late (e.g. recovered after a monitor outage).
 

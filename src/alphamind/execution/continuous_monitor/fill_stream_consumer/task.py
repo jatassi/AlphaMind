@@ -212,9 +212,20 @@ async def _sync_terminal_status_if_any(
     non-fill event (``new`` / ``replaced`` / …) carries no terminal
     disposition and no-ops here. Its own short-lived transaction, mirroring
     the per-fill write.
+
+    Scoped to **zero-fill** terminals (``cumulative_filled_quantity == 0``): a
+    partially-filled-then-terminal order is left to the fill path + Phase 1,
+    which own ``filled_quantity`` and integrate the partials. Stamping a
+    terminal status here for a partially-filled order would (a) read
+    ``filled_quantity == 0`` until Phase 1 catches up and fire a false
+    no-fill alert, and (b) be reverted to ``PARTIALLY_FILLED`` by Phase 1's
+    fill integration anyway. The no-fill case is the one the fill path does
+    not cover, so it is the only one this sync owns.
     """
     terminal_status = terminal_order_status_for(report)
     if terminal_status is None:
+        return
+    if report.cumulative_filled_quantity > 0:
         return
     order_id = order_id_for_report(report)
     async with session_factory() as db:
