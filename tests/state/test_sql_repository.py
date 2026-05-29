@@ -281,8 +281,12 @@ def _make_open_position(
         share_count=10.0,
         average_cost_basis_per_share=150.0,
     )
+    # PENDING (entry not yet filled) and CANCELLED (entry never filled, then
+    # cancelled — ALP-744) both carry an empty execution_history and no entry
+    # timestamp; only OPEN / CLOSED have fills.
+    never_filled = status in (PositionStatus.PENDING, PositionStatus.CANCELLED)
     fills: tuple[PositionFill, ...]
-    if status == PositionStatus.PENDING:
+    if never_filled:
         fills = ()
     else:
         fill_at = closed_at if closed_at is not None else _NOW - timedelta(hours=2)
@@ -295,7 +299,7 @@ def _make_open_position(
                 fees=money(1.0),
             ),
         )
-    entry_at = None if status == PositionStatus.PENDING else _NOW - timedelta(hours=3)
+    entry_at = None if never_filled else _NOW - timedelta(hours=3)
     return PositionRecord(
         position_id=PositionId(position_id),
         thesis_id=None,
@@ -938,6 +942,37 @@ async def test_get_pending_positions_returns_only_pending_status(
     assert len(result) == 1
     assert result[0].position_id == "pos-pending"
     assert result[0] == pending_pos
+
+
+async def test_cancelled_positions_excluded_from_open_and_pending(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-744: a never-filled position driven to the terminal CANCELLED state
+    is returned by neither get_open_positions nor get_pending_positions, so the
+    snapshot assembler — which prices only OPEN + PENDING — never tries to quote
+    it. That clears the recurring stale-sentinel ``price missing`` warning that
+    stranded-PENDING rows emitted every snapshot."""
+    _, factory = db
+    await _seed_minimal_invocation(factory)
+    open_pos = _make_open_position(position_id=PositionId("pos-open"), status=PositionStatus.OPEN)
+    pending_pos = _make_open_position(
+        position_id=PositionId("pos-pending"), status=PositionStatus.PENDING
+    )
+    cancelled_pos = _make_open_position(
+        position_id=PositionId("pos-cancelled"), status=PositionStatus.CANCELLED
+    )
+    await _seed_position(factory, open_pos)
+    await _seed_position(factory, pending_pos)
+    await _seed_position(factory, cancelled_pos)
+
+    repo = _build_repo(factory)
+    open_ids = {p.position_id for p in repo.get_open_positions()}
+    pending_ids = {p.position_id for p in repo.get_pending_positions()}
+
+    assert "pos-cancelled" not in open_ids
+    assert "pos-cancelled" not in pending_ids
+    assert open_ids == {"pos-open"}
+    assert pending_ids == {"pos-pending"}
 
 
 async def test_get_active_theses_returns_active_with_components(

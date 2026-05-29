@@ -70,12 +70,14 @@ class TestPositionStatusEnum:
             PositionStatus.PENDING,
             PositionStatus.OPEN,
             PositionStatus.CLOSED,
+            PositionStatus.CANCELLED,
         }
 
     def test_string_values(self) -> None:
         assert PositionStatus.PENDING == "PENDING"
         assert PositionStatus.OPEN == "OPEN"
         assert PositionStatus.CLOSED == "CLOSED"
+        assert PositionStatus.CANCELLED == "CANCELLED"
 
 
 class TestLocateStatusEnum:
@@ -626,6 +628,30 @@ class TestClosedStatusRules:
                 realized_pnl_to_date_usd=None,
             )
         assert "realized_pnl_to_date_usd" in str(exc_info.value)
+
+
+class TestCancelledStatusRules:
+    """CANCELLED is the terminal state for a position whose entry never filled
+    (ALP-744). It is distinct from CLOSED (opened then exited): a CANCELLED
+    position never opened, so it carries no fills and no realized P&L."""
+
+    def test_cancelled_never_filled_passes(self) -> None:
+        p = _make_position(
+            status=PositionStatus.CANCELLED,
+            entry_timestamp=None,
+            execution_history=(),
+            realized_pnl_to_date_usd=None,
+        )
+        assert p.status == PositionStatus.CANCELLED
+
+    def test_cancelled_with_fills_fails(self) -> None:
+        with pytest.raises((ValueError, TypeError)) as exc_info:
+            _make_position(
+                status=PositionStatus.CANCELLED,
+                entry_timestamp=None,
+                execution_history=(_FILL,),
+            )
+        assert "execution_history" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------

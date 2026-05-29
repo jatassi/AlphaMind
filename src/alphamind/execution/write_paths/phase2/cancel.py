@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 from alphamind._kernel.ids import OrderId
@@ -26,6 +27,7 @@ from alphamind.portfolio_state.records.orders import (
     OrderRole,
     OrderStatus,
 )
+from alphamind.portfolio_state.records.positions import PositionStatus
 from alphamind.portfolio_state.records.theses import ThesisRecordStatus
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
@@ -35,6 +37,7 @@ from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.orders_codec import (
     row_to_record as order_row_to_record,
 )
+from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.theses import ThesisRow
 
 
@@ -155,6 +158,14 @@ async def _writeback_cancel(
         detail=BracketDissolvedDetail(cancelled_leg_order_ids=leg_order_ids),
     )
 
+    # A never-filled position whose entry just cancelled has no terminal state
+    # in the fill path (phase1 only transitions PENDING→OPEN→CLOSED). Without
+    # this it strands in PENDING forever: never priced by the OPEN-only quote
+    # stream, perpetually emitting the assembler's stale-sentinel warning
+    # (ALP-744). Both the PM CANCEL and the ALP-737 entry-window auto-cancel
+    # reach here, so handling it once covers both routes.
+    await _cancel_never_filled_position(handle, position_id=bracket_row.position_id)
+
     if target.originating_thesis_id is not None:
         await _resolve_thesis_cancelled(
             handle,
@@ -167,6 +178,33 @@ async def _writeback_cancel(
     # continuous monitor and scheduled invocations use, or one corrupt row
     # becomes a system-wide kill switch (ALP-731).
     await _assert_bracket_readable(handle, bracket_id=target.bracket_id)
+
+
+async def _cancel_never_filled_position(
+    handle: InvocationHandle,
+    *,
+    position_id: str,
+) -> None:
+    """Drive a never-filled PENDING position to the terminal CANCELLED state.
+
+    No-op unless the position is still PENDING with zero recorded fills:
+
+    * An already-OPEN position (its entry filled; only a leftover entry-order
+      reference is being cancelled) must keep ``OPEN``.
+    * A partially-filled position (a strategy mid-open, with per-leg fills in
+      ``execution_history``) must keep ``PENDING`` — ``CANCELLED`` means *never
+      opened*, and the :class:`PositionRecord` invariant forbids any fill on a
+      CANCELLED row, so writing it on a filled row would persist a row the read
+      codec rejects (the ALP-731 class of unreadable-row corruption).
+    """
+    position_row = await handle.session.get(PositionRow, position_id)
+    if position_row is None:
+        return
+    if position_row.status != PositionStatus.PENDING.value:
+        return
+    if json.loads(position_row.execution_history_json):
+        return
+    position_row.status = PositionStatus.CANCELLED.value
 
 
 async def _resolve_thesis_cancelled(

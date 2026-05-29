@@ -633,6 +633,37 @@ def _open_position(
     )
 
 
+def _pending_never_filled_position(
+    position_id: str = "POS-NVDA-001",
+    *,
+    thesis_id: str = "THE-NVDA-1",
+    bracket_id: str = "BRK-NVDA-1",
+    ticker: str = "NVDA",
+) -> PositionRecord:
+    """A PENDING position whose entry has not filled — empty execution_history,
+    ``entry_timestamp=None`` (ALP-744). This is the shape the cancel/dissolve
+    write path must drive to the terminal CANCELLED state so it can't strand."""
+    details = EquityPositionDetails(
+        ticker=Symbol(ticker),
+        share_count=10.0,
+        average_cost_basis_per_share=150.0,
+    )
+    return PositionRecord(
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id),
+        bracket_id=BracketId(bracket_id),
+        status=PositionStatus.PENDING,
+        direction=Direction.LONG,
+        entry_timestamp=None,
+        details=details,
+        execution_history=(),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+
+
 def _active_thesis(
     thesis_id: str = "THE-NVDA-1", position_id: str = "POS-NVDA-001"
 ) -> ThesisRecord:
@@ -2597,6 +2628,13 @@ async def test_cancel_command_on_entry_dissolves_bracket_and_resolves_thesis(
         assert entry_order is not None
         assert entry_order.status == "CANCELLED"
 
+        # The position was OPEN (its entry already filled), so cancelling a
+        # leftover entry-order reference must NOT mark it CANCELLED — that
+        # terminal state is reserved for never-filled positions (ALP-744).
+        position = await sess.get(PositionRow, "POS-NVDA-001")
+        assert position is not None
+        assert position.status == PositionStatus.OPEN.value
+
         leg_order = await sess.get(OrderRow, "ord-old-stop")
         assert leg_order is not None
         assert leg_order.status == "CANCELLED"
@@ -2749,6 +2787,87 @@ async def test_persist_entry_window_cancel_dissolves_pending_entry_bracket(
     cancel_rows = [r for r in rows if r.event_type == EventType.ORDER_CANCELLED.value]
     assert cancel_rows
     assert any("entry_window_expired" in r.detail_json for r in cancel_rows)
+
+
+async def test_cancel_command_marks_never_filled_position_cancelled(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-744: a PM CANCEL of a never-filled entry transitions the PENDING
+    position to the terminal CANCELLED state instead of leaving it stranded in
+    PENDING forever. The bracket still dissolves as before."""
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
+    await _seed_position_cluster(
+        factory,
+        _pending_never_filled_position(),
+        _active_thesis(),
+        _active_bracket(),
+        _pending_entry_limit_order_rec(),
+    )
+
+    envelope = _make_strategist_envelope(
+        commands=(_cancel_command(order_id=OrderId("ord-entry-1")),)
+    )
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        position = await sess.get(PositionRow, "POS-NVDA-001")
+        assert position is not None
+        assert position.status == PositionStatus.CANCELLED.value
+
+        bracket = await sess.get(BracketRow, "BRK-NVDA-1")
+        assert bracket is not None
+        assert bracket.status == BracketStatus.DISSOLVED.value
+
+
+async def test_persist_entry_window_cancel_marks_never_filled_position_cancelled(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-744: the ALP-737 entry-window auto-cancel routes through the same
+    CANCEL writeback, so a never-filled PENDING position it dissolves must also
+    transition to the terminal CANCELLED state."""
+    from alphamind.execution.write_paths.phase2 import (
+        persist_entry_window_cancel,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
+    await _seed_position_cluster(
+        factory,
+        _pending_never_filled_position(),
+        _active_thesis(),
+        _pending_entry_bracket_with_event_leg(),
+        _pending_entry_limit_order_rec(),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await persist_entry_window_cancel(
+        handle,
+        entry_order_id="ord-entry-1",
+        cancel_reason="entry_window_expired",
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        position = await sess.get(PositionRow, "POS-NVDA-001")
+        assert position is not None
+        assert position.status == PositionStatus.CANCELLED.value
+
+        bracket = await sess.get(BracketRow, "BRK-NVDA-1")
+        assert bracket is not None
+        assert bracket.status == BracketStatus.DISSOLVED.value
 
 
 def _pending_entry_limit_order_rec(
