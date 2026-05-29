@@ -126,18 +126,18 @@ _ENTRY_ROLES: frozenset[OrderRole] = frozenset({OrderRole.ENTRY, OrderRole.ADD_E
 def _build_position_reservations(
     pending_orders: Sequence[OrderRecord],
 ) -> dict[str, float]:
-    """Mirror ``_order_notional_estimate`` in ``execution/write_paths/phase2/cancel.py``
-    so each position's view of "what will the OMS release on CANCEL" matches what
-    ``_release_capital`` will actually subtract. The cancel path uses
+    """Mirror ``_order_reserved_notional`` in ``execution/write_paths/phase2/_shared.py``
+    so each position's view of "what the OMS reserved / will release" matches what
+    the write path actually subtracts. The OMS uses
     ``limit_price (or stop_trigger_price) * remaining_quantity`` for ENTRY/ADD_ENTRY
     legs; protective legs never reserve capital and market orders carry no price.
 
-    Note: this per-position basis can disagree with the portfolio-level
-    ``cash_ledger.reserved_capital_usd``, which sums the original PM-command
-    ``dollar_value`` amounts reserved at submission. The divergence is the same
-    one the OMS cancel path already acknowledges as "best-effort capital
-    estimate"; mirroring it keeps the rule's projected-after value consistent
-    with the post-cancel ledger.
+    Since ALP-741 the portfolio-level ``cash_ledger.reserved_capital_usd`` is
+    maintained on this *same* notional basis end-to-end — OPEN / ADD reserve it,
+    reprice adjusts it, CANCEL / fill release it — so this per-position view and
+    the singleton agree. (Before ALP-741 the singleton summed the PM-command
+    ``dollar_value`` instead; that basis mismatch could drive it negative and
+    crash every decision-pipeline invocation.)
     """
     reservations: dict[str, float] = defaultdict(float)
     for order in pending_orders:

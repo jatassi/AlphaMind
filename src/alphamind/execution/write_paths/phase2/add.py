@@ -67,7 +67,10 @@ async def _writeback_add(
     Reads canonical :class:`AddCommand` fields:
 
     * ``additional_quantity`` — entry order quantity
-    * ``additional_dollar_value`` — capital reservation amount
+    * ``additional_dollar_value`` — sizing input only; the capital reservation
+      amount is the add-entry order's notional (``_order_reserved_notional`` =
+      ``limit_price * quantity``; ``money(0)`` for a market add), NOT this
+      field, since ALP-741 (symmetric with OPEN and the release paths)
     * ``entry_order`` — order type / price parameters
     * ``thesis_addition_component`` — appended to the existing thesis
     * ``bracket_adjustment`` (optional) — cancel + resubmit modified protective legs

@@ -9,6 +9,7 @@ derived adapters, and common direction / price-parameter / id helpers.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -94,6 +95,8 @@ from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.orders_codec import (
     row_to_record as order_row_to_record,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _instrument_ticker_key(
@@ -468,8 +471,24 @@ async def _release_capital(
     # (the ``pending_order_capital_pct`` rule's ``_classify_zone`` rejects a
     # negative consumption), so clamping here keeps a stray over-release from
     # poisoning the singleton.
-    floored = max(cash_row.reserved_capital_usd - amount_usd, Decimal(0))
-    cash_row.reserved_capital_usd = money(floored)
+    net = cash_row.reserved_capital_usd - amount_usd
+    if net < 0:
+        # The floor fired: a release exceeded the running reservation. With the
+        # ALP-741 basis unification this should never happen for more than
+        # rounding dust, so a real clamp means an upstream asymmetry (a forgotten
+        # market-entry guard, a release on a basis other than the reservation,
+        # double-release). The floor keeps it from poisoning the singleton, but
+        # log loudly so the over-release is observable instead of silently
+        # absorbed (the pre-ALP-741 signed-balance surfaced it by going negative).
+        logger.warning(
+            "reserved_capital_usd over-release floored: order_id=%s reserved=%s "
+            "release=%s deficit=%s",
+            order_id,
+            cash_row.reserved_capital_usd,
+            amount_usd,
+            -net,
+        )
+    cash_row.reserved_capital_usd = money(max(net, Decimal(0)))
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
     _emit(
         handle,

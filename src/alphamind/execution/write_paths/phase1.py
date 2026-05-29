@@ -1631,7 +1631,11 @@ async def _apply_cash_movement(
     cash_row.current_cash_usd = cash_row.current_cash_usd + delta
     if is_buy:
         release = _fill_reservation_release_usd(order, fill)
-        cash_row.reserved_capital_usd = max(cash_row.reserved_capital_usd - release, Decimal(0))
+        # Floor at zero (defensive) and wrap in money() — the same non-negative
+        # invariant _release_capital enforces on the Phase 2 side (ALP-741).
+        cash_row.reserved_capital_usd = money(
+            max(cash_row.reserved_capital_usd - release, Decimal(0))
+        )
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
     return delta
 

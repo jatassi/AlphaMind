@@ -128,7 +128,9 @@ async def _writeback_open(
     * entry order parameters ← ``command.entry_order``
     * bracket protective legs ← ``command.invalidation_legs`` + ``command.target``
     * thesis summary + components ← ``command.thesis``
-    * capital reservation amount ← ``command.position_size.dollar_value``
+    * capital reservation amount ← the entry order's notional
+      (``_order_reserved_notional`` = ``limit_price * quantity``; ``money(0)``
+      for a market entry), NOT ``command.position_size.dollar_value`` (ALP-741)
 
     When ``submitted_alpaca_order_id`` is supplied (broker-routing coordinated
     swap, story 03e / ALP-390), the persisted entry order carries the broker's
