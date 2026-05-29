@@ -91,7 +91,11 @@ Enum values and structural constraints trace back to these authoritative sources
           "description": "At least one leg with is_hard = true is required (price- or time-based). Event legs are soft. See orders-and-brackets.md hard backstop requirement.",
           "items": { "$ref": "#/$defs/invalidation_leg" }
         },
-        "thesis": { "$ref": "#/$defs/thesis" }
+        "thesis": { "$ref": "#/$defs/thesis" },
+        "entry_window": {
+          "$ref": "#/$defs/entry_window",
+          "description": "Optional. The analyst's patient-entry deadline, copied through from the recommendation (ALP-737). Its deadline is threaded onto the bracket's entry_window_deadline; the continuous monitor auto-cancels a still-PENDING_ENTRY entry once now() > deadline. Omit when the recommendation carried no window."
+        }
       }
     },
 
@@ -399,6 +403,23 @@ Enum values and structural constraints trace back to these authoritative sources
           "then": { "required": ["limit_price", "stop_price"] }
         }
       ]
+    },
+
+    "entry_window": {
+      "type": "object",
+      "required": ["deadline", "decay_type", "rationale"],
+      "description": "The analyst's patient-entry window, mirrored field-for-field from analyst-output-schema.md so the PM copies it through verbatim (ALP-737). The deadline drives the bracket's entry_window_deadline auto-cancel.",
+      "properties": {
+        "deadline": { "type": "string", "format": "date-time" },
+        "decay_type": {
+          "enum": ["binary", "gradual"],
+          "description": "binary: setup exists or doesn't (hard-catalyst trades). gradual: edge erodes progressively (technicals, information edges)."
+        },
+        "rationale": {
+          "type": "string",
+          "description": "Why the window exists and what happens after it closes."
+        }
+      }
     },
 
     "position_size": {

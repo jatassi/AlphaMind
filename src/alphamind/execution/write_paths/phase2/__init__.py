@@ -46,7 +46,10 @@ from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
 from alphamind.execution.write_paths.phase2._shared import _emit
 from alphamind.execution.write_paths.phase2.add import _writeback_add
 from alphamind.execution.write_paths.phase2.adjust import _writeback_adjust
-from alphamind.execution.write_paths.phase2.cancel import _writeback_cancel
+from alphamind.execution.write_paths.phase2.cancel import (
+    _writeback_cancel,
+    persist_entry_window_cancel,
+)
 from alphamind.execution.write_paths.phase2.close import _writeback_close
 from alphamind.execution.write_paths.phase2.open import _writeback_open
 from alphamind.portfolio_state.events.activity_log import (
@@ -353,6 +356,7 @@ async def _emit_pm_decision(
 __all__ = [
     "persist_command_abandoned",
     "persist_engine_envelope_outcome",
+    "persist_entry_window_cancel",
     "persist_envelope_outcome",
     "persist_envelope_parse_failure",
     "persist_envelope_rejection",

@@ -31,6 +31,13 @@ greeks_refresh_inspection_cadence_seconds: 30
 # balances near-tick-fast responsiveness against per-cycle iteration cost.
 bracket_stop_evaluation_cadence_seconds: 1.0
 
+# Per-loop inspection cadence for the entry-window expiry watcher (ALP-737).
+# The watcher reads PENDING_ENTRY brackets carrying an entry_window_deadline and
+# auto-cancels any whose deadline has passed (the analyst's patient-entry
+# window). A patient-entry deadline is coarse (hours), so this is far slower
+# than the price-driven bracket-stop cadence — a once-a-minute sweep is ample.
+entry_window_evaluation_cadence_seconds: 60.0
+
 # Live underlying-price stream provider. Single-value Literal today; decision (B)
 # pins Alpaca StockDataStream / IEX after the 2026-05-10 paper-account smoke
 # test. Story 02b's vendor surface lives here.

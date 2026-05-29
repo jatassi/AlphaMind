@@ -44,6 +44,7 @@ from alphamind.commands.command_models import (
     BracketAdjustment,
     BracketOrderParameters,
     EntryOrder,
+    EntryWindow,
     EquityInstrument,
     NewStopLevel,
     NewTargetLevel,
@@ -415,9 +416,11 @@ def _open_command(
     *,
     quantity: float = 10.0,
     dollar_value: float = 10_000.0,
+    entry_window: EntryWindow | None = None,
 ) -> OpenCommand:
     return OpenCommand(
         command_type="open",
+        entry_window=entry_window,
         instrument=EquityInstrument(asset_type="equity", ticker=underlying, direction="long"),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
         position_size=PositionSize(quantity=quantity, dollar_value=money(dollar_value)),
@@ -1179,6 +1182,52 @@ async def test_open_command_writes_position_thesis_bracket_orders_and_events(
     assert EventType.THESIS_CREATED.value in types
     assert EventType.CAPITAL_RESERVED.value in types
     assert EventType.PM_DECISION.value in types
+
+
+async def test_open_command_threads_entry_window_deadline_onto_bracket(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """OPEN writeback threads ``command.entry_window.deadline`` onto the
+    persisted bracket's ``entry_window_deadline`` (ALP-737 AC1).
+
+    Without an ``entry_window`` the bracket keeps ``entry_window_deadline=None``
+    (covered by the sibling OPEN tests); when the analyst's window rides through
+    the OPEN command, the deadline must round-trip analyst → OpenCommand →
+    writeback → DB so the continuous monitor can enforce it.
+    """
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    deadline = datetime(2026, 5, 29, 17, 30, tzinfo=UTC)
+    command = _open_command(
+        underlying=Symbol("NVDA"),
+        entry_window=EntryWindow(
+            deadline=deadline,
+            decay_type="gradual",
+            rationale="overnight gap retest window",
+        ),
+    )
+    envelope = _make_analyst_envelope(commands=(command,))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        brackets = (await sess.execute(select(BracketRow))).scalars().all()
+        assert len(brackets) == 1
+        # Stored as ISO-8601 text; the codec round-trips it back to a tz-aware
+        # datetime equal to the analyst's deadline.
+        assert brackets[0].entry_window_deadline is not None
+        assert datetime.fromisoformat(brackets[0].entry_window_deadline) == deadline
 
 
 async def test_open_command_persists_real_position_size_and_capital_reservation(
@@ -2544,6 +2593,134 @@ async def test_cancel_command_on_entry_dissolves_bracket_and_resolves_thesis(
     assert EventType.THESIS_RESOLVED.value in types
     assert EventType.BRACKET_DISSOLVED.value in types
     assert EventType.PM_DECISION.value in types
+
+
+async def test_persist_entry_window_cancel_dissolves_pending_entry_bracket(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-737 AC2 / verification: ``persist_entry_window_cancel`` — the engine-
+    originated cancel the continuous monitor runs when a ``PENDING_ENTRY`` entry
+    outlives its ``entry_window_deadline`` — drives the full CANCEL state
+    sequence: entry → CANCELLED, all legs → CANCELLED, bracket → DISSOLVED,
+    thesis → CANCELLED_NEVER_ENTERED, capital released, with an order_cancelled
+    activity-log entry carrying the ``entry_window_expired`` reason. No PM
+    command and no pm_decision entry (this is not a PM-originated cancel).
+    """
+    from alphamind.execution.write_paths.phase2 import (
+        persist_entry_window_cancel,
+    )
+    from alphamind.portfolio_state.records.orders import (
+        EquityInstrumentSpec,
+        OrderClass,
+        OrderDirection,
+        OrderDuration,
+        OrderRecord,
+        OrderRole,
+        OrderStatus,
+        OrderType,
+        PriceParameters,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
+    entry_order_rec = OrderRecord(
+        order_id=OrderId("ord-entry-1"),
+        position_id=PositionId("POS-NVDA-001"),
+        bracket_id=BracketId("BRK-NVDA-1"),
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("NVDA")),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.LIMIT,
+        order_class=OrderClass.BRACKET,
+        price_parameters=PriceParameters(limit_price=price("100.0")),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId("alp-ord-entry-1"),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-ord-entry-1"),),
+        submission_timestamp=_NOW - timedelta(hours=1),
+        last_update_timestamp=_NOW - timedelta(hours=1),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=ThesisId("THE-NVDA-1"),
+        originating_pm_command_id=None,
+        age_hours=1.0,
+    )
+    stop_order_rec = OrderRecord(
+        order_id=OrderId("BRK-NVDA-1-ord-stop"),
+        position_id=PositionId("POS-NVDA-001"),
+        bracket_id=BracketId("BRK-NVDA-1"),
+        role=OrderRole.PRICE_STOP,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("NVDA")),
+        direction=OrderDirection.SELL,
+        order_type=OrderType.STOP,
+        order_class=OrderClass.OTO,
+        price_parameters=PriceParameters(stop_trigger_price=price("140.0")),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId("alp-BRK-NVDA-1-ord-stop"),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-BRK-NVDA-1-ord-stop"),),
+        submission_timestamp=_NOW - timedelta(hours=1),
+        last_update_timestamp=_NOW - timedelta(hours=1),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=ThesisId("THE-NVDA-1"),
+        originating_pm_command_id=None,
+        age_hours=1.0,
+    )
+    await _seed_position_cluster(
+        factory,
+        _open_position(),
+        _active_thesis(),
+        _pending_entry_bracket_with_event_leg(),
+        entry_order_rec,
+        stop_order_rec,
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await persist_entry_window_cancel(
+        handle,
+        entry_order_id="ord-entry-1",
+        cancel_reason="entry_window_expired",
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        entry_order = await sess.get(OrderRow, "ord-entry-1")
+        assert entry_order is not None
+        assert entry_order.status == "CANCELLED"
+
+        bracket = await sess.get(BracketRow, "BRK-NVDA-1")
+        assert bracket is not None
+        assert bracket.status == BracketStatus.DISSOLVED.value
+
+        thesis = await sess.get(ThesisRow, "THE-NVDA-1")
+        assert thesis is not None
+        assert thesis.status == ThesisRecordStatus.CANCELLED.value
+        assert thesis.resolution_category == "CANCELLED_NEVER_ENTERED"
+
+        cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash is not None
+        assert cash.reserved_capital_usd == pytest.approx(0.0)
+
+    rows = await _read_activity_log_for(factory, handle.invocation_id)
+    types = {r.event_type for r in rows}
+    assert EventType.ORDER_CANCELLED.value in types
+    assert EventType.BRACKET_DISSOLVED.value in types
+    assert EventType.THESIS_RESOLVED.value in types
+    assert EventType.CAPITAL_RELEASED.value in types
+    # Not a PM-originated cancel — no pm_decision entry is written.
+    assert EventType.PM_DECISION.value not in types
+    # The order_cancelled detail carries the entry-window provenance.
+    cancel_rows = [r for r in rows if r.event_type == EventType.ORDER_CANCELLED.value]
+    assert cancel_rows
+    assert any("entry_window_expired" in r.detail_json for r in cancel_rows)
 
 
 async def test_cancel_entry_dissolve_cancels_all_legs_and_reloads(

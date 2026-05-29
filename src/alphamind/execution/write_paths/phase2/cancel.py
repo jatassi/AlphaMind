@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from alphamind._kernel.ids import OrderId
 from alphamind._kernel.money import Money, money
 from alphamind.commands.command_models import CancelCommand
 from alphamind.commands.submission_results import SubmissionResult
@@ -39,11 +40,41 @@ from alphamind.state.tables.orders_codec import (
 from alphamind.state.tables.theses import ThesisRow
 
 
+async def persist_entry_window_cancel(
+    handle: InvocationHandle,
+    *,
+    entry_order_id: str,
+    cancel_reason: str,
+) -> None:
+    """Engine-originated cancel of a never-filled entry whose window elapsed (ALP-737).
+
+    The continuous monitor's entry-window watcher calls this once it has
+    confirmed (via the broker cancel + a no-recorded-fills check) that the
+    resting entry will not fill. It reuses the CANCEL writeback state machine
+    (:func:`_writeback_cancel`) so the bracket dissolves, reserved capital is
+    released (the order-notional estimate, per ``_order_notional_estimate`` —
+    the same basis the PM CANCEL path uses, which for a resting limit entry is
+    ``limit_price * remaining_quantity``), and the thesis resolves
+    ``CANCELLED_NEVER_ENTERED`` exactly as a PM-originated CANCEL would.
+
+    Distinct from the PM CANCEL path in two ways: there is no PM envelope (so no
+    ``command_id`` and no ``pm_decision`` activity-log entry), and provenance
+    rides in ``cancel_reason`` (``"entry_window_expired"``) rather than a
+    PM-authored string.
+    """
+    command = CancelCommand(
+        command_type="cancel",
+        order_id=OrderId(entry_order_id),
+        cancel_reason=cancel_reason,
+    )
+    await _writeback_cancel(handle, command=command)
+
+
 async def _writeback_cancel(
     handle: InvocationHandle,
     *,
     command: CancelCommand,
-    result: SubmissionResult,
+    result: SubmissionResult | None = None,
 ) -> None:
     """CANCEL: mark target order CANCELLED. If the target is an entry leg:
     cancel all bracket legs, resolve thesis CANCELLED, dissolve bracket,

@@ -181,6 +181,7 @@ def test_main_registers_wave_2_and_3_tasks(
         "greeks_refresh",
         "breach_loop",
         "bracket_stops",
+        "entry_window",
         "borrow_accrual",
     ):
         assert expected in task_names, f"{expected} not registered; got {task_names!r}"

@@ -62,6 +62,7 @@ __all__ = [
     "Direction",
     "EntryOrder",
     "EntryOrderType",
+    "EntryWindow",
     "EquityInstrument",
     "EventCondition",
     "EventLeg",
@@ -421,6 +422,33 @@ class BracketAdjustment(BaseModel):
         return self
 
 
+class EntryWindow(BaseModel):
+    """Patient-entry deadline + decay rationale carried on an OPEN command.
+
+    Mirrors the analyst ``Recommendation.entry_window``
+    (:class:`alphamind.decision.analyst.models.EntryWindow`) field-for-field so
+    the PM copies the block through verbatim when authoring the OPEN command
+    rather than transforming it (ALP-737). ``deadline`` is threaded into the
+    bracket's ``entry_window_deadline`` at writeback (``phase2/open.py``); the
+    continuous monitor auto-cancels a still-``PENDING_ENTRY`` entry once
+    ``now() > deadline`` (see ``orders.py`` ``BracketRecord`` lifecycle
+    semantics). ``decay_type`` / ``rationale`` are preserved for the companion
+    reprice-policy and no-fill-alert work (ALP-738 / ALP-739).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    deadline: datetime
+    decay_type: Literal["binary", "gradual"]
+    rationale: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _deadline_tz_aware(self) -> EntryWindow:
+        if self.deadline.tzinfo is None:
+            raise ValueError("EntryWindow.deadline must be tz-aware")
+        return self
+
+
 # ---------------------------------------------------------------------------
 # command_id format documentation
 # ---------------------------------------------------------------------------
@@ -453,6 +481,7 @@ class OpenCommand(BaseModel):
     target: Target
     invalidation_legs: tuple[InvalidationLeg, ...] = Field(min_length=1)
     thesis: Thesis
+    entry_window: EntryWindow | None = None
 
     @model_validator(mode="after")
     def _validate_hard_backstop(self) -> OpenCommand:

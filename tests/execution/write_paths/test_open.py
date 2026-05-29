@@ -223,12 +223,12 @@ def _build_strategy_bracket(instrument: StrategyInstrument | None = None) -> Bra
     return _build_pending_bracket(
         bracket_id="BRK-NVDA-abc123",
         position_id="POS-NVDA-abc123",
-        ticker="NVDA",
         entry_order_id="ORD-NVDA-entry-abc123",
         target=_pl_percentage_target(),
         target_order_id="ORD-NVDA-target-abc123",
         invalidation_leg_orders=(),
         instrument=instrument if instrument is not None else _vertical_spread(),
+        entry_window_deadline=None,
     )
 
 
@@ -266,12 +266,12 @@ def test_single_leg_bracket_take_profit_build_unchanged() -> None:
     bracket = _build_pending_bracket(
         bracket_id="BRK-AAPL-abc123",
         position_id="POS-AAPL-abc123",
-        ticker="AAPL",
         entry_order_id="ORD-AAPL-entry-abc123",
         target=Target(target_type="absolute_price", price=price(160.0), order_type="limit"),
         target_order_id="ORD-AAPL-target-abc123",
         invalidation_leg_orders=(),
         instrument=equity,
+        entry_window_deadline=None,
     )
     target_leg = bracket.protective_legs[0]
     assert target_leg.leg_type is BracketLegType.TAKE_PROFIT
@@ -279,6 +279,27 @@ def test_single_leg_bracket_take_profit_build_unchanged() -> None:
     assert isinstance(target_leg.trigger, PriceTrigger)
     assert target_leg.trigger.direction == "GTE"
     assert target_leg.trigger.threshold_usd == 160.0
+
+
+def test_build_pending_bracket_carries_entry_window_deadline() -> None:
+    """``_build_pending_bracket`` stamps the supplied ``entry_window_deadline``
+    onto the bracket (ALP-737) — the seam the OPEN writeback feeds from
+    ``command.entry_window.deadline``."""
+    from datetime import UTC, datetime
+
+    equity = EquityInstrument(asset_type="equity", ticker="AAPL", direction="long")
+    deadline = datetime(2026, 5, 29, 17, 30, tzinfo=UTC)
+    bracket = _build_pending_bracket(
+        bracket_id="BRK-AAPL-abc123",
+        position_id="POS-AAPL-abc123",
+        entry_order_id="ORD-AAPL-entry-abc123",
+        target=Target(target_type="absolute_price", price=price(160.0), order_type="limit"),
+        target_order_id="ORD-AAPL-target-abc123",
+        invalidation_leg_orders=(),
+        instrument=equity,
+        entry_window_deadline=deadline,
+    )
+    assert bracket.entry_window_deadline == deadline
 
 
 # ---------------------------------------------------------------------------
