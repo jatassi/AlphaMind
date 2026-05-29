@@ -322,7 +322,7 @@ Identity fields:
 - Attempt number: 1 for the initial call, 2+ for subsequent retries triggered by [llm-agent-failure-handling.md](../llm-agent-failure-handling.md). Each attempt is a separate record so retry effectiveness is queryable.
 
 Model fields:
-- Model ID: exact API model identifier returned by the Anthropic API (e.g., `claude-opus-4-7`)
+- Model ID: exact API model identifier returned by the Anthropic API (e.g., `claude-opus-4-8`)
 - Model alias requested: the operator-facing alias from [agents.yaml](../configuration-management.md) (e.g., `opus`), distinct from the resolved ID — catches alias-vs-pin drift if Anthropic remaps an alias
 - API version header: value of the `anthropic-version` header sent on the call
 - Beta features enabled: ordered list of beta-feature flags passed on the call (empty if none)

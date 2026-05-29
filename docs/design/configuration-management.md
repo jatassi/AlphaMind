@@ -121,14 +121,14 @@ Per-agent configuration. The tool allowlist is a list of tool names that must re
 ```yaml
 agents:
   analyst:
-    model: claude-opus-4-7
+    model: claude-opus-4-8
     prompt: prompts/decision/analyst.md
     latency_budget_seconds: 180
     context_token_budget: 8000
     output_token_budget: 2000
     tools: [retrieve_brief, validate_guardrail]
   pm:
-    model: claude-opus-4-7
+    model: claude-opus-4-8
     prompt: prompts/decision/pm.md
     latency_budget_seconds: 240
     context_token_budget: 12000

@@ -358,7 +358,7 @@ def active_sectors() -> frozenset[str]:
 @pytest.fixture()
 def agent_config() -> BaseAgentConfig:
     return BaseAgentConfig(
-        model=AllowedModel.opus_4_7,
+        model=AllowedModel.opus_4_8,
         prompt="prompts/decision/pm.md",
         latency_budget_seconds=30,
         context_token_budget=8_000,
@@ -433,7 +433,7 @@ def _make_sdk_response(
     }
     assistant = AssistantMessage(
         content=[TextBlock(text=text)] if text else [],
-        model="claude-opus-4-7",
+        model="claude-opus-4-8",
         stop_reason=stop_reason,
         usage=usage,
     )
@@ -769,7 +769,7 @@ async def test_timeout_raises_timeout_failure(
 ) -> None:
     """A slow SDK stub causes the harness to raise TimeoutFailure."""
     tight_config = BaseAgentConfig(
-        model=AllowedModel.opus_4_7,
+        model=AllowedModel.opus_4_8,
         prompt="prompts/decision/pm.md",
         latency_budget_seconds=1,
         context_token_budget=8_000,

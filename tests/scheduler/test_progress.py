@@ -88,7 +88,7 @@ def test_noop_agent_request_accepts_kwargs_only_fields() -> None:
     emitter.agent_request(
         phase="synthesizer",
         agent="synthesizer",
-        model="claude-opus-4-7",
+        model="claude-opus-4-8",
     )
 
 
@@ -104,7 +104,7 @@ def test_noop_agent_response_accepts_all_seven_response_fields() -> None:
     emitter.agent_response(
         phase="synthesizer",
         agent="synthesizer",
-        model="claude-opus-4-7",
+        model="claude-opus-4-8",
         duration_s=42.7,
         input_tokens=12_345,
         cache_read_tokens=68_214,
@@ -121,7 +121,7 @@ def test_noop_agent_response_accepts_none_stop_reason() -> None:
     emitter.agent_response(
         phase="analyst",
         agent="analyst",
-        model="claude-opus-4-7",
+        model="claude-opus-4-8",
         duration_s=0.0,
         input_tokens=0,
         cache_read_tokens=0,
@@ -166,11 +166,11 @@ def test_recording_emitter_records_each_event_kind() -> None:
     emitter = RecordingProgressEmitter()
     emitter.phase_start("phase1")
     emitter.phase_done("phase1", fills_processed=3)
-    emitter.agent_request(phase="analyst", agent="analyst", model="claude-opus-4-7")
+    emitter.agent_request(phase="analyst", agent="analyst", model="claude-opus-4-8")
     emitter.agent_response(
         phase="analyst",
         agent="analyst",
-        model="claude-opus-4-7",
+        model="claude-opus-4-8",
         duration_s=4.2,
         input_tokens=100,
         cache_read_tokens=60_000,

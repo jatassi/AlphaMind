@@ -53,7 +53,7 @@ def test_apply_agent_overrides_layers_overrides() -> None:
     """The hoisted helper layers per-trigger override fields onto base
     configs via Pydantic ``model_copy``."""
     base = BaseAgentConfig(
-        model=AllowedModel.opus_4_7,
+        model=AllowedModel.opus_4_8,
         prompt="prompts/decision/analyst.md",
         latency_budget_seconds=30,
         context_token_budget=8_000,
@@ -300,7 +300,7 @@ def _sector_resolver(ticker: str) -> str:
 
 def _make_base_config(prompt: str) -> BaseAgentConfig:
     return BaseAgentConfig(
-        model=AllowedModel.opus_4_7,
+        model=AllowedModel.opus_4_8,
         prompt=prompt,
         latency_budget_seconds=30,
         context_token_budget=8_000,

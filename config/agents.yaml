@@ -15,7 +15,7 @@ agents:
   # --- Decision layer (Opus) -------------------------------------------------
 
   analyst:
-    model: claude-opus-4-7
+    model: claude-opus-4-8
     prompt: prompts/decision/analyst.md
     # 2026-05-25 debug-e2e: analyst hit budget_timeout at 305.07s — SDK trace
     # shows continuous productive work (ThinkingBlocks 32s/50s/65s/68s
@@ -44,7 +44,7 @@ agents:
     tools: [retrieve_brief, validate_guardrail]
 
   strategist:
-    model: claude-opus-4-7
+    model: claude-opus-4-8
     prompt: prompts/decision/strategist.md
     # 180s proved too tight in live e2e; the model emits ThinkingBlocks for
     # 60+s between actions on the strategist task (4+ positions × thesis
@@ -91,7 +91,7 @@ agents:
   #     in the normal three-instrument scenario; generous cap is cheap
   #     relative to a re-run and mirrors the strategist precedent (ALP-301).
   portfolio_manager:
-    model: claude-opus-4-7
+    model: claude-opus-4-8
     prompt: prompts/decision/pm.md
     # Preemptive bump 2026-05-09: latency 600→900 and output 16000→24000
     # mirroring the strategist + analysis-layer ALP-288 drift fixes.

@@ -443,7 +443,7 @@ def _current_price_lookup(ticker: str) -> Price:
 def _agent_config(*, latency: int = 30, output_budget: int = 4_000) -> BaseAgentConfig:
     """Minimal BaseAgentConfig pointing to the PM prompt."""
     return BaseAgentConfig(
-        model=AllowedModel.opus_4_7,
+        model=AllowedModel.opus_4_8,
         prompt="prompts/decision/pm.md",
         latency_budget_seconds=latency,
         context_token_budget=8_000,
@@ -501,7 +501,7 @@ def _make_sdk_response(
     return [
         AssistantMessage(
             content=[TextBlock(text=text)] if text else [],
-            model="claude-opus-4-7",
+            model="claude-opus-4-8",
             stop_reason=stop_reason,
             usage=usage,
         ),

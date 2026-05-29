@@ -34,7 +34,7 @@ def test_analyst_entry_loads() -> None:
     """`BaseAgentConfig` validates the analyst entry without error and the
     field values match the design contract."""
     entry = _load_analyst_entry()
-    assert entry.model == "claude-opus-4-7"
+    assert entry.model == "claude-opus-4-8"
     assert entry.prompt == "prompts/decision/analyst.md"
     assert entry.latency_budget_seconds == 500
     assert entry.context_token_budget == 8000
@@ -82,7 +82,7 @@ class TestAgentsYamlPortfolioManagerEntry:
         """`BaseAgentConfig` validates the portfolio_manager entry and all
         field values match the design contract with raised budgets."""
         entry = _load_pm_entry()
-        assert entry.model == "claude-opus-4-7"
+        assert entry.model == "claude-opus-4-8"
         assert entry.prompt == "prompts/decision/pm.md"
         assert entry.latency_budget_seconds == 900
         assert entry.context_token_budget == 16000

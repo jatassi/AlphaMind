@@ -412,7 +412,7 @@ def _emit_analysis_pipeline_progress(progress: ProgressEmitter) -> None:
     progress.phase_done("adaptive")
 
     progress.phase_start("synthesizer")
-    _emit_agent_call(progress, phase="synthesizer", agent="synthesizer", model="claude-opus-4-7")
+    _emit_agent_call(progress, phase="synthesizer", agent="synthesizer", model="claude-opus-4-8")
     progress.phase_done("synthesizer")
 
 
@@ -425,8 +425,8 @@ def _emit_decision_pipeline_progress(progress: ProgressEmitter) -> None:
     """
     progress.phase_start("analyst")
     progress.phase_start("strategist")
-    _emit_agent_call(progress, phase="analyst", agent="analyst", model="claude-opus-4-7")
-    _emit_agent_call(progress, phase="strategist", agent="strategist", model="claude-opus-4-7")
+    _emit_agent_call(progress, phase="analyst", agent="analyst", model="claude-opus-4-8")
+    _emit_agent_call(progress, phase="strategist", agent="strategist", model="claude-opus-4-8")
     progress.phase_done("analyst")
     progress.phase_done("strategist")
 
@@ -434,7 +434,7 @@ def _emit_decision_pipeline_progress(progress: ProgressEmitter) -> None:
     progress.phase_done("pre_processor")
 
     progress.phase_start("pm")
-    _emit_agent_call(progress, phase="pm", agent="portfolio_manager", model="claude-opus-4-7")
+    _emit_agent_call(progress, phase="pm", agent="portfolio_manager", model="claude-opus-4-8")
     progress.phase_done("pm")
 
 

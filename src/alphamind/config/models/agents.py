@@ -54,7 +54,7 @@ class AllowedModel(StrEnum):
     § Cap-approach response`.
     """
 
-    opus_4_7 = "claude-opus-4-7"
+    opus_4_8 = "claude-opus-4-8"
     sonnet_4_6 = "claude-sonnet-4-6"
     haiku_4_5 = "claude-haiku-4-5-20251001"
 

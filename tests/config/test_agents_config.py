@@ -29,7 +29,7 @@ def test_strategist_entry_loads() -> None:
     """`BaseAgentConfig` validates the strategist entry without error and the
     field values match the design contract."""
     entry = _load_strategist_entry()
-    assert entry.model == "claude-opus-4-7"
+    assert entry.model == "claude-opus-4-8"
     assert entry.prompt == "prompts/decision/strategist.md"
     assert entry.latency_budget_seconds == 900
     assert entry.context_token_budget == 8000
