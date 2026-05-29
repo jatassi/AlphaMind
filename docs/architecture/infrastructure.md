@@ -12,7 +12,7 @@ Scheduling, deployment, observability, and process supervision.
 
 ### Schedule definition
 
-Four scheduled trigger types (the **Tier B** cadence, ALP-745), all in US Eastern time. Every trigger fires at a distinct minute, so no two scheduled runs ever share a minute-truncated `as_of`:
+Four scheduled trigger types (the **Tier B** cadence, ALP-745), all in US Eastern time. Every trigger fires at a distinct minute, so no two scheduled runs ever share an `as_of` (it is second-resolution and cron fires land on `:00`, so a distinct minute is a distinct `as_of`):
 
 | Trigger | Schedule | APScheduler trigger type |
 |---------|----------|------------------------|

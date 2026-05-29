@@ -87,7 +87,7 @@ Anthropic deployed a server-side classifier in early 2026 rejecting OAuth tokens
 
 Per [architecture/infrastructure.md § Scheduling](../architecture/infrastructure.md#scheduling):
 
-Under the Tier B schedule (ALP-745), every trigger fires at a distinct minute so no two scheduled runs share a minute-truncated `as_of`:
+Under the Tier B schedule (ALP-745), every trigger fires at a distinct minute, so no two scheduled runs share an `as_of` (cron fires land on `:00`, so a distinct minute is a distinct second-resolution `as_of`):
 
 | Trigger | Times (US/Eastern) | Per week |
 |---|---|---|

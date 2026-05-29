@@ -66,7 +66,7 @@ paths:
 ```
 
 ### `scheduler.yaml`
-Full cron expressions for APScheduler. The Tier B schedule (ALP-745) assigns every trigger a distinct minute, so no two scheduled runs share a minute-truncated `as_of`; overlap-dedup and `max_instances` are a secondary safety net for manual / emergency runs rather than the primary collision guard. `off_hours_rolling` and `weekend_saturday` remain valid run types (overlays + enum members are retained) but are deliberately unscheduled — real-time risk on open positions is owned by the continuous monitor.
+Full cron expressions for APScheduler. The Tier B schedule (ALP-745) assigns every trigger a distinct minute, so no two scheduled runs share an `as_of` (the `as_of` is second-resolution and cron fires land on `:00`, so a distinct minute is a distinct `as_of`); overlap-dedup and `max_instances` are a secondary safety net for manual / emergency runs rather than the primary collision guard. `off_hours_rolling` and `weekend_saturday` remain valid run types (overlays + enum members are retained) but are deliberately unscheduled — real-time risk on open positions is owned by the continuous monitor.
 
 ```yaml
 timezone: US/Eastern

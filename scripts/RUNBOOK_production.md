@@ -434,9 +434,10 @@ production schedule (timezone `US/Eastern`, defined in
 `config/scheduler.yaml`):
 
 The schedule is **Tier B** (ALP-745): every trigger fires at a distinct
-minute, so no two scheduled runs ever share a minute-truncated `as_of` (the
-condition that previously crashed one of two coinciding distillation passes
-on the `distillation_ticker_baseline` UNIQUE constraint).
+minute. The `as_of` is second-resolution and cron fires land on `:00`, so a
+distinct minute means a distinct `as_of` — no two scheduled runs ever share
+one (the condition that previously crashed one of two coinciding distillation
+passes on the `distillation_ticker_baseline` UNIQUE constraint).
 
 | Run type               | Cron (US/Eastern)          | Fires (ET)                                | Notes                                        |
 |------------------------|----------------------------|-------------------------------------------|----------------------------------------------|

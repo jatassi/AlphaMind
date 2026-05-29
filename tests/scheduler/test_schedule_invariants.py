@@ -2,9 +2,11 @@
 
 Encodes "ALP-745 cannot recur" as a durable guard: the deliberative
 pipeline's cron triggers must never fire two distinct runs in the same
-minute. Two coinciding fires share a minute-truncated ``as_of`` and collide
-on ``distillation_ticker_baseline``'s ``UNIQUE(ticker, baseline_kind,
-as_of)``, hard-crashing one invocation in distillation.
+minute. The ``as_of`` is second-resolution (``%Y-%m-%dT%H:%M:%SZ``) derived
+from the fire time, and cron fires always land on the ``:00`` second — so two
+triggers in the same minute produce an identical ``as_of`` and collide on
+``distillation_ticker_baseline``'s ``UNIQUE(ticker, baseline_kind, as_of)``,
+hard-crashing one invocation in distillation.
 
 The original prod failure was the 15:30-ET pair: ``market_hours_rolling``
 (``30 9,11,13,15``) included hour 15, and ``pre_close`` (``30 15``) anchored
@@ -85,8 +87,9 @@ def _same_minute_collisions(
 ) -> list[tuple[str, str, datetime]]:
     """Return ``(key_a, key_b, minute)`` for every pair sharing a minute.
 
-    Truncation to the minute mirrors the ``as_of`` derivation that produced
-    the prod ``UNIQUE`` collision (the fire time is minute-truncated).
+    Grouping by minute mirrors the collision condition: cron fires land on
+    the ``:00`` second, so two fires in the same minute share the identical
+    second-resolution ``as_of`` that produced the prod ``UNIQUE`` collision.
     """
     by_minute: dict[datetime, list[str]] = {}
     for fire, key in fires:

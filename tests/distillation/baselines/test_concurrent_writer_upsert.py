@@ -8,23 +8,34 @@ with a scheduled one — folds into the existing row instead of crashing the
 loser on the ``UNIQUE(ticker, baseline_kind, as_of)`` / ``UNIQUE(lead, lag,
 as_of)`` constraint (the prod ``sqlite3.IntegrityError``).
 
-Each writer gets two checks: a high-level "second full refresh pass on the
-same ``as_of`` does not raise and leaves exactly one row" test, and a
-helper-level test that pre-seeds a committed row (the race winner) and proves
-the writer overwrites it in place rather than attempting a second INSERT.
+Two complementary kinds of check per writer:
+
+1. **Behavior pins** — a "second full refresh pass on the same ``as_of`` does
+   not raise and leaves exactly one row" test, and a helper-level test that
+   pre-seeds a committed row (the race winner) and confirms the writer folds
+   into it (one row, payload overwritten). These pin the *required behavior*
+   but, because they exercise sequential writes against an already-committed
+   row, the old check-then-insert code would satisfy them too (it took its
+   ``UPDATE`` branch) — so they do not by themselves detect a revert.
+2. **Structural guard** (:class:`TestWriterEmitsAtomicUpsert`) — captures the
+   SQL each writer emits and asserts it is a single ``INSERT … ON CONFLICT …
+   DO UPDATE`` with no preceding existence ``SELECT`` on the target table.
+   *This* is the regression guard: reverting to check-then-insert (which
+   reintroduces the ALP-745 race) emits a ``SELECT`` then a plain ``INSERT``
+   and trips it.
 
 Wall-clock concurrency between two OS processes is non-deterministic and not
-reproducible in-process; these tests assert the required *behavior* (no
-``IntegrityError``, second pass no-ops to a single consistent row), which is
-exactly what the atomic upsert guarantees regardless of interleaving.
+reproducible in-process, so the race itself is guarded structurally (the
+atomic upsert is correct regardless of interleaving) rather than by timing.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -303,8 +314,9 @@ class TestPairLagConcurrentWriter:
         """Update path overwrites the estimate but leaves ``last_overdue_flag``.
 
         The old read-modify-write never reassigned ``last_overdue_flag`` on
-        update, so the upsert's ``DO UPDATE`` set must omit it too — the
-        flag is owned by a separate overdue-detection write path.
+        update (it is set to ``0`` only on insert; the overdue signal itself
+        is derived at read time, not written back here), so the upsert's
+        ``DO UPDATE`` set must omit it too to stay faithful.
         """
         _add_ticker(session, "SMH")
         _add_ticker(session, "QQQ")
@@ -394,3 +406,94 @@ class TestUniqueConstraintIsReal:
         with pytest.raises(IntegrityError):
             session.commit()
         session.rollback()
+
+
+# ---------------------------------------------------------------------------
+# Structural guard — the writers must emit an atomic ON CONFLICT upsert.
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _capture_sql(engine: Engine) -> Iterator[list[str]]:
+    """Collect the lowercased SQL text of every statement run on *engine*."""
+    statements: list[str] = []
+
+    def _on_execute(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        statements.append(statement.lower())
+
+    event.listen(engine, "before_cursor_execute", _on_execute)
+    try:
+        yield statements
+    finally:
+        event.remove(engine, "before_cursor_execute", _on_execute)
+
+
+class TestWriterEmitsAtomicUpsert:
+    """The writers must emit a single ``INSERT … ON CONFLICT DO UPDATE``.
+
+    This is the real regression guard for ALP-745. The behavior-pin tests
+    above pass even against the old check-then-insert code (they exercise
+    sequential writes that the old ``UPDATE`` branch handled), so they cannot
+    catch a revert. Asserting the *shape* of the emitted SQL can: a return to
+    check-then-insert emits a ``SELECT`` followed by a plain ``INSERT`` (no
+    ``ON CONFLICT``) and trips these tests.
+    """
+
+    def test_ticker_baseline_writer_emits_on_conflict_upsert(
+        self, engine: Engine, session: Session
+    ) -> None:
+        _add_ticker(session, "AAPL")
+        session.commit()
+        with _capture_sql(engine) as sql:
+            _upsert_ticker_baseline(
+                session,
+                _TickerBaselineRow(
+                    ticker="AAPL",
+                    kind="volume",
+                    as_of=AS_OF,
+                    mean=42.0,
+                    stdev=3.0,
+                    n_observations=20,
+                    window_days=VOLUME_WINDOW_DAYS,
+                    state=CalibrationState.CALIBRATED,
+                ),
+            )
+            session.commit()
+        assert any(
+            "insert into distillation_ticker_baseline" in s and "on conflict" in s for s in sql
+        ), sql
+        # No read-modify-write: the writer must not pre-read the target row.
+        assert not any(
+            s.lstrip().startswith("select") and "distillation_ticker_baseline" in s for s in sql
+        ), sql
+
+    def test_pair_lag_writer_emits_on_conflict_upsert(
+        self, engine: Engine, session: Session
+    ) -> None:
+        _add_ticker(session, "SMH")
+        _add_ticker(session, "QQQ")
+        session.commit()
+        with _capture_sql(engine) as sql:
+            _upsert_pair_lag(
+                session,
+                lead="SMH",
+                lag="QQQ",
+                as_of=AS_OF,
+                estimate=1.0,
+                n_events=10,
+                state=CalibrationState.CALIBRATED,
+            )
+            session.commit()
+        assert any("insert into distillation_pair_lag" in s and "on conflict" in s for s in sql), (
+            sql
+        )
+        assert not any(
+            s.lstrip().startswith("select") and "distillation_pair_lag" in s for s in sql
+        ), sql
