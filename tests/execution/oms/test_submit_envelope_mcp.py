@@ -337,19 +337,25 @@ def _position_eval_all_pass() -> PositionActionEvaluation:
 
 
 def _open_command(
-    underlying: str = "NVDA", *, dollar_value: float = 1_000.0, quantity: float = 1.0
+    underlying: str = "NVDA",
+    *,
+    dollar_value: float = 1_000.0,
+    quantity: float = 1.0,
+    entry_order: EntryOrder | None = None,
 ) -> OpenCommand:
     """Build a canonical full-shape OPEN command.
 
     Default sizing is small enough (1% of $100k portfolio at the fixture's
     limits) that the projected exposure stays under every per-rule headroom;
     callers exercising larger sizing pass ``dollar_value`` / ``quantity``
-    explicitly.
+    explicitly. ``entry_order`` defaults to a market entry; pass a limit entry
+    to exercise the capital-reservation path (a market entry reserves nothing —
+    ALP-741).
     """
     return OpenCommand(
         command_type="open",
         instrument=EquityInstrument(asset_type="equity", ticker=underlying, direction="long"),
-        entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+        entry_order=entry_order or EntryOrder(type="market", limit_price=None, stop_price=None),
         position_size=PositionSize(quantity=quantity, dollar_value=money(dollar_value)),
         target=Target(
             target_type="absolute_price",
@@ -1707,7 +1713,15 @@ async def test_handle_submit_envelope_persists_accepted_envelope_via_phase2(
         ctx = InvocationContext(session_factory=factory, record=inv_record)
         handle = await ctx.__aenter__()
 
-        envelope = _make_analyst_envelope()
+        # A non-marketable LIMIT entry reserves capital ($1000 * 1 = $1000);
+        # a market entry would reserve nothing under the notional basis (ALP-741).
+        envelope = _make_analyst_envelope(
+            commands=(
+                _open_command(
+                    entry_order=EntryOrder(type="limit", limit_price=price(1000.0), stop_price=None)
+                ),
+            )
+        )
         validation_state = _make_validation_state()
         state = build_initial_submit_envelope_state(
             invocation_id=validation_state.invocation_id,

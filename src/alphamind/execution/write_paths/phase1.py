@@ -1596,10 +1596,16 @@ async def _apply_cash_movement(
     ``OptionsInstrumentSpec`` (typically 100). Equity consideration is
     ``fill_price * fill_quantity`` directly.
 
-    Buy-side fills additionally drain the per-order capital reservation
-    Phase 2 staked when the order was submitted; the decrement caps at
-    zero (defensive — partial fills, rounding, or mid-flight adjustments
-    can leave the seeded reservation smaller than the fill consideration).
+    Buy-side fills additionally release the capital Phase 2 reserved for this
+    entry order — by the order's *reserved notional* attributable to the filled
+    quantity (``_fill_reservation_release_usd``), NOT the fill consideration.
+    Reserve and release share the ``reservation_price * quantity`` basis (ALP-741)
+    so cumulative releases over partial fills sum to exactly what was reserved
+    and ``reserved_capital_usd`` returns to its pre-reservation level once the
+    entry is fully filled — the limit-vs-fill price gap never strands in the
+    reservation pool. The decrement still floors at zero (defensive — rounding
+    or mid-flight reprice could leave the running reservation just under the
+    release).
 
     Returns the *signed cash delta* — positive for credits (sell-side
     proceeds), negative for debits (buy-side consideration). Decimal-typed
@@ -1624,9 +1630,8 @@ async def _apply_cash_movement(
     cash_row = await _read_cash_row_or_raise(handle)
     cash_row.current_cash_usd = cash_row.current_cash_usd + delta
     if is_buy:
-        cash_row.reserved_capital_usd = max(
-            cash_row.reserved_capital_usd - (consideration + fees), Decimal(0)
-        )
+        release = _fill_reservation_release_usd(order, fill)
+        cash_row.reserved_capital_usd = max(cash_row.reserved_capital_usd - release, Decimal(0))
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
     return delta
 
@@ -1643,6 +1648,26 @@ def _fill_consideration_usd(order: OrderRecord, fill: FillRecord) -> Decimal:
     if isinstance(spec, OptionsInstrumentSpec):
         return base * Decimal(str(spec.contract_multiplier))
     return base
+
+
+def _fill_reservation_release_usd(order: OrderRecord, fill: FillRecord) -> Decimal:
+    """Reserved capital released by a buy-side fill (ALP-741).
+
+    The order's reservation price (``limit_price`` preferred, ``stop_trigger_price``
+    fallback) times *this fill's* quantity — the same ``reservation_price *
+    quantity`` basis Phase 2 reserves at OPEN / ADD
+    (``_shared._order_reserved_notional``) and adjusts on reprice, scoped to the
+    filled quantity so partial-fill releases sum to the order's full reservation.
+    A market entry carries no price → ``Decimal(0)`` (it reserved nothing). NOT
+    multiplier-scaled for options: the reservation basis is per-contract price,
+    so the release must match it (the *consideration* keeps the multiplier — that
+    is the real cash that moves, a separate ledger field).
+    """
+    pp = order.price_parameters
+    px = pp.limit_price if pp.limit_price is not None else pp.stop_trigger_price
+    if px is None:
+        return Decimal(0)
+    return Decimal(str(px)) * Decimal(str(fill.fill_quantity))
 
 
 async def _stamp_drawdown_state(handle: InvocationHandle) -> None:
@@ -1677,8 +1702,18 @@ async def _read_cash_row_or_raise(handle: InvocationHandle) -> CashLedgerRow:
 async def _emit_capital_release(
     handle: InvocationHandle, order: OrderRecord, fill: FillRecord
 ) -> None:
-    """Buy-side fills release the per-order capital reservation made by Phase 2."""
-    amount = _fill_consideration_usd(order, fill)
+    """Buy-side fills release the capital reservation Phase 2 staked.
+
+    The emitted amount is the order's reserved notional for the filled quantity
+    (``_fill_reservation_release_usd``) — the same basis
+    :func:`_apply_cash_movement` drains the reservation pool by, so the activity
+    log and the ledger agree (ALP-741). A market entry reserved nothing, so a
+    market-entry fill releases nothing and emits no entry (symmetric with OPEN /
+    ADD, which emit no ``capital_reserved`` for a market entry).
+    """
+    amount = _fill_reservation_release_usd(order, fill)
+    if amount == 0:
+        return
     _emit(
         handle,
         event_type=EventType.CAPITAL_RELEASED,

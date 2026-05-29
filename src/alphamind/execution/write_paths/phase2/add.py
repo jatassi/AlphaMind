@@ -24,6 +24,7 @@ from alphamind.execution.write_paths.phase2._shared import (
     _emit_order_submitted,
     _id_suffix,
     _instrument_spec_for_position,
+    _order_reserved_notional,
     _protective_roles_for_change_fields,
     _reserve_capital,
 )
@@ -131,15 +132,24 @@ async def _writeback_add(
             ),
         )
 
-    await _reserve_capital(handle, amount_usd=command.additional_dollar_value)
-    _emit_capital_reserved(
-        handle,
-        order_id=add_order_id,
-        position_id=command.position_id,
-        thesis_id=position.thesis_id,
-        amount_usd=command.additional_dollar_value,
-        timestamp=timestamp,
-    )
+    # Reserve the add-entry order's notional (``limit_price * quantity``), NOT
+    # the PM-command ``additional_dollar_value`` (ALP-741) — symmetric with OPEN
+    # and with the reprice / cancel / fill release paths, so an add entry that is
+    # repriced or cancelled releases exactly what it reserved and never drives
+    # ``reserved_capital_usd`` negative. A market add carries no price →
+    # ``money(0)`` (marketable: reserves nothing; consideration flows through
+    # Phase 1 on fill).
+    reserved_amount = _order_reserved_notional(add_order)
+    if reserved_amount > 0:
+        await _reserve_capital(handle, amount_usd=reserved_amount)
+        _emit_capital_reserved(
+            handle,
+            order_id=add_order_id,
+            position_id=command.position_id,
+            thesis_id=position.thesis_id,
+            amount_usd=reserved_amount,
+            timestamp=timestamp,
+        )
 
     if command.bracket_adjustment is not None:
         await _apply_bracket_adjustment(
