@@ -91,6 +91,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
+    EventTrigger,
     PLAnchorSpec,
     PriceTrigger,
     TimeTrigger,
@@ -133,6 +134,9 @@ from alphamind.state.tables.brackets_codec import (
 )
 from alphamind.state.tables.brackets_codec import (
     row_to_leg,
+)
+from alphamind.state.tables.brackets_codec import (
+    rows_to_record as bracket_rows_to_record,
 )
 from alphamind.state.tables.cash_ledger import (
     CASH_LEDGER_SINGLETON_ID,
@@ -688,6 +692,48 @@ def _active_bracket(
         status=BracketStatus.ACTIVE,
         entry_order_id=OrderId("ord-entry-1"),
         protective_legs=(leg,),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
+        entry_window_deadline=None,
+    )
+
+
+def _pending_entry_bracket_with_event_leg(
+    bracket_id: str = "BRK-NVDA-1",
+    position_id: str = "POS-NVDA-001",
+) -> BracketRecord:
+    """A never-filled PENDING_ENTRY bracket: a mechanical PRICE_STOP leg (with
+    a protective order) plus an order-less EVENT_INVALIDATION advisory leg.
+
+    The ALP-731 incident shape: an entry that never fills, dissolved by a PM
+    CANCEL. The order-less event leg is the one an orders-only cancel sweep can
+    never reach — it has no broker order. All legs are PENDING_ACTIVATION,
+    as the PENDING_ENTRY read invariant requires.
+    """
+    price_stop = BracketLeg(
+        leg_id=f"{bracket_id}-leg-stop",
+        leg_type=BracketLegType.PRICE_STOP,
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=140.0, direction="LTE"
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.PENDING_ACTIVATION,
+    )
+    event_leg = BracketLeg(
+        leg_id=f"{bracket_id}-leg-event",
+        leg_type=BracketLegType.EVENT_INVALIDATION,
+        order_id=None,
+        trigger=EventTrigger(description="Guidance withdrawn", condition_evaluator_id=None),
+        enforcement=BracketLegEnforcement.ADVISORY,
+        status=BracketLegStatus.PENDING_ACTIVATION,
+    )
+    return BracketRecord(
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
+        status=BracketStatus.PENDING_ENTRY,
+        entry_order_id=OrderId("ord-entry-1"),
+        protective_legs=(price_stop, event_leg),
         modification_history=(),
         corporate_action_cancellation_reason=None,
         entry_window_deadline=None,
@@ -2498,6 +2544,165 @@ async def test_cancel_command_on_entry_dissolves_bracket_and_resolves_thesis(
     assert EventType.THESIS_RESOLVED.value in types
     assert EventType.BRACKET_DISSOLVED.value in types
     assert EventType.PM_DECISION.value in types
+
+
+async def test_cancel_entry_dissolve_cancels_all_legs_and_reloads(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-731 regression: CANCELling a never-filled entry must leave every
+    ``bracket_legs`` row CANCELLED — including the order-less EVENT_INVALIDATION
+    advisory leg the order-cancel sweep can never reach — so the DISSOLVED
+    bracket reloads through the read codec (the path
+    ``get_brackets_for_positions`` uses) without raising. Before the fix the
+    leg rows stayed PENDING_ACTIVATION and every state load raised
+    ``ValueError: DISSOLVED bracket requires all legs to have status CANCELLED``.
+    """
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+    from alphamind.portfolio_state.records.orders import (
+        EquityInstrumentSpec,
+        OrderClass,
+        OrderDirection,
+        OrderDuration,
+        OrderRecord,
+        OrderRole,
+        OrderStatus,
+        OrderType,
+        PriceParameters,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
+    entry_order_rec = OrderRecord(
+        order_id=OrderId("ord-entry-1"),
+        position_id=PositionId("POS-NVDA-001"),
+        bracket_id=BracketId("BRK-NVDA-1"),
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("NVDA")),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.LIMIT,
+        order_class=OrderClass.BRACKET,
+        price_parameters=PriceParameters(limit_price=price("100.0")),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId("alp-ord-entry-1"),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-ord-entry-1"),),
+        submission_timestamp=_NOW - timedelta(hours=1),
+        last_update_timestamp=_NOW - timedelta(hours=1),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=ThesisId("THE-NVDA-1"),
+        originating_pm_command_id=None,
+        age_hours=1.0,
+    )
+    # The PRICE_STOP leg's protective order — PENDING, so the order sweep
+    # cancels it. The EVENT_INVALIDATION leg has no order (order_id=None).
+    stop_order_rec = OrderRecord(
+        order_id=OrderId("BRK-NVDA-1-ord-stop"),
+        position_id=PositionId("POS-NVDA-001"),
+        bracket_id=BracketId("BRK-NVDA-1"),
+        role=OrderRole.PRICE_STOP,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("NVDA")),
+        direction=OrderDirection.SELL,
+        order_type=OrderType.STOP,
+        order_class=OrderClass.OTO,
+        price_parameters=PriceParameters(stop_trigger_price=price("140.0")),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId("alp-BRK-NVDA-1-ord-stop"),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-BRK-NVDA-1-ord-stop"),),
+        submission_timestamp=_NOW - timedelta(hours=1),
+        last_update_timestamp=_NOW - timedelta(hours=1),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=ThesisId("THE-NVDA-1"),
+        originating_pm_command_id=None,
+        age_hours=1.0,
+    )
+    await _seed_position_cluster(
+        factory,
+        _open_position(),
+        _active_thesis(),
+        _pending_entry_bracket_with_event_leg(),
+        entry_order_rec,
+        stop_order_rec,
+    )
+
+    envelope = _make_strategist_envelope(
+        commands=(_cancel_command(order_id=OrderId("ord-entry-1")),)
+    )
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        bracket = await sess.get(BracketRow, "BRK-NVDA-1")
+        assert bracket is not None
+        assert bracket.status == BracketStatus.DISSOLVED.value
+
+        leg_rows = tuple(
+            (
+                await sess.execute(
+                    select(BracketLegRow)
+                    .where(BracketLegRow.bracket_id == "BRK-NVDA-1")
+                    .order_by(BracketLegRow.leg_index.asc())
+                )
+            ).scalars()
+        )
+        # Both legs — the order-backed stop AND the order-less event leg —
+        # must be CANCELLED.
+        assert {row.leg_status for row in leg_rows} == {BracketLegStatus.CANCELLED.value}
+        event_legs = [r for r in leg_rows if r.leg_type == BracketLegType.EVENT_INVALIDATION.value]
+        assert len(event_legs) == 1
+        assert event_legs[0].order_id is None
+        assert event_legs[0].leg_status == BracketLegStatus.CANCELLED.value
+
+        # The DISSOLVED bracket round-trips through the read codec — the exact
+        # call ``get_brackets_for_positions`` makes — without raising.
+        reloaded = bracket_rows_to_record(bracket, leg_rows)
+        assert reloaded.status == BracketStatus.DISSOLVED
+        assert all(leg.status == BracketLegStatus.CANCELLED for leg in reloaded.protective_legs)
+
+
+async def test_assert_bracket_readable_rejects_dissolved_with_non_cancelled_leg(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-731 write-time guard: a DISSOLVED bracket whose legs are not all
+    CANCELLED is rejected before it can be relied upon. Seeds the exact
+    orders-vs-legs corruption (bracket flipped to DISSOLVED, leg left ACTIVE)
+    and asserts the guard raises the same invariant the read path enforces."""
+    from alphamind.execution.write_paths.phase2._shared import (
+        _assert_bracket_readable,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
+
+    # Corrupt: flip only the bracket to DISSOLVED, leaving its single leg
+    # ACTIVE — the asymmetry the orders-only cancel path used to commit.
+    async with factory() as sess:
+        bracket = await sess.get(BracketRow, "BRK-NVDA-1")
+        assert bracket is not None
+        bracket.status = BracketStatus.DISSOLVED.value
+        await sess.commit()
+
+    ctx, handle = await _open_handle(factory)
+    with pytest.raises(ValueError, match="DISSOLVED bracket requires all legs"):
+        await _assert_bracket_readable(handle, bracket_id="BRK-NVDA-1")
+    await ctx.__aexit__(None, None, None)
 
 
 async def test_add_command_writes_add_entry_order_thesis_component_capital_reservation(

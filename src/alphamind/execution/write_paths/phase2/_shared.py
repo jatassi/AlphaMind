@@ -49,6 +49,7 @@ from alphamind.portfolio_state.events.activity_log import (
 )
 from alphamind.portfolio_state.records.orders import (
     BracketLegModification,
+    BracketLegStatus,
     EquityInstrumentSpec,
     InstrumentSpec,
     OptionsInstrumentSpec,
@@ -79,7 +80,11 @@ from alphamind.state.invocation_context.activity_log import (
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
+from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.brackets import BracketRow
+from alphamind.state.tables.brackets_codec import (
+    rows_to_record as bracket_rows_to_record,
+)
 from alphamind.state.tables.cash_ledger import (
     CASH_LEDGER_SINGLETON_ID,
     CashLedgerRow,
@@ -468,6 +473,47 @@ async def _cancel_pending_protective_orders(
         row.last_update_timestamp = timestamp.isoformat()
         cancelled.append(order_row_to_record(row))
     return tuple(cancelled)
+
+
+async def _cancel_all_bracket_legs(handle: InvocationHandle, *, bracket_id: str) -> None:
+    """Transition every ``bracket_legs`` row for *bracket_id* to CANCELLED.
+
+    Symmetric with the phase1 dissolve path (``phase1._dissolve_bracket``):
+    once a bracket is DISSOLVED the read-time invariant
+    (``BracketRecord._check_dissolved_rule``) requires every leg row to be
+    CANCELLED. This iterates ``bracket_legs`` directly rather than deriving
+    from the cancelled protective *orders* — order-less EVENT_INVALIDATION /
+    advisory legs (``order_id=None``) have no broker order an order-sweep
+    could reach, so an orders-only cancel leaves them PENDING_ACTIVATION and
+    makes the DISSOLVED bracket unreadable. ALP-731.
+    """
+    stmt = select(BracketLegRow).where(BracketLegRow.bracket_id == bracket_id)
+    for leg_row in (await handle.session.execute(stmt)).scalars():
+        leg_row.leg_status = BracketLegStatus.CANCELLED.value
+
+
+async def _assert_bracket_readable(handle: InvocationHandle, *, bracket_id: str) -> None:
+    """Re-materialize the bracket through the read codec as a write-time guard.
+
+    Defense in depth (ALP-731): a DISSOLVED bracket whose legs are not all
+    CANCELLED is committable but unreadable — every
+    ``get_brackets_for_positions`` loader then raises and one corrupt row
+    becomes a system-wide kill switch. Rebuilding the record here runs the
+    same ``BracketRecord`` invariants the read path enforces
+    (``brackets_codec.rows_to_record`` → ``_check_dissolved_rule``), so a
+    state the reader forbids fails loudly at write time instead of committing
+    silently. A no-op when the bracket row is absent.
+    """
+    bracket_row = await handle.session.get(BracketRow, bracket_id)
+    if bracket_row is None:
+        return
+    leg_stmt = (
+        select(BracketLegRow)
+        .where(BracketLegRow.bracket_id == bracket_id)
+        .order_by(BracketLegRow.leg_index.asc())
+    )
+    leg_rows = tuple((await handle.session.execute(leg_stmt)).scalars())
+    bracket_rows_to_record(bracket_row, leg_rows)
 
 
 def _protective_roles_for_change_fields(
