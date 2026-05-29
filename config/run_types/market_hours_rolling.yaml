@@ -17,6 +17,19 @@ agents:
     adaptive_researcher:
       cumulative_tool_call_limit: 20
       cumulative_tool_token_budget: 3000
+      # 2026-05-29: base 900s (config/agents.yaml) tripped a zero-token
+      # TimeoutFailure on inv-20260529T133000Z-b706d98d — the SDK was actively
+      # streaming the whole 905s, not stalled. Tool phase finished healthy at
+      # 122s (18 calls, same as clean baselines); the overrun was pure
+      # extended-thinking final-brief synthesis driven by a high anomaly count
+      # (36 distillation + 9 sector → 14,081-char bundle vs ~10,900 on runs that
+      # passed). Clean market-hours runs already brush the ceiling (821.7s on
+      # 2026-05-28). Raised to 1200s for ~30% headroom on high-anomaly days;
+      # the subprocess parent-side kill auto-tracks this (+30s slack) and the
+      # worker teardown cap is already 1200s. Follow-ups (not in this change):
+      # pre_close + weekend_sunday share the same marginal base; a top-N cap on
+      # adaptive anomaly inputs would bound the synthesis workload at the source.
+      latency_budget_seconds: 1200
 
 qualitative_researcher:
   news_digest:
