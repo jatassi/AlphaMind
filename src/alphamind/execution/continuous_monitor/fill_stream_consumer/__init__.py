@@ -21,6 +21,8 @@ from alphamind.execution.continuous_monitor.fill_stream_consumer.task import (
 )
 from alphamind.execution.continuous_monitor.fill_stream_consumer.translation import (
     fill_report_to_fill_record,
+    order_id_for_report,
+    terminal_order_status_for,
 )
 
 __all__ = [
@@ -29,5 +31,7 @@ __all__ = [
     "TradingClientFactory",
     "TradingStreamFactory",
     "fill_report_to_fill_record",
+    "order_id_for_report",
     "run_fill_stream_consumer",
+    "terminal_order_status_for",
 ]

@@ -76,7 +76,7 @@ class TestBindRulesFromConfig:
             ),
         )
         rules = bind_rules_from_config(config)
-        assert len(rules) == 17
+        assert len(rules) == 18
 
     def test_duplicate_rule_names_raise(self) -> None:
         """Wave-6 finding #5 — two rows with the same name fail loud.
@@ -176,19 +176,20 @@ class TestResolveDiscordWebhook:
 
 
 class TestConfigAlertsYamlShape:
-    """Loads the live ``config/alerts.yaml`` to confirm shape + 17 rule names."""
+    """Loads the live ``config/alerts.yaml`` to confirm shape + rule names."""
 
-    def test_alerts_yaml_loads_with_17_rules(self) -> None:
+    def test_alerts_yaml_loads_with_18_rules(self) -> None:
         config = load_alerts_config(_CONFIG_DIR)
-        assert len(config.rules) == 17
+        assert len(config.rules) == 18
 
-    def test_alerts_yaml_binds_to_all_17_rules(self) -> None:
+    def test_alerts_yaml_binds_to_all_18_rules(self) -> None:
         config = load_alerts_config(_CONFIG_DIR)
         rules = bind_rules_from_config(config)
-        assert len(rules) == 17
+        assert len(rules) == 18
         names = {str(r.name) for r in rules}
         # Spot-check a few key rule names.
         assert "pipeline_aborted" in names
         assert "monitor_websocket_disconnected" in names
         assert "agent_malformed_output" in names
         assert "thesis_resolved" in names
+        assert "entry_no_fill" in names

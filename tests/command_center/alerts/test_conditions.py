@@ -1,11 +1,11 @@
-"""Tests for the 17 default condition predicates (story 05a / ALP-671).
+"""Tests for the 18 default condition predicates (story 05a / ALP-671; ALP-739).
 
 Each test covers one of the three predicate categories:
 
 * Event-driven (PipelineAborted, MonitorWebsocketDisconnected,
   AgentMalformedOutput).
 * State-polling (MarginCallDetected, HardBlockGuardrailRejection,
-  HaltModeEntered, CommandAbandoned, ThesisResolved,
+  HaltModeEntered, CommandAbandoned, ThesisResolved, EntryNoFill,
   DataDirectoryDiskPressure).
 * Dormant (CriticalApiFailure, ImportantApiFailure,
   ScheduleMissCritical, ScheduleMiss, RegimeJump,
@@ -42,6 +42,7 @@ from alphamind.command_center.alerts.conditions import (
     DataDirectoryDiskPressureCondition,
     DormantCondition,
     DrawdownTierCrossedCondition,
+    EntryNoFillCondition,
     HaltModeEnteredCondition,
     HardBlockGuardrailRejectionCondition,
     ImportantApiFailureCondition,
@@ -63,6 +64,7 @@ from alphamind.command_center.alerts.rules import (
 from alphamind.persistence.models import Base
 from alphamind.state.tables.activity_log import ActivityLogRow
 from alphamind.state.tables.invocations import InvocationRow
+from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
 
 _NOW = datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC)
@@ -156,6 +158,54 @@ async def _seed_activity(
                 position_id=position_id,
                 order_id=None,
                 thesis_id=thesis_id,
+            )
+        )
+        await session.commit()
+
+
+async def _seed_order(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    order_id: str,
+    order_role: str,
+    status: str,
+    last_update_timestamp: str,
+    filled_quantity: float = 0.0,
+    instrument_spec_json: str = '{"instrument_type": "EQUITY", "ticker": "SCHW"}',
+    price_parameters_json: str = '{"limit_price": "61.50", "stop_trigger_price": null}',
+    duration: str = "DAY",
+) -> None:
+    """Insert one ``orders`` row for EntryNoFill state-polling tests.
+
+    FK enforcement is off on the in-memory engine, so ``bracket_id`` /
+    ``position_id`` may reference rows that don't exist — only the columns
+    the predicate reads are meaningful.
+    """
+    async with factory() as session:
+        session.add(
+            OrderRow(
+                order_id=order_id,
+                position_id=None,
+                bracket_id="brk-test",
+                order_role=order_role,
+                order_class="BRACKET",
+                instrument_spec_json=instrument_spec_json,
+                direction="SELL",
+                order_type="LIMIT",
+                quantity=10.0,
+                price_parameters_json=price_parameters_json,
+                duration=duration,
+                status=status,
+                alpaca_order_id="alp-1",
+                alpaca_order_id_chain_json='["alp-1"]',
+                submission_timestamp="2026-05-26T09:30:00+00:00",
+                last_update_timestamp=last_update_timestamp,
+                filled_quantity=filled_quantity,
+                average_fill_price=None,
+                remaining_quantity=10.0 - filled_quantity,
+                modification_count=0,
+                metadata_json='{"originating_thesis_id": null, '
+                '"originating_pm_command_id": null, "age_hours": 0.0}',
             )
         )
         await session.commit()
@@ -428,6 +478,148 @@ class TestThesisResolvedCondition:
         assert result.fired is True
 
 
+class TestEntryNoFillCondition:
+    @pytest.mark.asyncio
+    async def test_fires_on_expired_entry_zero_fill(
+        self,
+        state_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await _seed_order(
+            state_factory,
+            order_id="ord-expired",
+            order_role="ENTRY",
+            status="EXPIRED",
+            last_update_timestamp="2026-05-26T11:58:00+00:00",
+        )
+        cond = EntryNoFillCondition()
+        state = AlertEvaluatorState(now=_NOW, foreign_reader_factory=state_factory)
+        result = await cond.evaluate(event=None, state=state)
+        assert result.fired is True
+        assert result.debounce_key == "ord-expired"
+        assert result.context["ticker"] == "SCHW"
+        assert result.context["limit_price"] == "61.50"
+        assert result.context["time_in_force"] == "DAY"
+        assert result.context["reason"] == "expired"
+        assert result.context["status"] == "EXPIRED"
+
+    @pytest.mark.asyncio
+    async def test_fires_on_cancelled_entry_zero_fill(
+        self,
+        state_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await _seed_order(
+            state_factory,
+            order_id="ord-cancelled",
+            order_role="ENTRY",
+            status="CANCELLED",
+            last_update_timestamp="2026-05-26T11:58:00+00:00",
+        )
+        cond = EntryNoFillCondition()
+        state = AlertEvaluatorState(now=_NOW, foreign_reader_factory=state_factory)
+        result = await cond.evaluate(event=None, state=state)
+        assert result.fired is True
+        assert result.context["reason"] == "cancelled-superseded"
+
+    @pytest.mark.asyncio
+    async def test_options_entry_reports_underlying_as_ticker(
+        self,
+        state_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await _seed_order(
+            state_factory,
+            order_id="ord-opt",
+            order_role="ENTRY",
+            status="EXPIRED",
+            last_update_timestamp="2026-05-26T11:58:00+00:00",
+            instrument_spec_json=(
+                '{"instrument_type": "OPTIONS", "underlying": "AAPL", "strike": 150.0, '
+                '"expiration": "2026-06-19", "contract_type": "CALL", '
+                '"contract_multiplier": 100}'
+            ),
+        )
+        cond = EntryNoFillCondition()
+        state = AlertEvaluatorState(now=_NOW, foreign_reader_factory=state_factory)
+        result = await cond.evaluate(event=None, state=state)
+        assert result.fired is True
+        assert result.context["ticker"] == "AAPL"
+
+    @pytest.mark.asyncio
+    async def test_does_not_fire_when_partially_filled(
+        self,
+        state_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await _seed_order(
+            state_factory,
+            order_id="ord-partial",
+            order_role="ENTRY",
+            status="CANCELLED",
+            last_update_timestamp="2026-05-26T11:58:00+00:00",
+            filled_quantity=5.0,
+        )
+        cond = EntryNoFillCondition()
+        state = AlertEvaluatorState(now=_NOW, foreign_reader_factory=state_factory)
+        result = await cond.evaluate(event=None, state=state)
+        assert result.fired is False
+
+    @pytest.mark.asyncio
+    async def test_does_not_fire_for_non_entry_role(
+        self,
+        state_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await _seed_order(
+            state_factory,
+            order_id="ord-tp",
+            order_role="TAKE_PROFIT",
+            status="EXPIRED",
+            last_update_timestamp="2026-05-26T11:58:00+00:00",
+        )
+        cond = EntryNoFillCondition()
+        state = AlertEvaluatorState(now=_NOW, foreign_reader_factory=state_factory)
+        result = await cond.evaluate(event=None, state=state)
+        assert result.fired is False
+
+    @pytest.mark.asyncio
+    async def test_does_not_fire_for_pending_entry(
+        self,
+        state_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await _seed_order(
+            state_factory,
+            order_id="ord-pending",
+            order_role="ENTRY",
+            status="PENDING",
+            last_update_timestamp="2026-05-26T11:58:00+00:00",
+        )
+        cond = EntryNoFillCondition()
+        state = AlertEvaluatorState(now=_NOW, foreign_reader_factory=state_factory)
+        result = await cond.evaluate(event=None, state=state)
+        assert result.fired is False
+
+    @pytest.mark.asyncio
+    async def test_does_not_fire_outside_window(
+        self,
+        state_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await _seed_order(
+            state_factory,
+            order_id="ord-stale",
+            order_role="ENTRY",
+            status="EXPIRED",
+            last_update_timestamp="2026-05-26T08:00:00+00:00",  # 4h ago
+        )
+        cond = EntryNoFillCondition()
+        state = AlertEvaluatorState(now=_NOW, foreign_reader_factory=state_factory)
+        result = await cond.evaluate(event=None, state=state)
+        assert result.fired is False
+
+    @pytest.mark.asyncio
+    async def test_does_not_fire_without_factory(self) -> None:
+        cond = EntryNoFillCondition()
+        state = AlertEvaluatorState(now=_NOW)
+        result = await cond.evaluate(event=None, state=state)
+        assert result.fired is False
+
+
 @pytest.fixture(autouse=True)
 def _reset_directory_size_cache() -> None:
     """Drop the module-level size cache before each test runs.
@@ -584,14 +776,14 @@ def test_dormant_log_startup_warning_emits_one_line(
 
 
 class TestBuildDefaultRules:
-    def test_returns_exactly_17_rules(self) -> None:
+    def test_returns_exactly_18_rules(self) -> None:
         rules = build_default_rules()
-        assert len(rules) == 17
+        assert len(rules) == 18
 
     def test_rule_names_are_unique(self) -> None:
         rules = build_default_rules()
         names = [str(r.name) for r in rules]
-        assert len(set(names)) == 17
+        assert len(set(names)) == 18
 
     def test_critical_rules_route_to_in_app_and_discord(self) -> None:
         rules = build_default_rules()

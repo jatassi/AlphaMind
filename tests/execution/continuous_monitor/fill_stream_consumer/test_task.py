@@ -54,6 +54,7 @@ from alphamind.persistence.session import (
     make_session_factory,
 )
 from alphamind.state.tables.fill_records import FillRecordRow
+from alphamind.state.tables.orders import OrderRow
 from tests.state._fk_substrate import seed_position_cluster
 
 # ---------------------------------------------------------------------------
@@ -772,3 +773,86 @@ async def _seed_prior_fill(
     async with session_factory() as db:
         db.add(record_to_row(record))
         await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Terminal non-fill status sync (ALP-739)
+# ---------------------------------------------------------------------------
+
+
+async def _set_order_status(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    order_id: str,
+    status: str,
+) -> None:
+    async with session_factory() as session:
+        row = await session.get(OrderRow, order_id)
+        assert row is not None
+        row.status = status
+        await session.commit()
+
+
+async def _wait_for_order_status(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    order_id: str,
+    expected: str,
+    timeout_seconds: float = 5.0,
+) -> str | None:
+    deadline = asyncio.get_event_loop().time() + timeout_seconds
+    status: str | None = None
+    while asyncio.get_event_loop().time() < deadline:
+        async with session_factory() as session:
+            row = await session.get(OrderRow, order_id)
+            status = None if row is None else row.status
+        if status == expected:
+            return status
+        await asyncio.sleep(0.01)
+    return status
+
+
+class TestTerminalStatusSync:
+    """ALP-739 — a broker terminal non-fill event reaches ``orders.status``."""
+
+    async def test_expired_event_syncs_order_status(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        # The seeded entry is FILLED by default; reset to PENDING so the
+        # terminal-status sync has a non-terminal source to transition.
+        await _set_order_status(session_factory, order_id="order-1", status="PENDING")
+
+        stream = _FakeStream()
+        queries = _FakeAccountStateQueries()
+        task = asyncio.create_task(
+            run_fill_stream_consumer(
+                _session(),
+                _config(),
+                **_build_run_kwargs(session_factory, stream, queries),
+            )
+        )
+
+        await _wait_for_handler(stream)
+        await stream.inject(
+            _trade_update(
+                event="expired",
+                order=_build_order(
+                    client_order_id="order-1",
+                    qty="1",
+                    filled_qty="0",
+                    status=AlpacaOrderStatus.EXPIRED,
+                ),
+            )
+        )
+
+        status = await _wait_for_order_status(
+            session_factory, order_id="order-1", expected="EXPIRED"
+        )
+
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert status == "EXPIRED"
+        # A terminal non-fill event appends no fill_records row.
+        assert await _read_fill_records(session_factory) == []

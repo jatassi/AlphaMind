@@ -6,8 +6,8 @@ Subpackage layout:
   :class:`AlertRule`, :class:`AlertCondition` Protocol,
   :class:`AlertSeverity` re-export, :class:`AlertConditionResult`,
   :class:`AlertEvaluatorState`.
-* :mod:`alphamind.command_center.alerts.conditions` — 17 default
-  condition predicates per the design doc's table, plus the
+* :mod:`alphamind.command_center.alerts.conditions` — the default
+  condition predicates, plus the
   :func:`build_default_rules` factory the YAML loader binds to.
 * :mod:`alphamind.command_center.alerts.engine` — :class:`AlertEngine`
   long-running task: subscribes to the multiplexer + runs the 60s

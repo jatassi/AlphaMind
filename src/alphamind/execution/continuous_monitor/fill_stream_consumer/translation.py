@@ -41,6 +41,19 @@ _FILL_EVENT_TO_ORDER_STATUS: Final[dict[str, OrderStatus]] = {
     "stopped": OrderStatus.FILLED,
 }
 
+# Map FillReport.event_type → terminal non-fill OrderStatus. These events
+# append no ``fill_records`` row (``fill_report_to_fill_record`` returns
+# ``None``), but the order they reference has reached a terminal state and
+# the local ``orders`` row must reflect it — otherwise an accepted entry that
+# expires/cancels unfilled stays ``PENDING`` in local state (the ZS row in
+# ALP-739) and the no-fill alert never fires. ``rejected`` is deliberately
+# absent: a rejected order was never accepted by the broker, a distinct
+# failure mode outside this no-fill path's scope.
+_TERMINAL_NON_FILL_EVENT_TO_STATUS: Final[dict[str, OrderStatus]] = {
+    "canceled": OrderStatus.CANCELLED,
+    "expired": OrderStatus.EXPIRED,
+}
+
 
 def fill_report_to_fill_record(report: FillReport) -> FillRecord | None:
     """Translate one :class:`FillReport` into a :class:`FillRecord`.
@@ -113,6 +126,30 @@ def fill_report_to_fill_record(report: FillReport) -> FillRecord | None:
         regt_attribution=None,
         live_execution_estimate=None,
     )
+
+
+def terminal_order_status_for(report: FillReport) -> OrderStatus | None:
+    """Target ``orders.status`` for a terminal non-fill event, else ``None``.
+
+    Returns :attr:`OrderStatus.CANCELLED` for ``canceled`` events and
+    :attr:`OrderStatus.EXPIRED` for ``expired`` events; ``None`` for every
+    other event type. Fill-bearing events are handled by
+    :func:`fill_report_to_fill_record`; ``new`` / ``replaced`` /
+    ``replace_rejected`` / ``rejected`` / ``done_for_day`` carry no
+    terminal-unfilled disposition this path acts on.
+    """
+    return _TERMINAL_NON_FILL_EVENT_TO_STATUS.get(report.event_type)
+
+
+def order_id_for_report(report: FillReport) -> str:
+    """The OMS ``orders.order_id`` a report's disposition applies to.
+
+    Mleg per-leg children reference the parent strategy order id (legs do
+    not own ``orders`` rows); equity / single-leg events use their own
+    ``client_order_id``. Mirrors the order-id resolution in
+    :func:`fill_report_to_fill_record`.
+    """
+    return report.parent_client_order_id or report.client_order_id
 
 
 def _is_mleg_parent(report: FillReport) -> bool:
