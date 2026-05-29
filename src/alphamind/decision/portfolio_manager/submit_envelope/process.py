@@ -146,14 +146,26 @@ def _unwrap_envelope_args(args: dict[str, Any]) -> dict[str, Any]:
     return inner
 
 
-# Analyst-only sizing leaves the command ``PositionSize`` (extra="forbid") has
-# no field for — ``delta_adjusted_exposure`` is guardrail-populated context and
-# ``pct_of_portfolio`` is analyst sizing rationale; the command carries only
-# ``quantity`` / ``dollar_value`` / ``premium_at_risk``.
-_ANALYST_ONLY_POSITION_SIZE_KEYS: tuple[str, ...] = (
-    "delta_adjusted_exposure",
-    "pct_of_portfolio",
-)
+# Analyst-only leaf keys on a flat command sub-record that the ``extra="forbid"``
+# OMS command sub-model has no field for. Audited against the FULL analyst
+# ``Recommendation`` → ``OpenCommand`` delta (``analyst/models.py`` vs
+# ``command_models.py``), not just the fields seen in production, so a verbatim
+# copy of any analyst sub-block ``pm.md`` tells the PM to copy is accepted:
+#
+# * ``position_size`` — ``delta_adjusted_exposure`` (guardrail-populated context)
+#   and ``pct_of_portfolio`` (analyst sizing rationale); the command
+#   ``PositionSize`` is only ``quantity`` / ``dollar_value`` / ``premium_at_risk``.
+# * ``target`` — ``dollar_pl_target`` (a required analyst ``Target`` field with no
+#   command ``Target`` slot). The command additionally *requires* ``order_type``,
+#   which the analyst lacks; that one the PM must author (a strip can't supply a
+#   missing field), so it is correctly out of scope here.
+#
+# ``entry_order`` and ``instrument`` carry no analyst-only fields — their analyst
+# and command shapes match field-for-field — so they need no entry here.
+_ANALYST_ONLY_KEYS_BY_SUBRECORD: Mapping[str, tuple[str, ...]] = {
+    "position_size": ("delta_adjusted_exposure", "pct_of_portfolio"),
+    "target": ("dollar_pl_target",),
+}
 
 
 def _strip_analyst_only_command_fields(
@@ -174,14 +186,17 @@ def _strip_analyst_only_command_fields(
 
     Stripped (analyst-only, forbidden on the command):
 
-    * ``commands[].position_size.delta_adjusted_exposure`` /
-      ``pct_of_portfolio`` — see :data:`_ANALYST_ONLY_POSITION_SIZE_KEYS`.
+    * Flat sub-record keys per :data:`_ANALYST_ONLY_KEYS_BY_SUBRECORD` —
+      ``position_size.{delta_adjusted_exposure, pct_of_portfolio}`` and
+      ``target.dollar_pl_target``.
     * ``commands[].invalidation_legs[].leg_id`` — the analyst's
       ``^INV-[0-9]+$`` cross-reference id; the command legs are positional.
     * ``commands[].invalidation_legs[].order_parameters`` **only on
       ``type=event`` legs** — a soft event leg has no order block on the
-      command ``EventLeg`` (price/time legs legitimately keep their identical
-      ``order_parameters``).
+      command ``EventLeg``. The analyst dumps ``order_parameters: null`` on
+      event legs (the field defaults to ``None`` but still serializes), so a
+      verbatim copy carries the forbidden key; price/time legs legitimately
+      keep their identical ``order_parameters``.
 
     NOT stripped: ``entry_window``. ALP-737 added ``EntryWindow`` to
     ``OpenCommand`` field-for-field, so the PM copies the block through verbatim
@@ -190,11 +205,24 @@ def _strip_analyst_only_command_fields(
     ALP-737 fixed. (Strip-vs-thread decision resolved as *thread*, jointly with
     ALP-735 / ALP-737.)
 
-    Returns ``(normalized_args, stripped_paths)`` — *normalized_args* is a deep
-    copy (the caller's ``raw_args_for_log`` keeps the literal pre-strip input
-    for forensics), and *stripped_paths* names every removed key
+    **Why an enumerated strip list rather than a schema-driven
+    ``set(payload) - set(model.model_fields)`` diff:** the OMS command is a
+    nested discriminated union (instrument, per-leg price/time/event variants),
+    so a general diff would have to recursively resolve each discriminator and
+    risks stripping a key that is valid on a *sibling* variant. The enumerated
+    list is audited to be schema-complete for the analyst→command delta today,
+    and the residual-failure WARNING in :func:`_handle_submit_envelope` is the
+    backstop: if the analyst schema later grows a field this list misses, the
+    command fails *loudly* to ``collector.log`` rather than silently — so the
+    cost of drift is a logged parse failure, not a re-introduced silent drop.
+
+    Returns ``(normalized_args, stripped_paths)``. When at least one field is
+    stripped, *normalized_args* is a deep copy (the caller's
+    ``raw_args_for_log`` keeps the literal pre-strip input for forensics) and
+    *stripped_paths* names every removed key
     (e.g. ``commands[0].position_size.delta_adjusted_exposure``) so the caller
-    can log what it dropped. An ``args`` without a list-valued ``commands`` is
+    can log what it dropped. When nothing is stripped (a clean envelope, or a
+    payload without a list-valued ``commands``) the original *args* object is
     returned unchanged with an empty tuple.
     """
     commands = args.get("commands")
@@ -206,20 +234,30 @@ def _strip_analyst_only_command_fields(
     for index, command in enumerate(normalized["commands"]):
         if not isinstance(command, dict):
             continue
-        _strip_position_size_keys(command, index, stripped)
+        for subrecord, keys in _ANALYST_ONLY_KEYS_BY_SUBRECORD.items():
+            _strip_subrecord_keys(command, subrecord, keys, index, stripped)
         _strip_invalidation_leg_keys(command, index, stripped)
+    if not stripped:
+        return args, ()
     return normalized, tuple(stripped)
 
 
-def _strip_position_size_keys(command: dict[str, Any], index: int, stripped: list[str]) -> None:
-    """Pop analyst-only ``position_size`` keys from *command* in place."""
-    position_size = command.get("position_size")
-    if not isinstance(position_size, dict):
+def _strip_subrecord_keys(
+    command: dict[str, Any],
+    subrecord: str,
+    keys: tuple[str, ...],
+    index: int,
+    stripped: list[str],
+) -> None:
+    """Pop analyst-only *keys* from a flat command sub-record (``position_size``
+    / ``target``) in place, recording each removed path."""
+    sub = command.get(subrecord)
+    if not isinstance(sub, dict):
         return
-    for key in _ANALYST_ONLY_POSITION_SIZE_KEYS:
-        if key in position_size:
-            del position_size[key]
-            stripped.append(f"commands[{index}].position_size.{key}")
+    for key in keys:
+        if key in sub:
+            del sub[key]
+            stripped.append(f"commands[{index}].{subrecord}.{key}")
 
 
 def _strip_invalidation_leg_keys(command: dict[str, Any], index: int, stripped: list[str]) -> None:

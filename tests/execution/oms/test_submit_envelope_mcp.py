@@ -1374,12 +1374,14 @@ async def test_layer_0_unwrap_skipped_when_envelope_value_not_dict() -> None:
 
 def _inject_analyst_only_fields(raw: dict[str, Any]) -> dict[str, Any]:
     """Mutate a dumped analyst envelope's OPEN command to carry the analyst-only
-    leaf fields the PM copies verbatim from the analyst Recommendation — the
-    real MRVL ``inv-20260528T080000Z`` failure shape (``delta_adjusted_exposure``
-    + per-leg ``leg_id`` + an ``entry_window`` block)."""
+    fields the PM copies verbatim from the analyst Recommendation — the real MRVL
+    ``inv-20260528T080000Z`` failure shape (``delta_adjusted_exposure`` +
+    ``pct_of_portfolio`` + per-leg ``leg_id`` + an ``entry_window`` block) plus
+    the analyst ``Target.dollar_pl_target`` that has no command slot."""
     command = raw["commands"][0]
     command["position_size"]["delta_adjusted_exposure"] = 2000
     command["position_size"]["pct_of_portfolio"] = 1.0
+    command["target"]["dollar_pl_target"] = 500
     for leg_index, leg in enumerate(command["invalidation_legs"]):
         leg["leg_id"] = f"INV-{leg_index + 1}"
     command["entry_window"] = {

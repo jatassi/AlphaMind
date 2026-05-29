@@ -52,6 +52,7 @@ def _analyst_superset_open_command() -> dict[str, Any]:
         "target": {
             "target_type": "absolute_price",
             "price": 92,
+            "dollar_pl_target": 500,
             "pl_percentage": None,
             "pl_dollar": None,
             "order_type": "limit",
@@ -163,17 +164,35 @@ def test_stripped_paths_name_every_removed_key() -> None:
     assert set(stripped) == {
         "commands[0].position_size.delta_adjusted_exposure",
         "commands[0].position_size.pct_of_portfolio",
+        "commands[0].target.dollar_pl_target",
         "commands[0].invalidation_legs[0].leg_id",
         "commands[0].invalidation_legs[1].leg_id",
     }
 
 
+def test_target_dollar_pl_target_is_stripped() -> None:
+    """The analyst `Target` carries a required `dollar_pl_target` with no command
+    `Target` slot — a verbatim copy would reject the whole command, so the strip
+    drops it (the full analyst→command schema delta, not only the production
+    leaf fields)."""
+    args = {"commands": [_analyst_superset_open_command()]}
+
+    normalized, stripped = _strip_analyst_only_command_fields(args)
+
+    assert "commands[0].target.dollar_pl_target" in stripped
+    assert "dollar_pl_target" not in normalized["commands"][0]["target"]
+    # The price target the command DOES carry is preserved.
+    assert normalized["commands"][0]["target"]["price"] == 92
+    OpenCommand.model_validate(normalized["commands"][0])
+
+
 def test_clean_command_is_a_noop() -> None:
-    """A command already free of analyst-only fields is returned unchanged with
-    no reported strips."""
+    """A command already free of analyst-only fields is returned unchanged
+    (same object) with no reported strips."""
     clean = _analyst_superset_open_command()
     del clean["position_size"]["delta_adjusted_exposure"]
     del clean["position_size"]["pct_of_portfolio"]
+    del clean["target"]["dollar_pl_target"]
     for leg in clean["invalidation_legs"]:
         del leg["leg_id"]
     args = {"commands": [clean]}
@@ -181,7 +200,8 @@ def test_clean_command_is_a_noop() -> None:
     normalized, stripped = _strip_analyst_only_command_fields(args)
 
     assert stripped == ()
-    assert normalized["commands"][0] == clean
+    # No-op returns the original object unchanged, not a copy.
+    assert normalized is args
 
 
 def test_original_args_are_not_mutated() -> None:
