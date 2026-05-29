@@ -37,6 +37,13 @@ class PositionStatus(StrEnum):
     PENDING = "PENDING"
     OPEN = "OPEN"
     CLOSED = "CLOSED"
+    # Terminal state for a position whose entry order never filled and was then
+    # cancelled (bracket dissolved) — ALP-744. Distinct from CLOSED ("opened
+    # then exited"): a CANCELLED position never opened, so it carries no fills
+    # and no realized P&L. The cancel/dissolve write path
+    # (``execution/write_paths/phase2/cancel.py``) drives PENDING → CANCELLED so
+    # a never-filled position can't strand in PENDING forever.
+    CANCELLED = "CANCELLED"
 
 
 class LocateStatus(StrEnum):
@@ -325,6 +332,19 @@ class PositionRecord:
             raise ValueError(msg)
         if self.status == PositionStatus.CLOSED and self.realized_pnl_to_date_usd is None:
             msg = "realized_pnl_to_date_usd must be non-None when status is CLOSED"
+            raise ValueError(msg)
+        # CANCELLED is the never-opened terminal state (ALP-744): the entry never
+        # filled, so there can be no fills and no realized P&L. Unlike PENDING —
+        # which exempts strategy positions that accumulate per-leg fills while
+        # awaiting the atomic open — CANCELLED forbids any fill for every
+        # instrument type, so a partially-filled position can never be
+        # mislabelled "never opened". The realized-P&L clause mirrors CLOSED's
+        # (which requires it non-None): a never-opened position realized nothing.
+        if self.status == PositionStatus.CANCELLED and self.execution_history:
+            msg = "execution_history must be empty when status is CANCELLED"
+            raise ValueError(msg)
+        if self.status == PositionStatus.CANCELLED and self.realized_pnl_to_date_usd is not None:
+            msg = "realized_pnl_to_date_usd must be None when status is CANCELLED"
             raise ValueError(msg)
 
     def _check_equity_direction_fields(self) -> None:
