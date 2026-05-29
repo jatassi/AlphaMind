@@ -56,6 +56,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketRecord,
     BracketStatus,
     EquityInstrumentSpec,
+    EventTrigger,
     OrderClass,
     OrderDirection,
     OrderDuration,
@@ -100,9 +101,13 @@ from alphamind.state.records import (
     CorporateActionLedgerStatus,
 )
 from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.brackets import BracketRow
 from alphamind.state.tables.brackets_codec import (
     record_to_rows as bracket_record_to_rows,
+)
+from alphamind.state.tables.brackets_codec import (
+    rows_to_record as bracket_rows_to_record,
 )
 from alphamind.state.tables.cash_ledger import (
     CASH_LEDGER_SINGLETON_ID,
@@ -417,6 +422,41 @@ def _make_active_bracket(bracket_id: str = "brk-1", position_id: str = "pos-1") 
         status=BracketStatus.ACTIVE,
         entry_order_id=OrderId("ord-entry-1"),
         protective_legs=(leg,),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
+        entry_window_deadline=None,
+    )
+
+
+def _make_active_bracket_with_event_leg(
+    bracket_id: str = "brk-1", position_id: str = "pos-1"
+) -> BracketRecord:
+    """An ACTIVE bracket carrying a mechanical PRICE_STOP (order-backed) plus an
+    order-less EVENT_INVALIDATION advisory leg — the order-less leg is the one
+    a corporate-action dissolve that derives from cancelled *orders* could
+    never reach (ALP-731)."""
+    price_stop = BracketLeg(
+        leg_id=f"{bracket_id}-leg-stop",
+        leg_type=BracketLegType.PRICE_STOP,
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(underlying_ticker=Symbol("AAPL"), threshold_usd=40.0, direction="LTE"),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.ACTIVE,
+    )
+    event_leg = BracketLeg(
+        leg_id=f"{bracket_id}-leg-event",
+        leg_type=BracketLegType.EVENT_INVALIDATION,
+        order_id=None,
+        trigger=EventTrigger(description="Guidance withdrawn", condition_evaluator_id=None),
+        enforcement=BracketLegEnforcement.ADVISORY,
+        status=BracketLegStatus.ACTIVE,
+    )
+    return BracketRecord(
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
+        status=BracketStatus.ACTIVE,
+        entry_order_id=OrderId("ord-entry-1"),
+        protective_legs=(price_stop, event_leg),
         modification_history=(),
         corporate_action_cancellation_reason=None,
         entry_window_deadline=None,
@@ -1268,6 +1308,72 @@ async def test_cash_dividend_long_on_options_position_credits_and_preserves_cont
         )
         assert len(ledger_rows) == 1
         assert ledger_rows[0].processing_status == CorporateActionLedgerStatus.PROCESSED.value
+
+
+async def test_cash_dividend_dissolve_cancels_all_legs_and_reloads(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-731 regression (sibling dissolve path): a corporate action that
+    dissolves the bracket must leave every ``bracket_legs`` row CANCELLED —
+    including the order-less EVENT_INVALIDATION advisory leg — so the DISSOLVED
+    bracket reloads through the read codec without raising. Before the fix the
+    CA dissolve set ``brackets.status=DISSOLVED`` but never transitioned the
+    leg rows, leaving the bracket unreadable on every state load."""
+    from alphamind.execution.corporate_actions import integrate_ca_activity
+    from alphamind.execution.corporate_actions.types import CorporateActionActivity
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_position_cluster(
+        factory,
+        _make_open_position(direction=Direction.LONG),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_active_bracket_with_event_leg(),
+    )
+    await _seed_cash_ledger(factory)
+    await _seed_drawdown_state(factory)
+
+    ca = CorporateActionActivity(
+        alpaca_activity_id="ca-cash-div-dissolve-legs",
+        action_type=CorporateActionType.CASH_DIVIDEND_LONG,
+        ticker=Symbol("AAPL"),
+        new_ticker=None,
+        ratio_or_amount=0.10,
+        position_id=PositionId("pos-1"),
+        signed_cash_impact_usd=10.0,
+        transaction_time=_NOW - timedelta(minutes=5),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await integrate_ca_activity(handle, ca, alpaca_position_lookup=None)
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        bracket_row = (
+            await sess.execute(select(BracketRow).where(BracketRow.bracket_id == "brk-1"))
+        ).scalar_one()
+        assert bracket_row.status == BracketStatus.DISSOLVED.value
+
+        leg_rows = tuple(
+            (
+                await sess.execute(
+                    select(BracketLegRow)
+                    .where(BracketLegRow.bracket_id == "brk-1")
+                    .order_by(BracketLegRow.leg_index.asc())
+                )
+            ).scalars()
+        )
+        assert {row.leg_status for row in leg_rows} == {BracketLegStatus.CANCELLED.value}
+        event_legs = [r for r in leg_rows if r.leg_type == BracketLegType.EVENT_INVALIDATION.value]
+        assert len(event_legs) == 1
+        assert event_legs[0].order_id is None
+        assert event_legs[0].leg_status == BracketLegStatus.CANCELLED.value
+
+        # Round-trips through the read codec without raising.
+        reloaded = bracket_rows_to_record(bracket_row, leg_rows)
+        assert reloaded.status == BracketStatus.DISSOLVED
+        assert all(leg.status == BracketLegStatus.CANCELLED for leg in reloaded.protective_legs)
 
 
 async def test_cash_dividend_long_on_strategy_position_credits_and_preserves_legs(

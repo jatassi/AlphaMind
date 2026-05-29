@@ -9,6 +9,8 @@ from alphamind._kernel.money import Money, money
 from alphamind.commands.command_models import CancelCommand
 from alphamind.commands.submission_results import SubmissionResult
 from alphamind.execution.write_paths.phase2._shared import (
+    _assert_bracket_readable,
+    _cancel_all_bracket_legs,
     _cancel_pending_protective_orders,
     _emit,
     _emit_order_cancelled,
@@ -105,6 +107,11 @@ async def _writeback_cancel(
         handle, bracket_id=target.bracket_id, timestamp=timestamp
     )
     leg_order_ids = tuple(o.order_id for o in cancelled_legs)
+    # Transition the parallel ``bracket_legs`` representation, not just the
+    # protective *orders* — including order-less EVENT/advisory legs the order
+    # sweep above can never reach. A DISSOLVED bracket with a non-CANCELLED leg
+    # is unreadable on every subsequent state load (ALP-731).
+    await _cancel_all_bracket_legs(handle, bracket_id=target.bracket_id)
     bracket_row.status = BracketStatus.DISSOLVED.value
     _emit(
         handle,
@@ -123,6 +130,11 @@ async def _writeback_cancel(
             position_id=bracket_row.position_id,
             timestamp=timestamp,
         )
+
+    # Write-time guard: the bracket must round-trip through the read codec the
+    # continuous monitor and scheduled invocations use, or one corrupt row
+    # becomes a system-wide kill switch (ALP-731).
+    await _assert_bracket_readable(handle, bracket_id=target.bracket_id)
 
 
 def _order_notional_estimate(order: OrderRecord) -> Money:

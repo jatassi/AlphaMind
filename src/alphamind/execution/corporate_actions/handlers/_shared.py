@@ -31,7 +31,7 @@ from alphamind.portfolio_state.events.activity_log import (
     EventSource,
     EventType,
 )
-from alphamind.portfolio_state.records.orders import BracketStatus
+from alphamind.portfolio_state.records.orders import BracketLegStatus, BracketStatus
 from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.state.invocation_context.activity_log import (
     append_activity_log_entry,
@@ -41,6 +41,9 @@ from alphamind.state.invocation_context.context import (
 )
 from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.brackets import BracketRow
+from alphamind.state.tables.brackets_codec import (
+    rows_to_record as bracket_rows_to_record,
+)
 from alphamind.state.tables.cash_ledger import (
     CASH_LEDGER_SINGLETON_ID,
     CashLedgerRow,
@@ -128,10 +131,21 @@ async def _read_bracket_legs(handle: InvocationHandle, bracket_id: str) -> list[
     return list((await handle.session.execute(leg_stmt)).scalars())
 
 
-async def _bracket_leg_order_ids(handle: InvocationHandle, bracket_id: str) -> tuple[str, ...]:
-    return tuple(
-        row.order_id for row in await _read_bracket_legs(handle, bracket_id) if row.order_id
-    )
+async def _assert_bracket_readable(handle: InvocationHandle, bracket_id: str) -> None:
+    """Re-materialize the bracket through the read codec as a write-time guard.
+
+    Defense in depth (ALP-731): a DISSOLVED bracket whose legs are not all
+    CANCELLED is committable but unreadable — every
+    ``get_brackets_for_positions`` loader then raises. Rebuilding the record
+    here runs the same ``BracketRecord`` invariants the read path enforces, so
+    a state the reader forbids fails loudly at write time. Mirrors the phase2
+    cancel-path guard of the same name.
+    """
+    bracket_row = await handle.session.get(BracketRow, bracket_id)
+    if bracket_row is None:
+        return
+    leg_rows = tuple(await _read_bracket_legs(handle, bracket_id))
+    bracket_rows_to_record(bracket_row, leg_rows)
 
 
 async def _cancel_bracket_for_corporate_action(
@@ -152,7 +166,14 @@ async def _cancel_bracket_for_corporate_action(
     cancellation_reason = f"corporate_action_{activity.action_type.value.lower()}"
     bracket_row.status = BracketStatus.DISSOLVED.value
     bracket_row.corporate_action_cancellation_reason = cancellation_reason
-    leg_ids = await _bracket_leg_order_ids(handle, bracket_id)
+    # Transition the parallel ``bracket_legs`` rows to CANCELLED — including
+    # order-less EVENT/advisory legs — so the DISSOLVED bracket stays readable
+    # on every subsequent state load (ALP-731). Read once; derive the emitted
+    # leg order_ids from the same rows.
+    leg_rows = await _read_bracket_legs(handle, bracket_id)
+    for leg_row in leg_rows:
+        leg_row.leg_status = BracketLegStatus.CANCELLED.value
+    leg_ids = tuple(row.order_id for row in leg_rows if row.order_id)
     _emit(
         handle,
         event_type=EventType.BRACKET_CANCELLED_CORPORATE_ACTION,
@@ -166,6 +187,9 @@ async def _cancel_bracket_for_corporate_action(
             cancelled_leg_order_ids=leg_ids,
         ),
     )
+    # Write-time guard: the dissolved bracket must round-trip through the read
+    # codec the continuous monitor and scheduled invocations use (ALP-731).
+    await _assert_bracket_readable(handle, bracket_id)
 
 
 # ---------------------------------------------------------------------------
