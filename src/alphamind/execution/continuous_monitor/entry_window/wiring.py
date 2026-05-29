@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from typing import cast
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import AlpacaOrderId
@@ -30,10 +30,11 @@ from alphamind.execution.broker_adapter.errors import classify_alpaca_error
 from alphamind.execution.broker_adapter.order_modify import submit_cancel
 from alphamind.execution.broker_adapter.retry import GatewaySubmissionFailed
 from alphamind.execution.continuous_monitor.entry_window.canceller import (
-    AlpacaOrderIdResolver,
     BrokerCancelClassification,
     BrokerEntryWindowCanceller,
     CancelWriteback,
+    EntryCancelTarget,
+    EntryCancelTargetResolver,
 )
 from alphamind.execution.continuous_monitor.entry_window.task import (
     run_entry_window_watcher,
@@ -51,6 +52,7 @@ from alphamind.state.tables.brackets import BracketRow
 from alphamind.state.tables.brackets_codec import (
     rows_to_record as bracket_rows_to_record,
 )
+from alphamind.state.tables.fill_records import FillRecordRow
 from alphamind.state.tables.orders import OrderRow
 
 log = logging.getLogger(__name__)
@@ -110,16 +112,25 @@ class SqlPendingEntryBracketReader:
 # ---------------------------------------------------------------------------
 
 
+# Only these 4xx codes mean the order is genuinely terminal at the broker (gone
+# or not cancellable). Other 4xx — 401/403 auth, 400 malformed, 429 rate-limit —
+# are NOT "already filled"; latching them as terminal would silently abandon a
+# still-resting entry past its deadline, so they route to a retry instead.
+_TERMINAL_CANCEL_HTTP_STATUSES = frozenset({404, 422})
+
+
 class AlpacaEntryCancel:
     """Production broker-cancel callable backed by :func:`submit_cancel`.
 
     Maps the broker's answer onto :class:`BrokerCancelClassification`:
 
-    * ``Submitted`` → ``ACCEPTED`` (the broker took the cancel, so the entry had
-      not filled).
-    * raised 4xx (404 not_found / 422 already-filled) → ``ALREADY_TERMINAL`` (the
-      entry filled or the order is gone; leave it for reconciliation).
-    * ``GatewaySubmissionFailed`` (transient retry exhaustion) → ``FAILED``.
+    * ``Submitted`` → ``CANCEL_CONFIRMED`` (the broker accepted the cancel).
+    * raised 404 / 422 → ``CANCEL_CONFIRMED`` (order already terminal at the
+      broker — the canceller's separate no-recorded-fills check decides whether
+      that means cancelled-already vs filled).
+    * raised other 4xx (auth / rate-limit / malformed) → ``RETRYABLE`` — these
+      are not a fill, so do NOT latch the bracket as handled.
+    * ``GatewaySubmissionFailed`` (transient retry exhaustion) → ``RETRYABLE``.
     """
 
     def __init__(self, *, client_factory: object, execution_config: ExecutionConfig) -> None:
@@ -141,17 +152,19 @@ class AlpacaEntryCancel:
             )
         except Exception as exc:
             # submit_with_retry re-raises permanent 4xx rejections unchanged.
-            # classify_alpaca_error returns a rejection for broker errors and
-            # None for anything else (a real bug, which must propagate). A 4xx
-            # on a cancel means the order is already terminal — the entry
-            # filled or the order is gone — so do NOT dissolve the bracket.
+            # classify_alpaca_error returns a rejection for broker 4xx and None
+            # for anything else (a real bug, which must propagate). Only a 404 /
+            # 422 means the order is genuinely terminal; other 4xx are retried so
+            # a transient auth / rate-limit hiccup does not abandon the entry.
             rejection = classify_alpaca_error(exc)
             if rejection is None:
                 raise
-            return BrokerCancelClassification.ALREADY_TERMINAL
+            if rejection.http_status in _TERMINAL_CANCEL_HTTP_STATUSES:
+                return BrokerCancelClassification.CANCEL_CONFIRMED
+            return BrokerCancelClassification.RETRYABLE
         if isinstance(outcome, GatewaySubmissionFailed):
-            return BrokerCancelClassification.FAILED
-        return BrokerCancelClassification.ACCEPTED
+            return BrokerCancelClassification.RETRYABLE
+        return BrokerCancelClassification.CANCEL_CONFIRMED
 
 
 # ---------------------------------------------------------------------------
@@ -159,17 +172,33 @@ class AlpacaEntryCancel:
 # ---------------------------------------------------------------------------
 
 
-def make_entry_order_alpaca_id_resolver(
+def make_entry_cancel_target_resolver(
     session_factory: async_sessionmaker[AsyncSession],
-) -> AlpacaOrderIdResolver:
-    """Return a resolver mapping an entry ``order_id`` to its broker order id."""
+) -> EntryCancelTargetResolver:
+    """Return a resolver mapping an entry ``order_id`` to its broker id + fill state.
 
-    async def _resolve(entry_order_id: str) -> AlpacaOrderId | None:
+    One session reads both the order's ``alpaca_order_id`` and whether any
+    ``fill_records`` row exists for it (the raw fill signal the fill-stream
+    consumer writes ahead of reconciliation). Returns ``None`` when the order
+    row is missing.
+    """
+
+    async def _resolve(entry_order_id: str) -> EntryCancelTarget | None:
         async with session_factory() as session:
             row = await session.get(OrderRow, entry_order_id)
             if row is None:
                 return None
-            return AlpacaOrderId(row.alpaca_order_id)
+            fill_count = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(FillRecordRow)
+                    .where(FillRecordRow.order_id == entry_order_id)
+                )
+            ).scalar_one()
+            return EntryCancelTarget(
+                alpaca_order_id=AlpacaOrderId(row.alpaca_order_id),
+                has_recorded_fills=fill_count > 0,
+            )
 
     return _resolve
 
@@ -212,14 +241,14 @@ def register_entry_window_watcher_task(
 ) -> None:
     """Register the ``entry_window`` task on *supervisor*.
 
-    Assembles the reader, the Alpaca broker-cancel callable, the alpaca-id
-    resolver, and the Phase-2 writeback into a :class:`BrokerEntryWindowCanceller`
-    — all from the shared session factory + client factory the other monitor
-    tasks use.
+    Assembles the reader, the Alpaca broker-cancel callable, the entry-target
+    resolver (broker id + recorded-fill state), and the Phase-2 writeback into a
+    :class:`BrokerEntryWindowCanceller` — all from the shared session factory +
+    client factory the other monitor tasks use.
     """
     bracket_reader = SqlPendingEntryBracketReader(session_factory)
     canceller = BrokerEntryWindowCanceller(
-        resolve_alpaca_id=make_entry_order_alpaca_id_resolver(session_factory),
+        resolve_target=make_entry_cancel_target_resolver(session_factory),
         broker_cancel=AlpacaEntryCancel(
             client_factory=client_factory, execution_config=execution_config
         ),
@@ -240,7 +269,7 @@ def register_entry_window_watcher_task(
 __all__ = [
     "AlpacaEntryCancel",
     "SqlPendingEntryBracketReader",
-    "make_entry_order_alpaca_id_resolver",
+    "make_entry_cancel_target_resolver",
     "make_entry_window_writeback",
     "register_entry_window_watcher_task",
 ]

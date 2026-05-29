@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from alphamind._kernel.ids import BracketId, OrderId, PositionId, Symbol
+from alphamind._kernel.ids import AlpacaOrderId, BracketId, OrderId, PositionId, Symbol
 from alphamind.config.models.execution import (
     ExecutionConfig,
     FeeSchedule,
@@ -25,7 +25,11 @@ from alphamind.config.models.execution import (
     PaperHarness,
 )
 from alphamind.config.models.execution import OrderType as ExecOrderType
+from alphamind.execution.continuous_monitor.entry_window.canceller import (
+    BrokerCancelClassification,
+)
 from alphamind.execution.continuous_monitor.entry_window.wiring import (
+    AlpacaEntryCancel,
     SqlPendingEntryBracketReader,
     register_entry_window_watcher_task,
 )
@@ -189,3 +193,54 @@ def test_register_entry_window_watcher_task_registers_named_task(
     )
 
     assert "entry_window" in supervisor.task_names()
+
+
+class _FakeAPIError(Exception):
+    """Minimal alpaca-py APIError surrogate carrying an HTTP status_code."""
+
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"HTTP {status_code}")
+        self.status_code = status_code
+
+
+class _CancelClient:
+    def __init__(self, *, raise_status: int | None = None) -> None:
+        self._raise_status = raise_status
+        self.calls: list[str] = []
+
+    def cancel_order_by_id(self, order_id: str) -> None:
+        self.calls.append(order_id)
+        if self._raise_status is not None:
+            raise _FakeAPIError(self._raise_status)
+
+
+class _CancelClientFactory:
+    def __init__(self, client: _CancelClient) -> None:
+        self._client = client
+
+    def build_trading_client(self) -> _CancelClient:
+        return self._client
+
+
+@pytest.mark.parametrize(
+    ("raise_status", "expected"),
+    [
+        (None, BrokerCancelClassification.CANCEL_CONFIRMED),  # 2xx accept
+        (404, BrokerCancelClassification.CANCEL_CONFIRMED),  # order gone
+        (422, BrokerCancelClassification.CANCEL_CONFIRMED),  # not cancellable / filled
+        (403, BrokerCancelClassification.RETRYABLE),  # auth — NOT terminal
+        (429, BrokerCancelClassification.RETRYABLE),  # rate-limit — NOT terminal
+        (400, BrokerCancelClassification.RETRYABLE),  # malformed — NOT terminal
+    ],
+)
+async def test_alpaca_entry_cancel_classifies_broker_answers(
+    raise_status: int | None, expected: BrokerCancelClassification
+) -> None:
+    """Only a confirmed cancel or a 404/422 is CANCEL_CONFIRMED; every other 4xx
+    is RETRYABLE so a transient auth / rate-limit hiccup never abandons a still-
+    resting entry past its deadline (ALP-737 review finding)."""
+    canceller = AlpacaEntryCancel(
+        client_factory=_CancelClientFactory(_CancelClient(raise_status=raise_status)),
+        execution_config=_execution_config(),
+    )
+    assert await canceller(AlpacaOrderId("alpaca-uuid-xyz")) is expected

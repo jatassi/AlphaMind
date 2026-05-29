@@ -48,11 +48,13 @@ async def persist_entry_window_cancel(
 ) -> None:
     """Engine-originated cancel of a never-filled entry whose window elapsed (ALP-737).
 
-    The continuous monitor's entry-window watcher calls this *after* the broker
-    has accepted the cancel of the resting entry order (the broker-accept is the
-    race-safe proof the entry had not filled). It reuses the CANCEL writeback
-    state machine (:func:`_writeback_cancel`) so the bracket dissolves, the
-    reserved capital is released, and the thesis resolves
+    The continuous monitor's entry-window watcher calls this once it has
+    confirmed (via the broker cancel + a no-recorded-fills check) that the
+    resting entry will not fill. It reuses the CANCEL writeback state machine
+    (:func:`_writeback_cancel`) so the bracket dissolves, reserved capital is
+    released (the order-notional estimate, per ``_order_notional_estimate`` —
+    the same basis the PM CANCEL path uses, which for a resting limit entry is
+    ``limit_price * remaining_quantity``), and the thesis resolves
     ``CANCELLED_NEVER_ENTERED`` exactly as a PM-originated CANCEL would.
 
     Distinct from the PM CANCEL path in two ways: there is no PM envelope (so no

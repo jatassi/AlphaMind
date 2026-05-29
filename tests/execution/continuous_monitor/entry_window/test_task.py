@@ -109,6 +109,25 @@ async def test_cycle_cancels_only_expired_brackets() -> None:
     assert fired == {"BRK-EXPIRED"}
 
 
+async def test_cycle_does_not_fire_at_exact_deadline() -> None:
+    """A bracket exactly at its deadline does NOT fire — the contract is a
+    strict ``now() > deadline`` (orders.py BracketRecord lifecycle)."""
+    at_deadline = _pending_entry_bracket(bracket_id="BRK-AT", deadline=_NOW)
+    canceller = _FakeCanceller()
+    fired: set[str] = set()
+
+    await _run_entry_window_cycle(
+        config=_config(),
+        bracket_reader=_FakeReader((at_deadline,)),
+        canceller=canceller,
+        now=_NOW,
+        fired=fired,
+    )
+
+    assert canceller.calls == []
+    assert fired == set()
+
+
 async def test_cycle_skips_already_fired_brackets() -> None:
     """A bracket already cancelled this session is not re-fired even while the
     DB still shows it ``PENDING_ENTRY`` (pre-reconciliation)."""

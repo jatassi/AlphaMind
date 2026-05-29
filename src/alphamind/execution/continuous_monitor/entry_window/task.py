@@ -79,10 +79,14 @@ async def _run_entry_window_cycle(
     for bracket in brackets:
         if bracket.bracket_id in fired:
             continue
-        deadline = bracket.entry_window_deadline
-        if deadline is None or now <= deadline:
-            continue
         try:
+            deadline = bracket.entry_window_deadline
+            # Strict ``>``: a bracket exactly at its deadline does NOT fire, per
+            # the BracketRecord lifecycle contract (orders.py). The deadline read
+            # is inside the try so a malformed deadline isolates to this bracket
+            # instead of stalling the whole cycle.
+            if deadline is None or now <= deadline:
+                continue
             outcome = await canceller.cancel(bracket=bracket, now=now)
         except Exception:
             log.exception(
