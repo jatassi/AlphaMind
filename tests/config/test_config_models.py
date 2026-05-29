@@ -666,7 +666,7 @@ CANONICAL_AGENT_NAMES = {
 
 def _valid_base_agent(
     *,
-    model: str = "claude-opus-4-7",
+    model: str = "claude-opus-4-8",
     prompt: str = "prompts/decision/analyst.md",
     tools: list[str] | None = None,
 ) -> dict[str, object]:
@@ -713,7 +713,7 @@ def _valid_agents_raw() -> dict[str, object]:
     }
     agents: dict[str, object] = {}
     for name, prompt in decision_prompts.items():
-        agents[name] = _valid_base_agent(model="claude-opus-4-7", prompt=prompt)
+        agents[name] = _valid_base_agent(model="claude-opus-4-8", prompt=prompt)
     for name, prompt in sonnet_prompts.items():
         agents[name] = _valid_base_agent(model="claude-sonnet-4-6", prompt=prompt)
     agents["adaptive_researcher"] = _valid_adaptive_agent()

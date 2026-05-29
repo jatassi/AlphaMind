@@ -228,7 +228,7 @@ def active_sectors() -> frozenset[str]:
 def agent_config() -> BaseAgentConfig:
     """Minimal BaseAgentConfig pointing to the analyst prompt."""
     return BaseAgentConfig(
-        model=AllowedModel.opus_4_7,
+        model=AllowedModel.opus_4_8,
         prompt="prompts/decision/analyst.md",
         latency_budget_seconds=30,
         context_token_budget=8_000,
@@ -287,7 +287,7 @@ def _make_sdk_response(
         messages.append(
             AssistantMessage(
                 content=tool_blocks,
-                model="claude-opus-4-7",
+                model="claude-opus-4-8",
                 stop_reason=None,
                 usage=None,
             )
@@ -295,7 +295,7 @@ def _make_sdk_response(
 
     assistant = AssistantMessage(
         content=[TextBlock(text=text)] if text else [],
-        model="claude-opus-4-7",
+        model="claude-opus-4-8",
         stop_reason=stop_reason,
         usage={
             "input_tokens": input_tokens,
@@ -820,7 +820,7 @@ async def test_slow_sdk_stub_raises_timeout_failure(
 ) -> None:
     """A slow SDK stub causes the harness to raise TimeoutFailure."""
     tight_config = BaseAgentConfig(
-        model=AllowedModel.opus_4_7,
+        model=AllowedModel.opus_4_8,
         prompt="prompts/decision/analyst.md",
         latency_budget_seconds=1,
         context_token_budget=8_000,
@@ -995,13 +995,13 @@ def _make_response_with_mixed_tools(
     messages: list[Any] = [
         AssistantMessage(
             content=blocks,
-            model="claude-opus-4-7",
+            model="claude-opus-4-8",
             stop_reason=None,
             usage=None,
         ),
         AssistantMessage(
             content=[TextBlock(text="")],
-            model="claude-opus-4-7",
+            model="claude-opus-4-8",
             stop_reason="end_turn",
             usage={
                 "input_tokens": 100,

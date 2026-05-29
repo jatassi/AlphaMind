@@ -202,7 +202,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # triggers block dropped from six cron entries to the four Tier B triggers
     # (pre_open 09:00, market_hours_rolling 13:00, pre_close 15:30, weekend_sunday
     # 18:00), shifting the resolved-config canonical bytes.
-    expected = "160ced32f23b5250b84c3ac6723e433582ac2e8180ab9934481879036d540ccf"
+    # Pin updated 2026-05-29 (Opus 4.7 -> 4.8 upgrade): the analyst, strategist,
+    # and portfolio_manager model in config/agents.yaml moved from claude-opus-4-7
+    # to claude-opus-4-8 (AllowedModel.opus_4_8), shifting the resolved-config
+    # canonical bytes.
+    expected = "ec4328773cb47de7dbf07b231c270ff135815a6789a8d9ffdef9dcc480d737b8"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

@@ -85,14 +85,14 @@ def test_agent_request_emits_event_with_kwargs(tmp_path: Path) -> None:
     emitter.agent_request(
         phase="synthesizer",
         agent="synthesizer",
-        model="claude-opus-4-7",
+        model="claude-opus-4-8",
     )
 
     record = json.loads(path.read_text(encoding="utf-8").strip())
     assert record["event"] == "agent_request"
     assert record["phase"] == "synthesizer"
     assert record["agent"] == "synthesizer"
-    assert record["model"] == "claude-opus-4-7"
+    assert record["model"] == "claude-opus-4-8"
 
 
 def test_agent_response_emits_full_field_set(tmp_path: Path) -> None:
@@ -109,7 +109,7 @@ def test_agent_response_emits_full_field_set(tmp_path: Path) -> None:
     emitter.agent_response(
         phase="analyst",
         agent="analyst",
-        model="claude-opus-4-7",
+        model="claude-opus-4-8",
         duration_s=42.7,
         input_tokens=12_345,
         cache_read_tokens=68_214,
@@ -123,7 +123,7 @@ def test_agent_response_emits_full_field_set(tmp_path: Path) -> None:
     assert record["event"] == "agent_response"
     assert record["phase"] == "analyst"
     assert record["agent"] == "analyst"
-    assert record["model"] == "claude-opus-4-7"
+    assert record["model"] == "claude-opus-4-8"
     assert record["duration_s"] == 42.7
     assert record["input_tokens"] == 12_345
     assert record["cache_read_tokens"] == 68_214
@@ -198,12 +198,12 @@ def test_emit_one_of_each_event_type_roundtrips_in_order(tmp_path: Path) -> None
     emitter.agent_request(
         phase="synthesizer",
         agent="synthesizer",
-        model="claude-opus-4-7",
+        model="claude-opus-4-8",
     )
     emitter.agent_response(
         phase="synthesizer",
         agent="synthesizer",
-        model="claude-opus-4-7",
+        model="claude-opus-4-8",
         duration_s=3.0,
         input_tokens=100,
         cache_read_tokens=60_000,
