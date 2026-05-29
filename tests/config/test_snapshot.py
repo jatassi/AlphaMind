@@ -181,7 +181,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # ALP-718 added borrow_accrual_tick_local_time: "16:00" to
     # config/continuous_monitor.yaml and ContinuousMonitorConfig, shifting the
     # resolved-config canonical bytes.
-    expected = "5ebf691114e6a95a54adb9b4fb59d17d84918acc3ac452cebf60f2f059f7f710"
+    # Pin updated 2026-05-28 (breach_loop_consecutive_failure_alert_threshold, ALP-732):
+    # ALP-732 added breach_loop_consecutive_failure_alert_threshold: 3 to
+    # config/continuous_monitor.yaml and ContinuousMonitorConfig (sustained
+    # breach-loop-failure escalation), shifting the resolved-config canonical bytes.
+    expected = "180772b5eb8a20488c150c8ba459a1002f240b4dc554d31ed20bf8db0e63281f"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

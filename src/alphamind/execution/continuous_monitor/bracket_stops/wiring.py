@@ -68,7 +68,7 @@ from alphamind.portfolio_state.records.positions import (
 from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.brackets import BracketRow
 from alphamind.state.tables.brackets_codec import (
-    rows_to_record as bracket_rows_to_record,
+    rows_to_records_isolated as bracket_rows_to_records_isolated,
 )
 
 log = logging.getLogger(__name__)
@@ -120,9 +120,11 @@ class SqlBracketRepository:
         legs_by_bracket: dict[str, list[BracketLegRow]] = {bid: [] for bid in bracket_ids}
         for leg in leg_rows:
             legs_by_bracket[leg.bracket_id].append(leg)
-        return tuple(
-            bracket_rows_to_record(b, tuple(legs_by_bracket[b.bracket_id])) for b in bracket_rows
-        )
+        # Per-bracket isolation (ALP-732 Gap 1) — one unreadable bracket is
+        # skipped + surfaced rather than poisoning the whole batch and aborting
+        # the bracket-stop watcher's tick (leaving every mechanical stop
+        # unevaluated). Shared codec helper, same as the breach-loop loader.
+        return bracket_rows_to_records_isolated(bracket_rows, legs_by_bracket)
 
 
 # ---------------------------------------------------------------------------

@@ -176,8 +176,38 @@ class HeartbeatEvent(BaseModel):
     timestamp: AwareDatetime
 
 
+class BreachLoopDegradedEvent(BaseModel):
+    """``event: breach_loop_degraded`` payload (ALP-732).
+
+    Emitted once when the breach loop's consecutive-failure count crosses
+    ``breach_loop_consecutive_failure_alert_threshold`` — risk supervision is
+    silently down until a tick succeeds. ``last_error`` is the ``repr`` of the
+    most recent failing tick's exception so the operator has a first lead.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    consecutive_failures: int = Field(ge=1)
+    last_error: str = Field(min_length=1)
+
+
+class BreachLoopRecoveredEvent(BaseModel):
+    """``event: breach_loop_recovered`` payload (ALP-732).
+
+    Emitted on the first successful tick after a degraded run, clearing the
+    degraded health state. ``consecutive_failures`` is the length of the
+    failure run that just ended.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    consecutive_failures: int = Field(ge=1)
+
+
 __all__ = [
     "BreachDetectedEvent",
+    "BreachLoopDegradedEvent",
+    "BreachLoopRecoveredEvent",
     "BreachResponseClassification",
     "CancelOrderRequest",
     "ControlErrorCode",

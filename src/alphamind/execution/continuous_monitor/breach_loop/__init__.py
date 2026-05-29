@@ -25,11 +25,13 @@ from alphamind.execution.continuous_monitor.breach_loop.halt_tracker import (
     HaltTransitionTracker,
 )
 from alphamind.execution.continuous_monitor.breach_loop.result import (
+    BreachLoopHealthSignal,
     BreachLoopResult,
     RuleEvaluation,
 )
 from alphamind.execution.continuous_monitor.breach_loop.task import (
     MarketHoursClock,
+    OnHealthSignal,
     run_breach_loop,
 )
 from alphamind.execution.continuous_monitor.breach_loop.wiring import (
@@ -37,9 +39,11 @@ from alphamind.execution.continuous_monitor.breach_loop.wiring import (
 )
 
 __all__ = [
+    "BreachLoopHealthSignal",
     "BreachLoopResult",
     "HaltTransitionTracker",
     "MarketHoursClock",
+    "OnHealthSignal",
     "RuleEvaluation",
     "register_breach_loop_task",
     "run_breach_loop",

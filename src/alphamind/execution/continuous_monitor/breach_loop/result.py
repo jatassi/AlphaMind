@@ -72,3 +72,28 @@ class BreachLoopResult:
     halt_state: HaltState | None
     immediate_action_breaches: tuple[RuleEvaluation, ...]
     drawdown_velocity_sample: DrawdownSample
+
+
+@dataclass(frozen=True, slots=True)
+class BreachLoopHealthSignal:
+    """A breach-loop health-state transition (ALP-732 Gap 2).
+
+    The loop's per-tick supervisor counts consecutive failed ticks. When the
+    count crosses ``breach_loop_consecutive_failure_alert_threshold`` the loop
+    emits one ``degraded=True`` signal (fired once on entering the degraded
+    state, not on every subsequent failure); the first successful tick
+    afterwards emits a ``degraded=False`` (recovered) signal and resets the
+    counter. The monitor wires the consumer to its operator-visible surfaces
+    (the SSE ``/events`` stream + loud logging) so "breach loop alive but
+    failing every tick" is no longer indistinguishable from "healthy."
+
+    ``consecutive_failures`` is the failure run length at the moment of the
+    signal: the count that just crossed the threshold on a ``degraded=True``
+    signal, or the length of the run that just ended on a ``degraded=False``
+    one. ``last_error`` is the ``repr`` of the most recent tick exception on a
+    ``degraded=True`` signal, and ``None`` on recovery.
+    """
+
+    degraded: bool
+    consecutive_failures: int
+    last_error: str | None

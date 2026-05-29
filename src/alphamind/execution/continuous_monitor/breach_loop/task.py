@@ -57,6 +57,7 @@ from alphamind.execution.continuous_monitor.breach_loop.halt_tracker import (
     HaltTransitionTracker,
 )
 from alphamind.execution.continuous_monitor.breach_loop.result import (
+    BreachLoopHealthSignal,
     BreachLoopResult,
     RuleEvaluation,
 )
@@ -115,6 +116,31 @@ LibraryConfigFactory = Callable[[ActiveRiskParameterSet], LibraryConfig]
 ActivityLogSink = Callable[[Iterable[ActivityLogEntry]], Awaitable[None]]
 OnImmediateBreach = Callable[[BreachLoopResult, RuleEvaluation], Awaitable[None]]
 OnEmergencyInput = Callable[[BreachLoopResult], Awaitable[None]]
+# Health-signal sink (ALP-732 Gap 2). Invoked once when the consecutive-failure
+# count crosses the configured threshold (``degraded=True``) and once on the
+# first successful tick afterwards (``degraded=False``). The monitor wires it
+# to its operator surfaces; tests substitute a recorder. Synchronous: the
+# monitor-local surfacing (SSE ``put_nowait`` fan-out + logging) does no I/O
+# that needs awaiting, so this stays sync rather than adding async-over-sync
+# residue (architecture invariant L19).
+OnHealthSignal = Callable[[BreachLoopHealthSignal], None]
+
+
+def _no_op_health_signal(_signal: BreachLoopHealthSignal) -> None:
+    """Default health sink — used by callers (e.g. tests) that do not wire one."""
+
+
+def _safe_emit_health_signal(sink: OnHealthSignal, signal: BreachLoopHealthSignal) -> None:
+    """Emit a health signal without letting a faulty sink kill the loop.
+
+    The whole point of the escalation is resilience, so a sink that itself
+    raises (e.g. the SSE emitter or alert channel is momentarily down) must not
+    take down the breach loop — the failure is logged and the loop continues.
+    """
+    try:
+        sink(signal)
+    except Exception:
+        log.exception("breach_loop health-signal sink raised; continuing")
 
 
 async def run_breach_loop(  # noqa: PLR0913 — fan-in is the seam, not incidental complexity
@@ -134,13 +160,20 @@ async def run_breach_loop(  # noqa: PLR0913 — fan-in is the seam, not incident
     activity_log_sink: ActivityLogSink,
     on_immediate_breach: OnImmediateBreach,
     on_emergency_input: OnEmergencyInput,
+    on_health_signal: OnHealthSignal = _no_op_health_signal,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> None:
     """Run-forever breach-evaluation loop. See module docstring for the contract."""
     del session  # carried for signature uniformity; the loop reads identity via logging
     cadence_seconds = float(config.breach_evaluation_cadence_seconds)
+    failure_threshold = config.breach_loop_consecutive_failure_alert_threshold
     halt_tracker = HaltTransitionTracker()
     entry_counter = {"n": 0}
+    # Sustained-failure tracking (ALP-732 Gap 2). ``consecutive_failures``
+    # counts back-to-back failed ticks; ``degraded`` debounces the alert so it
+    # fires once on crossing the threshold, not on every subsequent failure.
+    consecutive_failures = 0
+    degraded = False
 
     def _entry_id_factory(local: int) -> str:
         # ``mon-alp-`` prefix mirrors the rest of the continuous-monitor
@@ -176,13 +209,52 @@ async def run_breach_loop(  # noqa: PLR0913 — fan-in is the seam, not incident
             )
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             # Per-tick supervisor per runtime §G1: one bad tick must not kill
             # the loop. ``CancelledError`` re-raised above so supervisor
             # shutdown propagates; ``BaseException`` (``KeyboardInterrupt`` /
             # ``SystemExit``) also propagates as it falls through the
             # ``Exception`` branch.
             log.exception("breach_loop tick raised; sleeping until next cycle")
+            consecutive_failures += 1
+            if consecutive_failures >= failure_threshold and not degraded:
+                degraded = True
+                # Loud, named ERROR (ALP-732): the prior signal was an opaque
+                # repeating "tick raised", indistinguishable from healthy on the
+                # process surfaces. Name the count so the operator sees risk
+                # supervision has been down for N ticks running. ``log.exception``
+                # attaches the failing tick's traceback to this once-per-episode
+                # escalation line so the operator has the error context inline.
+                log.exception(
+                    "breach_loop DEGRADED: %d consecutive failed ticks "
+                    "(threshold=%d); risk supervision is down until a tick succeeds",
+                    consecutive_failures,
+                    failure_threshold,
+                )
+                _safe_emit_health_signal(
+                    on_health_signal,
+                    BreachLoopHealthSignal(
+                        degraded=True,
+                        consecutive_failures=consecutive_failures,
+                        last_error=repr(exc),
+                    ),
+                )
+        else:
+            if degraded:
+                log.warning(
+                    "breach_loop RECOVERED after %d consecutive failed ticks",
+                    consecutive_failures,
+                )
+                _safe_emit_health_signal(
+                    on_health_signal,
+                    BreachLoopHealthSignal(
+                        degraded=False,
+                        consecutive_failures=consecutive_failures,
+                        last_error=None,
+                    ),
+                )
+                degraded = False
+            consecutive_failures = 0
 
         await asyncio.sleep(cadence_seconds)
 

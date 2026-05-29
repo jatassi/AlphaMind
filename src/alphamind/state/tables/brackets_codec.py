@@ -14,6 +14,8 @@ records enforce.
 from __future__ import annotations
 
 import json
+import logging
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from typing import Any
 
@@ -34,6 +36,8 @@ from alphamind.portfolio_state.records.orders import (
 )
 from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.brackets import BracketRow
+
+log = logging.getLogger(__name__)
 
 
 def _trigger_to_dict(trigger: TriggerPayload) -> dict[str, Any]:
@@ -170,6 +174,43 @@ def rows_to_record(bracket_row: BracketRow, leg_rows: tuple[BracketLegRow, ...])
         corporate_action_cancellation_reason=bracket_row.corporate_action_cancellation_reason,
         entry_window_deadline=_parse_optional_datetime(bracket_row.entry_window_deadline),
     )
+
+
+def rows_to_records_isolated(
+    bracket_rows: Iterable[BracketRow],
+    legs_by_bracket: Mapping[str, Iterable[BracketLegRow]],
+) -> tuple[BracketRecord, ...]:
+    """Reconstruct each bracket independently, skipping any unreadable one (ALP-732).
+
+    The continuous-monitor risk loops (breach loop, bracket-stop watcher) load
+    every position's brackets in one batch each tick. Before this guard a single
+    unreadable bracket — the ALP-731 corruption, a ``DISSOLVED`` bracket whose
+    legs are not all ``CANCELLED`` (``BracketRecord.__post_init__`` raises
+    ``ValueError``), or an out-of-vocabulary status / malformed
+    ``modification_history`` JSON (also ``ValueError``) — failed the whole batch
+    and aborted the entire tick, leaving every position unmonitored.
+
+    Only ``ValueError`` (the data-corruption signature) is isolated: the bad
+    bracket is skipped and surfaced at ``ERROR`` (naming bracket + position id,
+    with the traceback) so the operator sees *which* row is corrupt, while every
+    readable bracket still loads. Any other exception (e.g. a future codec bug
+    raising ``AttributeError``) propagates so it fails loudly rather than
+    silently dropping brackets and masquerading as a healthy tick.
+    """
+    readable: list[BracketRecord] = []
+    for bracket_row in bracket_rows:
+        try:
+            readable.append(
+                rows_to_record(bracket_row, tuple(legs_by_bracket[bracket_row.bracket_id]))
+            )
+        except ValueError:
+            log.exception(
+                "skipping unreadable bracket bracket_id=%s position_id=%s; excluded from "
+                "snapshot until the underlying row is repaired",
+                bracket_row.bracket_id,
+                bracket_row.position_id,
+            )
+    return tuple(readable)
 
 
 def _leg_column_values(leg: BracketLeg) -> dict[str, Any]:

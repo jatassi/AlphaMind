@@ -7,7 +7,7 @@ Pipeline wire format is specified separately in [pipeline-control-and-events-sch
 ## Scope
 
 - **Producer:** the continuous monitor process per [05-execution-layer/architecture.md §4](05-execution-layer/architecture.md). FastAPI + Uvicorn bound to `127.0.0.1` within the same OS process that runs the websocket consumer, breach detector, greeks refresh loop, and options bracket evaluator. The command-center backend is the only client; loopback isolation is the trust boundary.
-- **Surface:** three `POST /control/*` verbs (cancel order, force-close position, set halt mode) plus one `GET /events` SSE stream carrying seven event types (six operational, one heartbeat).
+- **Surface:** three `POST /control/*` verbs (cancel order, force-close position, set halt mode) plus one `GET /events` SSE stream carrying nine event types (eight operational, one heartbeat).
 - **What is and is not in scope:** request bodies, success response envelopes, error response envelope, SSE framing, and per-event payload shapes are in scope. Authentication is not — the surface is loopback-bound and the public-facing `/api/control/*` proxy on the command-center backend owns auth and audit per [command-center.md § Control surface](command-center.md#control-surface). HTTP status code semantics follow standard HTTP and FastAPI conventions and are noted in the per-verb tables; the schemas describe body shapes only.
 - **Header conventions:** `Content-Type: application/json` on every control request and response with a JSON body. `Content-Type: text/event-stream` with `Cache-Control: no-cache` and `Connection: keep-alive` on the `GET /events` response. No request-id or correlation header — the command-center backend is the only client and owns its own correlation in the audit trail.
 - **SSE framing.** Each event is emitted as one SSE record terminated by a blank line:
@@ -192,6 +192,8 @@ Enum values and structural constraints trace back to these authoritative sources
     { "$ref": "#/$defs/breach_detected_event" },
     { "$ref": "#/$defs/emergency_invocation_triggered_event" },
     { "$ref": "#/$defs/greeks_refreshed_event" },
+    { "$ref": "#/$defs/breach_loop_degraded_event" },
+    { "$ref": "#/$defs/breach_loop_recovered_event" },
     { "$ref": "#/$defs/heartbeat_event" }
   ],
 
@@ -288,6 +290,34 @@ Enum values and structural constraints trace back to these authoritative sources
       }
     },
 
+    "breach_loop_degraded_event": {
+      "type": "object",
+      "required": ["consecutive_failures", "last_error"],
+      "properties": {
+        "consecutive_failures": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of back-to-back failed breach-loop ticks at the moment the configured breach_loop_consecutive_failure_alert_threshold was crossed. Fired once on crossing, not on every subsequent failure. Per breach-loop resilience (ALP-732)."
+        },
+        "last_error": {
+          "type": "string",
+          "description": "repr of the most recent failing tick's exception, as a first lead for the operator. Risk supervision is silently down until a tick succeeds."
+        }
+      }
+    },
+
+    "breach_loop_recovered_event": {
+      "type": "object",
+      "required": ["consecutive_failures"],
+      "properties": {
+        "consecutive_failures": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Length of the failure run that just ended; emitted on the first successful tick after a degraded run, clearing the degraded health state (ALP-732)."
+        }
+      }
+    },
+
     "heartbeat_event": {
       "type": "object",
       "required": ["timestamp"],
@@ -309,6 +339,8 @@ Enum values and structural constraints trace back to these authoritative sources
 | `breach_detected` | The breach detector evaluates a rule as breached against live state | `rule`, `current_value`, `limit`, `response_classification` |
 | `emergency_invocation_triggered` | The monitor fires `POST /control/trigger_emergency_invocation` on the pipeline | `reason` |
 | `greeks_refreshed` | A scheduled or move-based greeks refresh completes for one underlying | `underlying`, `refreshed_at` |
+| `breach_loop_degraded` | The breach loop crosses its consecutive-failure threshold — risk supervision silently down (ALP-732) | `consecutive_failures`, `last_error` |
+| `breach_loop_recovered` | The breach loop's first successful tick after a degraded run | `consecutive_failures` |
 | `heartbeat` | 15 s elapsed since the last event of any kind on this connection | `timestamp` |
 
 ---
