@@ -24,7 +24,11 @@ PHASE2 = (
 
 
 def test_phase2_is_a_package_with_prescribed_files() -> None:
-    """phase2/ has the exact 7 files prescribed by ALP-465."""
+    """phase2/ has the files prescribed by ALP-465, plus reprice.py (ALP-740).
+
+    ALP-740 added ``reprice.py`` — the non-terminal entry-window reprice
+    writeback that contrasts with the terminal ``cancel.py``.
+    """
     assert PHASE2.is_dir()
     names = sorted(p.name for p in PHASE2.iterdir() if p.suffix == ".py")
     assert names == [
@@ -35,6 +39,7 @@ def test_phase2_is_a_package_with_prescribed_files() -> None:
         "cancel.py",
         "close.py",
         "open.py",
+        "reprice.py",
     ]
 
 

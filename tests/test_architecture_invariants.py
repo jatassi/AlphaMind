@@ -202,9 +202,14 @@ def test_l4_broad_except_count_below_audit_baseline(antipattern_findings: Script
     # (2) entry_pricing.py _rewrite_one wraps the whole quote-resolve so a
     # misbehaving QuoteSource or a degenerate-touch pricing error leaves the entry
     # verbatim rather than aborting the submission. Both carry inline rationale.
-    assert l4 <= 60, (
-        f"L4 (broad except) count drift: {l4}. Post-ALP-738 "
-        f"ceiling is 60. If this count climbs above 60, audit each new "
+    # Ceiling raised from 60 to 61 (2026-05-28, ALP-740 entry-window reprice):
+    # +1 warranted broker-error classification — entry_window/wiring.py
+    # AlpacaEntryReplace mirrors AlpacaEntryCancel's wide catch → classify_alpaca_error
+    # → re-raise any non-broker exception, returning None on a classified 4xx so the
+    # repricer retries. Carries an inline rationale comment.
+    assert l4 <= 61, (
+        f"L4 (broad except) count drift: {l4}. Post-ALP-740 "
+        f"ceiling is 61. If this count climbs above 61, audit each new "
         f"handler against ALP-480's warranted-residue list."
     )
 
@@ -279,9 +284,14 @@ def test_l19_async_over_sync_count_at_protocol_residue(antipattern_findings: Scr
     # Alpaca-backed implementation (AlpacaQuoteSource, which genuinely awaits the
     # latest-quote snapshot via asyncio.to_thread) satisfies. Same Protocol-stub
     # residue as the entry_window readers/cancellers above.
-    assert l19 <= 99, (
-        f"L19 (async-over-sync) count drift: {l19}. Post-ALP-738 "
-        f"ceiling is 99 (Protocol stubs + SDK decorators + alert "
+    # Ceiling raised from 99 to 100 (2026-05-28, ALP-740 entry-window reprice):
+    # one new async Protocol stub — EntryWindowDeadlineHandler.handle in
+    # entry_window/repricer.py — is the structural async seam its reprice-or-cancel
+    # implementation (BrokerEntryWindowRepricer, which genuinely awaits DB + broker
+    # I/O) satisfies. Same Protocol-stub residue as the EntryWindowCanceller above.
+    assert l19 <= 100, (
+        f"L19 (async-over-sync) count drift: {l19}. Post-ALP-740 "
+        f"ceiling is 100 (Protocol stubs + SDK decorators + alert "
         f"channels). Climbing above this suggests new ``async def`` "
         f"functions that never ``await`` — convert to sync unless the "
         f"function legitimately awaits I/O."

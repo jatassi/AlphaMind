@@ -194,7 +194,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # ALP-738 added marketable_entry_bps_through_touch: 5.0 to config/execution.yaml
     # and ExecutionConfig (basis points past the touch when re-pricing an enter-now
     # entry into a marketable limit), shifting the resolved-config canonical bytes.
-    expected = "eff7ae9fc83dc1e94758e1eb18e36bcf920ce58d130f4c17f702364d33bec2fb"
+    # Pin updated 2026-05-28 (entry_window_max_reprices knob, ALP-740):
+    # ALP-740 added entry_window_max_reprices: 2 to config/continuous_monitor.yaml
+    # and ContinuousMonitorConfig (the reprice/escalate loop bound for patient-retest
+    # entries at the entry_window deadline), shifting the resolved-config canonical bytes.
+    expected = "e806e9918ea890171dbf49a487fa91a800ddb2a4dc0918d76c6a8a078361dc32"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

@@ -213,18 +213,13 @@ class BrokerEntryWindowRepricer:
                 bracket.bracket_id,
             )
             return EntryWindowDeadlineOutcome.FAILED
-        try:
-            new_limit = marketable_limit_price(
-                direction=target.direction, quote=quote, bps_through_touch=self.bps_through_touch
-            )
-        except Exception:
-            log.warning(
-                "entry_window: could not price a marketable limit for %s; retrying bracket %s",
-                target.ticker,
-                bracket.bracket_id,
-                exc_info=True,
-            )
-            return EntryWindowDeadlineOutcome.FAILED
+        # marketable_limit_price is a pure Decimal computation over a validated
+        # touch (AlpacaQuoteSource guarantees bid/ask > 0); a degenerate-input
+        # raise is isolated + retried by the watcher cycle's per-bracket catch
+        # (task._run_entry_window_cycle), so no local guard is needed here.
+        new_limit = marketable_limit_price(
+            direction=target.direction, quote=quote, bps_through_touch=self.bps_through_touch
+        )
         if not _marketable_preserves_geometry(
             direction=target.direction,
             new_limit=new_limit,
