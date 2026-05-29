@@ -578,6 +578,7 @@ async def _maybe_route_accepted_commands(
         execution_config=execution_config,
         invocation_handle=invocation_handle,
         broker_dispatch=broker_dispatch,
+        quote_source=quote_source,
     )
     return envelope, submission_results, dispatch_results, abandoned_entries
 

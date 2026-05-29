@@ -27,7 +27,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -88,19 +88,32 @@ _DTB3_SERIES_ID = "DTB3"
 _DEFAULT_RISK_FREE_RATE = 0.045
 
 
-# The ``timeframe`` string the OHLCV collector writes for end-of-day bars
-# (see ``data_sources/polygon/equity.py``).
-_OHLCV_DAILY_TIMEFRAME = "1d"
+# ALP-747 — per-timeframe granularity rank used to break a ``period_start``
+# tie when selecting the freshest reference bar. A top-of-hour open can carry a
+# 15min and a 1h bar starting at the same instant; the finer-grained bar is the
+# more recent price, so it wins (lower rank). The ranks mirror the timeframes
+# the OHLCV collector writes (see ``data_sources/polygon/equity.py``); an
+# unrecognized timeframe sorts last. Keeping the tiebreak deterministic keeps
+# the chosen reference reproducible from the archived bars (ALP-747 AC4).
+_TIMEFRAME_GRANULARITY_RANK: dict[str, int] = {
+    "15min": 0,
+    "1h": 1,
+    "4h": 2,
+    "1d": 3,
+    "1w": 4,
+}
+_UNKNOWN_TIMEFRAME_RANK = 99
 
-# ALP-587 — staleness ceiling for an EOD bar consumed as a spot price. An
-# EOD close is structurally staler than the live-quote freshness window
-# (``config.snapshot_freshness_max_price_age_seconds`` is 900s) — applying
-# that bound would reject every EOD bar. A daily bar prints once per
-# trading session, so a seven-calendar-day ceiling clears the longest U.S.
-# market-holiday weekend yet still drops a ticker whose price feed has
-# genuinely stalled; a dropped ticker correctly falls back to the
-# validation tool's ``UNAVAILABLE`` / ``missing_market_price`` outcome.
-_MAX_EOD_BAR_AGE_SECONDS = 7 * 24 * 60 * 60
+# ALP-587 / ALP-747 — staleness ceiling for a recorded bar consumed as a spot
+# price. A daily bar is structurally staler than the live-quote freshness window
+# (``config.snapshot_freshness_max_price_age_seconds`` is 900s) — applying that
+# bound would reject every off-hours reference. A seven-calendar-day ceiling
+# clears the longest U.S. market-holiday weekend yet still drops a ticker whose
+# price feed has genuinely stalled; a dropped ticker correctly falls back to the
+# validation tool's ``UNAVAILABLE`` / ``missing_market_price`` outcome. The
+# dispatch-time live-quote coherence check (ALP-747) is the real-time backstop
+# for a reference bar that clears this bound but still lags a fast intraday move.
+_MAX_REFERENCE_BAR_AGE_SECONDS = 7 * 24 * 60 * 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,21 +213,30 @@ async def _read_active_universe_prices(
     session: AsyncSession,
     *,
     as_of: datetime,
-    max_bar_age_seconds: float = _MAX_EOD_BAR_AGE_SECONDS,
+    max_bar_age_seconds: float = _MAX_REFERENCE_BAR_AGE_SECONDS,
 ) -> dict[str, float]:
-    """Latest EOD close per active-universe ticker (ALP-587).
+    """Freshest recorded close per active-universe ticker (ALP-587 / ALP-747).
 
-    Reads the most recent ``1d`` :class:`OhlcvBars` row for every ticker
-    the ``asset_universe`` table marks ``is_active`` and returns
-    ``{ticker: unadj_close}``. The *unadjusted* close — the actual traded
-    price, not the split-adjusted series — is used so the value carries
-    the same semantics as a broker ``current_price`` quote. A corporate
-    action between the bar and ``as_of`` (split, large dividend) leaves
-    the close slightly off as a current-spot proxy; that imprecision is
-    accepted for guardrail projection, which is a coarse pre-trade
-    notional/margin check rather than a fill-quality gate.
+    Reads the most recent :class:`OhlcvBars` row of *any* timeframe for every
+    ticker the ``asset_universe`` table marks ``is_active`` and returns
+    ``{ticker: unadj_close}``. Pre-ALP-747 this read only ``1d`` bars, so the
+    reference price lagged the live intraday price by up to a full session
+    during a fast move (the ORCL $204-daily-vs-$226-intraday mispricing); now an
+    intraday ``15min`` / ``1h`` / ``4h`` close — which the collector writes on a
+    market-hours cadence — supersedes the daily close whenever it is fresher.
+    The *unadjusted* close — the actual traded price, not the split-adjusted
+    series — is used so the value carries the same semantics as a broker
+    ``current_price`` quote. A corporate action between the bar and ``as_of``
+    (split, large dividend) leaves the close slightly off as a current-spot
+    proxy; that imprecision is accepted for guardrail projection, which is a
+    coarse pre-trade notional/margin check rather than a fill-quality gate.
 
-    A ticker whose latest bar is older than ``max_bar_age_seconds`` is
+    "Freshest" is the maximum ``period_start`` across all timeframes; on a tie
+    (a top-of-hour open shared by a 15min and a 1h bar) the finer-grained bar
+    wins (:data:`_TIMEFRAME_GRANULARITY_RANK`), keeping selection deterministic
+    and the run reproducible from the archived bars (ALP-747 AC4).
+
+    A ticker whose freshest bar is older than ``max_bar_age_seconds`` is
     dropped: the validation tool's ``UNAVAILABLE`` / ``missing_market_price``
     path is the correct fallback for a price feed that has genuinely
     stalled. The bound is applied in SQL via the ``period_start`` ISO-8601
@@ -226,33 +248,34 @@ async def _read_active_universe_prices(
     that function.
     """
     cutoff_iso = (as_of - timedelta(seconds=max_bar_age_seconds)).replace(microsecond=0).isoformat()
-    # Latest ``period_start`` per active ticker — the MAX-per-group shape
-    # the sibling ``read_realized_vol_map`` uses, joined back for the close.
-    latest_subq = (
+    # Rank each in-window bar within its ticker by recency (period_start desc),
+    # breaking a period_start tie toward the finer-grained timeframe, then keep
+    # the top row per ticker. A row_number window avoids the MAX-per-group
+    # self-join's ambiguity when two timeframes share the maximum period_start.
+    rank_case = case(
+        _TIMEFRAME_GRANULARITY_RANK,
+        value=OhlcvBars.timeframe,
+        else_=_UNKNOWN_TIMEFRAME_RANK,
+    )
+    ranked = (
         select(
             OhlcvBars.ticker.label("ticker"),
-            func.max(OhlcvBars.period_start).label("latest"),
+            OhlcvBars.unadj_close.label("unadj_close"),
+            func.row_number()
+            .over(
+                partition_by=OhlcvBars.ticker,
+                order_by=(OhlcvBars.period_start.desc(), rank_case.asc()),
+            )
+            .label("rn"),
         )
         .join(AssetUniverse, AssetUniverse.ticker == OhlcvBars.ticker)
         .where(
-            OhlcvBars.timeframe == _OHLCV_DAILY_TIMEFRAME,
             AssetUniverse.is_active == 1,
-        )
-        .group_by(OhlcvBars.ticker)
-        .subquery()
-    )
-    stmt = (
-        select(OhlcvBars.ticker, OhlcvBars.unadj_close)
-        .join(
-            latest_subq,
-            (OhlcvBars.ticker == latest_subq.c.ticker)
-            & (OhlcvBars.period_start == latest_subq.c.latest),
-        )
-        .where(
-            OhlcvBars.timeframe == _OHLCV_DAILY_TIMEFRAME,
             OhlcvBars.period_start >= cutoff_iso,
         )
+        .subquery()
     )
+    stmt = select(ranked.c.ticker, ranked.c.unadj_close).where(ranked.c.rn == 1)
     rows = (await session.execute(stmt)).all()
     return {str(ticker): float(close) for ticker, close in rows}
 

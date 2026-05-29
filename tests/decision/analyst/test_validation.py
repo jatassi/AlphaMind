@@ -1337,6 +1337,52 @@ class TestBracketPriceCoherence:
         rules = [e.rule for e in result.errors]
         assert "bracket_directional_coherence" in rules
 
+    def test_orcl_anchor_rejected_against_fresh_intraday_not_stale_daily(self) -> None:
+        """ALP-747: the same ORCL bracket (inv-20260529T193819Z) flips from
+        accepted to rejected purely on which reference price the freshened
+        ``underlying_prices`` map carries.
+
+        Entry BUY LIMIT $198 (enter-now, no entry_window), target $212, stop $187.
+
+        * Against the stale 5/28 daily close $203.70 the $198 anchor drift is 2.8%
+          (< 5%) and the geometry straddles — the bracket sailed through (the
+          pre-ALP-747 bug).
+        * Against the fresh 1h intraday close $225.75 — what ALP-747's freshened
+          reference now feeds — the $198 anchor is 12.3% stale, so
+          ``reference_price_staleness`` fires and the bracket is rejected before
+          submission.
+        """
+        rec = _equity_rec(
+            ticker="ORCL",
+            direction="long",
+            entry=EntryOrder(type="limit", limit_price=price(198.0)),
+            target_price=212.0,
+            stop_trigger=187.0,
+            stop_comparator="<=",
+            quantity=10.0,
+            dollar_value=1980.0,
+        )
+        output = _make_output(recommendations=(rec,))
+
+        # Stale daily close — the pre-ALP-747 reference let the bracket through.
+        stale = validate_analyst_output(
+            output,
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            underlying_prices={"ORCL": 203.70},
+        )
+        assert "reference_price_staleness" not in [e.rule for e in stale.errors]
+
+        # Fresh intraday close — ALP-747's freshened reference rejects it.
+        fresh = validate_analyst_output(
+            output,
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            underlying_prices={"ORCL": 225.75},
+        )
+        assert fresh.is_valid is False
+        assert "reference_price_staleness" in [e.rule for e in fresh.errors]
+
     def test_enter_now_limit_coherent_vs_live_passes(self) -> None:
         """An enter-now limit at the live close with a bracket straddling it
         passes both checks."""

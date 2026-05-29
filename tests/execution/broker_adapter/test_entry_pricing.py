@@ -35,6 +35,7 @@ from alphamind.commands.command_models import (
 )
 from alphamind.execution.broker_adapter.entry_pricing import (
     TouchQuote,
+    live_bracket_incoherence_reason,
     marketable_limit_price,
     rewrite_enter_now_entries,
 )
@@ -316,6 +317,99 @@ def test_long_marketable_limit_crosses_to_or_above_the_ask() -> None:
     # 85.14 * (1 + 0.0005) = 85.182... -> rounded UP to a penny = 85.19.
     assert limit == price("85.19")
     assert Decimal(limit) >= Decimal(quote.ask)
+
+
+_LIVE_AROUND_226 = TouchQuote(bid=price("225.70"), ask=price("225.80"))
+
+
+def test_long_target_below_live_touch_is_incoherent() -> None:
+    """ALP-747 ORCL replay: a long enter-now bracket whose target sits below the
+    live ask cannot profit at a fill near the live quote, so dispatch rejects it.
+    Entry BUY LIMIT $198, target $212 with the live touch ~$226."""
+    command = _equity_open(
+        ticker="ORCL",
+        direction="long",
+        entry_order=EntryOrder(type="limit", limit_price=price("198.0")),
+        target_price=price("212.0"),
+        stop_trigger=price("187.0"),
+    )
+    reason = live_bracket_incoherence_reason(command, quote=_LIVE_AROUND_226)
+    assert reason is not None
+    assert "ORCL" in reason
+
+
+def test_coherent_long_vs_live_touch_passes() -> None:
+    """A long whose target sits above the live ask and stop below it is coherent
+    vs the live quote — no rejection."""
+    command = _equity_open(
+        ticker="ORCL",
+        direction="long",
+        entry_order=EntryOrder(type="limit", limit_price=price("225.0")),
+        target_price=price("245.0"),
+        stop_trigger=price("210.0"),
+    )
+    assert live_bracket_incoherence_reason(command, quote=_LIVE_AROUND_226) is None
+
+
+def test_short_target_above_live_touch_is_incoherent() -> None:
+    """A short whose target sits at/above the live bid cannot profit as price
+    falls from a fill near the live quote — reject."""
+    command = _equity_open(
+        ticker="SCHW",
+        direction="short",
+        entry_order=EntryOrder(type="market", limit_price=None),
+        target_price=price("230.0"),
+        stop_trigger=price("240.0"),
+    )
+    reason = live_bracket_incoherence_reason(command, quote=_LIVE_AROUND_226)
+    assert reason is not None
+    assert "SCHW" in reason
+
+
+def test_coherent_short_vs_live_touch_passes() -> None:
+    """A short whose target sits below the live bid and stop above it passes."""
+    command = _equity_open(
+        ticker="SCHW",
+        direction="short",
+        entry_order=EntryOrder(type="market", limit_price=None),
+        target_price=price("210.0"),
+        stop_trigger=price("240.0"),
+    )
+    assert live_bracket_incoherence_reason(command, quote=_LIVE_AROUND_226) is None
+
+
+def test_patient_retest_limit_is_exempt() -> None:
+    """A limit carrying an entry_window rests away from the touch by design —
+    the live-coherence check does not apply (returns None)."""
+    window = EntryWindow(
+        deadline=datetime(2026, 6, 1, 17, 30, tzinfo=UTC),
+        decay_type="gradual",
+        rationale="Patient retest of the breakout.",
+    )
+    command = _equity_open(
+        ticker="ORCL",
+        direction="long",
+        entry_order=EntryOrder(type="limit", limit_price=price("198.0")),
+        target_price=price("212.0"),
+        stop_trigger=price("187.0"),
+        entry_window=window,
+    )
+    assert live_bracket_incoherence_reason(command, quote=_LIVE_AROUND_226) is None
+
+
+def test_stop_limit_breakout_is_exempt() -> None:
+    """A breakout stop_limit entry deliberately fires away from the live quote —
+    exempt from the live-coherence check."""
+    command = _equity_open(
+        ticker="ORCL",
+        direction="long",
+        entry_order=EntryOrder(
+            type="stop_limit", limit_price=price("230.0"), stop_price=price("229.0")
+        ),
+        target_price=price("212.0"),
+        stop_trigger=price("187.0"),
+    )
+    assert live_bracket_incoherence_reason(command, quote=_LIVE_AROUND_226) is None
 
 
 def test_subpenny_tick_below_one_dollar() -> None:

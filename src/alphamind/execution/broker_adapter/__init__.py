@@ -36,6 +36,8 @@ from alphamind.execution.broker_adapter.corporate_actions_queries import (
 from alphamind.execution.broker_adapter.entry_pricing import (
     QuoteSource,
     TouchQuote,
+    fills_at_live_quote_equity,
+    live_bracket_incoherence_reason,
     marketable_limit_price,
     rewrite_enter_now_entries,
 )
@@ -137,7 +139,9 @@ __all__ = [
     "TradeAccountSnapshot",
     "build_occ_symbol",
     "classify_alpaca_error",
+    "fills_at_live_quote_equity",
     "is_transient",
+    "live_bracket_incoherence_reason",
     "marketable_limit_price",
     "order_snapshot_to_fill_reports",
     "recover_missed_fills_since",
