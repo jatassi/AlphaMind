@@ -196,9 +196,15 @@ def test_l4_broad_except_count_below_audit_baseline(antipattern_findings: Script
     # submit_engine_envelope's _dispatch_engine_close: wide catch →
     # classify_alpaca_error, re-raising any non-broker exception). Each carries
     # an inline rationale comment.
-    assert l4 <= 58, (
-        f"L4 (broad except) count drift: {l4}. Post-ALP-737 "
-        f"ceiling is 58. If this count climbs above 58, audit each new "
+    # Ceiling raised from 58 to 60 (2026-05-28, ALP-738 marketable entry pricing):
+    # +2 warranted money-path fallbacks — (1) quotes.py AlpacaQuoteSource.latest_quote
+    # degrades a raising latest-quote snapshot to None (leave entry verbatim), and
+    # (2) entry_pricing.py _rewrite_one wraps the whole quote-resolve so a
+    # misbehaving QuoteSource or a degenerate-touch pricing error leaves the entry
+    # verbatim rather than aborting the submission. Both carry inline rationale.
+    assert l4 <= 60, (
+        f"L4 (broad except) count drift: {l4}. Post-ALP-738 "
+        f"ceiling is 60. If this count climbs above 60, audit each new "
         f"handler against ALP-480's warranted-residue list."
     )
 
@@ -267,9 +273,15 @@ def test_l19_async_over_sync_count_at_protocol_residue(antipattern_findings: Scr
     # their SQL- / broker-backed implementations (which genuinely await DB +
     # broker I/O) satisfy, the same Protocol-stub residue bracket_stops carries
     # (BracketRepository / BracketCloseSubmitter).
-    assert l19 <= 98, (
-        f"L19 (async-over-sync) count drift: {l19}. Post-ALP-737 "
-        f"ceiling is 98 (Protocol stubs + SDK decorators + alert "
+    # Ceiling raised from 98 to 99 (2026-05-28, ALP-738 marketable entry pricing):
+    # one new async Protocol stub — QuoteSource.latest_quote in
+    # broker_adapter/entry_pricing.py — is the structural async seam its
+    # Alpaca-backed implementation (AlpacaQuoteSource, which genuinely awaits the
+    # latest-quote snapshot via asyncio.to_thread) satisfies. Same Protocol-stub
+    # residue as the entry_window readers/cancellers above.
+    assert l19 <= 99, (
+        f"L19 (async-over-sync) count drift: {l19}. Post-ALP-738 "
+        f"ceiling is 99 (Protocol stubs + SDK decorators + alert "
         f"channels). Climbing above this suggests new ``async def`` "
         f"functions that never ``await`` — convert to sync unless the "
         f"function legitimately awaits I/O."

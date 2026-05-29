@@ -131,31 +131,24 @@ async def _rewrite_one(command: OMSCommand, *, quote_source: QuoteSource, bps: f
     assert isinstance(command.instrument, EquityInstrument)
     ticker = command.instrument.ticker
     direction = command.instrument.direction
+    # One guard around the whole resolve: a quote-source raising (a misbehaving
+    # QuoteSource — the Alpaca one already returns None on error) or
+    # marketable_limit_price raising on a degenerate touch both degrade to
+    # leaving the entry verbatim rather than aborting the submission.
     try:
         quote = await quote_source.latest_quote(ticker)
-    except Exception:
-        logger.warning(
-            "entry_pricing: quote fetch raised for %s; leaving enter-now entry verbatim",
-            ticker,
-            exc_info=True,
-        )
-        return command
-    if quote is None:
-        logger.warning(
-            "entry_pricing: no quote for %s; leaving enter-now limit %s verbatim",
-            ticker,
-            command.entry_order.limit_price,
-        )
-        return command
-    try:
+        if quote is None:
+            logger.warning(
+                "entry_pricing: no quote for %s; leaving enter-now limit %s verbatim",
+                ticker,
+                command.entry_order.limit_price,
+            )
+            return command
         new_limit = marketable_limit_price(direction=direction, quote=quote, bps_through_touch=bps)
     except Exception:
         logger.warning(
-            "entry_pricing: could not price marketable limit for %s (bid=%s ask=%s); "
-            "leaving verbatim",
+            "entry_pricing: could not resolve a marketable limit for %s; leaving verbatim",
             ticker,
-            quote.bid,
-            quote.ask,
             exc_info=True,
         )
         return command
