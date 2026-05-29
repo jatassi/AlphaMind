@@ -21,6 +21,7 @@ in :mod:`alphamind.execution.broker_adapter.quotes`.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import ROUND_DOWN, ROUND_UP, Decimal
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -54,6 +55,21 @@ class QuoteSource(Protocol):
     """Fetches the live touch for a symbol; ``None`` when no quote is available."""
 
     async def latest_quote(self, symbol: str) -> TouchQuote | None: ...
+
+
+@runtime_checkable
+class BatchQuoteSource(Protocol):
+    """Fetches live touches for many symbols in one batch (ALP-753).
+
+    The returned mapping contains only symbols with a usable two-sided quote;
+    a missing / one-sided / zero touch is dropped per symbol, so the caller
+    falls back to a recorded reference for the dropped symbol. A whole-batch
+    broker failure raises ``RuntimeError`` (rather than the singular
+    :class:`QuoteSource`'s ``None``) so the phase-1 caller degrades the entire
+    reference layer and flips its staleness flag.
+    """
+
+    async def latest_quotes(self, symbols: Sequence[str]) -> Mapping[str, TouchQuote]: ...
 
 
 def _tick_for(value: Decimal) -> Decimal:
