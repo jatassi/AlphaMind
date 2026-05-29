@@ -15,8 +15,10 @@ from decimal import Decimal
 
 import pytest
 
-from alphamind._kernel.money import money, price
+from alphamind._kernel.ids import PositionId
+from alphamind._kernel.money import Price, money, price
 from alphamind.commands.command_models import (
+    AddCommand,
     BracketOrderParameters,
     Direction,
     EntryOrder,
@@ -50,13 +52,16 @@ class _FakeQuoteSource:
         return self._quotes.get(symbol)
 
 
-def _hard_leg(ticker: str) -> PriceLeg:
+# Module-level singletons so they can be used as default args (ruff B008).
+_DEFAULT_STOP_TRIGGER: Price = price(999.0)
+_DEFAULT_TARGET_PRICE: Price = price(80.0)
+
+
+def _hard_leg(ticker: str, trigger: Price = _DEFAULT_STOP_TRIGGER) -> PriceLeg:
     return PriceLeg(
         type="price",
         is_hard=True,
-        condition=PriceCondition(
-            underlying_trigger=ticker, comparator=">=", trigger_price=price(999.0)
-        ),
+        condition=PriceCondition(underlying_trigger=ticker, comparator=">=", trigger_price=trigger),
         order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
     )
 
@@ -82,7 +87,13 @@ def _equity_open(
     direction: Direction = "short",
     entry_order: EntryOrder,
     entry_window: EntryWindow | None = None,
+    target_price: Price = _DEFAULT_TARGET_PRICE,
+    stop_trigger: Price = _DEFAULT_STOP_TRIGGER,
 ) -> OpenCommand:
+    # Defaults form a coherent SHORT bracket (take-profit 80 below entry, stop
+    # 999 above). Long-direction callers pass coherent long geometry
+    # (take-profit above entry, stop below) so the rewrite's geometry guard
+    # does not skip them.
     return OpenCommand(
         command_type="open",
         instrument=EquityInstrument(asset_type="equity", ticker=ticker, direction=direction),
@@ -90,12 +101,12 @@ def _equity_open(
         position_size=PositionSize(quantity=25.0, dollar_value=money(2_000.0)),
         target=Target(
             target_type="absolute_price",
-            price=price(80.0),
+            price=target_price,
             pl_percentage=None,
             pl_dollar=None,
             order_type="limit",
         ),
-        invalidation_legs=(_hard_leg(ticker),),
+        invalidation_legs=(_hard_leg(ticker, stop_trigger),),
         thesis=_thesis(ticker),
         entry_window=entry_window,
     )
@@ -130,10 +141,13 @@ async def test_enter_now_short_rewritten_to_marketable_limit() -> None:
 
 @pytest.mark.asyncio
 async def test_long_enter_now_rewritten_to_marketable_buy_limit() -> None:
+    # Coherent long bracket: stop (80) below entry, take-profit (90) above.
     command = _equity_open(
         ticker="AAPL",
         direction="long",
         entry_order=EntryOrder(type="limit", limit_price=price("80.0")),
+        target_price=price("90.0"),
+        stop_trigger=price("80.0"),
     )
     source = _FakeQuoteSource({"AAPL": _BID_ASK})
 
@@ -235,6 +249,55 @@ async def test_missing_quote_leaves_enter_now_entry_verbatim() -> None:
 
     assert rewritten is command
     assert source.requested == ["SCHW"]
+
+
+@pytest.mark.asyncio
+async def test_enter_now_skipped_when_marketable_would_invert_bracket() -> None:
+    """If the marketable limit would cross the take-profit, leave verbatim.
+
+    The default short bracket has take_profit=80.0 (cover below entry). A bid
+    that prices the marketable SELL limit below 80 would invert the bracket
+    (entry must stay above the take-profit for a short), which the broker would
+    reject — so the rewrite is skipped and the analyst's entry is preserved.
+    """
+    command = _equity_open(entry_order=EntryOrder(type="limit", limit_price=price("82.0")))
+    # bid 79.50 -> marketable 79.46 < take_profit 80.0 -> would invert.
+    source = _FakeQuoteSource({"SCHW": TouchQuote(bid=price("79.50"), ask=price("79.54"))})
+
+    (rewritten,) = await rewrite_enter_now_entries(
+        (command,), quote_source=source, bps_through_touch=5.0
+    )
+
+    assert rewritten is command
+    assert source.requested == ["SCHW"]
+
+
+@pytest.mark.asyncio
+async def test_add_command_left_verbatim() -> None:
+    """ADD is out of scope — only OpenCommand entries are re-priced."""
+    add = AddCommand(
+        command_type="add",
+        position_id=PositionId("POS-SCHW-001"),
+        additional_quantity=10.0,
+        additional_dollar_value=money(1_000.0),
+        entry_order=EntryOrder(type="limit", limit_price=price("85.5")),
+        thesis_addition_component=ThesisComponent(
+            component_type="entry_rationale",
+            linked_leg="add",
+            instrument_reference="SCHW",
+            narrative="Add on confirmation.",
+            key_assumptions=("Trend intact.",),
+        ),
+        bracket_adjustment=None,
+    )
+    source = _FakeQuoteSource({"SCHW": _BID_ASK})
+
+    (rewritten,) = await rewrite_enter_now_entries(
+        (add,), quote_source=source, bps_through_touch=5.0
+    )
+
+    assert rewritten is add
+    assert source.requested == []
 
 
 def test_short_marketable_limit_crosses_to_or_below_the_bid() -> None:

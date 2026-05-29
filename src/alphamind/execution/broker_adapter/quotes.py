@@ -50,4 +50,6 @@ class AlpacaQuoteSource:
         ask = getattr(quote, "ask_price", None)
         if not bid or not ask or bid <= 0 or ask <= 0:
             return None
-        return TouchQuote(bid=price(str(bid)), ask=price(str(ask)))
+        # price() parses float at the boundary (str-converts internally to dodge
+        # binary-float drift), so pass the SDK float directly.
+        return TouchQuote(bid=price(bid), ask=price(ask))

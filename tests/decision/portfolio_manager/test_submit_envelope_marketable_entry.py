@@ -118,15 +118,17 @@ async def _dispatch(envelope: Any, *, quote_source: Any) -> _CapturingBrokerDisp
 @pytest.mark.asyncio
 async def test_quote_source_repricing_reaches_the_broker() -> None:
     """With a quote source, the dispatched command carries the marketable limit."""
-    quote_source = _FakeQuoteSource({"NVDA": TouchQuote(bid=price("99.98"), ask=price("100.00"))})
+    # _open_command() is a coherent long bracket (stop 750 below, target 950
+    # above); the quote sits in that band so the marketable limit stays coherent.
+    quote_source = _FakeQuoteSource({"NVDA": TouchQuote(bid=price("899.98"), ask=price("900.00"))})
 
     fake_dispatch = await _dispatch(_enter_now_limit_envelope(), quote_source=quote_source)
 
     (command,) = fake_dispatch.captured
     assert isinstance(command, OpenCommand)
     # long enter-now -> marketable BUY limit through the ask:
-    # 100.00 * (1 + 0.0005) = 100.05 (default bps=5.0), not the analyst's 950.
-    assert command.entry_order.limit_price == price("100.05")
+    # 900.00 * (1 + 0.0005) = 900.45 (default bps=5.0), not the analyst's 950.
+    assert command.entry_order.limit_price == price("900.45")
 
 
 @pytest.mark.asyncio

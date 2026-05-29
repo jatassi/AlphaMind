@@ -26,7 +26,7 @@ from decimal import ROUND_DOWN, ROUND_UP, Decimal
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from alphamind._kernel.money import Price, price
-from alphamind.commands.command_models import EntryOrder, EquityInstrument, OpenCommand
+from alphamind.commands.command_models import EquityInstrument, OpenCommand, PriceLeg
 
 if TYPE_CHECKING:
     from alphamind.commands.command_models import Direction, OMSCommand
@@ -71,11 +71,12 @@ def marketable_limit_price(
     result is rounded to the minimum pricing increment in the aggressive
     direction (SELL down, BUY up) so it stays marketable after tick conformance.
     """
+    # quote.bid / quote.ask are already Decimal (Price is a Decimal NewType).
     factor = Decimal(str(bps_through_touch)) / _BPS_DENOMINATOR
     if direction == "short":
-        raw = Decimal(quote.bid) * (Decimal(1) - factor)
+        raw = quote.bid * (Decimal(1) - factor)
         return price(raw.quantize(_tick_for(raw), rounding=ROUND_DOWN))
-    raw = Decimal(quote.ask) * (Decimal(1) + factor)
+    raw = quote.ask * (Decimal(1) + factor)
     return price(raw.quantize(_tick_for(raw), rounding=ROUND_UP))
 
 
@@ -87,6 +88,11 @@ def _is_enter_now_equity(command: OMSCommand) -> bool:
     rather than rest. A limit *with* an ``entry_window`` is a patient retest
     (left verbatim, handled by ALP-737's deadline watcher); ``market`` already
     fills and ``stop_limit`` is a conditional breakout entry.
+
+    Scope is OPEN bracket entries only — the ``isinstance(command, OpenCommand)``
+    guard intentionally excludes ``AddCommand`` (which also carries an
+    ``entry_order`` but no ``entry_window`` field); adds-to-existing-positions
+    are out of scope for this incident (ALP-738).
     """
     return (
         isinstance(command, OpenCommand)
@@ -153,6 +159,16 @@ async def _rewrite_one(command: OMSCommand, *, quote_source: QuoteSource, bps: f
             exc_info=True,
         )
         return command
+    if not _preserves_bracket_geometry(direction, new_limit, command):
+        logger.warning(
+            "entry_pricing: marketable limit %s for %s %s would invert the bracket "
+            "(take_profit=%s); leaving enter-now entry verbatim",
+            new_limit,
+            ticker,
+            direction,
+            command.target.price,
+        )
+        return command
     logger.info(
         "entry_pricing: %s %s enter-now limit %s -> marketable %s (bid=%s ask=%s)",
         ticker,
@@ -162,5 +178,38 @@ async def _rewrite_one(command: OMSCommand, *, quote_source: QuoteSource, bps: f
         quote.bid,
         quote.ask,
     )
-    new_entry = EntryOrder(type="limit", limit_price=new_limit, stop_price=None)
+    # model_copy (not a fresh EntryOrder) so any future entry_order fields ride
+    # through unchanged and we don't re-assert the type=="limit"/no-stop_price
+    # invariant the classifier already guarantees.
+    new_entry = command.entry_order.model_copy(update={"limit_price": new_limit})
     return command.model_copy(update={"entry_order": new_entry})
+
+
+def _preserves_bracket_geometry(
+    direction: Direction, new_limit: Price, command: OpenCommand
+) -> bool:
+    """True if *new_limit* keeps the bracket's entry/target/stop ordering valid.
+
+    Re-pricing moves a short entry **down** toward the bid / a long entry **up**
+    toward the ask. If the analyst paired the entry with a tight take-profit (or
+    stop), the marketable price can cross it and invert the bracket — which the
+    broker rejects outright (a worse outcome than the original no-fill). When
+    that would happen we leave the entry verbatim, preserving the analyst's
+    self-consistent bracket rather than submitting one the broker will reject.
+
+    A short bracket needs ``take_profit < entry < stop``; a long bracket needs
+    ``stop < entry < take_profit``. ``Target.price`` is present for every
+    target_type (Target's validator); the price-stop leg is optional (an OTO
+    bracket has none).
+    """
+    target = command.target.price
+    assert target is not None  # Target validator guarantees a price for every target_type.
+    price_leg = next((leg for leg in command.invalidation_legs if isinstance(leg, PriceLeg)), None)
+    stop = price_leg.condition.trigger_price if price_leg is not None else None
+    if direction == "short":
+        if new_limit <= target:
+            return False
+        return stop is None or new_limit < stop
+    if new_limit >= target:
+        return False
+    return stop is None or new_limit > stop
