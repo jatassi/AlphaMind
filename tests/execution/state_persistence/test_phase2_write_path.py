@@ -417,12 +417,13 @@ def _open_command(
     quantity: float = 10.0,
     dollar_value: float = 10_000.0,
     entry_window: EntryWindow | None = None,
+    entry_order: EntryOrder | None = None,
 ) -> OpenCommand:
     return OpenCommand(
         command_type="open",
         entry_window=entry_window,
         instrument=EquityInstrument(asset_type="equity", ticker=underlying, direction="long"),
-        entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+        entry_order=entry_order or EntryOrder(type="market", limit_price=None, stop_price=None),
         position_size=PositionSize(quantity=quantity, dollar_value=money(dollar_value)),
         target=Target(
             target_type="absolute_price",
@@ -514,13 +515,14 @@ def _add_command(
     position_id: str = "POS-NVDA-001",
     *,
     bracket_adjustment: BracketAdjustment | None = None,
+    entry_order: EntryOrder | None = None,
 ) -> AddCommand:
     return AddCommand(
         command_type="add",
         position_id=PositionId(position_id),
         additional_quantity=5.0,
         additional_dollar_value=money(5_000.0),
-        entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+        entry_order=entry_order or EntryOrder(type="market", limit_price=None, stop_price=None),
         thesis_addition_component=OMSThesisComponent(
             component_type="entry_rationale",
             linked_leg="add",
@@ -1133,7 +1135,17 @@ async def test_open_command_writes_position_thesis_bracket_orders_and_events(
     await _seed_invocation_substrate(factory)
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
 
-    envelope = _make_analyst_envelope(commands=(_open_command(underlying=Symbol("NVDA")),))
+    # A non-marketable LIMIT entry is the case that reserves capital (ALP-741):
+    # OPEN now reserves the order notional (limit * quantity), so a market entry
+    # would reserve nothing. 1000 * 10 = $10k reserved.
+    envelope = _make_analyst_envelope(
+        commands=(
+            _open_command(
+                underlying=Symbol("NVDA"),
+                entry_order=EntryOrder(type="limit", limit_price=price(1000.0), stop_price=None),
+            ),
+        )
+    )
     results = (
         _accepted_result(
             command_ordinal=0,
@@ -1236,10 +1248,14 @@ async def test_open_command_persists_real_position_size_and_capital_reservation(
     """OPEN writeback reads ``command.position_size`` end-to-end:
 
     * the entry order's quantity equals ``command.position_size.quantity``
-    * the cash ledger reserves exactly ``command.position_size.dollar_value``
-    * the capital_reserved activity-log detail records the same dollar value.
+    * the cash ledger reserves the entry order's NOTIONAL (``limit_price *
+      quantity``), NOT ``command.position_size.dollar_value`` (ALP-741) — the
+      basis the reprice / cancel / fill release paths use, so the reservation
+      lifecycle conserves and ``reserved_capital_usd`` never drifts negative.
+    * the capital_reserved activity-log detail records the same notional.
 
-    Replaces the prior $1k/share token sizing with the real PM intent.
+    A limit entry at $1050 over 10 shares reserves $10,500, deliberately !=
+    the command's $10,000 ``dollar_value`` to prove the basis changed.
     """
     from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
@@ -1249,8 +1265,12 @@ async def test_open_command_persists_real_position_size_and_capital_reservation(
     await _seed_invocation_substrate(factory)
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
 
-    # _open_command builds quantity=10.0, dollar_value=10_000.0.
-    cmd = _open_command(underlying=Symbol("NVDA"))
+    # quantity=10.0, dollar_value=10_000.0, limit=1050 → notional 10_500 != dollar_value.
+    cmd = _open_command(
+        underlying=Symbol("NVDA"),
+        entry_order=EntryOrder(type="limit", limit_price=price(1050.0), stop_price=None),
+    )
+    expected_notional = Decimal("1050.0") * Decimal("10.0")
     envelope = _make_analyst_envelope(commands=(cmd,))
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
 
@@ -1270,18 +1290,19 @@ async def test_open_command_persists_real_position_size_and_capital_reservation(
         assert len(entry_orders) == 1
         assert entry_orders[0].quantity == pytest.approx(cmd.position_size.quantity)
 
-        # Capital reservation is the command's dollar_value, not 1_000.0.
+        # Capital reservation is the entry NOTIONAL (limit * quantity), not dollar_value.
         cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
         assert cash_row is not None
-        assert cash_row.reserved_capital_usd == pytest.approx(cmd.position_size.dollar_value)
+        assert cash_row.reserved_capital_usd == expected_notional
+        assert cash_row.reserved_capital_usd != Decimal(str(cmd.position_size.dollar_value))
 
-    # capital_reserved activity-log detail matches.
+    # capital_reserved activity-log detail matches the reserved notional.
     rows = await _read_activity_log_for(factory, handle.invocation_id)
     capital_rows = [r for r in rows if r.event_type == EventType.CAPITAL_RESERVED.value]
     assert len(capital_rows) == 1
     detail = json.loads(capital_rows[0].detail_json)
     # ALP-463: ``amount_usd`` is stored as the Decimal-exact string repr.
-    assert Decimal(detail["amount_usd"]) == Decimal(str(cmd.position_size.dollar_value))
+    assert Decimal(detail["amount_usd"]) == expected_notional
 
 
 async def test_persist_envelope_outcome_stamps_phase2_completion_on_invocation_row(
@@ -1871,9 +1892,11 @@ async def test_cancel_command_on_protective_leg_does_not_release_capital(
 async def test_add_command_persists_real_quantity_and_dollar_value(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """ADD writeback reads ``additional_quantity`` and ``additional_dollar_value``:
-    add-entry order quantity equals the command's additional_quantity; the
-    capital reservation matches additional_dollar_value."""
+    """ADD writeback reads ``additional_quantity`` and reserves the add-entry
+    order's NOTIONAL (``limit_price * additional_quantity``), NOT
+    ``additional_dollar_value`` (ALP-741) — symmetric with OPEN and the release
+    paths. A limit add at $1100 over 5 shares reserves $5,500, deliberately !=
+    the command's $5,000 ``additional_dollar_value`` to prove the basis."""
     from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
@@ -1883,7 +1906,11 @@ async def test_add_command_persists_real_quantity_and_dollar_value(
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
     await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
 
-    cmd = _add_command(position_id=PositionId("POS-NVDA-001"))
+    cmd = _add_command(
+        position_id=PositionId("POS-NVDA-001"),
+        entry_order=EntryOrder(type="limit", limit_price=price(1100.0), stop_price=None),
+    )
+    expected_notional = Decimal("1100.0") * Decimal("5.0")
     envelope = _make_strategist_envelope(commands=(cmd,))
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
 
@@ -1904,7 +1931,8 @@ async def test_add_command_persists_real_quantity_and_dollar_value(
 
         cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
         assert cash_row is not None
-        assert cash_row.reserved_capital_usd == pytest.approx(cmd.additional_dollar_value)
+        assert cash_row.reserved_capital_usd == expected_notional
+        assert cash_row.reserved_capital_usd != Decimal(str(cmd.additional_dollar_value))
 
 
 async def test_open_command_persists_target_and_invalidation_legs(
@@ -2897,6 +2925,98 @@ async def test_persist_entry_window_reprice_raising_limit_reserves_more_capital(
     assert EventType.CAPITAL_RELEASED.value not in types
 
 
+async def test_open_reprice_cancel_returns_reserved_capital_to_zero(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-741 acceptance — reprice-then-cancel path across a *real* OPEN: the
+    reservation lifecycle conserves and ``reserved_capital_usd`` returns to 0,
+    never negative.
+
+    A limit entry @ $1000 over 10 shares with PM ``dollar_value=$9000`` reserves
+    the order NOTIONAL ($10,000), not ``dollar_value``. The entry-window repricer
+    raises the limit ``1000 -> 1050`` (reserved ``10,000 -> 10,500``). The
+    terminal cancel then releases the live reserved notional (``1050 * 10 =
+    $10,500``) → reserved nets to exactly 0.
+
+    Before ALP-741, OPEN reserved ``dollar_value=$9000`` while the cancel released
+    ``1050 * 10 = $10,500`` (after a ``+$500`` reprice on the $9000 base = $9500
+    reserved), driving the singleton to ``9500 - 10,500 = -$1000`` — exactly the
+    negative ``reserved_capital_usd`` that crashed every decision-pipeline
+    invocation via the ``pending_order_capital_pct`` rule's ``_classify_zone``
+    negative guard.
+    """
+    from alphamind.execution.write_paths.phase2 import (
+        persist_entry_window_cancel,
+        persist_entry_window_reprice,
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=0.0)
+
+    cmd = _open_command(
+        underlying=Symbol("NVDA"),
+        quantity=10.0,
+        dollar_value=9_000.0,
+        entry_order=EntryOrder(type="limit", limit_price=price(1000.0), stop_price=None),
+    )
+    envelope = _make_analyst_envelope(commands=(cmd,))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        entry_orders = (
+            (await sess.execute(select(OrderRow).where(OrderRow.order_role == "ENTRY")))
+            .scalars()
+            .all()
+        )
+        assert len(entry_orders) == 1
+        entry_order_id = entry_orders[0].order_id
+        cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash is not None
+        # Reserved is the entry NOTIONAL (1000 * 10), not dollar_value (9000).
+        assert cash.reserved_capital_usd == Decimal(10000)
+        assert cash.reserved_capital_usd >= 0
+
+    # Reprice the resting entry 1000 -> 1050: reserved 10,000 -> 10,500.
+    ctx, handle = await _open_handle(factory, invocation_id=_INV_ID + "-reprice")
+    await persist_entry_window_reprice(
+        handle,
+        entry_order_id=entry_order_id,
+        new_limit_price=price("1050.0"),
+        new_alpaca_order_id="alp-repriced",
+        reprice_reason="entry_window_reprice",
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash is not None
+        assert cash.reserved_capital_usd == Decimal(10500)
+        assert cash.reserved_capital_usd >= 0
+
+    # Cancel the repriced entry: release 1050 * 10 = 10,500 → reserved nets to 0.
+    ctx, handle = await _open_handle(factory, invocation_id=_INV_ID + "-cancel")
+    await persist_entry_window_cancel(
+        handle,
+        entry_order_id=entry_order_id,
+        cancel_reason="entry_window_expired",
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash is not None
+        assert cash.reserved_capital_usd == pytest.approx(0.0)
+        assert cash.reserved_capital_usd >= 0
+
+
 async def test_cancel_entry_dissolve_cancels_all_legs_and_reloads(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
@@ -3071,8 +3191,14 @@ async def test_add_command_writes_add_entry_order_thesis_component_capital_reser
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
     await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
 
+    # Limit add reserves its notional (ALP-741); a market add would reserve nothing.
     envelope = _make_strategist_envelope(
-        commands=(_add_command(position_id=PositionId("POS-NVDA-001")),)
+        commands=(
+            _add_command(
+                position_id=PositionId("POS-NVDA-001"),
+                entry_order=EntryOrder(type="limit", limit_price=price(1100.0), stop_price=None),
+            ),
+        )
     )
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
 
@@ -3406,7 +3532,11 @@ async def test_handle_submit_envelope_wires_sql_writeback_on_accepted_envelope(
     assert EventType.PM_DECISION.value in types
     assert EventType.ORDER_SUBMITTED.value in types
     assert EventType.THESIS_CREATED.value in types
-    assert EventType.CAPITAL_RESERVED.value in types
+    # No CAPITAL_RESERVED: this OPEN is a market entry, which reserves nothing
+    # under the notional reservation basis (ALP-741) — a marketable order needs
+    # no pending-order capital reservation. The reserve path is covered by the
+    # dedicated limit-entry OPEN tests above.
+    assert EventType.CAPITAL_RESERVED.value not in types
 
 
 # ---------------------------------------------------------------------------

@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from alphamind._kernel.ids import OrderId
-from alphamind._kernel.money import Money, money
 from alphamind.commands.command_models import CancelCommand
 from alphamind.commands.submission_results import SubmissionResult
 from alphamind.execution.write_paths.phase2._shared import (
@@ -14,7 +13,7 @@ from alphamind.execution.write_paths.phase2._shared import (
     _cancel_pending_protective_orders,
     _emit,
     _emit_order_cancelled,
-    _order_notional_usd,
+    _order_reserved_notional,
     _release_capital,
 )
 from alphamind.portfolio_state.events.activity_log import (
@@ -24,7 +23,6 @@ from alphamind.portfolio_state.events.activity_log import (
 )
 from alphamind.portfolio_state.records.orders import (
     BracketStatus,
-    OrderRecord,
     OrderRole,
     OrderStatus,
 )
@@ -52,7 +50,7 @@ async def persist_entry_window_cancel(
     confirmed (via the broker cancel + a no-recorded-fills check) that the
     resting entry will not fill. It reuses the CANCEL writeback state machine
     (:func:`_writeback_cancel`) so the bracket dissolves, reserved capital is
-    released (the order-notional estimate, per ``_order_notional_estimate`` —
+    released (the order's reserved notional, per ``_order_reserved_notional`` —
     the same basis the PM CANCEL path uses, which for a resting limit entry is
     ``limit_price * remaining_quantity``), and the thesis resolves
     ``CANCELLED_NEVER_ENTERED`` exactly as a PM-originated CANCEL would.
@@ -107,25 +105,28 @@ async def _writeback_cancel(
     # Capital release is only valid for entry-class orders (ENTRY / ADD_ENTRY).
     # Those are the only roles that reserve capital on submission via
     # ``_reserve_capital``; protective legs (TAKE_PROFIT / PRICE_STOP /
-    # TIME_STOP) never reserved any. CANCELling a protective leg must NOT
-    # release a phantom amount — the ``max(... - amount_usd, 0.0)`` floor in
-    # ``_release_capital`` would mask the symptom but leave the ledger off by
-    # the protective leg's notional for the remainder of the cell's life.
+    # TIME_STOP) never reserved any, so they are excluded here — the zero-floor
+    # in ``_release_capital`` would mask a phantom protective-leg release but
+    # leave the ledger off by its notional, so the role guard, not the floor, is
+    # what keeps protective cancels honest.
     if target.role in (OrderRole.ENTRY, OrderRole.ADD_ENTRY):
-        # Capital release amount derived from the cancelled order's notional
-        # (quantity * limit/stop price for non-market orders, or zero for
-        # market orders without price parameters — those have no capital
-        # reservation because a market order is filled immediately on
-        # submission and the reservation flowed through Phase 1 already).
-        release_amount = _order_notional_estimate(target)
-        await _release_capital(
-            handle,
-            order_id=target.order_id,
-            position_id=target.position_id,
-            thesis_id=target.originating_thesis_id,
-            amount_usd=release_amount,
-            timestamp=timestamp,
-        )
+        # Capital release amount is the order's reserved notional — the same
+        # ``_order_reserved_notional`` basis OPEN / ADD reserved at submission
+        # and the reprice path adjusts (ALP-741), so a cancel releases exactly
+        # what is currently reserved for the order and the ledger returns to its
+        # pre-reservation level. Market entries carry no price → ``money(0)``
+        # (they reserved nothing — skip the no-op release/emit; a market order
+        # fills immediately and its consideration flows through Phase 1).
+        release_amount = _order_reserved_notional(target)
+        if release_amount > 0:
+            await _release_capital(
+                handle,
+                order_id=target.order_id,
+                position_id=target.position_id,
+                thesis_id=target.originating_thesis_id,
+                amount_usd=release_amount,
+                timestamp=timestamp,
+            )
 
     if target.role != OrderRole.ENTRY:
         return
@@ -166,21 +167,6 @@ async def _writeback_cancel(
     # continuous monitor and scheduled invocations use, or one corrupt row
     # becomes a system-wide kill switch (ALP-731).
     await _assert_bracket_readable(handle, bracket_id=target.bracket_id)
-
-
-def _order_notional_estimate(order: OrderRecord) -> Money:
-    """Best-effort capital estimate for a cancelled order.
-
-    Uses the order's price parameters (limit price preferred, stop trigger
-    fallback) times the remaining quantity. Falls back to ``money("0")`` for
-    market orders with no parameters. Returns ``Money`` so callers thread the
-    Decimal-backed accumulator through ``_release_capital`` without floats.
-    """
-    pp = order.price_parameters
-    px = pp.limit_price if pp.limit_price is not None else pp.stop_trigger_price
-    if px is None:
-        return money(0)
-    return _order_notional_usd(price=px, remaining_quantity=order.remaining_quantity)
 
 
 async def _resolve_thesis_cancelled(

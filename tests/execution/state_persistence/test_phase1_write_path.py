@@ -258,7 +258,18 @@ def _make_pending_entry_order(
     filled_quantity: float = 0.0,
     avg_fill_price: float | None = None,
     position_id: str | None = None,
+    limit_price: float | None = None,
 ) -> OrderRecord:
+    # A non-marketable LIMIT entry (limit_price set) is the case that reserves
+    # capital — Phase 1's buy-fill release drains the reservation by the entry's
+    # ``limit_price * fill_quantity`` notional (ALP-741). A MARKET entry (the
+    # default) reserves nothing, so its fill releases nothing.
+    order_type = OrderType.LIMIT if limit_price is not None else OrderType.MARKET
+    price_parameters = (
+        PriceParameters(limit_price=price(limit_price))
+        if limit_price is not None
+        else PriceParameters()
+    )
     return OrderRecord(
         order_id=OrderId(order_id),
         position_id=PositionId(position_id) if position_id else None,
@@ -266,9 +277,9 @@ def _make_pending_entry_order(
         role=role,
         instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
         direction=direction,
-        order_type=OrderType.MARKET,
+        order_type=order_type,
         order_class=OrderClass.SIMPLE,
-        price_parameters=PriceParameters(),
+        price_parameters=price_parameters,
         quantity=quantity,
         duration=OrderDuration.DAY,
         status=status,
@@ -527,12 +538,14 @@ def _make_thesis_with_resolved_components(
     )
 
 
-def _make_cash_ledger(current_cash_usd: float = 100_000.0) -> CashLedger:
+def _make_cash_ledger(
+    current_cash_usd: float = 100_000.0, *, reserved_capital_usd: float = 0.0
+) -> CashLedger:
     return CashLedger(
         current_cash_usd=current_cash_usd,
         settled_cash_usd=current_cash_usd,
-        reserved_capital_usd=0.0,
-        available_buying_power_usd=current_cash_usd,
+        reserved_capital_usd=reserved_capital_usd,
+        available_buying_power_usd=current_cash_usd - reserved_capital_usd,
         margin_held_usd=0.0,
         unsettled_proceeds=(),
         cash_pct_of_portfolio=0.0,
@@ -729,15 +742,20 @@ async def _append_fill(
 
 async def _open_handle(
     factory: async_sessionmaker[AsyncSession],
+    *,
+    invocation_id: str = _INV_ID + "-phase1",
 ) -> tuple[InvocationContext, InvocationHandle]:
     """Open an InvocationContext and return (ctx, handle).
 
     Caller is responsible for ``await ctx.__aexit__(None, None, None)`` after
-    Phase 1 completes (or passing an exc to trigger rollback).
+    Phase 1 completes (or passing an exc to trigger rollback). Pass a distinct
+    ``invocation_id`` when a test opens more than one handle in sequence — each
+    handle inserts its own ``invocations`` row, so reusing the default id trips
+    the primary-key UNIQUE constraint.
     """
     ctx = InvocationContext(
         session_factory=factory,
-        record=_make_invocation_record(invocation_id=_INV_ID + "-phase1"),
+        record=_make_invocation_record(invocation_id=invocation_id),
     )
     handle = await ctx.__aenter__()
     return ctx, handle
@@ -762,7 +780,9 @@ async def test_entry_fill_transitions_pending_position_to_open(
     await _seed_position_order_thesis_bracket(
         factory,
         _make_pending_position(),
-        _make_pending_entry_order(),
+        # Limit entry @ $150 reserves capital; the buy fill releases its notional
+        # (150 * 10 = $1500) → CAPITAL_RELEASED is emitted (ALP-741).
+        _make_pending_entry_order(limit_price=150.0),
         _make_active_thesis(),
         _make_pending_bracket(),
     )
@@ -1268,7 +1288,8 @@ async def test_buy_fill_decrements_reserved_capital_to_zero(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """A buy fill consuming the full reservation must decrement
-    reserved_capital_usd by the fill consideration. Without this, Phase 2's
+    reserved_capital_usd by the entry's reserved notional (``limit_price *
+    fill_quantity``, ALP-741), NOT the fill consideration. Without this, Phase 2's
     OPEN reserve and Phase 1's fill double-count: current_cash drops AND
     reserved_capital stays — overstating committed capital.
     """
@@ -1281,7 +1302,8 @@ async def test_buy_fill_decrements_reserved_capital_to_zero(
     await _seed_position_order_thesis_bracket(
         factory,
         _make_pending_position(),
-        _make_pending_entry_order(quantity=10.0),
+        # Limit entry @ $100 over 10 shares: $1000 reserved at OPEN, released here.
+        _make_pending_entry_order(quantity=10.0, limit_price=100.0),
         _make_active_thesis(),
         _make_pending_bracket(),
     )
@@ -1331,9 +1353,10 @@ async def test_buy_fill_decrements_reserved_capital_to_zero(
 async def test_buy_fill_clamps_reserved_capital_decrement_at_zero(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """When the buy-fill consideration exceeds the seeded reservation
-    (partial reservations, rounding, mid-flight adjustments), the
-    decrement must clamp at zero rather than going negative.
+    """When the buy-fill's released notional (``limit_price * fill_quantity``)
+    exceeds the seeded reservation (partial reservations, rounding, mid-flight
+    reprice), the decrement must clamp at zero rather than going negative
+    (ALP-741 defensive floor).
     """
     from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
@@ -1344,11 +1367,12 @@ async def test_buy_fill_clamps_reserved_capital_decrement_at_zero(
     await _seed_position_order_thesis_bracket(
         factory,
         _make_pending_position(),
-        _make_pending_entry_order(quantity=10.0),
+        # Limit entry @ $100 over 10 shares releases $1000 — more than the $500 seeded.
+        _make_pending_entry_order(quantity=10.0, limit_price=100.0),
         _make_active_thesis(),
         _make_pending_bracket(),
     )
-    # Seed only $500 reserved while the fill consumes $1000.
+    # Seed only $500 reserved while the fill releases $1000.
     seeded = CashLedger(
         current_cash_usd=100_000.0,
         settled_cash_usd=100_000.0,
@@ -1385,6 +1409,87 @@ async def test_buy_fill_clamps_reserved_capital_decrement_at_zero(
         cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
         assert cash is not None
         assert cash.reserved_capital_usd == pytest.approx(0.0)
+
+
+async def test_reprice_then_fill_returns_reserved_capital_to_zero(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-741 acceptance — reprice-then-fill path: an entry reserved at OPEN,
+    repriced to a new limit, then filled at *yet another* price releases exactly
+    its repriced reserved notional, so ``reserved_capital_usd`` returns to 0 and
+    is never negative.
+
+    Lifecycle: OPEN reserves ``100 * 10 = $1000`` (seeded). The entry-window
+    repricer drops the limit ``100 -> 95`` (reserved ``1000 -> 950``). The fill
+    then prints at ``$92`` — *below* the limit — but the reservation release
+    tracks the order's ``$95`` limit (``95 * 10 = $950``), NOT the ``$92`` fill
+    consideration, so reserved nets to exactly 0. Before ALP-741 the fill
+    released the consideration (``92 * 10 = $920``), stranding ``$30`` in the
+    reservation pool — the kind of drift that, accumulated over reprices, drove
+    the singleton negative and crashed every decision-pipeline invocation.
+    """
+    from alphamind.execution.write_paths.phase1 import (
+        process_unprocessed_fills,
+    )
+    from alphamind.execution.write_paths.phase2 import (
+        persist_entry_window_reprice,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_pending_position(),
+        _make_pending_entry_order(quantity=10.0, limit_price=100.0),
+        _make_active_thesis(),
+        _make_pending_bracket(),
+    )
+    # OPEN reserved the entry notional 100 * 10 = $1000 (mirrors Phase 2).
+    await _seed_cash_ledger(
+        factory, _make_cash_ledger(current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
+    )
+    await _seed_drawdown_state(factory)
+
+    # Reprice the resting entry 100 -> 95: reserved 1000 -> 950.
+    ctx, handle = await _open_handle(factory, invocation_id=_INV_ID + "-reprice")
+    await persist_entry_window_reprice(
+        handle,
+        entry_order_id="ord-entry-1",
+        new_limit_price=price("95.0"),
+        new_alpaca_order_id="alp-repriced",
+        reprice_reason="entry_window_reprice",
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash is not None
+        assert cash.reserved_capital_usd == pytest.approx(950.0)
+        assert cash.reserved_capital_usd >= 0
+
+    # Fill the full 10 shares at $92 — different from the $95 limit.
+    await _append_fill(
+        factory,
+        _make_unprocessed_fill(fill_id="fill-1", fill_price=92.0, fill_quantity=10.0),
+    )
+    ctx, handle = await _open_handle(factory, invocation_id=_INV_ID + "-fill")
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash is not None
+        # Release = 95 (repriced limit) * 10 = 950 → reserved nets to exactly 0,
+        # NOT 950 - 92*10 = 30 (the pre-fix consideration-basis residual).
+        assert float(cash.reserved_capital_usd) == pytest.approx(0.0)
+        assert cash.reserved_capital_usd >= 0
+        # Cash debit is the real consideration (92 * 10 = 920), a separate field —
+        # independent of the 950 reservation released above.
+        assert float(cash.current_cash_usd) == pytest.approx(100_000.0 - 920.0)
 
 
 async def test_pending_position_with_missing_bracket_row_rejected_at_commit(

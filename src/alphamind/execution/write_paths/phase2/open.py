@@ -37,6 +37,7 @@ from alphamind.execution.write_paths.phase2._shared import (
     _id_suffix,
     _instrument_spec_for_position,
     _instrument_ticker_key,
+    _order_reserved_notional,
     _reserve_capital,
 )
 from alphamind.portfolio_state.events.activity_log import (
@@ -127,7 +128,9 @@ async def _writeback_open(
     * entry order parameters ← ``command.entry_order``
     * bracket protective legs ← ``command.invalidation_legs`` + ``command.target``
     * thesis summary + components ← ``command.thesis``
-    * capital reservation amount ← ``command.position_size.dollar_value``
+    * capital reservation amount ← the entry order's notional
+      (``_order_reserved_notional`` = ``limit_price * quantity``; ``money(0)``
+      for a market entry), NOT ``command.position_size.dollar_value`` (ALP-741)
 
     When ``submitted_alpaca_order_id`` is supplied (broker-routing coordinated
     swap, story 03e / ALP-390), the persisted entry order carries the broker's
@@ -255,7 +258,16 @@ async def _writeback_open(
         handle.session.add(order_record_to_row(inv_order))
     await handle.session.flush()
 
-    await _reserve_capital(handle, amount_usd=command.position_size.dollar_value)
+    # Reserve the entry order's notional (``limit_price * quantity``), NOT the
+    # PM-command ``dollar_value`` (ALP-741). The reservation must use the same
+    # basis the reprice / cancel / fill release paths use, or a repriced or
+    # cancelled entry over-/under-releases against ``dollar_value`` and drives
+    # ``reserved_capital_usd`` away from the true sum of live pending-entry
+    # notionals — negative, in the worst case, which crashes every subsequent
+    # decision-pipeline invocation. A market entry carries no price, so its
+    # notional is ``money(0)``: a marketable order reserves nothing and is
+    # filled immediately (its consideration flows through Phase 1).
+    reserved_amount = _order_reserved_notional(entry_order)
 
     _emit_order_submitted(
         handle,
@@ -277,14 +289,16 @@ async def _writeback_open(
             summary=thesis.summary,
         ),
     )
-    _emit_capital_reserved(
-        handle,
-        order_id=ids["entry_order_id"],
-        position_id=ids["position_id"],
-        thesis_id=ids["thesis_id"],
-        amount_usd=command.position_size.dollar_value,
-        timestamp=timestamp,
-    )
+    if reserved_amount > 0:
+        await _reserve_capital(handle, amount_usd=reserved_amount)
+        _emit_capital_reserved(
+            handle,
+            order_id=ids["entry_order_id"],
+            position_id=ids["position_id"],
+            thesis_id=ids["thesis_id"],
+            amount_usd=reserved_amount,
+            timestamp=timestamp,
+        )
 
 
 # ---------------------------------------------------------------------------

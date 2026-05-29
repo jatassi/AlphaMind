@@ -150,15 +150,16 @@ async def _adjust_reservation_for_reprice(
     """Adjust reserved capital by the change in the order's notional estimate.
 
     The notional basis is ``_order_notional_usd`` (``limit_price *
-    remaining_quantity``) — the same basis the terminal CANCEL releases on — so
-    the reservation tracks the live limit and the reprice adjustments stay
-    consistent with the eventual cancel's release. (It does NOT assert
-    full-lifecycle conservation against the OPEN reservation, which uses
-    ``position_size.dollar_value`` — a pre-existing OPEN-vs-cancel basis
-    difference ALP-740 neither introduces nor fixes.) A short entry repriced
-    down toward the bid frees capital (negative delta → release); a long entry
-    repriced up toward the ask reserves more (positive delta → reserve). A zero
-    delta (limit unchanged) is a no-op.
+    remaining_quantity``) — the same basis OPEN / ADD reserve on
+    (``_order_reserved_notional``) and the terminal CANCEL releases on — so the
+    reservation tracks the live limit and the full OPEN → reprice → cancel/fill
+    lifecycle conserves: ``reserved_capital_usd`` returns to its pre-reservation
+    level and never drifts. (ALP-741 unified OPEN onto this notional basis;
+    before that, OPEN reserved ``position_size.dollar_value`` and the basis
+    mismatch let a repriced/cancelled entry drive the ledger negative.) A short
+    entry repriced down toward the bid frees capital (negative delta → release);
+    a long entry repriced up toward the ask reserves more (positive delta →
+    reserve). A zero delta (limit unchanged) is a no-op.
     """
     new_notional = _order_notional_usd(price=new_limit, remaining_quantity=order.remaining_quantity)
     old_notional = _order_notional_usd(price=old_limit, remaining_quantity=order.remaining_quantity)

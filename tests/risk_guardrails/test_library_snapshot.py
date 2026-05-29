@@ -1549,8 +1549,8 @@ def _make_pending_entry_order(
 def test_existing_positions_reserves_capital_from_pending_entry_limit() -> None:
     """ALP-506: a PENDING position with a pending entry LIMIT order gets its
     ``reserves_capital_usd`` populated as ``limit_price * remaining_quantity``,
-    mirroring the OMS-side ``_order_notional_estimate`` formula in
-    ``execution/write_paths/phase2/cancel.py``.
+    mirroring the OMS-side ``_order_reserved_notional`` formula in
+    ``execution/write_paths/phase2/_shared.py``.
     """
     pos = _make_equity_position_view(
         "POS-AAPL",
@@ -1664,7 +1664,7 @@ def test_existing_positions_reserves_capital_market_order_zero() -> None:
 
 def test_existing_positions_reserves_capital_stop_trigger_price_fallback() -> None:
     """STOP_LIMIT and STOP entry orders fall back to ``stop_trigger_price``
-    when ``limit_price`` is absent, matching ``_order_notional_estimate``.
+    when ``limit_price`` is absent, matching ``_order_reserved_notional``.
     """
     pos = _make_equity_position_view(
         "POS-AAPL",
@@ -1695,7 +1695,7 @@ def test_existing_positions_reserves_capital_stop_trigger_price_fallback() -> No
 
 def test_existing_positions_reserves_capital_uses_remaining_quantity() -> None:
     """PARTIALLY_FILLED orders contribute ``remaining_quantity * px`` — not
-    total ``quantity``. The OMS-side ``_order_notional_estimate`` uses the
+    total ``quantity``. The OMS-side ``_order_reserved_notional`` uses the
     same field; a regression to ``quantity`` would over-state the release.
     """
     pos = _make_equity_position_view(

@@ -9,6 +9,7 @@ derived adapters, and common direction / price-parameter / id helpers.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -26,7 +27,7 @@ from alphamind._kernel.ids import (
     ThesisId,
     make_symbol,
 )
-from alphamind._kernel.money import Money, Price, money, signed_money
+from alphamind._kernel.money import Money, Price, money
 from alphamind.commands.command_models import (
     EntryOrder,
     EntryOrderType,
@@ -94,6 +95,8 @@ from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.orders_codec import (
     row_to_record as order_row_to_record,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _instrument_ticker_key(
@@ -385,14 +388,39 @@ async def _read_cash_row(handle: InvocationHandle) -> CashLedgerRow:
 def _order_notional_usd(*, price: Price, remaining_quantity: float) -> Money:
     """Capital-notional estimate ``price * remaining_quantity`` as ``Money``.
 
-    The single basis the CANCEL release (``cancel._order_notional_estimate``) and
-    the entry-window reprice adjustment (``reprice._adjust_reservation_for_reprice``,
-    ALP-740) share, so a repriced-then-cancelled entry's reservation deltas and
-    final release stay mutually consistent. ``remaining_quantity`` may be a float
-    in the legacy record types; cast through ``str`` so binary drift never enters
-    the monetary computation.
+    The single basis the reservation lifecycle shares — ``_order_reserved_notional``
+    (OPEN / ADD / CANCEL) and the entry-window reprice adjustment
+    (``reprice._adjust_reservation_for_reprice``, ALP-740) — so a repriced-then-
+    cancelled entry's reservation deltas and final release stay mutually
+    consistent. ``remaining_quantity`` may be a float in the legacy record types;
+    cast through ``str`` so binary drift never enters the monetary computation.
     """
     return money(Decimal(str(price)) * Decimal(str(remaining_quantity)))
+
+
+def _order_reserved_notional(order: OrderRecord) -> Money:
+    """Reserved-capital notional for an entry / add-entry order (ALP-741).
+
+    The single basis the *whole* reservation lifecycle uses: OPEN / ADD reserve
+    it at submission, the entry-window reprice adjusts it by the limit delta, and
+    the terminal CANCEL releases it — so ``cash_ledger.reserved_capital_usd``
+    stays equal to the sum of live pending-entry notionals at all times and can
+    never drift negative. ``limit_price`` is preferred, ``stop_trigger_price`` is
+    the fallback; a market entry carries no price → ``money(0)`` (a marketable
+    order reserves nothing, matching the ``pending_order_capital_pct`` rule's
+    ``reserves_capital`` convention and the read-side
+    ``library_snapshot._build_position_reservations``).
+
+    Before ALP-741, OPEN / ADD reserved ``position_size.dollar_value`` (the PM's
+    intended capital) while the release paths used this ``price * quantity``
+    notional — the basis mismatch let a repriced-then-cancelled entry drive the
+    ledger negative and crash every subsequent decision-pipeline invocation.
+    """
+    pp = order.price_parameters
+    px = pp.limit_price if pp.limit_price is not None else pp.stop_trigger_price
+    if px is None:
+        return money(0)
+    return _order_notional_usd(price=px, remaining_quantity=order.remaining_quantity)
 
 
 async def _reserve_capital(handle: InvocationHandle, *, amount_usd: Money) -> None:
@@ -434,10 +462,33 @@ async def _release_capital(
     timestamp: datetime,
 ) -> None:
     cash_row = await _read_cash_row(handle)
-    # signed_money admits the negative case so over-release surfaces in the
-    # running balance instead of being silently clamped (05b retired the
-    # legacy max-zero floor).
-    cash_row.reserved_capital_usd = signed_money(cash_row.reserved_capital_usd - amount_usd)
+    # Floor the pool at zero on every release (ALP-741). The reservation
+    # lifecycle is conservative by construction — ``_order_reserved_notional``
+    # is reserved at OPEN/ADD, adjusted on reprice, and released here — so this
+    # floor only ever absorbs residual rounding; it is a defensive backstop, not
+    # a substitute for that symmetry. A negative ``reserved_capital_usd`` is data
+    # corruption that crashes every downstream decision-pipeline invocation
+    # (the ``pending_order_capital_pct`` rule's ``_classify_zone`` rejects a
+    # negative consumption), so clamping here keeps a stray over-release from
+    # poisoning the singleton.
+    net = cash_row.reserved_capital_usd - amount_usd
+    if net < 0:
+        # The floor fired: a release exceeded the running reservation. With the
+        # ALP-741 basis unification this should never happen for more than
+        # rounding dust, so a real clamp means an upstream asymmetry (a forgotten
+        # market-entry guard, a release on a basis other than the reservation,
+        # double-release). The floor keeps it from poisoning the singleton, but
+        # log loudly so the over-release is observable instead of silently
+        # absorbed (the pre-ALP-741 signed-balance surfaced it by going negative).
+        logger.warning(
+            "reserved_capital_usd over-release floored: order_id=%s reserved=%s "
+            "release=%s deficit=%s",
+            order_id,
+            cash_row.reserved_capital_usd,
+            amount_usd,
+            -net,
+        )
+    cash_row.reserved_capital_usd = money(max(net, Decimal(0)))
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
     _emit(
         handle,
