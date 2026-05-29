@@ -1032,7 +1032,7 @@ async def test_breach_loop_sustained_failure_alert_fires_then_clears(
     immediate, emergency, sink = _noop_callbacks()
     health = _CallableRecord()
 
-    async def _on_health(signal: BreachLoopHealthSignal) -> None:
+    def _on_health(signal: BreachLoopHealthSignal) -> None:
         health.calls.append((signal,))
 
     snapshot_calls = {"n": 0}
@@ -1102,7 +1102,7 @@ async def test_breach_loop_below_threshold_failures_do_not_fire_alert(
     immediate, emergency, sink = _noop_callbacks()
     health = _CallableRecord()
 
-    async def _on_health(signal: BreachLoopHealthSignal) -> None:
+    def _on_health(signal: BreachLoopHealthSignal) -> None:
         health.calls.append((signal,))
 
     snapshot_calls = {"n": 0}
@@ -1162,7 +1162,7 @@ async def test_breach_loop_faulty_health_sink_does_not_kill_loop(
     )
     immediate, emergency, sink = _noop_callbacks()
 
-    async def _on_health(_signal: BreachLoopHealthSignal) -> None:
+    def _on_health(_signal: BreachLoopHealthSignal) -> None:
         raise RuntimeError("alert sink is down")
 
     async def _snapshot() -> LibrarySnapshot:

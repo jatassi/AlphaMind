@@ -119,15 +119,18 @@ OnEmergencyInput = Callable[[BreachLoopResult], Awaitable[None]]
 # Health-signal sink (ALP-732 Gap 2). Invoked once when the consecutive-failure
 # count crosses the configured threshold (``degraded=True``) and once on the
 # first successful tick afterwards (``degraded=False``). The monitor wires it
-# to its operator surfaces; tests substitute a recorder.
-OnHealthSignal = Callable[[BreachLoopHealthSignal], Awaitable[None]]
+# to its operator surfaces; tests substitute a recorder. Synchronous: the
+# monitor-local surfacing (SSE ``put_nowait`` fan-out + logging) does no I/O
+# that needs awaiting, so this stays sync rather than adding async-over-sync
+# residue (architecture invariant L19).
+OnHealthSignal = Callable[[BreachLoopHealthSignal], None]
 
 
-async def _no_op_health_signal(_signal: BreachLoopHealthSignal) -> None:
+def _no_op_health_signal(_signal: BreachLoopHealthSignal) -> None:
     """Default health sink — used by callers (e.g. tests) that do not wire one."""
 
 
-async def _safe_emit_health_signal(sink: OnHealthSignal, signal: BreachLoopHealthSignal) -> None:
+def _safe_emit_health_signal(sink: OnHealthSignal, signal: BreachLoopHealthSignal) -> None:
     """Emit a health signal without letting a faulty sink kill the loop.
 
     The whole point of the escalation is resilience, so a sink that itself
@@ -135,7 +138,7 @@ async def _safe_emit_health_signal(sink: OnHealthSignal, signal: BreachLoopHealt
     take down the breach loop — the failure is logged and the loop continues.
     """
     try:
-        await sink(signal)
+        sink(signal)
     except Exception:
         log.exception("breach_loop health-signal sink raised; continuing")
 
@@ -228,7 +231,7 @@ async def run_breach_loop(  # noqa: PLR0913 — fan-in is the seam, not incident
                     consecutive_failures,
                     failure_threshold,
                 )
-                await _safe_emit_health_signal(
+                _safe_emit_health_signal(
                     on_health_signal,
                     BreachLoopHealthSignal(
                         degraded=True,
@@ -242,7 +245,7 @@ async def run_breach_loop(  # noqa: PLR0913 — fan-in is the seam, not incident
                     "breach_loop RECOVERED after %d consecutive failed ticks",
                     consecutive_failures,
                 )
-                await _safe_emit_health_signal(
+                _safe_emit_health_signal(
                     on_health_signal,
                     BreachLoopHealthSignal(
                         degraded=False,

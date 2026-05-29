@@ -223,7 +223,7 @@ class TestMakeBreachLoopHealthEmit:
         emitter = SSEEventEmitter()
         emit = make_breach_loop_health_emit(emitter=emitter)
         async with emitter.subscribe() as queue:
-            await emit(
+            emit(
                 BreachLoopHealthSignal(
                     degraded=True, consecutive_failures=3, last_error="RuntimeError('x')"
                 )
@@ -238,13 +238,9 @@ class TestMakeBreachLoopHealthEmit:
         emitter = SSEEventEmitter()
         emit = make_breach_loop_health_emit(emitter=emitter)
         async with emitter.subscribe() as queue:
-            await emit(
-                BreachLoopHealthSignal(degraded=True, consecutive_failures=2, last_error="boom")
-            )
+            emit(BreachLoopHealthSignal(degraded=True, consecutive_failures=2, last_error="boom"))
             await asyncio.wait_for(queue.get(), timeout=0.5)
-            await emit(
-                BreachLoopHealthSignal(degraded=False, consecutive_failures=2, last_error=None)
-            )
+            emit(BreachLoopHealthSignal(degraded=False, consecutive_failures=2, last_error=None))
             event = await asyncio.wait_for(queue.get(), timeout=0.5)
         assert event.name == "breach_loop_recovered"
         assert event.payload["consecutive_failures"] == 2
@@ -257,8 +253,6 @@ class TestMakeBreachLoopHealthEmit:
         emitter = SSEEventEmitter()
         emit = make_breach_loop_health_emit(emitter=emitter)
         async with emitter.subscribe() as queue:
-            await emit(
-                BreachLoopHealthSignal(degraded=True, consecutive_failures=1, last_error=None)
-            )
+            emit(BreachLoopHealthSignal(degraded=True, consecutive_failures=1, last_error=None))
             event = await asyncio.wait_for(queue.get(), timeout=0.5)
         assert event.payload["last_error"] == "unknown"

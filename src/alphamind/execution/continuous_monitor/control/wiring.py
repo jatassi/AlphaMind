@@ -97,17 +97,18 @@ def make_deferred_breach_emit_for_breach_loop(
 def make_breach_loop_health_emit(
     *,
     emitter: SSEEventEmitter,
-) -> Callable[[BreachLoopHealthSignal], Awaitable[None]]:
+) -> Callable[[BreachLoopHealthSignal], None]:
     """Return the breach loop's ``on_health_signal`` sink (ALP-732 Gap 2).
 
     Maps each :class:`BreachLoopHealthSignal` transition onto the SSE
     ``breach_loop_degraded`` / ``breach_loop_recovered`` events (and flips the
     emitter's health flag), so a silently-failing breach loop becomes visible
-    on the monitor's ``/events`` stream. The emit is guarded: an SSE failure
-    must not propagate back into the loop's per-tick supervisor.
+    on the monitor's ``/events`` stream. Synchronous — the SSE fan-out is a
+    non-blocking ``put_nowait``. The emit is guarded: an SSE failure must not
+    propagate back into the loop's per-tick supervisor.
     """
 
-    async def _emit(signal: BreachLoopHealthSignal) -> None:
+    def _emit(signal: BreachLoopHealthSignal) -> None:
         try:
             if signal.degraded:
                 emitter.emit_breach_loop_degraded(

@@ -78,7 +78,7 @@ def register_breach_loop_task(  # noqa: PLR0913
     ) = None,
     on_emergency_input: Callable[[BreachLoopResult], Awaitable[None]] | None = None,
     activity_log_sink: (Callable[[Iterable[ActivityLogEntry]], Awaitable[None]] | None) = None,
-    on_health_signal: (Callable[[BreachLoopHealthSignal], Awaitable[None]] | None) = None,
+    on_health_signal: (Callable[[BreachLoopHealthSignal], None] | None) = None,
     now: Callable[[], datetime] | None = None,
 ) -> None:
     """Register the ``breach_loop`` task on *supervisor*.
