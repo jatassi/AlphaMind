@@ -9,6 +9,7 @@ root injected (ALP-458); ``broker_dispatch=None`` lazy-loads the concrete
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -21,6 +22,7 @@ from alphamind.commands.command_models import (
     AdjustCommand,
     CancelCommand,
     CloseCommand,
+    EquityInstrument,
     OMSCommand,
     OpenCommand,
     OptionInstrument,
@@ -51,7 +53,7 @@ if TYPE_CHECKING:
     from alpaca.trading.client import TradingClient
 
     from alphamind.config.models.execution import ExecutionConfig
-    from alphamind.execution.broker_adapter import AccountStateQueries
+    from alphamind.execution.broker_adapter import AccountStateQueries, QuoteSource
     from alphamind.execution.broker_adapter.order_modify import (
         AssetClass as ReplaceAssetClass,
     )
@@ -85,6 +87,63 @@ _COMMAND_TYPE_TO_LABEL: dict[str, Literal["OPEN", "CLOSE", "ADD", "ADJUST", "CAN
     "add": "ADD",
 }
 
+# ALP-747 — rejection code surfaced on a command whose bracket geometry is
+# materially incoherent vs the live touch at dispatch (a stale-anchor mispricing
+# that straddled its own stale reference and so cleared the analyst-side guard).
+_STALE_ANCHOR_REJECTION_CODE = "stale_anchor_vs_live_quote"
+
+logger = logging.getLogger(__name__)
+
+
+async def _stale_anchor_rejection_reason(
+    command: OMSCommand, *, quote_source: QuoteSource
+) -> str | None:
+    """Live-quote coherence backstop (ALP-747): fetch the live touch and return a
+    rejection reason if *command*'s bracket geometry is materially incoherent vs
+    it, else ``None``.
+
+    Returns ``None`` when the command is out of scope (only an equity OPEN whose
+    entry fills at the live quote is checked — see
+    :func:`fills_at_live_quote_equity`) or when no live quote is available. The
+    fail-open on a missing / erroring quote is deliberate: the broker's own
+    bracket validation remains the final backstop, and a flaky quote feed must
+    never block an otherwise-valid submission.
+    """
+    # Imported from the broker_adapter package root (not the ``entry_pricing``
+    # submodule) so the edge matches the composition-root carve-out the sibling
+    # lazy execution imports already use (see ``.importlinter``).
+    from alphamind.execution.broker_adapter import (
+        fills_at_live_quote_equity,
+        live_bracket_incoherence_reason,
+    )
+
+    if not fills_at_live_quote_equity(command):
+        return None
+    assert isinstance(command, OpenCommand)
+    assert isinstance(command.instrument, EquityInstrument)
+    ticker = command.instrument.ticker
+    try:
+        quote = await quote_source.latest_quote(ticker)
+    except Exception:
+        # Warranted broad except (ALP-747): a misbehaving QuoteSource must never
+        # abort an otherwise-valid submission — fail open and let broker
+        # validation backstop, mirroring entry_pricing._rewrite_one (ALP-738).
+        logger.warning(
+            "broker_dispatch: live-coherence quote fetch failed for %s; skipping the "
+            "stale-anchor check (broker validation remains the backstop)",
+            ticker,
+            exc_info=True,
+        )
+        return None
+    if quote is None:
+        logger.warning(
+            "broker_dispatch: no live quote for %s; skipping the stale-anchor coherence "
+            "check (broker validation remains the backstop)",
+            ticker,
+        )
+        return None
+    return live_bracket_incoherence_reason(command, quote=quote)
+
 
 async def _route_through_broker(
     *,
@@ -95,6 +154,7 @@ async def _route_through_broker(
     execution_config: ExecutionConfig,
     invocation_handle: Any | None = None,
     broker_dispatch: BrokerDispatch | None = None,
+    quote_source: QuoteSource | None = None,
 ) -> tuple[
     tuple[SubmissionResult, ...],
     tuple[BrokerDispatchResult | None, ...],
@@ -108,6 +168,16 @@ async def _route_through_broker(
     rejected on ``GatewaySubmissionFailed`` (appending an
     :class:`_AbandonedCommandEntry`) or ``PermanentRejectionError`` (surfacing
     the broker's ``PermanentRejection.code`` as the rule).
+
+    ALP-747 — before dispatching an accepted equity OPEN whose entry fills at the
+    live quote, the bracket geometry is checked against a fresh broker quote
+    (``quote_source``). A bracket sized against a stale reference price (the ORCL
+    daily-vs-intraday mispricing) straddles its stale anchor self-consistently —
+    so the analyst-side ALP-742 guard passes it — but is materially off the live
+    touch; it flips to rejected (``_STALE_ANCHOR_REJECTION_CODE``) with an
+    :class:`_AbandonedCommandEntry` and is never sent. The check fails open: a
+    missing/erroring quote leaves the command to the broker's own validation.
+    Skipped entirely when ``quote_source`` is absent (the fixture-only path).
     """
     # Lazy imports — broker_adapter ships an alpaca-py dependency we don't
     # want loaded for the fixture-only path.
@@ -135,6 +205,27 @@ async def _route_through_broker(
             updated.append(result)
             dispatches.append(None)
             continue
+        if quote_source is not None:
+            stale_reason = await _stale_anchor_rejection_reason(command, quote_source=quote_source)
+            if stale_reason is not None:
+                logger.warning(
+                    "broker_dispatch: rejecting %s before submission — %s",
+                    result.command_id,
+                    stale_reason,
+                )
+                updated.append(
+                    _to_rejection(result, code=_STALE_ANCHOR_REJECTION_CODE, reason=stale_reason)
+                )
+                dispatches.append(None)
+                abandoned.append(
+                    _AbandonedCommandEntry(
+                        command_id=result.command_id,
+                        command_type=_COMMAND_TYPE_TO_LABEL[command.command_type],
+                        failure_reason=stale_reason,
+                        retry_attempt_count=0,
+                    )
+                )
+                continue
         try:
             context_kwargs = await _dispatcher_context_for(
                 command, invocation_handle=invocation_handle
@@ -520,6 +611,7 @@ __all__ = [
     "_persisted_legs_to_mleg_acks",
     "_read_position",
     "_route_through_broker",
+    "_stale_anchor_rejection_reason",
     "_to_rejection",
     "_with_real_order_id",
 ]

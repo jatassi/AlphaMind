@@ -1482,6 +1482,157 @@ async def test_broker_rejected_short_does_not_overreject_resized_retry() -> None
     assert state.validation_state.accumulated_deltas == ()
 
 
+# ---------------------------------------------------------------------------
+# ALP-747 — dispatch-time live-quote bracket coherence. An accepted equity OPEN
+# whose bracket geometry is materially off the live touch (a stale-anchor
+# mispricing that straddled its own stale reference and so cleared the
+# analyst-side guard) is rejected before the broker sees it.
+# ---------------------------------------------------------------------------
+
+
+class _FixedQuoteSource:
+    """In-process QuoteSource returning a fixed touch and recording requests."""
+
+    def __init__(self, quote: Any) -> None:
+        self._quote = quote
+        self.requested: list[str] = []
+
+    async def latest_quote(self, symbol: str) -> Any:
+        self.requested.append(symbol)
+        return self._quote
+
+
+async def test_pm_envelope_open_rejected_when_bracket_stale_vs_live_quote() -> None:
+    """ALP-747: the default OPEN is a NVDA long, target $950 / stop $750, sized
+    against a stale ~$850 anchor. With NVDA now trading ~$1000 the target sits
+    below where a market entry would fill, so the dispatch-time live-coherence
+    check rejects it (gateway_reason ``stale_anchor_vs_live_quote``), the broker
+    is never called, and the credited cumulative delta is released."""
+    from alphamind.decision.portfolio_manager.submit_envelope import (
+        _handle_submit_envelope,
+        build_initial_submit_envelope_state,
+    )
+    from alphamind.execution.broker_adapter import AccountStateQueries
+    from alphamind.execution.broker_adapter.entry_pricing import TouchQuote
+    from tests.execution.oms.test_submit_envelope_mcp import (
+        _DEFAULT_ACTIVE_SECTORS,
+        _make_analyst_envelope,
+        _make_bundle,
+        _make_pm_view,
+        _make_validation_state,
+        _recommendation_stub,
+        _retrieval_store,
+        _sector_resolver,
+    )
+
+    envelope = _make_analyst_envelope()
+    validation_state = _make_validation_state()
+    state = build_initial_submit_envelope_state(
+        invocation_id=validation_state.invocation_id,
+        starting_validation_state=validation_state,
+    )
+    bundle = _make_bundle(recommendations=(_recommendation_stub("REC-1"),))
+
+    client = MagicMock()
+    client.submit_order = MagicMock()
+    queries = MagicMock(spec=AccountStateQueries)
+    quote_source = _FixedQuoteSource(TouchQuote(bid=price("1000.0"), ask=price("1001.0")))
+
+    _response, state = await _handle_submit_envelope(
+        envelope.model_dump(mode="json"),
+        state=state,
+        retrieval_store=_retrieval_store(),
+        pre_processor_bundle=bundle,
+        pm_view=_make_pm_view(),
+        active_sectors=_DEFAULT_ACTIVE_SECTORS,
+        halt_mode=False,
+        sector_resolver=_sector_resolver,
+        state_persistence_config=_make_state_persistence_config(),
+        invocation_handle=None,
+        client=client,
+        queries=queries,
+        execution_config=_default_execution_config(),
+        quote_source=quote_source,
+    )
+
+    # Rejected before dispatch — the broker was never called.
+    client.submit_order.assert_not_called()
+    assert quote_source.requested == ["NVDA"]
+    result = state.submission_log[0].submission_results[0]
+    assert result.status == "rejected"
+    assert result.rejection_payload is not None
+    assert result.rejection_payload.gateway_reason == "stale_anchor_vs_live_quote"
+    # The credited delta was released (ALP-743 reconciliation) so a re-anchored
+    # retry is evaluated against the true book.
+    assert state.validation_state.accumulated_deltas == ()
+
+
+async def test_pm_envelope_open_coherent_vs_live_quote_still_dispatches() -> None:
+    """ALP-747 no-false-reject: with NVDA trading ~$850 the default bracket
+    (target $950 above, stop $750 below) is coherent vs the live touch, so the
+    live-coherence check passes and the OPEN routes through to the broker."""
+    from alphamind.decision.portfolio_manager.submit_envelope import (
+        _handle_submit_envelope,
+        build_initial_submit_envelope_state,
+    )
+    from alphamind.execution.broker_adapter import AccountStateQueries
+    from alphamind.execution.broker_adapter.entry_pricing import TouchQuote
+    from tests.execution.oms.test_submit_envelope_mcp import (
+        _DEFAULT_ACTIVE_SECTORS,
+        _make_analyst_envelope,
+        _make_bundle,
+        _make_pm_view,
+        _make_validation_state,
+        _recommendation_stub,
+        _retrieval_store,
+        _sector_resolver,
+    )
+
+    envelope = _make_analyst_envelope()
+    validation_state = _make_validation_state()
+    state = build_initial_submit_envelope_state(
+        invocation_id=validation_state.invocation_id,
+        starting_validation_state=validation_state,
+    )
+    bundle = _make_bundle(recommendations=(_recommendation_stub("REC-1"),))
+
+    fake_order = _make_fake_alpaca_order(order_class=OrderClass.BRACKET)
+    fake_order.id = uuid.uuid4()
+
+    def _submit_order(req: Any) -> MagicMock:
+        if hasattr(req, "client_order_id"):
+            fake_order.client_order_id = req.client_order_id
+        return fake_order
+
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=_submit_order)
+    queries = MagicMock(spec=AccountStateQueries)
+    quote_source = _FixedQuoteSource(TouchQuote(bid=price("849.0"), ask=price("851.0")))
+
+    _response, state = await _handle_submit_envelope(
+        envelope.model_dump(mode="json"),
+        state=state,
+        retrieval_store=_retrieval_store(),
+        pre_processor_bundle=bundle,
+        pm_view=_make_pm_view(),
+        active_sectors=_DEFAULT_ACTIVE_SECTORS,
+        halt_mode=False,
+        sector_resolver=_sector_resolver,
+        state_persistence_config=_make_state_persistence_config(),
+        invocation_handle=None,
+        client=client,
+        queries=queries,
+        execution_config=_default_execution_config(),
+        quote_source=quote_source,
+    )
+
+    # Coherent vs live — the OPEN dispatched and was accepted.
+    assert client.submit_order.call_count == 1
+    assert quote_source.requested == ["NVDA"]
+    result = state.submission_log[0].submission_results[0]
+    assert result.status == "accepted"
+
+
 class _SelectiveBrokerDispatch:
     """A ``BrokerDispatch`` that rejects commands whose underlying is targeted
     and accepts the rest with a synthetic broker ack.

@@ -178,6 +178,14 @@ async def _rewrite_one(command: OMSCommand, *, quote_source: QuoteSource, bps: f
     return command.model_copy(update={"entry_order": new_entry})
 
 
+def _first_price_leg(command: OpenCommand) -> PriceLeg | None:
+    """The bracket's protective-stop leg — the first price-invalidation leg, or
+    ``None`` for an OTO bracket (only a hard time leg). Mirrors
+    ``validation._protective_stop_price`` and the equity OPEN bracket builder,
+    which both take the first price leg as the bracket's stop."""
+    return next((leg for leg in command.invalidation_legs if isinstance(leg, PriceLeg)), None)
+
+
 def _preserves_bracket_geometry(
     direction: Direction, new_limit: Price, command: OpenCommand
 ) -> bool:
@@ -197,7 +205,7 @@ def _preserves_bracket_geometry(
     """
     target = command.target.price
     assert target is not None  # Target validator guarantees a price for every target_type.
-    price_leg = next((leg for leg in command.invalidation_legs if isinstance(leg, PriceLeg)), None)
+    price_leg = _first_price_leg(command)
     stop = price_leg.condition.trigger_price if price_leg is not None else None
     if direction == "short":
         if new_limit <= target:
@@ -206,3 +214,96 @@ def _preserves_bracket_geometry(
     if new_limit >= target:
         return False
     return stop is None or new_limit > stop
+
+
+def fills_at_live_quote_equity(command: OMSCommand) -> bool:
+    """True when *command* is an equity OPEN whose entry fills at the live quote.
+
+    A ``market`` order fills at the prevailing quote unconditionally — any
+    ``entry_window`` annotation on it is vestigial (a market order never rests),
+    so it is always in scope. An enter-now ``limit`` (a ``limit`` with no
+    ``entry_window``) is repriced to marketable by ALP-738 and likewise fills at
+    the touch, so it is in scope too. A patient-retest ``limit`` (carries an
+    ``entry_window``) and a ``stop_limit`` breakout deliberately rest away from
+    the touch and are exempt; non-equity and non-OPEN commands are out of scope.
+    Callers gate the dispatch-time live-coherence check
+    (:func:`live_bracket_incoherence_reason`) on this predicate so a quote is
+    fetched only when the check can apply.
+    """
+    if not (isinstance(command, OpenCommand) and isinstance(command.instrument, EquityInstrument)):
+        return False
+    entry_type = command.entry_order.type
+    if entry_type == "market":
+        return True
+    if entry_type == "limit":
+        return command.entry_window is None
+    return False  # stop_limit breakout — anchors away from the touch
+
+
+def live_bracket_incoherence_reason(command: OpenCommand, *, quote: TouchQuote) -> str | None:
+    """Reason *command*'s bracket is directionally incoherent vs the live touch,
+    or ``None`` when it is coherent.
+
+    The deterministic dispatch-time complement of :func:`rewrite_enter_now_entries`
+    (ALP-747): where the rewrite makes an enter-now entry fill *at* the quote,
+    this rejects a bracket whose target/stop cannot work at the live price — a
+    long target at/below where you'd buy (the ORCL stale-anchor mispricing:
+    entry $198 / target $212 with ORCL trading $226), or a short target at/above
+    where you'd sell. Such a bracket straddles its *stale* anchor
+    self-consistently, so the analyst-side ALP-742 guard and the broker's own
+    bracket validation both pass it; checked against the *live* touch at
+    submission it is exposed as mispriced and fails closed before dispatch.
+
+    Scope is :func:`fills_at_live_quote_equity` (equity OPEN, market or enter-now
+    limit); this function re-checks it so an out-of-scope command always returns
+    ``None`` even if a caller forgets to gate. The directional touch is the price
+    the entry transacts at — the ask for a long, the bid for a short. The
+    protective stop is the first price-invalidation leg (an OTO bracket has none).
+    """
+    if not fills_at_live_quote_equity(command):
+        return None
+    assert isinstance(command.instrument, EquityInstrument)
+    target = command.target.price
+    assert target is not None  # Target validator guarantees a price for every target_type.
+    direction = command.instrument.direction
+    ticker = command.instrument.ticker
+    base = quote.ask if direction == "long" else quote.bid
+    price_leg = _first_price_leg(command)
+    stop = price_leg.condition.trigger_price if price_leg is not None else None
+    if direction == "long":
+        return _long_bracket_incoherence(ticker, target=target, stop=stop, base=base)
+    return _short_bracket_incoherence(ticker, target=target, stop=stop, base=base)
+
+
+def _long_bracket_incoherence(
+    ticker: str, *, target: Price, stop: Price | None, base: Price
+) -> str | None:
+    """Long bracket vs the live ask: the target must clear it and the stop sit below it."""
+    if target <= base:
+        return (
+            f"{ticker} long: target {target} is at/below the live ask {base}; the bracket was "
+            "sized against a stale price and cannot profit at a fill near the live quote"
+        )
+    if stop is not None and stop >= base:
+        return (
+            f"{ticker} long: protective stop {stop} is at/above the live ask {base}; a fill "
+            "near the live quote would stop out immediately"
+        )
+    return None
+
+
+def _short_bracket_incoherence(
+    ticker: str, *, target: Price, stop: Price | None, base: Price
+) -> str | None:
+    """Short bracket vs the live bid: the target must sit below it and the stop above it."""
+    if target >= base:
+        return (
+            f"{ticker} short: target {target} is at/above the live bid {base}; the bracket was "
+            "sized against a stale price and cannot profit at a fill near the live quote"
+        )
+    if stop is not None and stop <= base:
+        return (
+            f"{ticker} short: protective stop {stop} is at/below the live bid {base}; a fill "
+            "near the live quote would stop out immediately"
+        )
+    return None

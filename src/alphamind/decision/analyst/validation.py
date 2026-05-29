@@ -319,10 +319,11 @@ def _live_equity_close(rec: Recommendation, underlying_prices: Mapping[str, floa
 
     The value is the guardrail library's ``MarketInputs.underlying_prices`` entry
     — the freshest ``ohlcv_bars`` close the system holds for the ticker: a live
-    broker quote for a held name, the latest daily close (up to a few days old)
-    for an unheld candidate. It is the same price substrate the analyst's own
-    inputs are built from, so a coherent bracket the analyst draws against its
-    inputs stays coherent here.
+    broker quote for a held name, the freshest recorded bar of any timeframe
+    (an intraday 15min/1h/4h close that supersedes the lagging daily close on a
+    fast move, per ALP-747) for an unheld candidate. It is the same price
+    substrate the analyst's own inputs are built from, so a coherent bracket the
+    analyst draws against its inputs stays coherent here.
     """
     if not isinstance(rec.instrument, InstrumentEquity):
         return None
@@ -672,11 +673,12 @@ def validate_analyst_output(
         soft sizing-band warning. Defaults to
         :data:`DEFAULT_CONVICTION_BANDS`.
     underlying_prices:
-        Per-ticker latest ``ohlcv_bars`` close (the guardrail library's
-        ``MarketInputs.underlying_prices``), used by the ALP-742 bracket
-        price-coherence and reference-price-staleness checks. ``None`` (or a
-        ticker absent from the map) skips those checks — production always
-        threads the live close map through from the harness.
+        Per-ticker freshest recorded ``ohlcv_bars`` close of any timeframe (the
+        guardrail library's ``MarketInputs.underlying_prices``; ALP-747 freshens
+        it from the lagging daily close to the freshest intraday bar), used by
+        the ALP-742 bracket price-coherence and reference-price-staleness checks.
+        ``None`` (or a ticker absent from the map) skips those checks —
+        production always threads the live close map through from the harness.
     price_staleness_tolerance_pct:
         Maximum tolerated drift between the analyst's implied entry anchor and
         the live close before the recommendation is flagged for redraft.

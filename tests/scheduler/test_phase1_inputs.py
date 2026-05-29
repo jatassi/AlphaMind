@@ -317,14 +317,20 @@ def _make_ohlcv_bar(
 
 
 class TestReadActiveUniversePrices:
-    """``_read_active_universe_prices`` — latest EOD close per active ticker (ALP-587)."""
+    """``_read_active_universe_prices`` — freshest bar (any timeframe) per active ticker.
 
-    async def test_returns_latest_daily_unadjusted_close_for_active_tickers(
+    ALP-747: the reference price the decision agents anchor on is the freshest
+    recorded bar of *any* timeframe, so a live-tracking intraday close supersedes
+    a lagging daily close. Pre-ALP-747 this read only ``1d`` bars (ALP-587).
+    """
+
+    async def test_returns_freshest_bar_of_any_timeframe_for_active_tickers(
         self,
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        """The latest ``1d`` bar's ``unadj_close`` is returned per active ticker;
-        older bars and intraday timeframes are ignored, inactive tickers dropped."""
+        """The freshest bar's ``unadj_close`` is returned per active ticker — an
+        intraday bar more recent than the daily close wins (ALP-747); the
+        *unadjusted* close is selected, inactive tickers are dropped."""
         from alphamind.scheduler import phase1_inputs as module
 
         async with async_factory() as seed_session:
@@ -338,9 +344,10 @@ class TestReadActiveUniversePrices:
             await seed_session.flush()
             seed_session.add_all(
                 [
-                    # CSCO: two daily bars — the later one wins; adj_close
-                    # differs from unadj_close so the assertion proves the
-                    # *unadjusted* close is selected.
+                    # CSCO: two daily bars then a fresher intraday bar. The
+                    # intraday close wins (ALP-747); adj_close differs from
+                    # unadj_close so the assertion proves the *unadjusted* close
+                    # is selected.
                     _make_ohlcv_bar(
                         "CSCO", period_start="2026-05-05T00:00:00+00:00", unadj_close=47.0
                     ),
@@ -350,11 +357,13 @@ class TestReadActiveUniversePrices:
                         unadj_close=48.5,
                         adj_close=99.0,
                     ),
-                    # An intraday bar more recent than the daily bar must not win.
+                    # An intraday bar more recent than the daily close — this is
+                    # the freshest reference and must win.
                     _make_ohlcv_bar(
                         "CSCO",
                         period_start="2026-05-07T13:00:00+00:00",
                         unadj_close=50.0,
+                        adj_close=101.0,
                         timeframe="1h",
                     ),
                     _make_ohlcv_bar(
@@ -370,7 +379,45 @@ class TestReadActiveUniversePrices:
         async with async_factory() as session:
             prices = await module._read_active_universe_prices(session, as_of=_NOW)
 
-        assert prices == {"CSCO": 48.5, "MSFT": 410.0}
+        assert prices == {"CSCO": 50.0, "MSFT": 410.0}
+
+    async def test_coarser_timeframe_wins_when_period_start_ties(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """On an equal ``period_start`` across timeframes the coarser-grained bar
+        wins: its window closes later, so its close is the more recent price.
+        Selection stays deterministic and reproducible (ALP-747 AC4)."""
+        from alphamind.scheduler import phase1_inputs as module
+
+        async with async_factory() as seed_session:
+            seed_session.add_all([_make_universe_row("NVDA")])
+            await seed_session.flush()
+            seed_session.add_all(
+                [
+                    # Both bars start at the same instant (a top-of-hour open).
+                    # The 1h bar's window closes later (14:00 vs 13:15), so its
+                    # close is the more recent price and it must win.
+                    _make_ohlcv_bar(
+                        "NVDA",
+                        period_start="2026-05-07T13:00:00+00:00",
+                        unadj_close=900.0,
+                        timeframe="1h",
+                    ),
+                    _make_ohlcv_bar(
+                        "NVDA",
+                        period_start="2026-05-07T13:00:00+00:00",
+                        unadj_close=905.0,
+                        timeframe="15min",
+                    ),
+                ]
+            )
+            await seed_session.commit()
+
+        async with async_factory() as session:
+            prices = await module._read_active_universe_prices(session, as_of=_NOW)
+
+        assert prices == {"NVDA": 900.0}
 
     async def test_drops_stale_bars_past_the_age_bound(
         self,
