@@ -433,23 +433,26 @@ all scheduled invocations automatically against the NYSE calendar. The
 production schedule (timezone `US/Eastern`, defined in
 `config/scheduler.yaml`):
 
+The schedule is **Tier B** (ALP-745): every trigger fires at a distinct
+minute, so no two scheduled runs ever share a minute-truncated `as_of` (the
+condition that previously crashed one of two coinciding distillation passes
+on the `distillation_ticker_baseline` UNIQUE constraint).
+
 | Run type               | Cron (US/Eastern)          | Fires (ET)                                | Notes                                        |
 |------------------------|----------------------------|-------------------------------------------|----------------------------------------------|
 | `pre_open`             | `0 9 * * mon-fri`          | 09:00 weekdays                            | NYSE-calendar-gated                          |
-| `market_hours_rolling` | `30 9,11,13,15 * * mon-fri`| 09:30, 11:30, 13:30, 15:30 weekdays       | NYSE-gated; dedup-gated within 30 min        |
-| `pre_close`            | `30 15 * * mon-fri`        | 15:30 weekdays                            | NYSE-gated                                   |
-| `off_hours_rolling`    | `0 0,4,8,20 * * mon-fri`   | 00:00, 04:00, 08:00, 20:00 weekdays       | NYSE-gated                                   |
-| `weekend_saturday`     | `0 10 * * sat`             | 10:00 Saturday                            | Unconditional                                |
+| `market_hours_rolling` | `0 13 * * mon-fri`         | 13:00 weekdays (single mid-day read)      | NYSE-gated; dedup-gated within 30 min        |
+| `pre_close`            | `30 15 * * mon-fri`        | 15:30 weekdays                            | NYSE-gated; sole owner of the close slot     |
 | `weekend_sunday`       | `0 18 * * sun`             | 18:00 Sunday                              | Unconditional                                |
+| `off_hours_rolling`    | (unscheduled)              | Manual / emergency only                   | Valid run type; overlay retained, not on cron |
+| `weekend_saturday`     | (unscheduled)              | Manual / emergency only                   | Valid run type; overlay retained, not on cron |
 | `emergency`            | (not scheduled)            | On-demand, breach-cascade-triggered       | Cooldown-gated per `config/breach_behavior.yaml` |
 
-Up to ~9 scheduled invocations per trading weekday (1 pre_open + 4
-market_hours_rolling + 1 pre_close + 4 off_hours_rolling — but the dedup
-window collapses the 15:30 `market_hours_rolling` fire into the same-minute
-`pre_close` on most days, so the practical count is closer to 8). The
-cost-modeling doc estimates ~28 invocations per full trading week after
-dedup trimming. **Typical steady-state wall-clock per invocation is ~60–180
-seconds** (longer when the adaptive researcher consumes its full budget;
+~3 scheduled invocations per trading weekday (`pre_open` + `market_hours_rolling`
++ `pre_close`), ~16 per full trading week including the Sunday run. There is no
+longer any same-minute collision for the dedup window to "collapse" — every slot
+is distinct by construction. **Typical steady-state wall-clock per invocation is
+~60–180 seconds** (longer when the adaptive researcher consumes its full budget;
 shorter — ~25–35 s — for `emergency` invocations that bypass the analysis
 layer).
 
@@ -655,8 +658,11 @@ no `invocation_started` event arrived:
   No fire on a market holiday is expected, not a bug.
 - **Daemon paused** — check the command center Controls panel. Pause flag
   doesn't survive a restart.
-- **Dedup collapsed it** — same-minute fires (e.g., `pre_close` and the
-  15:30 `market_hours_rolling`) collapse to one invocation. The
+- **Dedup suppressed it** — the 30-minute dedup window suppresses a
+  `market_hours_rolling` fire if some invocation completed phase 2 within the
+  lookback (e.g., a manual or emergency run just before the 13:00 slot). Under
+  Tier B no two scheduled triggers share a minute, so this only happens around
+  off-schedule runs, never between two scheduled fires. The
   `next_trigger_changed` events on the SSE stream show what APScheduler
   thinks comes next.
 
@@ -828,8 +834,9 @@ instead.
 ### 8.8 Scheduled invocation didn't fire when § 4's schedule said it would
 
 Walk § 5.7's "Skipped invocations" checklist: NYSE holiday, daemon paused,
-or dedup collapsed it. The `next_trigger_changed` events on the SSE stream
-are the source of truth for what the scheduler thinks comes next.
+or dedup suppressed it (only around an off-schedule run — under Tier B no two
+scheduled triggers share a minute). The `next_trigger_changed` events on the
+SSE stream are the source of truth for what the scheduler thinks comes next.
 
 ---
 

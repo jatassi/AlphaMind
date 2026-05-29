@@ -87,15 +87,16 @@ Anthropic deployed a server-side classifier in early 2026 rejecting OAuth tokens
 
 Per [architecture/infrastructure.md § Scheduling](../architecture/infrastructure.md#scheduling):
 
+Under the Tier B schedule (ALP-745), every trigger fires at a distinct minute so no two scheduled runs share a minute-truncated `as_of`:
+
 | Trigger | Times (US/Eastern) | Per week |
 |---|---|---|
 | Pre-open anchored | 09:00 Mon–Fri | 5 |
-| Market-hours rolling | 09:30, 11:30, 13:30, 15:30 Mon–Fri (deduplicated against anchored) | 20 (or 16 after dedup) |
-| Pre-close anchored | 15:30 Mon–Fri (overlaps and replaces the 15:30 rolling) | included above |
-| Off-hours rolling | 20:00, 00:00, 04:00, 08:00 Mon–Fri | 20 |
-| Weekend anchored | Sat 10:00, Sun 18:00 | 2 |
+| Market-hours rolling | 13:00 Mon–Fri (single mid-day read) | 5 |
+| Pre-close anchored | 15:30 Mon–Fri | 5 |
+| Weekend anchored | Sun 18:00 | 1 |
 
-Net scheduled invocations per week: **~28 normal market week**, with dedup and skip-on-recent-completion trimming the raw cron count.
+Net scheduled invocations per week: **~16 normal market week** (~3 per trading weekday plus the Sunday run). `off_hours_rolling` and `weekend_saturday` remain valid run types for manual / emergency use but are no longer scheduled — real-time risk on open positions is owned by the continuous monitor, not by an intraday pipeline cadence.
 
 Emergency invocations triggered by the continuous monitor add a variable tail: **0–2 in a quiet week, 4–8 in a stress week, occasionally more in a crisis week**. Each runs the same agent surface as a scheduled invocation, with the analyst in `watchlist` mode and the strategist in `defensive_posture` mode, both producing smaller outputs than normal mode.
 
@@ -140,7 +141,7 @@ Token volumes per agent are documented at the agent-spec level. Aggregated for t
 | Portfolio manager | ~6,000 | ~3,000 |
 | **Opus subtotal** | **~11,000** | **~5,500** |
 
-**Per-invocation total: ~49,900 tokens (~33K Sonnet, ~16.5K Opus).** Triggers that omit the adaptive researcher (off-hours rolling, weekend-Saturday — together 21 of 28 scheduled invocations per normal week) drop ~3,100 Sonnet tokens and one Sonnet call from the per-invocation total. The weekly Opus envelope — the binding constraint — is unaffected by run-type composition since the decision-layer trio fires on every trigger.
+**Per-invocation total: ~49,900 tokens (~33K Sonnet, ~16.5K Opus).** Under Tier B every scheduled trigger (pre-open, market-hours rolling, pre-close, weekend-Sunday) carries the adaptive researcher, so the full ~49,900-token surface applies to all ~16 scheduled invocations per normal week. (The off-hours-rolling and weekend-Saturday overlays still omit the adaptive researcher and drop ~3,100 Sonnet tokens, but those triggers are unscheduled under Tier B and contribute only on manual / emergency use.) The weekly Opus envelope — the binding constraint — is unaffected by run-type composition since the decision-layer trio fires on every trigger; the move from ~28 to ~16 scheduled invocations per week lowers total weekly token consumption proportionally.
 
 Full-system profile ($100K, 6–15 positions, options/shorts enabled) increases strategist and PM input/output proportional to position count and adds the options/shorts sections to the analyst's guardrail header. Per-invocation total scales to **~65,000–80,000 tokens** in normal operation, with the increase concentrated in Opus.
 
@@ -170,14 +171,14 @@ Per scheduled invocation: 3 Opus calls (analyst, strategist, PM).
 
 | Scenario | Scheduled | Emergency | Retries | Opus calls/week | Vs. 15-Opus-hour cap (~180 msg) | Vs. 35-Opus-hour cap (~420 msg) |
 |---|---|---|---|---|---|---|
-| Quiet week, primary | 28 × 3 = 84 | 0 | +5% = +4 | ~88 | 49% | 21% |
-| Normal week, primary | 28 × 3 = 84 | 4 × 3 = 12 | +10% = +10 | ~106 | 59% | 25% |
-| Stress week, full-system | 28 × 3 = 84 | 8 × 3 = 24 | +20% = +22 | ~130 | 72% | 31% |
-| Crisis week, full-system | 28 × 3 = 84 | 16 × 3 = 48 | +20% = +26 | ~158 | 88% | 38% |
+| Quiet week, primary | 16 × 3 = 48 | 0 | +5% = +2 | ~50 | 28% | 12% |
+| Normal week, primary | 16 × 3 = 48 | 4 × 3 = 12 | +10% = +6 | ~66 | 37% | 16% |
+| Stress week, full-system | 16 × 3 = 48 | 8 × 3 = 24 | +20% = +14 | ~86 | 48% | 20% |
+| Crisis week, full-system | 16 × 3 = 48 | 16 × 3 = 48 | +20% = +19 | ~115 | 64% | 27% |
 
 The cap-numerator uses the 12-message-per-Opus-hour calibration baseline. AlphaMind's PM call (~9K tokens combined) is meaningfully heavier than that baseline; effective cap may be tighter than message count suggests. Treat percentages as "best-case headroom from published structure"; expect actual paper-trading measurements to land at the higher end of utilization.
 
-**Read:** Normal weeks consume 25–59% of the weekly Opus cap depending on which end of the published range Anthropic enforces. Stress weeks push 31–72%. A crisis week with large sustained breaches could exhaust the cap. The operating posture is built around this risk.
+**Read:** Normal weeks consume 16–37% of the weekly Opus cap depending on which end of the published range Anthropic enforces. Stress weeks push 20–48%. A crisis week with large sustained breaches reaches 27–64% — still within cap under the Tier B cadence, where the schedule contributes ~48 of the weekly Opus calls and emergencies drive the rest. The operating posture remains built around the crisis tail.
 
 ### Weekly Sonnet utilization
 
@@ -185,20 +186,20 @@ Per scheduled invocation: 6 Sonnet calls. Stress and crisis weeks approximately 
 
 | Scenario | Sonnet calls/week | Vs. 140-Sonnet-hour cap (~1,680 msg) | Vs. 280-Sonnet-hour cap (~3,360 msg) |
 |---|---|---|---|
-| Normal week | 28 × 6 + ~10 emergency + ~20 retries = ~198 | 12% | 6% |
-| Crisis week | 28 × 6 + ~42 emergency + ~50 retries = ~260 | 15% | 8% |
+| Normal week | 16 × 6 + ~10 emergency + ~20 retries = ~126 | 8% | 4% |
+| Crisis week | 16 × 6 + ~42 emergency + ~50 retries = ~188 | 11% | 6% |
 
 Sonnet has comfortable headroom in every realistic scenario.
 
 ### 5-hour rolling window utilization
 
-Peak 5-hour window is morning trading: the 09:00 pre-open invocation, 09:30 and 11:30 rolling invocations, plus a possible emergency invocation. Worst case ~4 invocations × ~10 LLM calls = ~40 calls.
+Under Tier B no 5-hour window holds more than two scheduled invocations (e.g., 09:00 pre-open and 13:00 mid-day, or 13:00 mid-day and 15:30 pre-close). Worst case ~2 scheduled + a possible emergency = ~3 invocations × ~10 LLM calls = ~30 calls.
 
-Against a community-measured ~225-message Max 5x window allowance: **~18% utilization at peak.** No real risk of hitting the 5-hour cap from scheduled cadence alone.
+Against a community-measured ~225-message Max 5x window allowance: **~13% utilization at peak.** No real risk of hitting the 5-hour cap from scheduled cadence alone.
 
 ### Combined all-models weekly cap
 
-Anthropic enforces an umbrella all-models weekly cap in addition to per-model sub-caps. The numeric value is not published, but per-model caps are roughly half the umbrella cap. Opus + Sonnet combined (normal week ~230 + ~106 = ~336 calls) sits well below either per-model cap and clears the umbrella by a wider margin.
+Anthropic enforces an umbrella all-models weekly cap in addition to per-model sub-caps. The numeric value is not published, but per-model caps are roughly half the umbrella cap. Opus + Sonnet combined (normal week ~126 Sonnet + ~66 Opus = ~192 calls) sits well below either per-model cap and clears the umbrella by a wider margin.
 
 ### What happens if the cap estimates are wrong
 
@@ -231,7 +232,7 @@ The pipeline runs sequentially across data → distillation → analysis → dec
 
 ### Catch-up budget
 
-The tightest scheduler spacing is the 2-hour market-hours rolling cadence. Even a worst-case 3-minute invocation consumes ~2.5% of the inter-trigger budget. APScheduler's `max_instances=1` prevents pile-up by queuing at most one rolling trigger. The 30-minute deduplication window suppresses redundant rolling fires after an emergency or slow run.
+Under Tier B the tightest scheduler spacing is the 13:00↔15:30 gap (2.5 hours; the 09:00↔13:00 gap is wider). Even a worst-case 3-minute invocation consumes ~2% of the inter-trigger budget. APScheduler's `max_instances=1` prevents pile-up by queuing at most one fire per trigger. The 30-minute deduplication window suppresses a rolling fire only if an emergency or slow run completed within the lookback — under Tier B no anchored trigger sits within 30 minutes of the mid-day rolling slot, so the window is a backstop rather than a load-bearing collision guard.
 
 ### Emergency invocation latency target
 
@@ -357,7 +358,7 @@ Three classes of number:
 2. **Anthropic-unpublished cap thresholds** — actual numeric values of the windows. Community-measured and approximate; ranges given here are best estimates as of late 2026.
 3. **AlphaMind-side estimates** — per-invocation token volumes, latency budgets, retry rates. Derived from agent specs and engineering judgment, not measured.
 
-The cost model's conclusions (binding constraint is weekly Opus; normal-week utilization sits 28–66% of cap; latency budget is comfortable against scheduler cadence) are robust to wide uncertainty in numeric values. The alert-registry threshold values are starting points that need calibration.
+The cost model's conclusions (binding constraint is weekly Opus; normal-week utilization sits ~16–37% of cap under the Tier B cadence; latency budget is comfortable against scheduler cadence) are robust to wide uncertainty in numeric values. The alert-registry threshold values are starting points that need calibration.
 
 ### Re-evaluation triggers
 

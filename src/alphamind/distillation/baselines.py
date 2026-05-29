@@ -36,6 +36,7 @@ from itertools import pairwise
 from typing import Any, Literal
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from alphamind.distillation.calibration import (
@@ -388,35 +389,39 @@ class _TickerBaselineRow:
 
 
 def _upsert_ticker_baseline(session: Session, row: _TickerBaselineRow) -> None:
-    """Insert or update one ``distillation_ticker_baseline`` row."""
-    existing = session.execute(
-        select(DistillationTickerBaseline).where(
-            DistillationTickerBaseline.ticker == row.ticker,
-            DistillationTickerBaseline.baseline_kind == row.kind,
-            DistillationTickerBaseline.as_of == row.as_of,
-        )
-    ).scalar_one_or_none()
-    if existing is None:
-        session.add(
-            DistillationTickerBaseline(
-                ticker=row.ticker,
-                baseline_kind=row.kind,
-                as_of=row.as_of,
-                mean=row.mean,
-                stdev=row.stdev,
-                n_observations=row.n_observations,
-                window_days=row.window_days,
-                calibration_state=row.state.value,
-                ingested_at=row.as_of,
-            )
-        )
-    else:
-        existing.mean = row.mean
-        existing.stdev = row.stdev
-        existing.n_observations = row.n_observations
-        existing.window_days = row.window_days
-        existing.calibration_state = row.state.value
-        existing.ingested_at = row.as_of
+    """Insert or update one ``distillation_ticker_baseline`` row.
+
+    A single ``INSERT … ON CONFLICT(ticker, baseline_kind, as_of) DO UPDATE``
+    statement rather than a read-modify-write. The check-then-insert it
+    replaced left a race window: two distillation passes sharing an ``as_of``
+    (a coinciding scheduled fire, or a manual ``cli`` run bar-aligned with a
+    scheduled one) both read "no row" and both attempted an INSERT, crashing
+    the loser on the ``UNIQUE`` constraint (ALP-745). The atomic upsert lets
+    the second writer fold into the first instead of raising.
+    """
+    stmt = sqlite_insert(DistillationTickerBaseline).values(
+        ticker=row.ticker,
+        baseline_kind=row.kind,
+        as_of=row.as_of,
+        mean=row.mean,
+        stdev=row.stdev,
+        n_observations=row.n_observations,
+        window_days=row.window_days,
+        calibration_state=row.state.value,
+        ingested_at=row.as_of,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["ticker", "baseline_kind", "as_of"],
+        set_={
+            "mean": stmt.excluded.mean,
+            "stdev": stmt.excluded.stdev,
+            "n_observations": stmt.excluded.n_observations,
+            "window_days": stmt.excluded.window_days,
+            "calibration_state": stmt.excluded.calibration_state,
+            "ingested_at": stmt.excluded.ingested_at,
+        },
+    )
+    session.execute(stmt)
 
 
 def _full_recompute_required(
@@ -669,31 +674,32 @@ def _upsert_pair_lag(
     n_events: int,
     state: CalibrationState,
 ) -> None:
-    existing = session.execute(
-        select(DistillationPairLag).where(
-            DistillationPairLag.lead_ticker == lead,
-            DistillationPairLag.lag_ticker == lag,
-            DistillationPairLag.as_of == as_of,
-        )
-    ).scalar_one_or_none()
-    if existing is None:
-        session.add(
-            DistillationPairLag(
-                lead_ticker=lead,
-                lag_ticker=lag,
-                as_of=as_of,
-                lead_lag_days_estimate=estimate,
-                n_pair_events=n_events,
-                last_overdue_flag=0,
-                calibration_state=state.value,
-                ingested_at=as_of,
-            )
-        )
-    else:
-        existing.lead_lag_days_estimate = estimate
-        existing.n_pair_events = n_events
-        existing.calibration_state = state.value
-        existing.ingested_at = as_of
+    # Atomic ``INSERT … ON CONFLICT DO UPDATE`` rather than check-then-insert —
+    # same idempotency backstop as ``_upsert_ticker_baseline`` so a duplicate /
+    # concurrent ``as_of`` pass folds in instead of raising ``IntegrityError``
+    # (ALP-745). ``last_overdue_flag`` is set only on insert; an update leaves
+    # the existing flag untouched (matching the prior read-modify-write, which
+    # never reassigned it).
+    stmt = sqlite_insert(DistillationPairLag).values(
+        lead_ticker=lead,
+        lag_ticker=lag,
+        as_of=as_of,
+        lead_lag_days_estimate=estimate,
+        n_pair_events=n_events,
+        last_overdue_flag=0,
+        calibration_state=state.value,
+        ingested_at=as_of,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["lead_ticker", "lag_ticker", "as_of"],
+        set_={
+            "lead_lag_days_estimate": stmt.excluded.lead_lag_days_estimate,
+            "n_pair_events": stmt.excluded.n_pair_events,
+            "calibration_state": stmt.excluded.calibration_state,
+            "ingested_at": stmt.excluded.ingested_at,
+        },
+    )
+    session.execute(stmt)
 
 
 def refresh_pair_lag(

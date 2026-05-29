@@ -32,23 +32,22 @@ Competitive advantage is cross-domain synthesis of unstructured data. The system
 
 ### Invocation schedule
 
-The pipeline runs on a fixed schedule tied to US market hours (NYSE: 9:30 AM – 4:00 PM ET).
+The pipeline runs on a deliberately sparse schedule (Tier B) tied to US market hours (NYSE: 9:30 AM – 4:00 PM ET). The deliberative pipeline forms theses and makes position decisions — an inherently low-frequency job for a swing/position system — so it does not need an intraday polling cadence. Real-time risk on open positions is owned by the continuous monitor (breach checks, bracket stops, greeks, entry windows, borrow accrual), not by the pipeline.
 
-**Market hours (9:30 AM – 4:00 PM ET):** Every 2 hours, where price action, flow, and news are most signal-dense. Runs at ~9:30, 11:30, 1:30, 3:30.
+Three fixed weekday invocations, each at a distinct minute:
+- **Pre-open (9:00 AM ET):** Synthesizes overnight developments, pre-market price action, and thesis-relevant news; positions for the open — open new entries vs. adjust existing.
+- **Mid-day (1:00 PM ET):** A single intraday read (`market_hours_rolling`) for new-opportunity discovery and thesis updates while price action, flow, and news are signal-dense.
+- **Pre-close (3:30 PM ET):** Evaluates open positions against end-of-day dynamics: close before the overnight gap? Late-day setups? Bias toward risk reduction — overnight holds need strong conviction.
 
-**Off hours (4:00 PM – 9:30 AM ET):** Every 4 hours. Signal density drops, but overnight developments (Asian/European markets, geopolitics, earnings) still need monitoring. Runs at ~8:00 PM, 12:00 AM, 4:00 AM, 8:00 AM.
+Between 9:00↔13:00 and 13:00↔15:30 there is no deliberative read. An intraday setup that appears and decays inside those gaps will not be acted on; the continuous monitor still manages risk on open positions throughout. This is the intentional Tier B bargain — what is given up is new-opportunity discovery in those gaps.
 
-**Anchored runs:** Two fixed invocations regardless of rolling schedule:
-- **Pre-open (9:00 AM ET):** 30 minutes before open. Synthesizes overnight developments, pre-market price action, thesis-relevant news. Critical for positioning — open new entries vs. adjust existing.
-- **Pre-close (3:30 PM ET):** 30 minutes before close. Evaluates open positions against end-of-day dynamics: close before the overnight gap? Late-day setups? Bias toward risk reduction — overnight holds need strong conviction.
+**Overlap handling:** The Tier B schedule assigns every trigger a distinct minute, so no two scheduled runs ever fire in the same minute or share a minute-truncated `as_of` — the prior design's collision (two passes racing on the distillation `UNIQUE(ticker, baseline_kind, as_of)` constraint) is structurally unreachable on the scheduled path. The 30-minute dedup window remains as a backstop: it suppresses a rolling fire only if some invocation completed phase 2 within the lookback (e.g., a manual or emergency run just before the mid-day slot).
 
-**Overlap handling:** When an anchored run coincides with a rolling interval (e.g., pre-close at 3:30 overlaps the 2-hour cadence), the anchored run takes precedence and the rolling run is skipped. No double-invocations within 30 minutes.
+**Per-run-type scoping.** Each invocation type carries a tailored pipeline configuration via the [`run_types/` overlay](configuration-management.md#run_typestriggeryaml): an agent roster (which of the nine LLM agents fire on this trigger) plus a budget envelope (per-agent latency and output-token caps, adaptive-research tool-call and token caps, qualitative news-digest depth). Pre-open and weekend-Sunday carry full rosters with expanded adaptive budget; pre-close and market-hours rolling carry full rosters at normal budget. The off-hours-rolling and weekend-Saturday overlays — which omit the adaptive researcher entirely — remain defined for manual / emergency use but are no longer scheduled under Tier B. Behavioral shaping flows from the synthesizer brief's data composition and the structural budget envelope — no agent prompt receives a run-type instruction.
 
-**Per-run-type scoping.** Each invocation type carries a tailored pipeline configuration via the [`run_types/` overlay](configuration-management.md#run_typestriggeryaml): an agent roster (which of the nine LLM agents fire on this trigger) plus a budget envelope (per-agent latency and output-token caps, adaptive-research tool-call and token caps, qualitative news-digest depth). Pre-open and weekend-Sunday carry full rosters with expanded adaptive budget; pre-close and market-hours rolling carry full rosters at normal budget; off-hours rolling and weekend-Saturday omit the adaptive researcher entirely. Behavioral shaping flows from the synthesizer brief's data composition and the structural budget envelope — no agent prompt receives a run-type instruction.
+**Total daily invocations:** ~3 per trading day (pre-open + mid-day + pre-close), ~16 per normal week including the Sunday run.
 
-**Total daily invocations:** ~8–10 per trading day (4 market + 2 anchored + 3–4 off hours).
-
-**Weekend invocations:** Two anchored runs concentrated on the highest-signal moments. Saturday ~10:00 ET digests Friday's close and the start of weekend news flow; Sunday ~18:00 ET positions before Monday's pre-market open and the Sunday-evening earnings-preannouncement window. Strategist re-evaluates open positions against new weekend signal; analyst's inclusion threshold suppresses noise on quiet weekends. Off-weekend events (geopolitical breaks, prediction-market shifts beyond distillation thresholds) reach the system through the continuous monitor's emergency-invocation path.
+**Weekend invocations:** One anchored run. Sunday ~18:00 ET positions before Monday's pre-market open and the Sunday-evening earnings-preannouncement window. Strategist re-evaluates open positions against new weekend signal; analyst's inclusion threshold suppresses noise on quiet weekends. The Saturday run is unscheduled under Tier B. Off-schedule events (geopolitical breaks, prediction-market shifts beyond distillation thresholds) reach the system through the continuous monitor's emergency-invocation path.
 
 
 ---

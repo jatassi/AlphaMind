@@ -66,19 +66,17 @@ paths:
 ```
 
 ### `scheduler.yaml`
-Full cron expressions for APScheduler. Overlap-dedup and `max_instances` are the scheduler's safety net.
+Full cron expressions for APScheduler. The Tier B schedule (ALP-745) assigns every trigger a distinct minute, so no two scheduled runs share a minute-truncated `as_of`; overlap-dedup and `max_instances` are a secondary safety net for manual / emergency runs rather than the primary collision guard. `off_hours_rolling` and `weekend_saturday` remain valid run types (overlays + enum members are retained) but are deliberately unscheduled — real-time risk on open positions is owned by the continuous monitor.
 
 ```yaml
 timezone: US/Eastern
 max_instances: 1
 overlap_dedup_lookback_minutes: 30
 triggers:
-  market_hours_rolling: "30 9,11,13,15 * * mon-fri"
-  off_hours_rolling:    "0 0,4,8,20 * * mon-fri"
-  pre_open:             "0 9 * * mon-fri"
-  pre_close:            "30 15 * * mon-fri"
-  weekend_saturday:     "0 10 * * sat"
-  weekend_sunday:       "0 18 * * sun"
+  pre_open:             "0 9 * * mon-fri"     # 09:00 ET
+  market_hours_rolling: "0 13 * * mon-fri"    # 13:00 ET — single mid-day read
+  pre_close:            "30 15 * * mon-fri"   # 15:30 ET
+  weekend_sunday:       "0 18 * * sun"        # 18:00 ET Sun
 ```
 
 ### `data_sources.yaml`
@@ -489,16 +487,16 @@ qualitative_researcher:
     top_n_high_priority: 3
 ```
 
-The remaining overlay files (`market_hours_rolling.yaml`, `pre_close.yaml`, `weekend_saturday.yaml`, `weekend_sunday.yaml`) follow the same shape. Starting values across the trigger set, calibrated against the cost-and-rate-limit envelope and refined once paper-trading data lands:
+The remaining overlay files (`market_hours_rolling.yaml`, `pre_close.yaml`, `weekend_saturday.yaml`, `weekend_sunday.yaml`) follow the same shape. Starting values across the trigger set, calibrated against the cost-and-rate-limit envelope and refined once paper-trading data lands. All six overlays remain defined; the `Scheduled (Tier B)` column marks which fire on the cron schedule versus which are retained for manual / emergency use only:
 
-| Trigger | Adaptive researcher | Adaptive tool-call cap | Adaptive token cap | News-digest top-N per sector |
-|---|---|---|---|---|
-| `pre_open` | enabled | 25 | 4000 | 5 |
-| `market_hours_rolling` | enabled | 20 | 3000 | 5 |
-| `pre_close` | enabled | 15 | 2500 | 4 |
-| `off_hours_rolling` | omitted | — | — | 3 |
-| `weekend_saturday` | omitted | — | — | 3 |
-| `weekend_sunday` | enabled | 20 | 3000 | 5 |
+| Trigger | Scheduled (Tier B) | Adaptive researcher | Adaptive tool-call cap | Adaptive token cap | News-digest top-N per sector |
+|---|---|---|---|---|---|
+| `pre_open` | yes (09:00) | enabled | 25 | 4000 | 5 |
+| `market_hours_rolling` | yes (13:00) | enabled | 20 | 3000 | 5 |
+| `pre_close` | yes (15:30) | enabled | 15 | 2500 | 4 |
+| `off_hours_rolling` | no (manual/emergency) | omitted | — | — | 3 |
+| `weekend_saturday` | no (manual/emergency) | omitted | — | — | 3 |
+| `weekend_sunday` | yes (Sun 18:00) | enabled | 20 | 3000 | 5 |
 
 The three decision-layer agents (analyst, strategist, PM) and the synthesizer fire on every run type — the run-type bundle never disables the decision layer. The three parallel analysis-layer sector researchers likewise fire on every run type. Only the adaptive researcher and the qualitative researcher's news-digest depth carry per-trigger variance in v1.
 
