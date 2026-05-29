@@ -40,6 +40,7 @@ from alphamind.decision.portfolio_manager.submit_envelope.process import (
     _build_envelope_level_rejection,
     _format_first_error,
     _process_commands,
+    _reconcile_validation_state,
     _safe_derive_pm_command_id,
     _serialize_response,
     _strip_analyst_only_command_fields,
@@ -411,8 +412,11 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
             log_envelope_for_record=envelope,
         )
 
-    # Step 3: process embedded commands.
-    submission_results, state = _process_commands(
+    # Step 3: process embedded commands. Capture the validation-state cell as
+    # it stood on envelope entry so Step 4.5 can rebuild it against the final
+    # (post-broker-routing) outcome (ALP-743).
+    entry_validation_state = state.validation_state
+    submission_results, state, credited_deltas = _process_commands(
         envelope,
         state=state,
         sector_resolver=sector_resolver,
@@ -437,6 +441,19 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
         quote_source=quote_source,
         invocation_handle=invocation_handle,
         broker_dispatch=broker_dispatch,
+    )
+
+    # Step 4.5: reconcile the cumulative validation-state cell against the
+    # post-broker-routing outcome (ALP-743). A command that PASSed guardrails
+    # (advancing the cell in Step 3) but was then rejected by the broker in
+    # Step 4 must release the delta it credited, so a resize/retry of the same
+    # idea is evaluated against the true book rather than phantom stacked
+    # exposure. Re-applies only the deltas of finally-accepted commands.
+    state = _reconcile_validation_state(
+        state,
+        entry_validation_state=entry_validation_state,
+        submission_results=submission_results,
+        credited_deltas=credited_deltas,
     )
 
     # Step 5: append to submission log (post-broker outcome). ALP-711 scope (C):

@@ -118,7 +118,18 @@ class Acknowledgment(BaseModel):
 
 
 class _BreachedRule(BaseModel):
-    """One breached-rule entry on a RejectionPayload."""
+    """One breached-rule entry on a RejectionPayload.
+
+    ``projected_after`` is the rule's projected value once the proposal is
+    applied — i.e. the *cumulative basis* the ``overage`` was measured against
+    (``overage == |projected_after - limit|`` for a guardrail breach). It is
+    surfaced explicitly (ALP-743) so the consumer can see that the overage may
+    reflect prior in-invocation proposals plus this one, not just this command's
+    single-command delta — without it the PM mistook a doubled cumulative
+    projection for a phantom broker margin multiplier. Defaults to ``0.0`` for
+    non-guardrail rejections (schema-invariant / broker-gateway) where there is
+    no per-rule projection.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -127,6 +138,7 @@ class _BreachedRule(BaseModel):
     limit: float
     overage: float
     unit: str
+    projected_after: float = 0.0
 
 
 class RejectionPayload(BaseModel):

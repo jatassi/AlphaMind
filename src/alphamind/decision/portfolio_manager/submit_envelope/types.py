@@ -74,10 +74,17 @@ def build_initial_submit_envelope_state(
 ) -> SubmitEnvelopeState:
     """Construct a fresh :class:`SubmitEnvelopeState` for one invocation.
 
-    The ``starting_validation_state`` is the same cell that backs the
-    analyst's / strategist's / PM's :func:`validate_guardrail` MCP tool —
-    sharing the cell keeps cumulative-impact tracking unified across
-    pre-submission validation and submit-time re-validation.
+    ``starting_validation_state`` seeds the submit_envelope cumulative state
+    from the same initial :class:`ValidationToolState` the PM's
+    :func:`validate_guardrail` MCP tool starts from, but the two advance
+    INDEPENDENTLY thereafter: ``ValidationToolState`` is immutable, so the
+    standalone validation tool mutates its own ``_ValidationStateCell`` on each
+    pre-submission PASS while submit_envelope advances ``validation_state`` via
+    :func:`dataclasses.replace` on each accepted command. A pre-submission
+    ``validate_guardrail`` PASS therefore does NOT credit the submit-time
+    cumulative state — only commands actually accepted through
+    ``submit_envelope`` (surviving guardrails *and* broker routing) do
+    (ALP-743).
     """
     return SubmitEnvelopeState(
         validation_state=starting_validation_state,

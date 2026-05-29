@@ -270,9 +270,11 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
     budget knobs reach the PM slot.
 
     Builds the validation-tool initial state and the submit_envelope initial
-    state (both fresh per invocation; the latter wraps the former so
-    cumulative-impact tracking is unified across pre-submission validation
-    and submit-time re-validation), composes the user-message via
+    state (both fresh per invocation; the latter is seeded from the former's
+    initial state but the two cumulative cells advance independently — a
+    pre-submission ``validate_guardrail`` PASS does not feed the submit-time
+    cumulative state, only commands accepted through ``submit_envelope`` do,
+    ALP-743), composes the user-message via
     :func:`assemble_input_bundle_normal` or :func:`assemble_input_bundle_halt`
     based on *mode* (per parent decision (M), ``mode`` is caller-supplied —
     never inferred from breach state), invokes :func:`invoke_pm`, and returns

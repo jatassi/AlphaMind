@@ -906,6 +906,46 @@ async def test_rejects_command_breaching_sector_concentration() -> None:
     assert len(get_state().validation_state.accumulated_deltas) == 0
 
 
+@pytest.mark.asyncio
+async def test_rejection_payload_surfaces_cumulative_projected_after() -> None:
+    """ALP-743 (AC#3): a breached rule's ``projected_after`` carries the
+    cumulative basis the overage was measured against — distinct from this
+    command's single-command ``delta_adjusted_exposure``.
+
+    Two $4k NVDA shorts (4% each) on a $100k book: the first PASSes
+    (single_short_max cap 5%) and credits 4% to cumulative state; the second
+    projects 8% and FAILs. Its rejection reports ``projected_after == 8.0``
+    (cumulative) while ``delta_adjusted_exposure == -4000`` (single), so the PM
+    can read the overage as stacked exposure rather than inventing a broker
+    margin multiplier to reconcile the two figures.
+    """
+    cmd1 = _open_command(underlying=Symbol("NVDA"), dollar_value=4_000.0, quantity=20)
+    cmd2 = _open_command(underlying=Symbol("NVDA"), dollar_value=4_000.0, quantity=20)
+    envelope = _make_strategist_envelope(verdict="approve", commands=(cmd1, cmd2))
+    raw = envelope.model_dump(mode="json")
+    for command in raw["commands"]:
+        command["instrument"]["direction"] = "short"
+
+    _get_state, server, _ = _build_state_and_server(
+        envelope_for_routing=envelope,
+        borrow_cost_resolver=lambda _ticker: 0.5,
+    )
+
+    text, is_error = await _invoke_mcp_tool(server, "submit_envelope", raw)
+    assert not is_error, text
+
+    results = json.loads(text)["submission_results"]
+    assert results[0]["status"] == "accepted"
+    assert results[1]["status"] == "rejected"
+    rejection = results[1]["rejection_payload"]
+    breach = next(b for b in rejection["rules_breached"] if b["rule"] == "single_short_max_pct")
+    assert breach["projected_after"] == pytest.approx(8.0, abs=0.01)
+    assert breach["overage"] == pytest.approx(3.0, abs=0.01)
+    # The single-command delta is half the cumulative basis — the figure that,
+    # absent projected_after, looked inconsistent with the overage.
+    assert rejection["delta_adjusted_exposure"] == pytest.approx(-4_000.0, abs=0.01)
+
+
 # ---------------------------------------------------------------------------
 # 5. Multiple commands with partial rejection — middle command rejects
 # ---------------------------------------------------------------------------
