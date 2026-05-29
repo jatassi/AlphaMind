@@ -223,7 +223,7 @@ Company-level numbers, but *not* for deep fundamental analysis or long-term valu
   - Revision velocity and breadth: one analyst bumping numbers is noise; five revising in the same direction within days is signal. Track revision count, percentage of covering analysts revising, and time clustering
   - Estimate dispersion: spread between highest and lowest estimates — wide dispersion means high uncertainty and potential for sharp repricing
   - Revision momentum: are revisions accelerating or decelerating?
-  - Intraday revision timestamps: sell-side analysts publish in clusters — before open, midday, after close. A 2 PM revision may not hit price until next morning. For a system running every 2 hours, knowing *when* during the day a revision hit is the difference between catching and chasing the move. Timestamp revisions to the hour; flag revisions landed since last run but not yet absorbed by price (revision-price lag detection).
+  - Intraday revision timestamps: sell-side analysts publish in clusters — before open, midday, after close. A 2 PM revision may not hit price until next morning. For a deliberative system that reads only a few times a day (Tier B: pre-open, mid-day, pre-close), knowing *when* during the day a revision hit is the difference between catching and chasing the move. Timestamp revisions to the hour; flag revisions landed since last run but not yet absorbed by price (revision-price lag detection).
 
   *5b. Earnings calendar and event proximity*
   Where each ticker sits relative to its next earnings date. As earnings approach, IV ramps (see 3e), volume patterns shift, and the thesis framework changes.

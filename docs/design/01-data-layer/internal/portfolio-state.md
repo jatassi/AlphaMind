@@ -135,7 +135,7 @@ The PM's gating input for any new position — regardless of thesis quality, the
 ---
 
 **5. Activity log**
-What happened since the last invocation. Categories 1–4 describe current *state*; this describes the *trajectory*. Between invocations (every 2 hours during market hours) orders fill, stops trigger, positions open or close.
+What happened since the last invocation. Categories 1–4 describe current *state*; this describes the *trajectory*. Between invocations (hours apart under the Tier B schedule — pre-open, a single mid-day read, and pre-close) orders fill, stops trigger, positions open or close.
 
   *Design principle — changelog over snapshot diffing:* Each invocation operates in a fresh context with no memory of prior state. An explicit changelog is cleaner than forcing agents to diff snapshots.
 

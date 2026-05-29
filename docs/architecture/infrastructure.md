@@ -12,17 +12,18 @@ Scheduling, deployment, observability, and process supervision.
 
 ### Schedule definition
 
-Five trigger types, all in US Eastern time:
+Four scheduled trigger types (the **Tier B** cadence, ALP-745), all in US Eastern time. Every trigger fires at a distinct minute, so no two scheduled runs ever share an `as_of` (it is second-resolution and cron fires land on `:00`, so a distinct minute is a distinct `as_of`):
 
 | Trigger | Schedule | APScheduler trigger type |
 |---------|----------|------------------------|
-| Market-hours rolling | Every 2h during 9:30 AM – 4:00 PM ET | `CronTrigger` (hour='9,11,13,15', minute='30') |
-| Off-hours rolling | Every 4h during 4:00 PM – 9:30 AM ET | `CronTrigger` (hour='20,0,4,8') |
-| Pre-open (anchored) | 9:00 AM ET | `CronTrigger` (hour=9, minute=0) |
-| Pre-close (anchored) | 3:30 PM ET | `CronTrigger` (hour=15, minute=30) |
-| Weekend (reduced) | Every 6-8h Sat/Sun | `CronTrigger` with day_of_week filter |
+| Pre-open (anchored) | 9:00 AM ET weekdays | `CronTrigger` (hour=9, minute=0) |
+| Market-hours rolling | 1:00 PM ET weekdays (single mid-day read) | `CronTrigger` (hour=13, minute=0) |
+| Pre-close (anchored) | 3:30 PM ET weekdays | `CronTrigger` (hour=15, minute=30) |
+| Weekend (reduced) | Sun 6:00 PM ET | `CronTrigger` (day_of_week=sun, hour=18) |
 
-**Overlap deduplication:** When an anchored run coincides with a rolling run (e.g., pre-close at 3:30 overlaps the 2h cadence), the anchored run takes precedence. Each trigger is tagged with a run type; before firing a rolling trigger, the scheduler checks whether a run of any type completed within the last 30 minutes. APScheduler's `max_instances=1` is a safety net against concurrent pipeline executions.
+`off_hours_rolling` and `weekend_saturday` remain valid run types (enum members + overlays retained) but are deliberately unscheduled — real-time risk on open positions is owned by the continuous monitor, not by an intraday pipeline cadence.
+
+**Overlap deduplication:** Under Tier B the schedule itself guarantees no two scheduled triggers fire in the same minute, so the prior collision (two passes racing on the distillation `UNIQUE(ticker, baseline_kind, as_of)` constraint) is structurally unreachable on the scheduled path. The 30-minute dedup window is retained as a backstop: each rolling trigger is tagged with a run type, and before firing the scheduler checks whether a run completed within the last 30 minutes — relevant now only around manual / emergency runs near a scheduled slot. APScheduler's `max_instances=1` is a safety net against concurrent pipeline executions.
 
 **Market calendar:** Trading day detection via `exchange-calendars` or `pandas_market_calendars` for NYSE schedules, checked before each trigger fires.
 

@@ -366,17 +366,27 @@ def test_adaptive_overrides_match_doc_table(
     assert overrides["cumulative_tool_token_budget"] == tool_token_budget
 
 
-def test_run_type_filename_stems_match_scheduler_trigger_keys_plus_emergency() -> None:
-    """The 7 run-type filenames cover scheduler.yaml's 6 triggers + ``emergency``.
+def test_run_type_filename_stems_cover_scheduled_triggers_and_unscheduled_run_types() -> None:
+    """Every scheduled trigger has an overlay; the spare overlays are the
+    valid-but-unscheduled run types plus ``emergency``.
 
-    ``emergency`` has no cron entry in ``scheduler.yaml`` — the emergency
-    receiver task (story 04b) dispatches it from activity-log events instead.
+    Under the Tier B schedule (ALP-745) ``scheduler.yaml`` schedules four
+    triggers, but all six run-type overlays are retained: ``off_hours_rolling``
+    and ``weekend_saturday`` stay valid run types for manual / emergency use
+    even though they are no longer on the cron schedule. ``emergency`` has no
+    cron entry either — the emergency receiver task (story 04b) dispatches it
+    from activity-log events. So every scheduled trigger must have an overlay,
+    and the overlay stems beyond the scheduled set are exactly the two
+    unscheduled run types plus ``emergency``.
     """
     scheduler = _read_yaml(CONFIG_DIR / "scheduler.yaml")
     trigger_keys = set(scheduler["triggers"].keys())
     yaml_stems = {p.stem for p in RUN_TYPES_DIR.glob("*.yaml")}
-    assert yaml_stems - trigger_keys == {"emergency"}
+    # Every scheduled trigger resolves to an overlay file.
     assert trigger_keys - yaml_stems == set()
+    # The overlays not on the schedule are the two retained-but-unscheduled
+    # run types plus the non-cron ``emergency`` type.
+    assert yaml_stems - trigger_keys == {"emergency", "off_hours_rolling", "weekend_saturday"}
 
 
 def test_loaded_bundle_pre_open_has_news_digest_5_3() -> None:

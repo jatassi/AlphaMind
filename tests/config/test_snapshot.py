@@ -198,7 +198,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # ALP-740 added entry_window_max_reprices: 2 to config/continuous_monitor.yaml
     # and ContinuousMonitorConfig (the reprice/escalate loop bound for patient-retest
     # entries at the entry_window deadline), shifting the resolved-config canonical bytes.
-    expected = "e806e9918ea890171dbf49a487fa91a800ddb2a4dc0918d76c6a8a078361dc32"
+    # Pin updated 2026-05-29 (Tier B schedule, ALP-745): config/scheduler.yaml's
+    # triggers block dropped from six cron entries to the four Tier B triggers
+    # (pre_open 09:00, market_hours_rolling 13:00, pre_close 15:30, weekend_sunday
+    # 18:00), shifting the resolved-config canonical bytes.
+    expected = "160ced32f23b5250b84c3ac6723e433582ac2e8180ab9934481879036d540ccf"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

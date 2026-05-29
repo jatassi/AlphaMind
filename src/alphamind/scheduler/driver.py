@@ -215,13 +215,16 @@ def register_pipeline_jobs(
 
 
 # Trigger keys that match the schema's ``_RunType`` literal in
-# ``scheduler.control.models``. APScheduler registers six jobs (per
-# ``config/scheduler.yaml``) — the two weekend triggers are valid
-# AlphaMind run types but the wire-format schema does not include them
-# in its closed enum, so a ``NextTriggerChangedEvent`` constructed with
-# a weekend key raises ``ValidationError``. Filter at the emit boundary
-# so weekend slots simply don't update the operator console rather than
-# silently dropping all weekend emits to an error log.
+# ``scheduler.control.models``. Under the Tier B schedule (ALP-745)
+# APScheduler registers four jobs (per ``config/scheduler.yaml``), of which
+# the weekend trigger (``weekend_sunday``) is a valid AlphaMind run type the
+# wire-format schema does not include in its closed enum, so a
+# ``NextTriggerChangedEvent`` constructed with a weekend key raises
+# ``ValidationError``. Filter at the emit boundary so weekend slots simply
+# don't update the operator console rather than silently dropping all weekend
+# emits to an error log. This set is keyed on the wire-format enum, not the
+# scheduled triggers, so it still lists ``off_hours_rolling`` even though
+# Tier B no longer schedules it (it remains a valid manual / emergency type).
 _SCHEMA_TRIGGER_TYPES: frozenset[str] = frozenset(
     {
         "market_hours_rolling",

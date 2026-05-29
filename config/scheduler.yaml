@@ -20,10 +20,19 @@ supervisor_shutdown_timeout_seconds: 10
 # port if it conflicts with another service on the trading machine.
 control_port: 8765
 
+# Tier B cadence (ALP-745). Every trigger fires in a distinct minute. The
+# `as_of` is second-resolution and cron fires land on `:00`, so a distinct
+# minute means a distinct `as_of` — no two scheduled runs ever share one, and
+# the distillation UNIQUE(ticker, baseline_kind, as_of) collision is
+# unreachable on the scheduled path. The deliberative pipeline is thesis formation / position decisions — an
+# inherently low-frequency job. Real-time risk on open positions is owned by the
+# continuous monitor (config/continuous_monitor.yaml), not by an intraday
+# pipeline cadence. `off_hours_rolling` and `weekend_saturday` stay valid run
+# types (overlays + enum members remain) but are deliberately unscheduled.
 triggers:
-  market_hours_rolling: "30 9,11,13,15 * * mon-fri"
-  off_hours_rolling:    "0 0,4,8,20 * * mon-fri"
-  pre_open:             "0 9 * * mon-fri"
-  pre_close:            "30 15 * * mon-fri"
-  weekend_saturday:     "0 10 * * sat"
-  weekend_sunday:       "0 18 * * sun"
+  pre_open:             "0 9 * * mon-fri"     # 09:00 ET — overnight synthesis, position for the open
+  # `market_hours_rolling` is now a single mid-day fire (a slight misnomer the
+  # name keeps to avoid churning the enum / wire-schema / DB CHECK vocab).
+  market_hours_rolling: "0 13 * * mon-fri"    # 13:00 ET — single mid-day opportunity / thesis read
+  pre_close:            "30 15 * * mon-fri"   # 15:30 ET — EOD risk reduction; SOLE owner of the close slot
+  weekend_sunday:       "0 18 * * sun"        # 18:00 ET Sun — pre-week positioning

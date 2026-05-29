@@ -7,12 +7,16 @@ T-2 in-window, T-1 final) plus the post-event lift, while the stress
 overlay holds steady — testing the orchestrator's overlay-composition
 seam in concert with the audit-log activation/deactivation predicates.
 
-Invocation timing aligns the shipped ``market_hours_rolling`` cron
-(``30 9,11,13,15 * * mon-fri`` in US/Eastern) against an FOMC at
-``2026-04-29 19:00 UTC`` (15:00 ET) on a Wednesday so:
+Invocation timing aligns the shipped Tier B schedule (ALP-745) —
+``pre_open`` 09:00 ET, ``market_hours_rolling`` 13:00 ET, ``pre_close``
+15:30 ET — against an FOMC at ``2026-04-29 19:00 UTC`` (15:00 ET) on a
+Wednesday. The activator counts the next ``windows_before_event + 1`` = 3
+unioned firings; on the FOMC day the firings preceding the event are
+``pre_open`` (13:00 UTC) and ``market_hours_rolling`` (17:00 UTC), with
+``pre_close`` (19:30 UTC) landing just after it, so:
 
-- Inv 1 (now=15:00 UTC, 11:00 ET) — 2 firings before FOMC → outside pre_event window
-- Inv 2 (now=16:00 UTC, 12:00 ET) — 1 firing before FOMC → T-2 of windows=2
+- Inv 1 (now=12:00 UTC, 08:00 ET) — 2 firings before FOMC → outside pre_event window
+- Inv 2 (now=14:00 UTC, 10:00 ET) — 1 firing before FOMC → T-2 of windows=2
 - Inv 3 (now=18:00 UTC, 14:00 ET) — 0 firings before FOMC → final pre-event firing
 - Inv 4 (now=19:30 UTC, 15:30 ET) — FOMC in past → pre_event inactive
 
@@ -58,12 +62,12 @@ _FOMC_LABEL = "FOMC announcement"
 _TIMELINE: tuple[tuple[str, datetime, tuple[Overlay, ...]], ...] = (
     (
         "INV-B-01",
-        datetime(2026, 4, 29, 15, 0, tzinfo=UTC),
+        datetime(2026, 4, 29, 12, 0, tzinfo=UTC),
         (Overlay.stress,),
     ),
     (
         "INV-B-02",
-        datetime(2026, 4, 29, 16, 0, tzinfo=UTC),
+        datetime(2026, 4, 29, 14, 0, tzinfo=UTC),
         (Overlay.pre_event, Overlay.stress),
     ),
     (
@@ -186,7 +190,7 @@ def _drive_full_timeline(
     rule_metadata: Mapping[str, RuleMetadata],
 ) -> tuple[RegimeAdaptationOutput, ...]:
     """Seed the funding-stress alert and drive all four invocations."""
-    _seed_funding_stress_alert(in_memory_session, as_of="2026-04-29T14:00:00Z")
+    _seed_funding_stress_alert(in_memory_session, as_of="2026-04-29T11:00:00Z")
     outputs: list[RegimeAdaptationOutput] = []
     for invocation_id, now_utc, _ in _TIMELINE:
         outputs.append(
