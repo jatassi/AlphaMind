@@ -421,6 +421,15 @@ ignore_imports =
     # ``dispatch`` entries above.
     alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.broker_adapter.client_factory
     alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.broker_adapter.queries
+    # ALP-738 — ``submit_envelope.server`` also lazily builds the Alpaca-backed
+    # quote source (``build_broker_routing_kwargs``) and invokes the
+    # marketable-entry rewrite (``_handle_submit_envelope`` step 3.5) inside the
+    # PM composition root, re-pricing an enter-now equity entry against the live
+    # touch before broker dispatch. Re-pricing against the live quote is an
+    # execution concern realized at the composition root — the same permanent
+    # carve-out as the ALP-711 entries above.
+    alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.broker_adapter.entry_pricing
+    alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.broker_adapter.quotes
     # ALP-470 hoisted ``state.config`` out of execution but its
     # ``CorporateActionsConfig`` field still reaches into
     # ``execution.corporate_actions.config`` (the per-feature CA knobs).

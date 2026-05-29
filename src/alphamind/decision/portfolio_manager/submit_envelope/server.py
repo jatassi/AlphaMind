@@ -59,7 +59,7 @@ if TYPE_CHECKING:
     from alphamind.config.models.execution import ExecutionConfig
     from alphamind.config.models.main import ExecutionMode
     from alphamind.config.models.venue import VenueConfig
-    from alphamind.execution.broker_adapter import AccountStateQueries
+    from alphamind.execution.broker_adapter import AccountStateQueries, QuoteSource
     from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
     from alphamind.state.config import StatePersistenceConfig
 
@@ -104,6 +104,7 @@ def build_broker_routing_kwargs(
         ExecutionMode as ClientFactoryExecutionMode,
     )
     from alphamind.execution.broker_adapter.queries import AccountStateQueries
+    from alphamind.execution.broker_adapter.quotes import AlpacaQuoteSource
 
     mode_literal: ClientFactoryExecutionMode = "live" if execution_mode.value == "live" else "paper"
     factory = AlpacaClientFactory(venue_config, mode=mode_literal)
@@ -112,6 +113,10 @@ def build_broker_routing_kwargs(
         "client": client,
         "queries": AccountStateQueries(client),
         "execution_config": execution_config,
+        # ALP-738 — live-quote source for re-pricing enter-now equity entries
+        # into marketable limits. Built in the worker (the SDK client is not
+        # picklable across the PM subprocess boundary, same as the TradingClient).
+        "quote_source": AlpacaQuoteSource(factory.build_stock_data_client()),
     }
 
 
@@ -152,6 +157,7 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
     client: TradingClient | None = None,
     queries: AccountStateQueries | None = None,
     execution_config: ExecutionConfig | None = None,
+    quote_source: QuoteSource | None = None,
     broker_dispatch: BrokerDispatch | None = None,
     defer_writeback: bool = False,
 ) -> tuple[Mapping[str, McpSdkServerConfig], tuple[str, ...], Callable[[], SubmitEnvelopeState]]:
@@ -243,6 +249,7 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
             client=client,
             queries=queries,
             execution_config=execution_config,
+            quote_source=quote_source,
             broker_dispatch=broker_dispatch,
             defer_writeback=defer_writeback,
         )
@@ -277,6 +284,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
     client: TradingClient | None = None,
     queries: AccountStateQueries | None = None,
     execution_config: ExecutionConfig | None = None,
+    quote_source: QuoteSource | None = None,
     broker_dispatch: BrokerDispatch | None = None,
     defer_writeback: bool = False,
 ) -> tuple[dict[str, Any], SubmitEnvelopeState]:
@@ -382,6 +390,27 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
     dispatch_results: tuple[BrokerDispatchResult | None, ...] | None = None
     abandoned_entries: tuple[_AbandonedCommandEntry, ...] = ()
     if client is not None and queries is not None and execution_config is not None:
+        # Step 3.5 (ALP-738): re-price "enter-now" equity entries (a limit with
+        # no analyst entry_window) into marketable limits through the live touch
+        # so a working short thesis fills at the quote instead of resting above a
+        # falling market. Rewriting the envelope here — before both broker
+        # dispatch and Phase-2 writeback — keeps the persisted order row and the
+        # broker order in agreement. ``submission_results`` validated against the
+        # original commands stay aligned by ordinal (guardrails don't read
+        # limit_price). A no-op when no enter-now entry is present or no quote
+        # source was wired (fixture path).
+        if quote_source is not None:
+            from alphamind.execution.broker_adapter.entry_pricing import (
+                rewrite_enter_now_entries,
+            )
+
+            new_commands = await rewrite_enter_now_entries(
+                envelope.commands,
+                quote_source=quote_source,
+                bps_through_touch=execution_config.marketable_entry_bps_through_touch,
+            )
+            if new_commands != envelope.commands:
+                envelope = envelope.model_copy(update={"commands": new_commands})
         submission_results, dispatch_results, abandoned_entries = await _route_through_broker(
             envelope=envelope,
             submission_results=submission_results,

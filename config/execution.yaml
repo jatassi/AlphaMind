@@ -26,3 +26,8 @@ paper_harness:
     # Source: https://www.theocc.com/Company-Information/Documents-and-Archives/Fee-Schedules
     occ_per_options_contract: 0.02
 pl_target_margin_pct: 5
+# ALP-738 — basis points past the touch when an "enter-now" equity entry (a
+# limit with no analyst entry_window) is re-priced into a marketable limit so a
+# working short thesis fills at the quote instead of resting above a falling
+# market. SELL prices below the bid, BUY above the ask; rounded to the tick.
+marketable_entry_bps_through_touch: 5.0

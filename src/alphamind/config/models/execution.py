@@ -88,3 +88,9 @@ class ExecutionConfig(BaseModel):
     submission_retry_window_seconds: int = Field(ge=1)
     paper_harness: PaperHarness
     pl_target_margin_pct: float = Field(ge=0)
+    # ALP-738 — basis points past the touch when re-pricing an "enter-now"
+    # equity entry into a marketable limit (SELL below the bid, BUY above the
+    # ask). Caps slippage while still crossing to secure a fill; a small default
+    # so liquid names fill at ~the quote. Defaulted so callers/tests that build
+    # ExecutionConfig without it (and pre-existing execution.yaml) keep working.
+    marketable_entry_bps_through_touch: float = Field(default=5.0, ge=0)
