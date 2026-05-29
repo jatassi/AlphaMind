@@ -22,13 +22,14 @@ Composes the watcher entirely from existing primitives — no new infrastructure
 from __future__ import annotations
 
 import logging
-from typing import Literal, cast
+from typing import cast
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import AlpacaOrderId
 from alphamind._kernel.money import Price
+from alphamind.commands.command_models import Direction
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.execution import ExecutionConfig
 from alphamind.execution.broker_adapter.errors import classify_alpaca_error
@@ -48,8 +49,6 @@ from alphamind.execution.continuous_monitor.entry_window.canceller import (
 )
 from alphamind.execution.continuous_monitor.entry_window.repricer import (
     BrokerEntryWindowRepricer,
-    BrokerReplaceClassification,
-    BrokerReplaceResult,
     RepriceTarget,
     RepriceTargetResolver,
     RepriceWriteback,
@@ -201,19 +200,26 @@ class AlpacaEntryReplace:
     """Production broker-replace callable backed by :func:`submit_replace`.
 
     Cancel-and-replaces the resting equity-bracket entry at the new marketable
-    limit and maps the broker's answer onto :class:`BrokerReplaceClassification`:
+    limit, returning the new ``alpaca_order_id`` on success or ``None`` on any
+    failure (the repricer then retries next cycle):
 
-    * ``Submitted`` → ``REPLACED`` carrying the new ``alpaca_order_id``.
-    * ``GatewaySubmissionFailed`` (transient retry exhaustion) → ``RETRYABLE``.
-    * raised, classified 4xx (validation / insufficient buying power / already
-      terminal) → ``REJECTED`` — the replacement is not viable, so the repricer
-      falls back to the terminal cancel rather than chasing a doomed escalation
-      (this is what guarantees the reprice loop terminates).
+    * ``Submitted`` → the replacement's new ``alpaca_order_id``.
+    * ``GatewaySubmissionFailed`` (transient retry exhaustion) → ``None``.
+    * raised, classified 4xx (404/422 already-terminal — most likely *just
+      filled* during the round trip — or buying-power / validation) → ``None``.
+      We deliberately do NOT cancel off a broker replace error: a 404/422 is far
+      more likely a fresh fill than a permanent rejection here (a marketable limit
+      fills near-instantly), and cancelling would risk dissolving a filled bracket
+      before the fill record lands. Retrying lets the next cycle's fill check
+      resolve it to ``SKIPPED_FILLED``. Geometry inversions are caught pre-flight
+      by the repricer, so they never reach the broker as a validation 422.
     * raised, *unclassified* (a real bug, not a 4xx) → propagate.
 
-    Equity-bracket-scoped: ALP-740 only reprices equity ``LIMIT`` entries
-    (the repricer's ``is_equity_limit`` gate), so the asset / order class are
-    fixed at ``us_equity`` / ``bracket``.
+    Equity-bracket-scoped: ALP-740 only reprices equity ``LIMIT`` entries (the
+    repricer's ``is_equity_limit`` gate), so the asset / order class are fixed at
+    ``us_equity`` / ``bracket``. If that gate is ever widened, this hardcoded pair
+    must widen in lockstep, or the replace will validation-fail (→ ``None`` → retry
+    loop) for the new instrument class.
     """
 
     def __init__(self, *, client_factory: object, execution_config: ExecutionConfig) -> None:
@@ -228,7 +234,7 @@ class AlpacaEntryReplace:
 
     async def __call__(
         self, alpaca_order_id: AlpacaOrderId, new_limit: Price
-    ) -> BrokerReplaceResult:
+    ) -> AlpacaOrderId | None:
         try:
             outcome = await submit_replace(
                 client=self._trading_client,  # type: ignore[arg-type]
@@ -245,13 +251,10 @@ class AlpacaEntryReplace:
             rejection = classify_alpaca_error(exc)
             if rejection is None:
                 raise
-            return BrokerReplaceResult(classification=BrokerReplaceClassification.REJECTED)
+            return None
         if isinstance(outcome, GatewaySubmissionFailed):
-            return BrokerReplaceResult(classification=BrokerReplaceClassification.RETRYABLE)
-        return BrokerReplaceResult(
-            classification=BrokerReplaceClassification.REPLACED,
-            new_alpaca_order_id=outcome.payload.new_alpaca_order_id,
-        )
+            return None
+        return outcome.payload.new_alpaca_order_id
 
 
 # ---------------------------------------------------------------------------
@@ -320,9 +323,9 @@ def make_reprice_target_resolver(
     """Return a resolver mapping an entry ``order_id`` to its reprice projection.
 
     Reads the order's broker id, recorded-fill state, and the fields the
-    repricer branches on: whether it is an equity ``LIMIT`` entry, its ticker,
-    its buy/sell side, and its ``modification_count`` (the reprice-loop bound).
-    Returns ``None`` when the order row is missing.
+    repricer branches on: whether it is a repriceable equity ``LIMIT`` entry, its
+    ticker, its long/short ``direction``, and its ``modification_count`` (the
+    reprice-loop bound). Returns ``None`` when the order row is missing.
     """
 
     async def _resolve(entry_order_id: str) -> RepriceTarget | None:
@@ -338,24 +341,30 @@ def make_reprice_target_resolver(
                 )
             ).scalar_one()
         record = order_row_to_record(row)
-        is_equity = isinstance(record.instrument_spec, EquityInstrumentSpec)
-        is_equity_limit = is_equity and record.order_type == OrderType.LIMIT
+        # A directionless order (MLEG envelope) has no coherent long/short to price
+        # a marketable limit against, so it is not a reprice target — fall through
+        # to the terminal cancel (is_equity_limit=False) rather than guessing.
+        direction: Direction = (
+            "short"
+            if record.direction is not None and direction_to_side(record.direction) == "sell"
+            else "long"
+        )
+        is_equity_limit = (
+            isinstance(record.instrument_spec, EquityInstrumentSpec)
+            and record.order_type == OrderType.LIMIT
+            and record.direction is not None
+        )
         ticker = (
             record.instrument_spec.ticker
             if isinstance(record.instrument_spec, EquityInstrumentSpec)
             else ""
-        )
-        # side is only read on the reprice path (equity limit + non-None direction);
-        # an MLEG envelope (direction None) is never an equity-limit reprice target.
-        side: Literal["buy", "sell"] = (
-            direction_to_side(record.direction) if record.direction is not None else "buy"
         )
         return RepriceTarget(
             alpaca_order_id=AlpacaOrderId(row.alpaca_order_id),
             has_recorded_fills=fill_count > 0,
             is_equity_limit=is_equity_limit,
             ticker=ticker,
-            side=side,
+            direction=direction,
             modification_count=record.modification_count,
         )
 

@@ -20,16 +20,21 @@ branches:
    (cancel + ALP-739 no-fill alert). ``modification_count`` is the loop bound:
    each successful reprice increments it (Alpaca cancel-and-replace), so the
    escalation cannot chase the market indefinitely.
-5. otherwise → fetch the live touch, price a marketable limit, cancel-and-replace
-   at the broker, and run the non-terminal Phase-2 reprice writeback
-   (``persist_entry_window_reprice``) → ``REPRICED`` (re-evaluated next cycle).
+5. otherwise → fetch the live touch and price a marketable limit. If that price
+   would invert the bracket geometry (the market moved past the analyst's
+   take-profit / stop) → delegate to the terminal cancel. Otherwise
+   cancel-and-replace at the broker and run the non-terminal Phase-2 reprice
+   writeback (``persist_entry_window_reprice``) → ``REPRICED`` (re-evaluated next
+   cycle).
 
-A broker rejection of the replace (any classified 4xx — structurally invalid /
-insufficient buying power) is non-retryable, so it falls back to the terminal
-cancel; that, plus the ``modification_count`` budget, guarantees the loop always
-terminates (fill, or cancel with the no-fill alert). A transient gateway failure
-or a missing quote returns ``FAILED`` so the entry keeps resting and the next
-cycle retries.
+The loop always terminates: a successful reprice increments ``modification_count``
+toward the budget (then step 4 cancels), a geometry-inverting market cancels, and
+a successful marketable fill resolves to ``SKIPPED_FILLED`` next cycle. A *broker
+error* on the replace (transient gateway failure, or a 404/422 that most likely
+means the entry just filled during the round trip) returns ``FAILED`` so the entry
+keeps resting and the next cycle retries — we never cancel off a broker error, so
+a freshly-filled entry is resolved by the fill check rather than dissolved. A
+missing quote likewise returns ``FAILED``.
 
 Per parent issue ALP-123 § Pre-resolved decision (I) the continuous monitor
 talks to the broker adapter directly rather than through an engine envelope.
@@ -41,8 +46,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
-from typing import Literal, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from alphamind._kernel.ids import AlpacaOrderId
 from alphamind._kernel.money import Price
@@ -56,7 +60,12 @@ from alphamind.execution.continuous_monitor.entry_window.canceller import (
     EntryWindowDeadlineOutcome,
     _is_synthetic,
 )
-from alphamind.portfolio_state.records.orders import BracketRecord
+from alphamind.portfolio_state.records.orders import (
+    BracketLeg,
+    BracketLegType,
+    BracketRecord,
+    PriceTrigger,
+)
 
 log = logging.getLogger(__name__)
 
@@ -64,54 +73,78 @@ log = logging.getLogger(__name__)
 _REPRICE_REASON = "entry_window_reprice"
 
 
-class BrokerReplaceClassification(Enum):
-    """How the broker answered a cancel-and-replace of the resting entry."""
-
-    REPLACED = "replaced"  # accepted; carries the new alpaca_order_id
-    RETRYABLE = "retryable"  # transient gateway failure; retry next cycle
-    REJECTED = "rejected"  # permanent 4xx (invalid / no buying power); cancel instead
-
-
-@dataclass(frozen=True, slots=True)
-class BrokerReplaceResult:
-    """Outcome of a broker replace — the new id is present iff ``REPLACED``."""
-
-    classification: BrokerReplaceClassification
-    new_alpaca_order_id: AlpacaOrderId | None = None
-
-    def __post_init__(self) -> None:
-        is_replaced = self.classification is BrokerReplaceClassification.REPLACED
-        if is_replaced != (self.new_alpaca_order_id is not None):
-            msg = "new_alpaca_order_id must be set iff classification is REPLACED"
-            raise ValueError(msg)
-
-
 @dataclass(frozen=True, slots=True)
 class RepriceTarget:
     """What the repricer needs to decide an expired entry's fate.
 
     ``is_equity_limit`` gates the reprice path — only an equity ``LIMIT`` entry
-    is escalated through the touch; anything else (a market / stop_limit entry,
-    or a non-equity instrument) falls back to the terminal cancel, mirroring
-    ALP-738's equity-limit-only scope. ``side`` collapses the entry direction to
-    buy/sell (only read for equity limits). ``has_recorded_fills`` reflects
-    ``fill_records`` written by the fill-stream consumer ahead of reconciliation.
+    with a known long/short ``direction`` is escalated through the touch; anything
+    else (a market / stop_limit entry, a non-equity instrument, or a directionless
+    MLEG envelope) falls back to the terminal cancel, mirroring ALP-738's
+    equity-limit-only scope. ``direction`` is the position direction the marketable
+    pricing keys off (short → price the bid, long → the ask) — only meaningful when
+    ``is_equity_limit``. ``has_recorded_fills`` reflects ``fill_records`` written by
+    the fill-stream consumer ahead of reconciliation.
     """
 
     alpaca_order_id: AlpacaOrderId
     has_recorded_fills: bool
     is_equity_limit: bool
     ticker: str
-    side: Literal["buy", "sell"]
+    direction: Direction
     modification_count: int
 
 
 # entry_order_id → the reprice target projection (None when the order is missing).
 type RepriceTargetResolver = Callable[[str], Awaitable[RepriceTarget | None]]
-# (broker order id, new marketable limit) → how the broker answered the replace.
-type BrokerReplace = Callable[[AlpacaOrderId, Price], Awaitable[BrokerReplaceResult]]
+# (broker order id, new marketable limit) → the new alpaca_order_id on a confirmed
+# cancel-and-replace, or None on any failure (transient gateway / classified 4xx).
+# We never distinguish "rejected" from "retryable": a 404/422 most likely means the
+# marketable limit just filled, so the repricer retries and the next cycle's fill
+# check resolves it — rather than cancelling off a broker error and risking a
+# dissolve of a freshly-filled bracket (ALP-740 review). Geometry inversions are
+# caught pre-flight, so they never reach the broker.
+type BrokerReplace = Callable[[AlpacaOrderId, Price], Awaitable[AlpacaOrderId | None]]
 # (entry_order_id, new_limit, new_alpaca_order_id, reason) → run the Phase-2 reprice writeback.
 type RepriceWriteback = Callable[[str, Price, str, str], Awaitable[None]]
+
+
+def _leg_threshold(legs: tuple[BracketLeg, ...], leg_type: BracketLegType) -> float | None:
+    """Return the price threshold of the first *leg_type* leg with a price trigger.
+
+    ``None`` when the bracket carries no such leg, or its leg is a time/event
+    trigger (no price level) — the geometry check then skips that side.
+    """
+    for leg in legs:
+        if leg.leg_type is leg_type and isinstance(leg.trigger, PriceTrigger):
+            return leg.trigger.threshold_usd
+    return None
+
+
+def _marketable_preserves_geometry(
+    *, direction: Direction, new_limit: Price, protective_legs: tuple[BracketLeg, ...]
+) -> bool:
+    """True if *new_limit* keeps the bracket's entry/target/stop ordering valid.
+
+    The repricer counterpart of ALP-738's ``entry_pricing._preserves_bracket_geometry``
+    (which works off the ``OpenCommand``; this reads the persisted bracket's
+    protective-leg thresholds). Repricing moves a short entry down toward the bid /
+    a long entry up toward the ask; if the market has moved past the analyst's
+    take-profit (or stop), the marketable price crosses it and inverts the bracket —
+    a sign the thesis' edge is gone. The watcher then cancels rather than escalating
+    into an inverted bracket (which the broker may reject, or worse accept and
+    instantly round-trip). A missing take-profit / stop leg skips that side's check.
+    """
+    target = _leg_threshold(protective_legs, BracketLegType.TAKE_PROFIT)
+    stop = _leg_threshold(protective_legs, BracketLegType.PRICE_STOP)
+    limit = float(new_limit)
+    if direction == "short":
+        if target is not None and limit <= target:
+            return False
+        return stop is None or limit < stop
+    if target is not None and limit >= target:
+        return False
+    return stop is None or limit > stop
 
 
 @runtime_checkable
@@ -180,10 +213,9 @@ class BrokerEntryWindowRepricer:
                 bracket.bracket_id,
             )
             return EntryWindowDeadlineOutcome.FAILED
-        direction: Direction = "short" if target.side == "sell" else "long"
         try:
             new_limit = marketable_limit_price(
-                direction=direction, quote=quote, bps_through_touch=self.bps_through_touch
+                direction=target.direction, quote=quote, bps_through_touch=self.bps_through_touch
             )
         except Exception:
             log.warning(
@@ -193,23 +225,34 @@ class BrokerEntryWindowRepricer:
                 exc_info=True,
             )
             return EntryWindowDeadlineOutcome.FAILED
-        result = await self.broker_replace(target.alpaca_order_id, new_limit)
-        if result.classification is BrokerReplaceClassification.RETRYABLE:
+        if not _marketable_preserves_geometry(
+            direction=target.direction,
+            new_limit=new_limit,
+            protective_legs=bracket.protective_legs,
+        ):
+            # The market moved past the analyst's target/stop — a marketable
+            # escalation would invert the bracket. Cancel rather than chase an
+            # inverted entry (fires ALP-739's no-fill alert).
+            log.warning(
+                "entry_window: marketable %s would invert bracket %s (market moved past "
+                "target/stop); cancelling instead of repricing",
+                new_limit,
+                bracket.bracket_id,
+            )
+            return await self.canceller.cancel(bracket=bracket, now=now)
+        new_alpaca_id = await self.broker_replace(target.alpaca_order_id, new_limit)
+        if new_alpaca_id is None:
+            # Transient gateway failure, or a 404/422 that most likely means the
+            # entry just filled during the round trip. Retry: next cycle's fill
+            # check resolves a fill to SKIPPED_FILLED rather than cancelling off a
+            # broker error and risking a dissolve of a freshly-filled bracket.
             log.warning(
                 "entry_window: broker replace not confirmed for bracket %s; retrying next cycle",
                 bracket.bracket_id,
             )
             return EntryWindowDeadlineOutcome.FAILED
-        if result.classification is BrokerReplaceClassification.REJECTED:
-            log.warning(
-                "entry_window: broker rejected the reprice for bracket %s; cancelling instead",
-                bracket.bracket_id,
-            )
-            return await self.canceller.cancel(bracket=bracket, now=now)
-        # REPLACED — the post-init invariant guarantees the new id is present.
-        assert result.new_alpaca_order_id is not None
         await self.reprice_writeback(
-            bracket.entry_order_id, new_limit, result.new_alpaca_order_id, _REPRICE_REASON
+            bracket.entry_order_id, new_limit, new_alpaca_id, _REPRICE_REASON
         )
         log.info(
             "entry_window: repriced bracket %s entry to marketable %s (reprice #%d)",
@@ -223,8 +266,6 @@ class BrokerEntryWindowRepricer:
 __all__ = [
     "BrokerEntryWindowRepricer",
     "BrokerReplace",
-    "BrokerReplaceClassification",
-    "BrokerReplaceResult",
     "EntryWindowDeadlineHandler",
     "RepriceTarget",
     "RepriceTargetResolver",

@@ -29,9 +29,6 @@ from alphamind.config.models.execution import OrderType as ExecOrderType
 from alphamind.execution.continuous_monitor.entry_window.canceller import (
     BrokerCancelClassification,
 )
-from alphamind.execution.continuous_monitor.entry_window.repricer import (
-    BrokerReplaceClassification,
-)
 from alphamind.execution.continuous_monitor.entry_window.wiring import (
     AlpacaEntryCancel,
     AlpacaEntryReplace,
@@ -283,38 +280,35 @@ class _ReplaceClientFactory:
 
 
 @pytest.mark.parametrize(
-    ("raise_status", "expected"),
+    ("raise_status", "expected_id"),
     [
-        (None, BrokerReplaceClassification.REPLACED),  # 2xx accept
-        (404, BrokerReplaceClassification.REJECTED),  # order gone — cannot escalate
-        (422, BrokerReplaceClassification.REJECTED),  # validation / not replaceable
-        (403, BrokerReplaceClassification.REJECTED),  # insufficient buying power
-        (400, BrokerReplaceClassification.REJECTED),  # malformed
+        (None, "alpaca-new-uuid"),  # 2xx accept → the replacement's new broker id
+        (404, None),  # order gone — most likely just filled → retry, never cancel
+        (422, None),  # validation / not replaceable / filled → retry
+        (403, None),  # insufficient buying power → retry (transient-tolerant)
+        (429, None),  # rate-limit → retry (must NOT abandon a resting entry)
+        (400, None),  # malformed → retry
     ],
 )
-async def test_alpaca_entry_replace_classifies_broker_answers(
-    raise_status: int | None, expected: BrokerReplaceClassification
+async def test_alpaca_entry_replace_returns_new_id_or_none(
+    raise_status: int | None, expected_id: str | None
 ) -> None:
-    """A confirmed replace is REPLACED (with the new broker id); any classified
-    4xx is REJECTED so the repricer falls back to the terminal cancel rather
-    than chasing a doomed escalation (ALP-740 — guarantees loop termination)."""
+    """A confirmed replace yields the new broker id; ANY classified 4xx (incl.
+    transient 429/auth, and 404/422 that most likely mean a fresh fill) yields
+    None so the repricer retries rather than cancelling off a broker error
+    (ALP-740 review — no premature abandonment, no dissolve of a filled bracket)."""
     replace = AlpacaEntryReplace(
         client_factory=_ReplaceClientFactory(_ReplaceClient(raise_status=raise_status)),
         execution_config=_execution_config(),
     )
-    result = await replace(AlpacaOrderId("alpaca-uuid-xyz"), price("99.95"))
-    assert result.classification is expected
-    if expected is BrokerReplaceClassification.REPLACED:
-        assert result.new_alpaca_order_id == "alpaca-new-uuid"
-    else:
-        assert result.new_alpaca_order_id is None
+    assert await replace(AlpacaOrderId("alpaca-uuid-xyz"), price("99.95")) == expected_id
 
 
 async def test_make_reprice_target_resolver_projects_equity_limit_entry(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """The resolver decodes a resting equity LIMIT entry into the projection the
-    repricer branches on: equity-limit flag, ticker, buy/sell side, the
+    repricer branches on: equity-limit flag, ticker, long/short direction, the
     modification_count loop bound, and no recorded fills."""
     from alphamind.portfolio_state.records.orders import (
         EquityInstrumentSpec,
@@ -380,7 +374,7 @@ async def test_make_reprice_target_resolver_projects_equity_limit_entry(
     assert target is not None
     assert target.is_equity_limit is True
     assert target.ticker == "ZS"
-    assert target.side == "sell"
+    assert target.direction == "short"  # SELL entry → short
     assert target.modification_count == 1
     assert target.alpaca_order_id == "alpaca-real-uuid"
     assert target.has_recorded_fills is False

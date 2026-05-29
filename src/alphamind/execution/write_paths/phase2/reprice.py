@@ -31,13 +31,13 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import UTC, datetime
-from decimal import Decimal
 
 from alphamind._kernel.ids import AlpacaOrderId
 from alphamind._kernel.money import Price, money
 from alphamind.execution.write_paths.phase2._shared import (
     _emit,
     _emit_capital_reserved,
+    _order_notional_usd,
     _release_capital,
     _reserve_capital,
 )
@@ -103,6 +103,11 @@ async def persist_entry_window_reprice(
         ),
         alpaca_order_id=new_alpaca_id,
         alpaca_order_id_chain=(*target.alpaca_order_id_chain, new_alpaca_id),
+        # This is the only writer of an entry order's modification_count in the
+        # codebase (PM ADJUSTs touch protective legs, not the entry), so the
+        # repricer can read it back as the reprice-loop bound. If a future path
+        # ever cancel-and-replaces a PENDING_ENTRY entry, that coupling must be
+        # revisited (ALP-740 review).
         modification_count=target.modification_count + 1,
         last_update_timestamp=timestamp,
     )
@@ -144,15 +149,20 @@ async def _adjust_reservation_for_reprice(
 ) -> None:
     """Adjust reserved capital by the change in the order's notional estimate.
 
-    The notional basis is ``limit_price * remaining_quantity`` — the same basis
-    :func:`...cancel._order_notional_estimate` releases on — so the reservation
-    tracks the live limit and a later terminal cancel's release nets out. A
-    short entry repriced down toward the bid frees capital (negative delta →
-    release); a long entry repriced up toward the ask reserves more (positive
-    delta → reserve). A zero delta (limit unchanged) is a no-op.
+    The notional basis is ``_order_notional_usd`` (``limit_price *
+    remaining_quantity``) — the same basis the terminal CANCEL releases on — so
+    the reservation tracks the live limit and the reprice adjustments stay
+    consistent with the eventual cancel's release. (It does NOT assert
+    full-lifecycle conservation against the OPEN reservation, which uses
+    ``position_size.dollar_value`` — a pre-existing OPEN-vs-cancel basis
+    difference ALP-740 neither introduces nor fixes.) A short entry repriced
+    down toward the bid frees capital (negative delta → release); a long entry
+    repriced up toward the ask reserves more (positive delta → reserve). A zero
+    delta (limit unchanged) is a no-op.
     """
-    qty = Decimal(str(order.remaining_quantity))
-    delta = (Decimal(str(new_limit)) - Decimal(str(old_limit))) * qty
+    new_notional = _order_notional_usd(price=new_limit, remaining_quantity=order.remaining_quantity)
+    old_notional = _order_notional_usd(price=old_limit, remaining_quantity=order.remaining_quantity)
+    delta = new_notional - old_notional
     if delta == 0:
         return
     if delta > 0:

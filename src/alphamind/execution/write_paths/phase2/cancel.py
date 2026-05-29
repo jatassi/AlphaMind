@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
 
 from alphamind._kernel.ids import OrderId
 from alphamind._kernel.money import Money, money
@@ -15,6 +14,7 @@ from alphamind.execution.write_paths.phase2._shared import (
     _cancel_pending_protective_orders,
     _emit,
     _emit_order_cancelled,
+    _order_notional_usd,
     _release_capital,
 )
 from alphamind.portfolio_state.events.activity_log import (
@@ -180,9 +180,7 @@ def _order_notional_estimate(order: OrderRecord) -> Money:
     px = pp.limit_price if pp.limit_price is not None else pp.stop_trigger_price
     if px is None:
         return money(0)
-    # Quantity may be float in the legacy record types; cast through ``str`` so
-    # binary drift never enters the monetary computation.
-    return money(Decimal(str(px)) * Decimal(str(order.remaining_quantity)))
+    return _order_notional_usd(price=px, remaining_quantity=order.remaining_quantity)
 
 
 async def _resolve_thesis_cancelled(

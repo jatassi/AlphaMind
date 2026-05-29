@@ -30,8 +30,6 @@ from alphamind.execution.continuous_monitor.entry_window.canceller import (
 )
 from alphamind.execution.continuous_monitor.entry_window.repricer import (
     BrokerEntryWindowRepricer,
-    BrokerReplaceClassification,
-    BrokerReplaceResult,
     RepriceTarget,
 )
 from alphamind.portfolio_state.records.orders import (
@@ -49,12 +47,19 @@ _BPS = 5.0
 _QUOTE = TouchQuote(bid=price("100.00"), ask=price("100.10"))
 
 
-def _bracket() -> BracketRecord:
+def _bracket(*, stop_threshold: float = 140.0, stop_above: bool = True) -> BracketRecord:
+    # Default is a short-shaped bracket (stop above the ~100 entry); the long
+    # tests pass stop_above=False so the marketable long price (above the ask)
+    # stays the correct side of the stop and the geometry guard does not trip.
     leg = BracketLeg(
         leg_id="BRK-1-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
         order_id=OrderId("BRK-1-ord-stop"),
-        trigger=PriceTrigger(underlying_ticker=Symbol("ZS"), threshold_usd=140.0, direction="GTE"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("ZS"),
+            threshold_usd=stop_threshold,
+            direction="GTE" if stop_above else "LTE",
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
@@ -73,11 +78,8 @@ def _bracket() -> BracketRecord:
 @dataclass
 class _Recorder:
     target: RepriceTarget | None
-    replace_result: BrokerReplaceResult = field(
-        default_factory=lambda: BrokerReplaceResult(
-            classification=BrokerReplaceClassification.REPLACED,
-            new_alpaca_order_id=AlpacaOrderId("alpaca-new-uuid"),
-        )
+    replace_return: AlpacaOrderId | None = field(
+        default_factory=lambda: AlpacaOrderId("alpaca-new-uuid")
     )
     quote: TouchQuote | None = _QUOTE
     cancel_outcome: EntryWindowDeadlineOutcome = EntryWindowDeadlineOutcome.CANCELLED
@@ -97,9 +99,9 @@ class _Recorder:
 
     async def broker_replace(
         self, alpaca_order_id: AlpacaOrderId, new_limit: Price
-    ) -> BrokerReplaceResult:
+    ) -> AlpacaOrderId | None:
         self.replaced.append((alpaca_order_id, new_limit))
-        return self.replace_result
+        return self.replace_return
 
     async def reprice_writeback(
         self, entry_order_id: str, new_limit: Price, new_alpaca_order_id: str, reason: str
@@ -129,7 +131,7 @@ def _target(
     alpaca_order_id: str = "alpaca-uuid-xyz",
     has_recorded_fills: bool = False,
     is_equity_limit: bool = True,
-    side: str = "sell",
+    direction: str = "short",
     modification_count: int = 0,
 ) -> RepriceTarget:
     return RepriceTarget(
@@ -137,8 +139,41 @@ def _target(
         has_recorded_fills=has_recorded_fills,
         is_equity_limit=is_equity_limit,
         ticker="ZS",
-        side=side,  # type: ignore[arg-type]
+        direction=direction,  # type: ignore[arg-type]
         modification_count=modification_count,
+    )
+
+
+def _bracket_with_take_profit(target_threshold: float) -> BracketRecord:
+    """A PENDING_ENTRY bracket carrying a TAKE_PROFIT price leg at *target_threshold*
+    (plus the mandatory mechanical stop) for exercising the geometry guard."""
+    take_profit = BracketLeg(
+        leg_id="BRK-1-leg-tp",
+        leg_type=BracketLegType.TAKE_PROFIT,
+        order_id=OrderId("BRK-1-ord-tp"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("ZS"), threshold_usd=target_threshold, direction="LTE"
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.PENDING_ACTIVATION,
+    )
+    stop = BracketLeg(
+        leg_id="BRK-1-leg-stop",
+        leg_type=BracketLegType.PRICE_STOP,
+        order_id=OrderId("BRK-1-ord-stop"),
+        trigger=PriceTrigger(underlying_ticker=Symbol("ZS"), threshold_usd=140.0, direction="GTE"),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.PENDING_ACTIVATION,
+    )
+    return BracketRecord(
+        bracket_id=BracketId("BRK-1"),
+        position_id=PositionId("POS-1"),
+        status=BracketStatus.PENDING_ENTRY,
+        entry_order_id=OrderId("ORD-entry-1"),
+        protective_legs=(take_profit, stop),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
+        entry_window_deadline=_NOW,
     )
 
 
@@ -146,7 +181,7 @@ async def test_successful_reprice_writes_back_and_returns_repriced() -> None:
     """A repriceable equity limit under budget is escalated to a marketable
     limit through the touch, the new broker id is handed to the writeback, and
     the outcome is the non-terminal REPRICED — no cancel."""
-    rec = _Recorder(target=_target(side="sell", modification_count=0))
+    rec = _Recorder(target=_target(direction="short", modification_count=0))
     outcome = await _repricer(rec).handle(bracket=_bracket(), now=_NOW)
 
     assert outcome is EntryWindowDeadlineOutcome.REPRICED
@@ -161,8 +196,8 @@ async def test_successful_reprice_writes_back_and_returns_repriced() -> None:
 
 async def test_long_entry_prices_through_the_ask() -> None:
     """A long (BUY) entry is escalated above the ask, not the bid."""
-    rec = _Recorder(target=_target(side="buy", modification_count=0))
-    await _repricer(rec).handle(bracket=_bracket(), now=_NOW)
+    rec = _Recorder(target=_target(direction="long", modification_count=0))
+    await _repricer(rec).handle(bracket=_bracket(stop_threshold=90.0, stop_above=False), now=_NOW)
 
     expected_limit = marketable_limit_price(direction="long", quote=_QUOTE, bps_through_touch=_BPS)
     assert rec.replaced == [(AlpacaOrderId("alpaca-uuid-xyz"), expected_limit)]
@@ -250,28 +285,30 @@ async def test_missing_quote_retries_without_cancelling() -> None:
 
 
 async def test_broker_replace_retryable_is_retried() -> None:
-    rec = _Recorder(
-        target=_target(),
-        replace_result=BrokerReplaceResult(classification=BrokerReplaceClassification.RETRYABLE),
-    )
+    rec = _Recorder(target=_target(), replace_return=None)
     outcome = await _repricer(rec).handle(bracket=_bracket(), now=_NOW)
 
     assert outcome is EntryWindowDeadlineOutcome.FAILED
     assert rec.written_back == []
+    # Never cancel off a broker error — a 404/422 most likely means a fresh fill,
+    # which the next cycle's fill check resolves rather than dissolving the bracket.
     assert rec.cancelled == []
 
 
-async def test_broker_replace_rejected_falls_back_to_cancel() -> None:
-    """A structurally-invalid replace (permanent 4xx) cannot escalate — cancel
-    instead so the loop terminates with the no-fill alert."""
-    rec = _Recorder(
-        target=_target(),
-        replace_result=BrokerReplaceResult(classification=BrokerReplaceClassification.REJECTED),
+async def test_geometry_inverting_marketable_falls_back_to_cancel() -> None:
+    """When the market has moved past the take-profit, the marketable price would
+    invert the bracket — the repricer cancels (no-fill alert) rather than replacing
+    into an inverted bracket, and never hits the broker."""
+    # Short marketable price ~99.95; a take-profit at 100.0 sits above it, so
+    # new_limit <= target → inversion → cancel.
+    rec = _Recorder(target=_target(direction="short"))
+    outcome = await _repricer(rec).handle(
+        bracket=_bracket_with_take_profit(target_threshold=100.0), now=_NOW
     )
-    outcome = await _repricer(rec).handle(bracket=_bracket(), now=_NOW)
 
     assert outcome is EntryWindowDeadlineOutcome.CANCELLED
     assert rec.cancelled == ["BRK-1"]
+    assert rec.replaced == []  # never reached the broker
     assert rec.written_back == []
 
 
@@ -295,12 +332,9 @@ class _SequentialRecorder:
 
     async def broker_replace(
         self, alpaca_order_id: AlpacaOrderId, new_limit: Price
-    ) -> BrokerReplaceResult:
+    ) -> AlpacaOrderId | None:
         del alpaca_order_id, new_limit
-        return BrokerReplaceResult(
-            classification=BrokerReplaceClassification.REPLACED,
-            new_alpaca_order_id=AlpacaOrderId("alpaca-new-uuid"),
-        )
+        return AlpacaOrderId("alpaca-new-uuid")
 
     async def reprice_writeback(
         self, entry_order_id: str, new_limit: Price, new_alpaca_order_id: str, reason: str
@@ -356,15 +390,3 @@ async def test_bounded_loop_stops_when_marketable_limit_fills() -> None:
 
     assert first is EntryWindowDeadlineOutcome.REPRICED
     assert second is EntryWindowDeadlineOutcome.SKIPPED_FILLED
-
-
-def test_broker_replace_result_requires_id_iff_replaced() -> None:
-    import pytest
-
-    with pytest.raises(ValueError, match="iff classification is REPLACED"):
-        BrokerReplaceResult(classification=BrokerReplaceClassification.REPLACED)
-    with pytest.raises(ValueError, match="iff classification is REPLACED"):
-        BrokerReplaceResult(
-            classification=BrokerReplaceClassification.RETRYABLE,
-            new_alpaca_order_id=AlpacaOrderId("x"),
-        )
