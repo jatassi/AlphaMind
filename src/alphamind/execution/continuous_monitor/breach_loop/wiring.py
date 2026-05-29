@@ -19,6 +19,7 @@ from datetime import datetime
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.guardrails import BreachResponse, ProgressiveTier
 from alphamind.execution.continuous_monitor.breach_loop.result import (
+    BreachLoopHealthSignal,
     BreachLoopResult,
     RuleEvaluation,
 )
@@ -77,6 +78,7 @@ def register_breach_loop_task(  # noqa: PLR0913
     ) = None,
     on_emergency_input: Callable[[BreachLoopResult], Awaitable[None]] | None = None,
     activity_log_sink: (Callable[[Iterable[ActivityLogEntry]], Awaitable[None]] | None) = None,
+    on_health_signal: (Callable[[BreachLoopHealthSignal], Awaitable[None]] | None) = None,
     now: Callable[[], datetime] | None = None,
 ) -> None:
     """Register the ``breach_loop`` task on *supervisor*.
@@ -85,6 +87,9 @@ def register_breach_loop_task(  # noqa: PLR0913
     callbacks; the no-op defaults above keep the registration valid in tests
     or any caller that omits them. The activity-log sink defaults to a no-op
     stub so the breach loop runs even if the caller does not wire the writer.
+    ``on_health_signal`` (ALP-732) carries the sustained-failure escalation
+    sink; when omitted the loop's own no-op default applies so an unwired
+    caller still runs (the loop just logs degraded/recovered transitions).
     """
     resolved_immediate = on_immediate_breach or _no_op_immediate_breach
     resolved_emergency = on_emergency_input or _no_op_emergency_input
@@ -106,6 +111,8 @@ def register_breach_loop_task(  # noqa: PLR0913
             "on_immediate_breach": resolved_immediate,
             "on_emergency_input": resolved_emergency,
         }
+        if on_health_signal is not None:
+            kwargs["on_health_signal"] = on_health_signal
         if now is not None:
             kwargs["now"] = now
         await run_breach_loop(session, config, **kwargs)  # type: ignore[arg-type]

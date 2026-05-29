@@ -39,6 +39,8 @@ from typing import Any
 
 from alphamind.execution.continuous_monitor.control.models import (
     BreachDetectedEvent,
+    BreachLoopDegradedEvent,
+    BreachLoopRecoveredEvent,
     BreachResponseClassification,
     EmergencyInvocationTriggeredEvent,
     FillReceivedEvent,
@@ -91,6 +93,12 @@ class SSEEventEmitter:
         # only legal transitions are None→connected, connected→disconnected,
         # disconnected→connected; everything else raises.
         self._last_websocket_state: str | None = None
+        # Current breach-loop health (ALP-732). Flipped by
+        # ``emit_breach_loop_degraded`` / ``emit_breach_loop_recovered`` so a
+        # subscriber that joins after the transient transition event — or any
+        # diagnostic surface — can read the loop's current health rather than
+        # having to have caught the moment it flipped.
+        self._breach_loop_degraded = False
 
     # ------------------------------------------------------------------
     # Subscriber management
@@ -110,6 +118,10 @@ class SSEEventEmitter:
     def subscriber_count(self) -> int:
         """Return the current number of subscribed queues. Used by tests + diagnostics."""
         return len(self._subscribers)
+
+    def is_breach_loop_degraded(self) -> bool:
+        """Return whether the breach loop is currently in the degraded state (ALP-732)."""
+        return self._breach_loop_degraded
 
     # ------------------------------------------------------------------
     # Structural callbacks — one per documented event type
@@ -205,6 +217,25 @@ class SSEEventEmitter:
         """Idle-cadence heartbeat. The route handler drives the 15 s cadence."""
         event = HeartbeatEvent(timestamp=timestamp or _utcnow())
         self._fanout("heartbeat", event)
+
+    def emit_breach_loop_degraded(self, *, consecutive_failures: int, last_error: str) -> None:
+        """The breach loop crossed its consecutive-failure threshold (ALP-732).
+
+        Sets the degraded health flag BEFORE fanning out (mirrors the
+        websocket-state F7 ordering) so the flag is coherent even if fanout
+        partially fails.
+        """
+        event = BreachLoopDegradedEvent(
+            consecutive_failures=consecutive_failures, last_error=last_error
+        )
+        self._breach_loop_degraded = True
+        self._fanout("breach_loop_degraded", event)
+
+    def emit_breach_loop_recovered(self, *, consecutive_failures: int) -> None:
+        """The breach loop's first successful tick after a degraded run (ALP-732)."""
+        event = BreachLoopRecoveredEvent(consecutive_failures=consecutive_failures)
+        self._breach_loop_degraded = False
+        self._fanout("breach_loop_recovered", event)
 
     # ------------------------------------------------------------------
     # Internal — fan-out

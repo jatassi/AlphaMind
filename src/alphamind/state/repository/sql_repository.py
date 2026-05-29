@@ -32,6 +32,7 @@ concurrent reader. The provider callables are likewise sync.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 
@@ -117,6 +118,8 @@ from alphamind.state.tables.thesis_components import (
 # inlines sync equivalents of those queries on its own session below.
 
 _PENDING_ORDER_STATUSES = (OrderStatus.PENDING.value, OrderStatus.PARTIALLY_FILLED.value)
+
+log = logging.getLogger(__name__)
 
 
 def _apply_pragmas(dbapi_connection: object, _connection_record: object) -> None:
@@ -369,9 +372,34 @@ class SqlPortfolioStateRepository:
             legs_by_bracket: dict[str, list[BracketLegRow]] = {bid: [] for bid in bracket_ids}
             for leg in session.execute(leg_stmt).scalars():
                 legs_by_bracket[leg.bracket_id].append(leg)
-        return tuple(
-            bracket_rows_to_record(b, tuple(legs_by_bracket[b.bracket_id])) for b in bracket_rows
-        )
+        # Per-bracket isolation (ALP-732 Gap 1): reconstruct each bracket
+        # independently so a single unreadable row — e.g. the ALP-731
+        # data-corruption case, a ``DISSOLVED`` bracket whose legs are not all
+        # ``CANCELLED`` (``BracketRecord.__post_init__`` raises) — does not
+        # poison the whole batch. The breach loop assembles every position's
+        # brackets in one tick; before this guard one bad bracket aborted the
+        # entire tick and left every position unmonitored. The offending
+        # bracket is skipped and surfaced at ``ERROR`` so an operator sees
+        # *which* row is corrupt instead of an opaque downstream failure; every
+        # readable bracket (and the positions enriched from it) still loads.
+        readable: list[BracketRecord] = []
+        for bracket_row in bracket_rows:
+            try:
+                readable.append(
+                    bracket_rows_to_record(
+                        bracket_row, tuple(legs_by_bracket[bracket_row.bracket_id])
+                    )
+                )
+            except Exception:
+                # ``log.exception`` records at ERROR with the traceback — loud
+                # and grep-able so the operator sees *which* bracket is corrupt.
+                log.exception(
+                    "skipping unreadable bracket bracket_id=%s position_id=%s; excluded from "
+                    "snapshot until the underlying row is repaired",
+                    bracket_row.bracket_id,
+                    bracket_row.position_id,
+                )
+        return tuple(readable)
 
     # ------------------------------------------------------------------
     # Tier 2 — activity log + invocations

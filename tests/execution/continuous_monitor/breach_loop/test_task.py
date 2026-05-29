@@ -21,6 +21,7 @@ from alphamind._kernel.ids import Symbol
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.guardrails import BreachResponse, ProgressiveTier
 from alphamind.execution.continuous_monitor.breach_loop import (
+    BreachLoopHealthSignal,
     BreachLoopResult,
     RuleEvaluation,
     run_breach_loop,
@@ -63,7 +64,7 @@ from alphamind.risk_guardrails.regime_adaptation.types import RegimeAdaptationSt
 # ---------------------------------------------------------------------------
 
 
-def _config(cadence_s: int = 60) -> ContinuousMonitorConfig:
+def _config(cadence_s: int = 60, *, failure_threshold: int = 3) -> ContinuousMonitorConfig:
     return ContinuousMonitorConfig(
         breach_evaluation_cadence_seconds=cadence_s,
         greeks_refresh_interval_minutes=15,
@@ -72,6 +73,7 @@ def _config(cadence_s: int = 60) -> ContinuousMonitorConfig:
         subscription_refresh_seconds=30,
         max_reconnect_attempts=3,
         supervisor_shutdown_timeout_seconds=5,
+        breach_loop_consecutive_failure_alert_threshold=failure_threshold,
     )
 
 
@@ -990,3 +992,216 @@ async def test_determinism_identical_inputs_produce_identical_result(
     first = emergency.calls[0][0]
     second = emergency.calls[1][0]
     assert first.rule_evaluations == second.rule_evaluations
+
+
+# ---------------------------------------------------------------------------
+# Sustained-failure escalation (ALP-732 Gap 2)
+# ---------------------------------------------------------------------------
+
+
+def _noop_callbacks() -> tuple[
+    Callable[[BreachLoopResult, RuleEvaluation], Awaitable[None]],
+    Callable[[BreachLoopResult], Awaitable[None]],
+    Callable[[Iterable[ActivityLogEntry]], Awaitable[None]],
+]:
+    async def _immediate(_result: BreachLoopResult, _evaluation: RuleEvaluation) -> None:
+        return None
+
+    async def _emergency(_result: BreachLoopResult) -> None:
+        return None
+
+    async def _sink(_entries: Iterable[ActivityLogEntry]) -> None:
+        return None
+
+    return _immediate, _emergency, _sink
+
+
+@pytest.mark.asyncio
+async def test_breach_loop_sustained_failure_alert_fires_then_clears(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N consecutive failed ticks fire one degraded signal; the first success clears it.
+
+    Threshold 2; the snapshot provider raises on ticks 1-3 then succeeds on
+    tick 4. Expected health signals: degraded (on the 2nd failure, fired once)
+    then recovered (on the 4th tick's success)."""
+    repo = _StubRepository(
+        drawdown_states=[_drawdown_state()],
+        active_risk_parameters=_active_risk_parameters(),
+    )
+    immediate, emergency, sink = _noop_callbacks()
+    health = _CallableRecord()
+
+    async def _on_health(signal: BreachLoopHealthSignal) -> None:
+        health.calls.append((signal,))
+
+    snapshot_calls = {"n": 0}
+
+    async def _snapshot() -> LibrarySnapshot:
+        snapshot_calls["n"] += 1
+        if snapshot_calls["n"] <= 3:
+            raise RuntimeError("snapshot assembly failed (simulated)")
+        return _library_snapshot()
+
+    async def _regime() -> RegimeAdaptationOutput:
+        return _regime_output()
+
+    sleep_calls: list[float] = []
+
+    async def _go() -> None:
+        await run_breach_loop(
+            _session(),
+            _config(failure_threshold=2),
+            repository=cast(PortfolioStateRepository, repo),
+            cache=_cache(),
+            snapshot_provider=_snapshot,
+            regime_provider=_regime,
+            progressive_tiers=_progressive_tiers(),
+            library_config_factory=_library_config,
+            iv_provider=_FixtureIvProvider(),
+            risk_free_rate=0.045,
+            breach_response_lookup=_breach_response_lookup(),
+            market_hours=_StubMarketHours(open_flag=True),
+            activity_log_sink=sink,
+            on_immediate_breach=immediate,
+            on_emergency_input=emergency,
+            on_health_signal=_on_health,
+        )
+
+    await _drive_loop(
+        _go,
+        ticks=4,
+        tick_sentinels=[],
+        sleep_calls=sleep_calls,
+        monkeypatch=monkeypatch,
+        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
+    )
+
+    signals = [c[0] for c in health.calls]
+    # Exactly one degraded then one recovered — the alert fires once on
+    # crossing the threshold and does not re-fire on every subsequent failure.
+    assert [s.degraded for s in signals] == [True, False]
+    degraded = signals[0]
+    assert degraded.consecutive_failures == 2
+    assert degraded.last_error is not None
+    assert "snapshot assembly failed" in degraded.last_error
+    recovered = signals[1]
+    assert recovered.degraded is False
+    assert recovered.consecutive_failures == 3
+
+
+@pytest.mark.asyncio
+async def test_breach_loop_below_threshold_failures_do_not_fire_alert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failures that never reach the threshold raise no health signal."""
+    repo = _StubRepository(
+        drawdown_states=[_drawdown_state()],
+        active_risk_parameters=_active_risk_parameters(),
+    )
+    immediate, emergency, sink = _noop_callbacks()
+    health = _CallableRecord()
+
+    async def _on_health(signal: BreachLoopHealthSignal) -> None:
+        health.calls.append((signal,))
+
+    snapshot_calls = {"n": 0}
+
+    async def _snapshot() -> LibrarySnapshot:
+        snapshot_calls["n"] += 1
+        # Tick 1 fails, ticks 2-3 succeed — never 3 in a row at threshold 3.
+        if snapshot_calls["n"] == 1:
+            raise RuntimeError("transient blip")
+        return _library_snapshot()
+
+    async def _regime() -> RegimeAdaptationOutput:
+        return _regime_output()
+
+    sleep_calls: list[float] = []
+
+    async def _go() -> None:
+        await run_breach_loop(
+            _session(),
+            _config(failure_threshold=3),
+            repository=cast(PortfolioStateRepository, repo),
+            cache=_cache(),
+            snapshot_provider=_snapshot,
+            regime_provider=_regime,
+            progressive_tiers=_progressive_tiers(),
+            library_config_factory=_library_config,
+            iv_provider=_FixtureIvProvider(),
+            risk_free_rate=0.045,
+            breach_response_lookup=_breach_response_lookup(),
+            market_hours=_StubMarketHours(open_flag=True),
+            activity_log_sink=sink,
+            on_immediate_breach=immediate,
+            on_emergency_input=emergency,
+            on_health_signal=_on_health,
+        )
+
+    await _drive_loop(
+        _go,
+        ticks=3,
+        tick_sentinels=[],
+        sleep_calls=sleep_calls,
+        monkeypatch=monkeypatch,
+        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
+    )
+
+    assert health.calls == []
+
+
+@pytest.mark.asyncio
+async def test_breach_loop_faulty_health_sink_does_not_kill_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A health sink that raises must not crash the loop — resilience is the point."""
+    repo = _StubRepository(
+        drawdown_states=[_drawdown_state()],
+        active_risk_parameters=_active_risk_parameters(),
+    )
+    immediate, emergency, sink = _noop_callbacks()
+
+    async def _on_health(_signal: BreachLoopHealthSignal) -> None:
+        raise RuntimeError("alert sink is down")
+
+    async def _snapshot() -> LibrarySnapshot:
+        raise RuntimeError("snapshot assembly failed (simulated)")
+
+    async def _regime() -> RegimeAdaptationOutput:
+        return _regime_output()
+
+    sleep_calls: list[float] = []
+
+    async def _go() -> None:
+        await run_breach_loop(
+            _session(),
+            _config(failure_threshold=1),
+            repository=cast(PortfolioStateRepository, repo),
+            cache=_cache(),
+            snapshot_provider=_snapshot,
+            regime_provider=_regime,
+            progressive_tiers=_progressive_tiers(),
+            library_config_factory=_library_config,
+            iv_provider=_FixtureIvProvider(),
+            risk_free_rate=0.045,
+            breach_response_lookup=_breach_response_lookup(),
+            market_hours=_StubMarketHours(open_flag=True),
+            activity_log_sink=sink,
+            on_immediate_breach=immediate,
+            on_emergency_input=emergency,
+            on_health_signal=_on_health,
+        )
+
+    # The loop must keep ticking (and sleeping) despite the sink raising on
+    # every degraded emit; _drive_loop cancels it after 3 ticks.
+    await _drive_loop(
+        _go,
+        ticks=3,
+        tick_sentinels=[],
+        sleep_calls=sleep_calls,
+        monkeypatch=monkeypatch,
+        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
+    )
+
+    assert sleep_calls == [60.0, 60.0, 60.0]

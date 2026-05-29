@@ -60,3 +60,12 @@ supervisor_shutdown_timeout_seconds: 5
 # HH:MM ET (US/Eastern wall clock, matching the rest of the monitor).
 # Source: ALP-715 § Pre-resolved decision (E).
 borrow_accrual_tick_local_time: "16:00"
+
+# Number of consecutive failed breach-loop ticks before the loop emits a
+# degraded operator health signal (ALP-732). One bad tick must not alert —
+# transient blips (a momentary DB lock, a single regime-provider timeout)
+# self-heal within a tick or two — but a sustained run of failures means risk
+# supervision is silently down and the operator must be told. At the 60s
+# default cadence, 3 is ~3 minutes of unbroken failure before escalating; the
+# counter resets to zero on the first successful tick.
+breach_loop_consecutive_failure_alert_threshold: 3

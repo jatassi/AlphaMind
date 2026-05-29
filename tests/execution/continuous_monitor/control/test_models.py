@@ -15,6 +15,8 @@ from pydantic import ValidationError
 
 from alphamind.execution.continuous_monitor.control.models import (
     BreachDetectedEvent,
+    BreachLoopDegradedEvent,
+    BreachLoopRecoveredEvent,
     CancelOrderRequest,
     ControlErrorEnvelope,
     ControlResponseEnvelope,
@@ -221,6 +223,37 @@ class TestHeartbeatEvent:
     def test_carries_timestamp(self) -> None:
         event = HeartbeatEvent(timestamp=datetime.now(UTC))
         assert event.timestamp.tzinfo is not None
+
+
+class TestBreachLoopHealthEvents:
+    """ALP-732 sustained-failure health event payloads."""
+
+    def test_degraded_carries_count_and_error(self) -> None:
+        event = BreachLoopDegradedEvent(consecutive_failures=3, last_error="RuntimeError('x')")
+        assert event.consecutive_failures == 3
+        assert event.last_error == "RuntimeError('x')"
+
+    def test_degraded_rejects_zero_failures(self) -> None:
+        with pytest.raises(ValidationError):
+            BreachLoopDegradedEvent(consecutive_failures=0, last_error="x")
+
+    def test_degraded_rejects_empty_error(self) -> None:
+        with pytest.raises(ValidationError):
+            BreachLoopDegradedEvent(consecutive_failures=2, last_error="")
+
+    def test_degraded_rejects_extra_fields(self) -> None:
+        with pytest.raises(ValidationError):
+            BreachLoopDegradedEvent.model_validate(
+                {"consecutive_failures": 2, "last_error": "x", "extra": "y"}
+            )
+
+    def test_recovered_carries_count(self) -> None:
+        event = BreachLoopRecoveredEvent(consecutive_failures=5)
+        assert event.consecutive_failures == 5
+
+    def test_recovered_rejects_zero_failures(self) -> None:
+        with pytest.raises(ValidationError):
+            BreachLoopRecoveredEvent(consecutive_failures=0)
 
 
 class TestAwareDatetimeEnforcement:
