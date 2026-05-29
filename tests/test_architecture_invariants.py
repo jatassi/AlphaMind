@@ -216,11 +216,13 @@ def test_l4_broad_except_count_below_audit_baseline(antipattern_findings: Script
     # Ceiling raised from 62 to 63 (2026-05-29, ALP-753 phase-1 batch live-quote anchor):
     # +1 warranted broker-exception translation — quotes.py
     # AlpacaQuoteSource.latest_quotes catches any alpaca-py snapshot failure (APIError,
-    # httpx/requests transport error, parse error) and re-raises as RuntimeError so the
-    # phase-1 gatherer degrades the active-universe reference layer to recorded bars and
-    # flips staleness_flag (parent decision H) rather than the invocation aborting on a
-    # raw SDK error. Mirrors AccountStateQueries' RuntimeError vocabulary; carries an
-    # inline rationale comment.
+    # httpx/requests transport error, or a malformed-response parse/type error) and
+    # re-raises as RuntimeError so the phase-1 gatherer degrades the active-universe
+    # reference layer to recorded bars and flips staleness_flag (parent decision H)
+    # rather than the invocation aborting on a raw SDK error. (Note: this is the inverse
+    # of AccountStateQueries, which propagates raw alpaca errors — latest_quotes
+    # translates precisely because the phase-1 caller catches RuntimeError only.)
+    # Carries an inline rationale comment.
     assert l4 <= 63, (
         f"L4 (broad except) count drift: {l4}. Post-ALP-753 "
         f"ceiling is 63. If this count climbs above 63, audit each new "
@@ -303,15 +305,17 @@ def test_l19_async_over_sync_count_at_protocol_residue(antipattern_findings: Scr
     # entry_window/repricer.py — is the structural async seam its reprice-or-cancel
     # implementation (BrokerEntryWindowRepricer, which genuinely awaits DB + broker
     # I/O) satisfies. Same Protocol-stub residue as the EntryWindowCanceller above.
-    # Ceiling raised from 100 to 101 (2026-05-29, ALP-753 phase-1 batch live-quote anchor):
-    # one new async Protocol stub — BatchQuoteSource.latest_quotes in
-    # broker_adapter/entry_pricing.py — is the structural async seam its Alpaca-backed
-    # implementation (AlpacaQuoteSource.latest_quotes, which genuinely awaits the batch
-    # snapshot via asyncio.to_thread) satisfies. Same Protocol-stub residue as the
-    # QuoteSource.latest_quote stub above.
-    assert l19 <= 101, (
+    # Ceiling raised from 100 to 102 (2026-05-29, ALP-753 phase-1 batch live-quote anchor):
+    # two new async-over-sync sites. (1) BatchQuoteSource.latest_quotes in
+    # broker_adapter/entry_pricing.py — the structural async Protocol seam its
+    # Alpaca-backed implementation (AlpacaQuoteSource.latest_quotes, which genuinely
+    # awaits the batch snapshot via asyncio.to_thread) satisfies. (2)
+    # LogOnlyBatchQuoteSource.latest_quotes in scheduler/debug_e2e/broker.py — the
+    # offline debug-e2e stand-in returns {} with no await, the same Protocol-stub
+    # residue LogOnlyCorporateActionsQueries.get_corporate_actions already carries.
+    assert l19 <= 102, (
         f"L19 (async-over-sync) count drift: {l19}. Post-ALP-753 "
-        f"ceiling is 101 (Protocol stubs + SDK decorators + alert "
+        f"ceiling is 102 (Protocol stubs + SDK decorators + alert "
         f"channels). Climbing above this suggests new ``async def`` "
         f"functions that never ``await`` — convert to sync unless the "
         f"function legitimately awaits I/O."

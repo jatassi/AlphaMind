@@ -497,7 +497,6 @@ class TestMergeQuoteAndBarPrices:
     """
 
     def test_quote_mid_primary_bar_fallback_quote_wins_neither_absent(self) -> None:
-        from alphamind.execution.broker_adapter.entry_pricing import TouchQuote
         from alphamind.scheduler import phase1_inputs as module
 
         active_tickers = ("AAA", "BBB", "CCC", "DDD")

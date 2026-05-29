@@ -142,6 +142,22 @@ class Phase1Inputs:
     staleness_flag: bool
 
 
+def _alpaca_client_factory(
+    venue_config: VenueConfig, execution_mode: ExecutionMode
+) -> AlpacaClientFactory:
+    """Resolve the venue config + execution mode into an ``AlpacaClientFactory``.
+
+    The single source of the ``ExecutionMode`` → paper/live mapping shared by the
+    three default Alpaca-backed factories below; each builds a different client
+    off the returned factory. Raises ``RuntimeError`` (from the factory's
+    constructor) when the mode's credentials are unset.
+    """
+    mode_literal: ClientFactoryExecutionMode = (
+        "live" if execution_mode is ExecutionMode.live else "paper"
+    )
+    return AlpacaClientFactory(venue_config, mode=mode_literal)
+
+
 def _default_account_queries_factory(
     venue_config: VenueConfig, execution_mode: ExecutionMode
 ) -> AccountStateQueriesP:
@@ -150,10 +166,7 @@ def _default_account_queries_factory(
     Used when ``gather_phase1_inputs`` is called without an
     ``account_queries_factory`` kwarg (the production daemon path).
     """
-    mode_literal: ClientFactoryExecutionMode = (
-        "live" if execution_mode is ExecutionMode.live else "paper"
-    )
-    factory = AlpacaClientFactory(venue_config, mode=mode_literal)
+    factory = _alpaca_client_factory(venue_config, execution_mode)
     return AccountStateQueries(factory.build_trading_client())
 
 
@@ -165,10 +178,7 @@ def _default_ca_queries_factory(
     Used when ``gather_phase1_inputs`` is called without a
     ``ca_queries_factory`` kwarg (the production daemon path).
     """
-    mode_literal: ClientFactoryExecutionMode = (
-        "live" if execution_mode is ExecutionMode.live else "paper"
-    )
-    factory = AlpacaClientFactory(venue_config, mode=mode_literal)
+    factory = _alpaca_client_factory(venue_config, execution_mode)
     return CorporateActionsQueries(factory.build_corporate_actions_client())
 
 
@@ -179,13 +189,12 @@ def _default_quote_source_factory(
 
     Mirrors the client wiring ``submit_envelope.server.build_broker_routing_kwargs``
     uses for the marketable-entry rewrite: an :class:`AlpacaQuoteSource` over a
-    fresh ``StockHistoricalDataClient``. Used when ``gather_phase1_inputs`` is
-    called without a ``quote_source_factory`` kwarg (the production daemon path).
+    fresh ``StockHistoricalDataClient`` (both default to ``DataFeed.IEX``, so the
+    phase-1 reference anchor and the submission-time repricer read the same feed).
+    Used when ``gather_phase1_inputs`` is called without a ``quote_source_factory``
+    kwarg (the production daemon path).
     """
-    mode_literal: ClientFactoryExecutionMode = (
-        "live" if execution_mode is ExecutionMode.live else "paper"
-    )
-    factory = AlpacaClientFactory(venue_config, mode=mode_literal)
+    factory = _alpaca_client_factory(venue_config, execution_mode)
     return AlpacaQuoteSource(factory.build_stock_data_client())
 
 
@@ -345,21 +354,31 @@ def _merge_quote_and_bar_prices(
     the pure bar-based layer exactly.
     """
     universe_prices: dict[str, float] = {}
+    quoted_count = 0
     fallback_count = 0
     for ticker in active_tickers:
         quote = quotes.get(ticker)
         if quote is not None:
-            universe_prices[ticker] = float((quote.bid + quote.ask) / 2)
+            universe_prices[ticker] = float(quote.mid)
+            quoted_count += 1
             continue
         bar_close = bar_prices.get(ticker)
         if bar_close is not None:
             universe_prices[ticker] = bar_close
             fallback_count += 1
+    total = len(active_tickers)
+    # Report three disjoint counts (live / bar-fallback / unpriced) rather than a
+    # single "N/M fell back" line: the unpriced tickers (no quote AND no bar) are
+    # absent from universe_prices and surface as the validation tool's UNAVAILABLE,
+    # so folding them into a fallback denominator would hide that coverage gap.
     log.info(
-        "phase1_inputs: active-universe reference prices — %d/%d tickers fell back "
-        "to a recorded bar (no live quote available)",
+        "phase1_inputs: active-universe reference prices for %d active ticker(s) — "
+        "%d via live quote, %d via recorded-bar fallback (no live quote), "
+        "%d unpriced (no quote and no recorded bar)",
+        total,
+        quoted_count,
         fallback_count,
-        len(active_tickers),
+        total - quoted_count - fallback_count,
     )
     return universe_prices
 
@@ -395,7 +414,8 @@ async def _gather_universe_reference_prices(
                 "active-universe reference layer to recorded bars",
                 exc,
             )
-            quotes = {}
+            # `quotes` is still the empty map from above (latest_quotes raised
+            # before binding it), so the merge below falls back wholesale to bars.
             degraded = True
     universe_prices = _merge_quote_and_bar_prices(
         active_tickers=active_tickers,

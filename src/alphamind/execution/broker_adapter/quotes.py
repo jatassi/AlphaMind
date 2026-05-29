@@ -51,6 +51,27 @@ def _touch_from_quote(quote: object | None) -> TouchQuote | None:
     return TouchQuote(bid=price(bid), ask=price(ask))
 
 
+def _map_batch_quotes(response: object, symbols: Sequence[str]) -> dict[str, TouchQuote]:
+    """Map a batch latest-quote response to ``{symbol: TouchQuote}``.
+
+    Raises ``TypeError`` when *response* is not the documented symbol-keyed dict
+    so :meth:`AlpacaQuoteSource.latest_quotes` translates an unusable response
+    into the ``RuntimeError`` its degradation contract expects (rather than
+    silently returning ``{}`` as if every quote were legitimately dropped). A
+    per-symbol missing / one-sided / zero quote is dropped via
+    :func:`_touch_from_quote`.
+    """
+    if not isinstance(response, dict):
+        msg = f"expected a symbol-keyed dict, got {type(response).__name__}"
+        raise TypeError(msg)
+    quotes: dict[str, TouchQuote] = {}
+    for symbol in symbols:
+        touch = _touch_from_quote(response.get(symbol))
+        if touch is not None:
+            quotes[symbol] = touch
+    return quotes
+
+
 @dataclass(frozen=True)
 class AlpacaQuoteSource:
     """A :class:`QuoteSource` / :class:`BatchQuoteSource` backed by Alpaca snapshots."""
@@ -78,12 +99,16 @@ class AlpacaQuoteSource:
         for a dropped symbol.
 
         Unlike :meth:`latest_quote` (which degrades a raising snapshot to ``None``
-        for the marketable-entry rewrite's leave-verbatim path), a whole-batch
-        broker failure here is translated into ``RuntimeError`` — the phase-1
-        gatherer catches it to degrade the entire reference layer to recorded
-        bars and flip ``staleness_flag``, mirroring ``AccountStateQueries``'
-        RuntimeError vocabulary. An empty symbol list short-circuits to ``{}``
-        without an API call.
+        for the marketable-entry rewrite's leave-verbatim path), *any* failure of
+        the whole batch — a broker / transport error, or a response that is not the
+        documented symbol-keyed dict — is translated into ``RuntimeError``. The
+        phase-1 gatherer catches it to degrade the entire reference layer to
+        recorded bars and flip ``staleness_flag`` (parent decision H), so an
+        unusable batch never silently anchors the agents on stale bars while the
+        bundle reports itself fresh. (This differs from ``AccountStateQueries``,
+        which propagates raw alpaca errors — the quote source translates here
+        precisely because the phase-1 caller catches ``RuntimeError`` only.) An
+        empty symbol list short-circuits to ``{}`` without an API call.
         """
         symbol_list = list(symbols)
         if not symbol_list:
@@ -91,19 +116,19 @@ class AlpacaQuoteSource:
         request = StockLatestQuoteRequest(symbol_or_symbols=symbol_list, feed=self.feed)
         try:
             response = await asyncio.to_thread(self.client.get_stock_latest_quote, request)
+            # The whole map-build (incl. the non-dict / non-numeric-bid-ask checks
+            # in _map_batch_quotes) is inside the try, not just the network call, so
+            # a malformed-response error degrades like a fetch failure rather than
+            # escaping as a raw exception.
+            return _map_batch_quotes(response, symbol_list)
         except Exception as exc:
             # Warranted broad except (ALP-753): the alpaca-py snapshot can raise
-            # APIError, transport (httpx/requests) errors, or parse failures; all
-            # mean "the batch fetch failed". Re-raise as RuntimeError so the
-            # phase-1 degradation path (which catches RuntimeError) flips
-            # staleness_flag rather than the invocation aborting on a raw SDK error.
+            # APIError, transport (httpx/requests) errors, or — should the SDK ever
+            # return a non-dict or a non-numeric bid/ask — a type/parse error. All
+            # mean "the batch response is unusable". Re-raise as RuntimeError so the
+            # phase-1 degradation path (which catches RuntimeError) falls back to
+            # recorded bars and flips staleness_flag, rather than the invocation
+            # aborting on a raw SDK error or silently serving an empty map as if
+            # every quote were legitimately dropped.
             msg = f"batch latest-quote snapshot failed for {len(symbol_list)} symbol(s)"
             raise RuntimeError(msg) from exc
-        if not isinstance(response, dict):
-            return {}
-        quotes: dict[str, TouchQuote] = {}
-        for symbol in symbol_list:
-            touch = _touch_from_quote(response.get(symbol))
-            if touch is not None:
-                quotes[symbol] = touch
-        return quotes

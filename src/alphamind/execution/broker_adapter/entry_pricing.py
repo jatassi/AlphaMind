@@ -49,6 +49,16 @@ class TouchQuote:
     bid: Price
     ask: Price
 
+    @property
+    def mid(self) -> Price:
+        """The touch midpoint ``(bid + ask) / 2`` — a coarse current-spot proxy.
+
+        Used by the ALP-753 phase-1 reference anchor as the single scalar that
+        mirrors a held position's ``current_price``. ``bid``/``ask`` are both
+        strictly positive (constructed via :func:`price`), so the mid is too.
+        """
+        return price((self.bid + self.ask) / 2)
+
 
 @runtime_checkable
 class QuoteSource(Protocol):

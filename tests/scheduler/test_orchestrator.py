@@ -1259,6 +1259,7 @@ class TestRunInvocationDebugE2EWiring:
         """``debug_e2e`` populated → factories non-None + resolve to bundle queries."""
         from alphamind.scheduler.debug_e2e.broker import (
             LogOnlyAccountStateQueries,
+            LogOnlyBatchQuoteSource,
             LogOnlyCorporateActionsQueries,
         )
         from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
@@ -1267,9 +1268,11 @@ class TestRunInvocationDebugE2EWiring:
 
         account_queries = LogOnlyAccountStateQueries(SYNTHETIC_PORTFOLIO)
         ca_queries = LogOnlyCorporateActionsQueries()
+        quote_source = LogOnlyBatchQuoteSource()
         debug_settings = DebugE2ESettings(
             account_queries=account_queries,
             ca_queries=ca_queries,
+            quote_source=quote_source,
             emitter_factory=lambda _inv_id, _as_of: NOOP_PROGRESS_EMITTER,
         )
 
@@ -1291,14 +1294,17 @@ class TestRunInvocationDebugE2EWiring:
         )
 
         gather_kw = captured["gather"]
-        # Both factories are wired and yield the bundle's query instances.
+        # All three factories are wired and yield the bundle's instances — the
+        # quote-source factory keeps debug-e2e offline (ALP-753).
         assert gather_kw["account_queries_factory"] is not None
         assert gather_kw["ca_queries_factory"] is not None
+        assert gather_kw["quote_source_factory"] is not None
 
         venue = gather_kw["venue_config"]
         mode = gather_kw["execution_mode"]
         assert gather_kw["account_queries_factory"](venue, mode) is account_queries
         assert gather_kw["ca_queries_factory"](venue, mode) is ca_queries
+        assert gather_kw["quote_source_factory"](venue, mode) is quote_source
 
     async def test_production_path_leaves_query_factories_at_none(
         self,
@@ -1331,6 +1337,7 @@ class TestRunInvocationDebugE2EWiring:
         # is stable; ``None`` is the canonical "use the Alpaca default" value.
         assert gather_kw.get("account_queries_factory") is None
         assert gather_kw.get("ca_queries_factory") is None
+        assert gather_kw.get("quote_source_factory") is None
 
 
 class TestRunInvocationBrokerDispatchWiring:
@@ -1396,6 +1403,7 @@ class TestRunInvocationBrokerDispatchWiring:
         """
         from alphamind.scheduler.debug_e2e.broker import (
             LogOnlyAccountStateQueries,
+            LogOnlyBatchQuoteSource,
             LogOnlyCorporateActionsQueries,
         )
         from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
@@ -1405,6 +1413,7 @@ class TestRunInvocationBrokerDispatchWiring:
         debug_settings = DebugE2ESettings(
             account_queries=LogOnlyAccountStateQueries(SYNTHETIC_PORTFOLIO),
             ca_queries=LogOnlyCorporateActionsQueries(),
+            quote_source=LogOnlyBatchQuoteSource(),
             emitter_factory=lambda _inv_id, _as_of: NOOP_PROGRESS_EMITTER,
         )
 

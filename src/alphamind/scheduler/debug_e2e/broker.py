@@ -17,6 +17,7 @@ the run log.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from datetime import date
 from decimal import Decimal
 
@@ -24,6 +25,7 @@ from alpaca.data.enums import CorporateActionsType
 from alpaca.data.models.corporate_actions import CorporateAction
 
 from alphamind._kernel.money import money, price, signed_money
+from alphamind.execution.broker_adapter.entry_pricing import TouchQuote
 from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
@@ -36,7 +38,11 @@ from alphamind.scheduler.debug_e2e.portfolio import (
     SyntheticPosition,
 )
 
-__all__ = ["LogOnlyAccountStateQueries", "LogOnlyCorporateActionsQueries"]
+__all__ = [
+    "LogOnlyAccountStateQueries",
+    "LogOnlyBatchQuoteSource",
+    "LogOnlyCorporateActionsQueries",
+]
 
 log = logging.getLogger(__name__)
 
@@ -186,3 +192,23 @@ class LogOnlyCorporateActionsQueries:
             len(types),
         )
         return ()
+
+
+class LogOnlyBatchQuoteSource:
+    """Log-only ``BatchQuoteSource`` stand-in for ``--debug-e2e`` (ALP-753).
+
+    Returns ``{}`` — no live quotes — so the phase-1 reference layer falls back
+    deterministically to the seeded ``ohlcv_bars`` for every active ticker, the
+    same offline, reproducible bar-based behavior debug-e2e had before ALP-753.
+    Returning an empty map (rather than raising) keeps ``staleness_flag`` off, so
+    a debug-e2e run is not spuriously marked degraded. Logs the call at INFO with
+    a ``[debug_e2e]`` prefix so the operator can confirm no live fetch occurred.
+    """
+
+    async def latest_quotes(self, symbols: Sequence[str]) -> Mapping[str, TouchQuote]:
+        log.info(
+            "[debug_e2e] LogOnlyBatchQuoteSource.latest_quotes(%d symbol(s)) "
+            "-> {} (offline; active universe falls back to seeded bars)",
+            len(list(symbols)),
+        )
+        return {}

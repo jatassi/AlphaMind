@@ -70,6 +70,13 @@ class _RaisingDataClient:
         raise self._exc
 
 
+class _NonDictDataClient:
+    """Returns a successful-but-unexpected (non-dict) response."""
+
+    def get_stock_latest_quote(self, request: StockLatestQuoteRequest) -> object:
+        return ["not", "a", "dict"]
+
+
 @pytest.mark.asyncio
 async def test_latest_quotes_batch_maps_keyed_response() -> None:
     """One API call carries the whole symbol list; the keyed response is mapped
@@ -130,6 +137,17 @@ async def test_latest_quotes_raises_runtimeerror_on_broker_failure() -> None:
     :meth:`latest_quote`, which returns ``None``) so the phase-1 caller can
     degrade the universe layer and flip ``staleness_flag`` (ALP-753)."""
     source = _source(cast("_FakeDataClient", _RaisingDataClient(ConnectionError("feed down"))))
+
+    with pytest.raises(RuntimeError):
+        await source.latest_quotes(["SCHW"])
+
+
+@pytest.mark.asyncio
+async def test_latest_quotes_raises_runtimeerror_on_non_dict_response() -> None:
+    """A successful-but-non-dict batch response degrades conservatively (raises
+    ``RuntimeError`` → phase-1 falls back to bars + flips staleness) rather than
+    silently returning an empty map as if every quote were dropped (ALP-753)."""
+    source = _source(cast("_FakeDataClient", _NonDictDataClient()))
 
     with pytest.raises(RuntimeError):
         await source.latest_quotes(["SCHW"])
