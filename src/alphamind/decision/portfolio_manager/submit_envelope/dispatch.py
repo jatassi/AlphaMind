@@ -125,6 +125,9 @@ async def _stale_anchor_rejection_reason(
     try:
         quote = await quote_source.latest_quote(ticker)
     except Exception:
+        # Warranted broad except (ALP-747): a misbehaving QuoteSource must never
+        # abort an otherwise-valid submission — fail open and let broker
+        # validation backstop, mirroring entry_pricing._rewrite_one (ALP-738).
         logger.warning(
             "broker_dispatch: live-coherence quote fetch failed for %s; skipping the "
             "stale-anchor check (broker validation remains the backstop)",

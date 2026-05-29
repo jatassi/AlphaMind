@@ -207,9 +207,15 @@ def test_l4_broad_except_count_below_audit_baseline(antipattern_findings: Script
     # AlpacaEntryReplace mirrors AlpacaEntryCancel's wide catch → classify_alpaca_error
     # → re-raise any non-broker exception, returning None on a classified 4xx so the
     # repricer retries. Carries an inline rationale comment.
-    assert l4 <= 61, (
-        f"L4 (broad except) count drift: {l4}. Post-ALP-740 "
-        f"ceiling is 61. If this count climbs above 61, audit each new "
+    # Ceiling raised from 61 to 62 (2026-05-29, ALP-747 stale-anchor dispatch check):
+    # +1 warranted money-path fallback — submit_envelope/dispatch.py
+    # _stale_anchor_rejection_reason wraps the dispatch-time live-quote fetch so a
+    # misbehaving QuoteSource fails open (skips the coherence check, broker validation
+    # remains the backstop) rather than aborting an otherwise-valid submission. Mirrors
+    # the ALP-738 entry_pricing._rewrite_one fallback above; carries an inline rationale.
+    assert l4 <= 62, (
+        f"L4 (broad except) count drift: {l4}. Post-ALP-747 "
+        f"ceiling is 62. If this count climbs above 62, audit each new "
         f"handler against ALP-480's warranted-residue list."
     )
 
