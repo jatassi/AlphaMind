@@ -70,6 +70,7 @@ from alphamind.risk_guardrails.state_delivery.validation_tool import (
     ValidationResult,
     ValidationSize,
     ValidationStrategyLeg,
+    ValidationToolState,
     validate_guardrail,
 )
 
@@ -395,19 +396,29 @@ def _process_commands(
     state: SubmitEnvelopeState,
     sector_resolver: Callable[[str], str],
     position_lookup: PositionLookup,
-) -> tuple[tuple[SubmissionResult, ...], SubmitEnvelopeState]:
+) -> tuple[tuple[SubmissionResult, ...], SubmitEnvelopeState, tuple[ProjectedDelta | None, ...]]:
     """Process every command in *envelope*, in order.
 
     Re-runs :func:`validate_guardrail` per command against the cumulative
-    state. PASS advances ``validation_state`` (returned in the new state
-    instance); FAIL leaves it unchanged. Returns the per-command results in
-    command_ordinal order alongside the post-processing state.
+    state. A guardrail PASS advances ``validation_state`` (so the next command
+    in the envelope sees this one's projected impact) and records the
+    :class:`ProjectedDelta` it credited; FAIL leaves the state unchanged and
+    records ``None``.
+
+    Returns ``(results, state, credited_deltas)`` — the per-command results and
+    the per-command credited deltas are both in command_ordinal order. The
+    caller reconciles ``state.validation_state`` against the *final*
+    (post-broker-routing) submission results via
+    :func:`_reconcile_validation_state` so a command that PASSed guardrails but
+    was then rejected by the broker releases its credit (ALP-743) rather than
+    leaving phantom exposure that over-rejects a retry of the same idea.
     """
     results: list[SubmissionResult] = []
+    credited_deltas: list[ProjectedDelta | None] = []
     attempt_seq = compute_attempt_seq(envelope)
     current_state = state
     for ordinal, command in enumerate(envelope.commands):
-        result, current_state = _process_one_command(
+        result, current_state, credited_delta = _process_one_command(
             command=command,
             command_ordinal=ordinal,
             envelope=envelope,
@@ -417,7 +428,55 @@ def _process_commands(
             position_lookup=position_lookup,
         )
         results.append(result)
-    return tuple(results), current_state
+        credited_deltas.append(credited_delta)
+    return tuple(results), current_state, tuple(credited_deltas)
+
+
+def _reconcile_validation_state(
+    state: SubmitEnvelopeState,
+    *,
+    entry_validation_state: ValidationToolState,
+    submission_results: tuple[SubmissionResult, ...],
+    credited_deltas: tuple[ProjectedDelta | None, ...],
+) -> SubmitEnvelopeState:
+    """Rebuild ``validation_state`` to credit only finally-accepted commands.
+
+    ``_process_commands`` advances ``validation_state`` for every command that
+    PASSes guardrails so later commands in the same envelope see its impact.
+    But broker routing (story 03e) can flip a guardrail-accepted command to
+    ``rejected`` *after* that advance — a permanent rejection or an exhausted
+    gateway-retry window. Before ALP-743 the credited delta stayed, so the next
+    envelope (typically a resize/retry of the very same idea) projected against
+    phantom stacked exposure and over-rejected.
+
+    Reconciliation rebuilds the cumulative state from *entry_validation_state*
+    (the cell as it stood when the envelope arrived) plus only the deltas whose
+    command is still ``accepted`` in the final, post-broker-routing
+    *submission_results*. Commands that never credited a delta (CLOSE / CANCEL /
+    ADJUST / guardrail-FAIL) carry ``None`` and are skipped regardless of
+    status. When no command flipped — the fixture-only path with no broker
+    routing — this reproduces the threaded end-state exactly, so it is safe to
+    apply unconditionally.
+
+    Survivors are re-indexed to a contiguous ``proposal_index`` run as they are
+    re-applied. Each delta's ``proposal_index`` was frozen during Step 3 from
+    the cumulative length at validation time; dropping a non-last command would
+    otherwise leave a gap, and the next command credited in the invocation
+    (``proposal_index = len(accumulated_deltas) + 1``) could then collide with a
+    surviving delta's frozen index — two accumulated deltas sharing an index
+    surface as duplicate ``prior_{index}`` proposal ids and a guardrail-library
+    ``LibraryInputError`` on the next projection. Re-indexing restores the
+    monotonic-contiguous invariant the append-only Step-3 path maintained.
+    """
+    reconciled = entry_validation_state
+    next_index = len(entry_validation_state.accumulated_deltas) + 1
+    for result, delta in zip(submission_results, credited_deltas, strict=True):
+        if delta is not None and result.status == "accepted":
+            reconciled = reconciled.with_accepted_proposal(
+                delta.model_copy(update={"proposal_index": next_index})
+            )
+            next_index += 1
+    return dataclasses.replace(state, validation_state=reconciled)
 
 
 def _process_one_command(
@@ -429,12 +488,16 @@ def _process_one_command(
     state: SubmitEnvelopeState,
     sector_resolver: Callable[[str], str],
     position_lookup: PositionLookup,
-) -> tuple[SubmissionResult, SubmitEnvelopeState]:
+) -> tuple[SubmissionResult, SubmitEnvelopeState, ProjectedDelta | None]:
     """Process one embedded command — translate, validate, format result.
 
-    Returns ``(submission_result, new_state)`` — accepted OPEN/ADD commands
-    return a state with an advanced ``validation_state``; all other outcomes
-    return the input state unchanged.
+    Returns ``(submission_result, new_state, credited_delta)``. A guardrail-PASS
+    OPEN/ADD returns a state with an advanced ``validation_state`` and the
+    :class:`ProjectedDelta` it credited; all other outcomes return the input
+    state unchanged and a ``None`` credited delta. The caller threads the
+    credited delta through :func:`_reconcile_validation_state` so a command
+    that PASSes guardrails here but is later rejected by the broker releases
+    its credit (ALP-743).
     """
     command_id = derive_pm_command_id(
         invocation_id=state.invocation_id,
@@ -457,6 +520,7 @@ def _process_one_command(
                 acknowledgment=ack,
             ),
             state,
+            None,
         )
     if isinstance(command, CloseCommand):
         ack = Acknowledgment(
@@ -471,6 +535,7 @@ def _process_one_command(
                 acknowledgment=ack,
             ),
             state,
+            None,
         )
 
     request = _command_to_validation_request(command, position_lookup=position_lookup)
@@ -478,24 +543,26 @@ def _process_one_command(
 
     if result.overall == "PASS":
         # Advance ``validation_state`` unless the command produces no exposure
-        # delta (ADJUST is metadata-only at this layer).
+        # delta (ADJUST is metadata-only at this layer). The credited delta is
+        # returned so the caller can release it if broker routing later rejects
+        # this command (ALP-743).
+        credited_delta: ProjectedDelta | None = None
         new_state = state
         if isinstance(command, OpenCommand | AddCommand):
+            credited_delta = ProjectedDelta(
+                instrument=request.instrument,
+                size=request.size,
+                action=request.action,
+                sector=sector_resolver(request.instrument.ticker),
+                delta_adjusted_exposure=result.delta_adjusted_exposure,
+                greeks=result.greeks,
+                proposal_index=result.proposal_index_in_invocation,
+                reserves_capital=request.reserves_capital,
+                existing_position_id=None,
+            )
             new_state = dataclasses.replace(
                 state,
-                validation_state=state.validation_state.with_accepted_proposal(
-                    ProjectedDelta(
-                        instrument=request.instrument,
-                        size=request.size,
-                        action=request.action,
-                        sector=sector_resolver(request.instrument.ticker),
-                        delta_adjusted_exposure=result.delta_adjusted_exposure,
-                        greeks=result.greeks,
-                        proposal_index=result.proposal_index_in_invocation,
-                        reserves_capital=request.reserves_capital,
-                        existing_position_id=None,
-                    )
-                ),
+                validation_state=state.validation_state.with_accepted_proposal(credited_delta),
             )
         ack = _build_acknowledgment(command=command, command_id=command_id, result=result)
         return (
@@ -506,6 +573,7 @@ def _process_one_command(
                 acknowledgment=ack,
             ),
             new_state,
+            credited_delta,
         )
 
     rejection = _build_rejection_payload(result=result)
@@ -517,6 +585,7 @@ def _process_one_command(
             rejection_payload=rejection,
         ),
         state,
+        None,
     )
 
 
@@ -799,6 +868,13 @@ def _build_rejection_payload(*, result: ValidationResult) -> RejectionPayload:
     populate ``rules_breached``; ``suggested_modification`` is
     ``failure_guidance``; ``headroom_after_suggestion`` carries one entry per
     breached rule.
+
+    Each breached rule surfaces ``projected_after`` — the cumulative basis the
+    ``overage`` was measured against (ALP-743). For a near-cap proposal stacked
+    on prior in-invocation passes, ``projected_after`` exceeds this command's
+    single-command ``delta_adjusted_exposure``; carrying it lets the PM read the
+    overage as cumulative exposure rather than inventing a broker margin
+    multiplier to reconcile the two figures.
     """
     failed = tuple(p for p in result.per_rule if p.status is Status.FAIL)
     rules_breached = tuple(
@@ -808,6 +884,7 @@ def _build_rejection_payload(*, result: ValidationResult) -> RejectionPayload:
             limit=p.limit,
             overage=abs(p.projected_after - p.limit),
             unit=p.unit,
+            projected_after=p.projected_after,
         )
         for p in failed
     )
@@ -846,6 +923,7 @@ __all__ = [
     "_open_instrument_kwargs",
     "_process_commands",
     "_process_one_command",
+    "_reconcile_validation_state",
     "_safe_derive_pm_command_id",
     "_serialize_response",
     "_strategy_legs_for_validation",
