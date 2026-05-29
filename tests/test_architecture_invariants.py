@@ -186,9 +186,18 @@ def test_l4_broad_except_count_below_audit_baseline(antipattern_findings: Script
     # boundaries). All audited at PR #209 final-state review; per-site
     # audit to drive the ceiling back down is tracked as a Command
     # Center post-merge cleanup item.
-    assert l4 <= 55, (
-        f"L4 (broad except) count drift: {l4}. Post-Command-Center "
-        f"ceiling is 55. If this count climbs above 55, audit each new "
+    # Ceiling raised from 55 to 56 (2026-05-28, ALP-737 entry-window watcher):
+    # the new continuous-monitor task adds three warranted broad excepts —
+    # (1) the per-bracket catch and (2) the run-forever loop backstop in
+    # entry_window/task.py (both mirror bracket_stops' resilience: re-raise
+    # CancelledError, log + continue so one bad bracket / cycle never stalls
+    # the monitor), and (3) the broker-error classification in
+    # entry_window/wiring.py (AlpacaEntryCancel mirrors submit_engine_envelope's
+    # _dispatch_engine_close: wide catch → classify_alpaca_error, re-raising any
+    # non-broker exception). Each carries an inline rationale comment.
+    assert l4 <= 56, (
+        f"L4 (broad except) count drift: {l4}. Post-ALP-737 "
+        f"ceiling is 56. If this count climbs above 56, audit each new "
         f"handler against ALP-480's warranted-residue list."
     )
 
@@ -251,9 +260,15 @@ def test_l19_async_over_sync_count_at_protocol_residue(antipattern_findings: Scr
     # signature on the matching Protocol so the stub must be ``async def``
     # to satisfy the structural type. The four stubs are warranted
     # short-term scaffolding pending the broker-dispatch follow-up.
-    assert l19 <= 96, (
-        f"L19 (async-over-sync) count drift: {l19}. Post-ALP-720 "
-        f"ceiling is 96 (Protocol stubs + SDK decorators + alert "
+    # Ceiling raised from 96 to 98 (2026-05-28, ALP-737 entry-window watcher):
+    # two new async Protocol stubs — PendingEntryBracketReader and
+    # EntryWindowCanceller in entry_window/ — are the structural async seams
+    # their SQL- / broker-backed implementations (which genuinely await DB +
+    # broker I/O) satisfy, the same Protocol-stub residue bracket_stops carries
+    # (BracketRepository / BracketCloseSubmitter).
+    assert l19 <= 98, (
+        f"L19 (async-over-sync) count drift: {l19}. Post-ALP-737 "
+        f"ceiling is 98 (Protocol stubs + SDK decorators + alert "
         f"channels). Climbing above this suggests new ``async def`` "
         f"functions that never ``await`` — convert to sync unless the "
         f"function legitimately awaits I/O."
