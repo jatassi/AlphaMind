@@ -1107,9 +1107,9 @@ def _equity_rec(
 ) -> Recommendation:
     """Build an equity recommendation with an explicit bracket geometry.
 
-    ``stop_trigger=None`` omits the price-stop leg (an OTO bracket) — a soft
-    event leg stands in as the required hard... no: a hard time leg keeps the
-    at-least-one-hard-leg invariant satisfied without a price stop.
+    ``stop_trigger=None`` omits the price-stop leg (an OTO bracket); a hard time
+    leg then keeps the at-least-one-hard-leg invariant satisfied without a price
+    stop.
     """
     legs: tuple[InvalidationLeg, ...]
     rationale: tuple[InvalidationRationale, ...]
@@ -1284,18 +1284,22 @@ class TestBracketPriceCoherence:
         assert "reference_price_staleness" in rules
         assert "bracket_directional_coherence" not in rules
 
-    def test_stop_limit_breakout_long_above_live_passes(self) -> None:
-        """A breakout long triggers *above* the live quote on purpose: the
-        bracket is coherent against the trigger price, so neither check fires."""
+    def test_stop_limit_breakout_is_exempt_from_both_checks(self) -> None:
+        """A breakout ``stop_limit`` triggers at ``stop_price`` and fills at
+        ``limit_price`` — which the broker treats as ``base_price`` is ambiguous
+        and the entry is deliberately away from the live quote — so both checks
+        are skipped. The chosen geometry (target $325 between trigger $320 and
+        limit $326) would false-positive against either single anchor; exemption
+        avoids blocking a legitimate breakout."""
         rec = _equity_rec(
             ticker="JPM",
             direction="long",
-            entry=EntryOrder(type="stop_limit", limit_price=price(320.0), stop_price=price(320.0)),
-            target_price=340.0,
-            stop_trigger=310.0,
+            entry=EntryOrder(type="stop_limit", limit_price=price(326.0), stop_price=price(320.0)),
+            target_price=325.0,
+            stop_trigger=315.0,
             stop_comparator="<=",
             quantity=10.0,
-            dollar_value=3200.0,
+            dollar_value=3260.0,
         )
         result = validate_analyst_output(
             _make_output(recommendations=(rec,)),
@@ -1306,6 +1310,53 @@ class TestBracketPriceCoherence:
         rules = [e.rule for e in result.errors]
         assert "bracket_directional_coherence" not in rules
         assert "reference_price_staleness" not in rules
+
+    def test_enter_now_limit_stale_vs_live_is_directional_error(self) -> None:
+        """An enter-now limit (limit, no entry_window) is repriced to a marketable
+        price ≈ the live quote by ALP-738 before submission, so its bracket must
+        straddle the live close — not the stale resting limit. A long limit at
+        $288 with target $295 below the live close $300 fails: target must be
+        above the live close the broker fills at."""
+        rec = _equity_rec(
+            ticker="JPM",
+            direction="long",
+            entry=EntryOrder(type="limit", limit_price=price(288.0)),
+            target_price=295.0,
+            stop_trigger=270.0,
+            stop_comparator="<=",
+            quantity=10.0,
+            dollar_value=2880.0,
+        )
+        result = validate_analyst_output(
+            _make_output(recommendations=(rec,)),
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            underlying_prices={"JPM": 300.0},
+        )
+        assert result.is_valid is False
+        rules = [e.rule for e in result.errors]
+        assert "bracket_directional_coherence" in rules
+
+    def test_enter_now_limit_coherent_vs_live_passes(self) -> None:
+        """An enter-now limit at the live close with a bracket straddling it
+        passes both checks."""
+        rec = _equity_rec(
+            ticker="JPM",
+            direction="long",
+            entry=EntryOrder(type="limit", limit_price=price(300.0)),
+            target_price=315.0,
+            stop_trigger=290.0,
+            stop_comparator="<=",
+            quantity=10.0,
+            dollar_value=3000.0,
+        )
+        result = validate_analyst_output(
+            _make_output(recommendations=(rec,)),
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            underlying_prices={"JPM": 300.0},
+        )
+        assert [e.rule for e in result.errors] == []
 
     def test_patient_retest_limit_away_from_live_passes(self) -> None:
         """A patient-retest limit (limit + entry_window) deliberately rests away
