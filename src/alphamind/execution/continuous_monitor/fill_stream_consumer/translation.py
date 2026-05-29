@@ -58,7 +58,9 @@ _TERMINAL_NON_FILL_EVENT_TO_STATUS: Final[dict[str, OrderStatus]] = {
 }
 
 
-def fill_report_to_fill_record(report: FillReport) -> FillRecord | None:
+def fill_report_to_fill_record(
+    report: FillReport, *, oms_order_id: str | None = None
+) -> FillRecord | None:
     """Translate one :class:`FillReport` into a :class:`FillRecord`.
 
     Returns ``None`` for events that do not produce a persisted fill:
@@ -75,6 +77,15 @@ def fill_report_to_fill_record(report: FillReport) -> FillRecord | None:
       always populate both for ``filled`` / ``partially_filled`` / ``stopped``;
       a ``None`` here would be a malformed payload and is filtered rather
       than letting Pydantic raise downstream).
+
+    ``oms_order_id`` overrides the report-derived order id with the local
+    ``orders`` PK the caller resolved (ALP-746): the broker's ``client_order_id``
+    does not round-trip the OMS order id for equity entries (it carries the
+    command id) or for native-bracket protective children (Alpaca generates it),
+    so the consumer resolves the row by ``alpaca_order_id`` and threads the PK
+    here. The ``fill_id`` is derived from the resolved id so the same logical
+    fill dedupes identically across the live-stream and recovery paths. ``None``
+    preserves the report-derived id (the historical / already-aligned path).
     """
     order_status_after = _FILL_EVENT_TO_ORDER_STATUS.get(report.event_type)
     if order_status_after is None:
@@ -86,8 +97,10 @@ def fill_report_to_fill_record(report: FillReport) -> FillRecord | None:
     if report.fill_price is None or report.fill_quantity is None:
         return None
 
-    # Mleg per-leg children map ``order_id`` to the parent's client_order_id
-    # because the OMS persists mleg orders as a single parent
+    # The order id the fill applies to. ``oms_order_id`` (when the consumer
+    # resolved the local row by broker UUID) wins; otherwise fall back to the
+    # report-derived id. Mleg per-leg children map ``order_id`` to the parent's
+    # client_order_id because the OMS persists mleg orders as a single parent
     # :class:`OrderRecord` with ``order_class=MLEG`` and the legs encoded on
     # ``instrument_spec`` — the legs themselves do not own separate rows in
     # the ``orders`` table. Per-leg child fills therefore reference the
@@ -95,7 +108,7 @@ def fill_report_to_fill_record(report: FillReport) -> FillRecord | None:
     # ``gateway_reference`` for reconciliation. For equity / single-leg
     # options, ``parent_client_order_id`` is ``None`` and the report's own
     # ``client_order_id`` is the OMS order id.
-    order_id = order_id_for_report(report)
+    order_id = oms_order_id if oms_order_id is not None else order_id_for_report(report)
     alpaca_ref = report.alpaca_order_id
 
     fill_id = _derive_fill_id(

@@ -35,8 +35,8 @@ ADJUST / CANCEL target an existing alpaca order by id; the caller threads
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from alpaca.trading.client import TradingClient
@@ -110,6 +110,13 @@ class BrokerDispatchResult:
     Alpaca order id — Alpaca's PATCH-as-cancel-and-replace semantics replace
     the original. For CANCEL submissions, ``alpaca_order_id`` carries the
     canceled order's id (the cancellation has no fresh order id).
+
+    ``leg_alpaca_order_ids`` maps a native equity bracket / OTO's protective
+    role (``"take_profit"`` / ``"stop_loss"``) to the broker's real child id,
+    captured at submission (ALP-746). The Phase 2 OPEN writeback consumes it to
+    stamp each protective-leg ``orders`` row with its real ``alpaca_order_id``.
+    Empty for every non-equity-OPEN submission (options / mleg / replace /
+    cancel and equity ADD / CLOSE carry no broker-side protective child).
     """
 
     alpaca_order_id: AlpacaOrderId
@@ -118,6 +125,7 @@ class BrokerDispatchResult:
     order_class: str
     payload_kind: PayloadKind
     raw_submission: Any
+    leg_alpaca_order_ids: Mapping[str, AlpacaOrderId] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -517,6 +525,9 @@ def _wrap_equity(
             order_class=sub.order_class,
             payload_kind="equity",
             raw_submission=sub,
+            # Native bracket / OTO protective children captured at submission
+            # (ALP-746); empty for SIMPLE equity ADD / CLOSE.
+            leg_alpaca_order_ids={ack.role: ack.alpaca_order_id for ack in sub.leg_acks},
         ),
         attempt_count=outcome.attempt_count,
     )

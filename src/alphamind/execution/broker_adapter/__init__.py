@@ -52,6 +52,7 @@ from alphamind.execution.broker_adapter.fill_stream import (
     translate_trade_update,
 )
 from alphamind.execution.broker_adapter.order_equity import (
+    EquityLegAck,
     EquitySubmission,
     submit_equity_add,
     submit_equity_close,
@@ -112,6 +113,7 @@ __all__ = [
     "CalendarDay",
     "CancellationAck",
     "CorporateActionsQueries",
+    "EquityLegAck",
     "EquitySubmission",
     "ExecutionMode",
     "FillReport",

@@ -92,7 +92,12 @@ def stub_order_row(
     role: str = OrderRole.ENTRY.value,
     direction: str = OrderDirection.BUY.value,
     status: str = OrderStatus.FILLED.value,
+    alpaca_order_id: str | None = None,
 ) -> OrderRow:
+    # ``alpaca_order_id`` defaults to the synthetic ``alp-{order_id}`` placeholder;
+    # pass a real broker UUID to exercise the alpaca_order_id-keyed resolution
+    # path (ALP-746).
+    resolved_alpaca_id = alpaca_order_id or f"alp-{order_id}"
     return OrderRow(
         order_id=order_id,
         position_id=position_id,
@@ -106,8 +111,8 @@ def stub_order_row(
         price_parameters_json="{}",
         duration=OrderDuration.DAY.value,
         status=status,
-        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
-        alpaca_order_id_chain_json=f'["alp-{order_id}"]',
+        alpaca_order_id=AlpacaOrderId(resolved_alpaca_id),
+        alpaca_order_id_chain_json=f'["{resolved_alpaca_id}"]',
         submission_timestamp=_TS,
         last_update_timestamp=_TS,
         filled_quantity=0.0,
