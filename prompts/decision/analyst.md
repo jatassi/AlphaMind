@@ -82,6 +82,8 @@ For each candidate opportunity, construct a thesis with these required elements.
 
 9. Validate each surviving proposal (see Tool policy) and revise or drop on FAIL.
 
+Ground the bracket in the current price. Anchor entry, target, and the protective-stop invalidation level to the underlying's current market price as carried in your inputs — not to a level quoted earlier in a brief or carried over from a prior session. For a short, the protective stop sits above the current price and the target below it; for a long, the target sits above and the stop below. A bracket built around a stale reference fails to straddle the live price and is rejected downstream before it can fill, so re-derive the levels from the freshest price you have.
+
 Each proposal is self-contained. Do not compare proposals to each other in any narrative field, do not signal preference, do not describe one as stronger than another. Cross-proposal judgment belongs to the portfolio manager.
 </method>
 

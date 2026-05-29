@@ -20,7 +20,7 @@ is used. Tests pass a stub so no test touches the Anthropic API.
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -164,15 +164,17 @@ def _compose_retry_prompt(original_user_message: str, retry_diagnostic: str) -> 
 
 @dataclass(frozen=True)
 class _ValidatorContext:
-    """Per-invocation inputs the analyst's Layer-3 validator needs.
+    """Per-invocation inputs the analyst's Layer-2/3 validator needs.
 
-    The retrieval store and active-sector set always travel together through
-    the harness's parse/validate path; bundling them keeps the helper
-    signatures narrow.
+    The retrieval store, active-sector set, and live-close map always travel
+    together through the harness's parse/validate path; bundling them keeps the
+    helper signatures narrow. ``underlying_prices`` is the guardrail library's
+    latest ``ohlcv_bars`` close per ticker (ALP-742 bracket-coherence checks).
     """
 
     retrieval_store: RetrievalStore
     active_sectors: frozenset[str]
+    underlying_prices: Mapping[str, float]
 
 
 def _parse_and_validate(
@@ -215,6 +217,7 @@ def _parse_and_validate(
         output,
         retrieval_store=validator.retrieval_store,
         active_sectors=validator.active_sectors,
+        underlying_prices=validator.underlying_prices,
     )
     if not validation.is_valid:
         for ve in validation.errors:
@@ -510,7 +513,14 @@ async def invoke_analyst(  # noqa: PLR0913 — public signature is fixed by ALP-
 
     agent_name = AgentName.analyst.value
 
-    validator = _ValidatorContext(retrieval_store=retrieval_store, active_sectors=active_sectors)
+    # The latest-close map the ALP-742 bracket checks compare geometry against
+    # rides in on the same ValidationToolState the validate_guardrail tool uses;
+    # no new subprocess-serialized parameter is needed.
+    validator = _ValidatorContext(
+        retrieval_store=retrieval_store,
+        active_sectors=active_sectors,
+        underlying_prices=initial_validation_state.library_market.underlying_prices,
+    )
     mcp_servers, allowed_tools = _build_mcp_wiring(
         initial_validation_state=initial_validation_state,
         retrieval_store=retrieval_store,

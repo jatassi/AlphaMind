@@ -21,7 +21,7 @@ Errors disqualify the output (``is_valid=False``); warnings do not.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 
 from alphamind.analysis.synthesizer.models import (
@@ -38,12 +38,14 @@ from alphamind.commands.validation_results import (
 from alphamind.decision.analyst.models import (
     AnalystOutput,
     InstrumentEquity,
+    PriceCondition,
     Recommendation,
     WatchlistEntry,
 )
 
 __all__ = [
     "DEFAULT_CONVICTION_BANDS",
+    "DEFAULT_PRICE_STALENESS_TOLERANCE_PCT",
     "ValidationError",
     "ValidationResult",
     "ValidationWarning",
@@ -70,6 +72,15 @@ DEFAULT_CONVICTION_BANDS: dict[int, tuple[float, float]] = {
 # that forbids them). Matched against ``cumulative_impact_note`` and
 # per-rule ``rule`` text.
 _FEATURE_DISABLED_TOKEN = "feature_disabled"
+
+# Maximum tolerated drift between the analyst's implied per-share entry anchor
+# and the latest ``ohlcv_bars`` close (as a percentage of the live close) before
+# the recommendation is flagged for redraft (ALP-742). A bracket sized against a
+# price this far from the live close produces target/stop levels the broker
+# rejects as incoherent (the 2026-05-29 JPM-short / CRWD-long cancellations).
+# Mirrors the ``DEFAULT_CONVICTION_BANDS`` pattern: a module default the caller
+# may override; it is not (yet) YAML-wired.
+DEFAULT_PRICE_STALENESS_TOLERANCE_PCT: float = 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +304,213 @@ def _check_conviction_band_deviation(
 
 
 # ---------------------------------------------------------------------------
+# Layer-2 (j)-(k) — bracket price coherence vs the latest recorded close (ALP-742)
+# ---------------------------------------------------------------------------
+
+
+def _live_equity_close(rec: Recommendation, underlying_prices: Mapping[str, float]) -> float | None:
+    """The reference close for *rec*'s underlying, or ``None`` to skip the check.
+
+    Returns ``None`` for a non-equity instrument — option/strategy targets
+    reference net P/L, not an underlying price, and options manage their
+    protective leg through the continuous monitor rather than a broker bracket —
+    or for a ticker absent / non-positive in ``underlying_prices`` (the guardrail
+    tool already returns ``UNAVAILABLE`` for unpriced tickers upstream).
+
+    The value is the guardrail library's ``MarketInputs.underlying_prices`` entry
+    — the freshest ``ohlcv_bars`` close the system holds for the ticker: a live
+    broker quote for a held name, the latest daily close (up to a few days old)
+    for an unheld candidate. It is the same price substrate the analyst's own
+    inputs are built from, so a coherent bracket the analyst draws against its
+    inputs stays coherent here.
+    """
+    if not isinstance(rec.instrument, InstrumentEquity):
+        return None
+    live = underlying_prices.get(rec.underlying)
+    if live is None or live <= 0:
+        return None
+    return live
+
+
+def _protective_stop_price(rec: Recommendation) -> float | None:
+    """Return the recommendation's protective-stop trigger price, or ``None``.
+
+    Mirrors the equity OPEN bracket builder
+    (``broker_adapter.order_equity._bracket_params``), which takes the *first*
+    price-invalidation leg as the bracket's ``stop_loss``. An OTO bracket (no
+    price leg — only a hard time leg) returns ``None``.
+    """
+    for leg in rec.invalidation_legs:
+        if leg.type == "price" and isinstance(leg.condition, PriceCondition):
+            return float(leg.condition.trigger_price)
+    return None
+
+
+def _bracket_base_price(rec: Recommendation, *, live: float) -> float | None:
+    """The price the broker fills the entry against — the ``base_price`` its
+    bracket-coherence check uses — or ``None`` when the base is ambiguous.
+
+    * ``market`` and *enter-now* ``limit`` (a ``limit`` with no ``entry_window``)
+      fill at the prevailing quote. The marketable-limit rewrite (ALP-738) prices
+      an enter-now limit *through the touch* before submission, so the broker's
+      base is the live close, not the analyst's resting limit — grounding the
+      check on ``live`` stays consistent with the downstream rewrite and with
+      ``entry_pricing._preserves_bracket_geometry``.
+    * a *patient-retest* ``limit`` (``limit`` with an ``entry_window``) rests at
+      its stated ``limit_price`` away from the market; the broker brackets
+      against that limit, so the check uses it.
+    * ``stop_limit`` (breakout) triggers at ``stop_price`` and fills at
+      ``limit_price``; which the broker treats as ``base_price`` is ambiguous and
+      the entry is deliberately away from the live quote, so the directional
+      check is skipped (``None``). A broker-incoherent breakout bracket still
+      fails closed at submission rather than silently filling.
+    """
+    entry = rec.entry_order
+    if entry.type == "stop_limit":
+        return None
+    if entry.type == "limit" and rec.entry_window is not None:
+        # Patient retest — rests at the stated limit (limit_price is required for
+        # a limit entry by the EntryOrder validator; fall back defensively).
+        return float(entry.limit_price) if entry.limit_price is not None else live
+    # market, or enter-now limit (repriced to marketable ≈ the live quote).
+    return live
+
+
+def _check_bracket_directional_coherence(
+    rec: Recommendation,
+    *,
+    field_prefix: str,
+    underlying_prices: Mapping[str, float],
+) -> Iterable[ValidationError]:
+    """(j) Bracket geometry must straddle the broker's base price directionally.
+
+    For a **short** the protective stop sits *above* and the target *below* the
+    base price; for a **long** the target sits *above* and the stop *below*.
+    A stale price anchor produces a bracket that fails this ordering, which the
+    broker rejects as ``stop_loss``/``take_profit`` ``must be >= base_price``
+    (the 2026-05-29 JPM-short / CRWD-long cancellations).
+    """
+    live = _live_equity_close(rec, underlying_prices)
+    if live is None:
+        return
+    base = _bracket_base_price(rec, live=live)
+    if base is None:
+        return  # stop_limit breakout — base ambiguous; broker still fails closed.
+    # ``_live_equity_close`` already narrowed the instrument to equity.
+    assert isinstance(rec.instrument, InstrumentEquity)
+    target = float(rec.target.price)
+    stop = _protective_stop_price(rec)
+    is_short = rec.instrument.direction == "short"
+
+    if is_short and target >= base:
+        yield ValidationError(
+            field_path=f"{field_prefix}.target.price",
+            rule="bracket_directional_coherence",
+            message=(
+                f"short {rec.recommendation_id}: target {target} must be below the entry "
+                f"reference {base} (latest recorded close {live}); a short profits as price falls"
+            ),
+        )
+    elif not is_short and target <= base:
+        yield ValidationError(
+            field_path=f"{field_prefix}.target.price",
+            rule="bracket_directional_coherence",
+            message=(
+                f"long {rec.recommendation_id}: target {target} must be above the entry "
+                f"reference {base} (latest recorded close {live}); a long profits as price rises"
+            ),
+        )
+
+    if stop is None:
+        return
+    if is_short and stop <= base:
+        yield ValidationError(
+            field_path=f"{field_prefix}.invalidation_legs",
+            rule="bracket_directional_coherence",
+            message=(
+                f"short {rec.recommendation_id}: protective stop {stop} must be above the "
+                f"entry reference {base} (latest recorded close {live}); a short is stopped "
+                "out as price rises"
+            ),
+        )
+    elif not is_short and stop >= base:
+        yield ValidationError(
+            field_path=f"{field_prefix}.invalidation_legs",
+            rule="bracket_directional_coherence",
+            message=(
+                f"long {rec.recommendation_id}: protective stop {stop} must be below the "
+                f"entry reference {base} (latest recorded close {live}); a long is stopped "
+                "out as price falls"
+            ),
+        )
+
+
+def _entry_anchor_at_live(rec: Recommendation) -> float | None:
+    """The per-share price the analyst sized against, for entries expected to
+    fill at the live quote — or ``None`` when the entry intentionally rests away
+    from it.
+
+    * ``market`` — the implied anchor is ``dollar_value / quantity`` (a market
+      entry fills now, so its sizing price should track the latest close).
+    * ``limit`` with no ``entry_window`` — an "enter-now" limit priced through
+      the touch (ALP-738); its ``limit_price`` should track the latest close.
+    * ``limit`` with an ``entry_window`` (patient retest) and ``stop_limit``
+      (breakout) — the analyst deliberately anchors away from the live quote,
+      so staleness does not apply; returns ``None``.
+    """
+    entry = rec.entry_order
+    if entry.type == "stop_limit":
+        return None
+    if entry.type == "limit":
+        if rec.entry_window is not None:
+            return None
+        return float(entry.limit_price) if entry.limit_price is not None else None
+    qty = rec.position_size.quantity
+    if qty <= 0:
+        return None
+    return float(rec.position_size.dollar_value) / qty
+
+
+def _check_reference_price_staleness(
+    rec: Recommendation,
+    *,
+    field_prefix: str,
+    underlying_prices: Mapping[str, float],
+    tolerance_pct: float,
+) -> Iterable[ValidationError]:
+    """(k) The analyst's entry anchor must be within tolerance of the latest close.
+
+    Catches calibration drift the directional check can miss: a bracket whose
+    target/stop happen to straddle the latest close can still have been *sized*
+    against a stale reference, mis-stating notional and risk. Drift beyond
+    ``tolerance_pct`` of the latest ``ohlcv_bars`` close is flagged for redraft
+    (the recurring 3+-cycle pattern the PM narrative named on 2026-05-29).
+
+    Scoped to equity entries that fill at the live quote (see
+    :func:`_entry_anchor_at_live`); patient-retest and breakout entries are
+    exempt. A ticker absent from ``underlying_prices`` is skipped.
+    """
+    live = _live_equity_close(rec, underlying_prices)
+    if live is None:
+        return
+    anchor = _entry_anchor_at_live(rec)
+    if anchor is None or anchor <= 0:
+        return
+    drift_pct = abs(anchor - live) / live * 100.0
+    if drift_pct > tolerance_pct:
+        yield ValidationError(
+            field_path=f"{field_prefix}.position_size",
+            rule="reference_price_staleness",
+            message=(
+                f"{rec.recommendation_id}: entry anchor {anchor:.4f} is {drift_pct:.1f}% from "
+                f"the latest recorded close {live} (tolerance {tolerance_pct}%); the bracket "
+                "was sized against a stale price — re-anchor entry/target/stop to the "
+                "current price"
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Layer-3 referential integrity
 # ---------------------------------------------------------------------------
 
@@ -432,6 +650,8 @@ def validate_analyst_output(
     retrieval_store: RetrievalStore,
     active_sectors: frozenset[str],
     conviction_bands: dict[int, tuple[float, float]] | None = None,
+    underlying_prices: Mapping[str, float] | None = None,
+    price_staleness_tolerance_pct: float | None = None,
 ) -> ValidationResult:
     """Run Layer-2 + Layer-3 checks on *output*.
 
@@ -451,6 +671,16 @@ def validate_analyst_output(
         Mapping ``conviction_level`` → ``(lower_pct, upper_pct)`` for the
         soft sizing-band warning. Defaults to
         :data:`DEFAULT_CONVICTION_BANDS`.
+    underlying_prices:
+        Per-ticker latest ``ohlcv_bars`` close (the guardrail library's
+        ``MarketInputs.underlying_prices``), used by the ALP-742 bracket
+        price-coherence and reference-price-staleness checks. ``None`` (or a
+        ticker absent from the map) skips those checks — production always
+        threads the live close map through from the harness.
+    price_staleness_tolerance_pct:
+        Maximum tolerated drift between the analyst's implied entry anchor and
+        the live close before the recommendation is flagged for redraft.
+        Defaults to :data:`DEFAULT_PRICE_STALENESS_TOLERANCE_PCT`.
 
     Returns
     -------
@@ -458,6 +688,11 @@ def validate_analyst_output(
         ``is_valid=True`` iff no errors. Warnings never disqualify.
     """
     bands = conviction_bands if conviction_bands is not None else DEFAULT_CONVICTION_BANDS
+    tolerance = (
+        price_staleness_tolerance_pct
+        if price_staleness_tolerance_pct is not None
+        else DEFAULT_PRICE_STALENESS_TOLERANCE_PCT
+    )
     errors: list[ValidationError] = []
     warnings: list[ValidationWarning] = []
     if output.mode == "normal" and output.recommendations is not None:
@@ -489,6 +724,20 @@ def validate_analyst_output(
                     rec, field_prefix=field_prefix, retrieval_store=retrieval_store
                 )
             )
+            if underlying_prices is not None:
+                errors.extend(
+                    _check_bracket_directional_coherence(
+                        rec, field_prefix=field_prefix, underlying_prices=underlying_prices
+                    )
+                )
+                errors.extend(
+                    _check_reference_price_staleness(
+                        rec,
+                        field_prefix=field_prefix,
+                        underlying_prices=underlying_prices,
+                        tolerance_pct=tolerance,
+                    )
+                )
     elif output.mode == "watchlist" and output.watchlist is not None:
         for k, entry in enumerate(output.watchlist):
             errors.extend(
