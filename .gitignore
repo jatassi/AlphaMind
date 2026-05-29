@@ -27,3 +27,4 @@ opencode.json
 
 # Verification-run diagnostic archives (LLM-call dumps, prompts, responses)
 .archive/
+archive/
