@@ -39,6 +39,7 @@ from alphamind.decision.analyst.models import (
     Recommendation,
     StrategyLeg,
     Target,
+    TimeCondition,
     WatchlistEntry,
 )
 from alphamind.decision.analyst.validation import (
@@ -1084,6 +1085,280 @@ class TestExampleOutputSmoke:
         )
         assert result.is_valid is True
         assert result.warnings == ()
+
+
+# ---------------------------------------------------------------------------
+# Bracket price coherence + reference-price staleness (ALP-742)
+# ---------------------------------------------------------------------------
+
+
+def _equity_rec(
+    *,
+    ticker: str,
+    direction: str,
+    entry: EntryOrder,
+    target_price: float,
+    stop_trigger: float | None,
+    stop_comparator: str,
+    quantity: float,
+    dollar_value: float,
+    entry_window: EntryWindow | None = None,
+    entry_window_rationale: str | None = None,
+) -> Recommendation:
+    """Build an equity recommendation with an explicit bracket geometry.
+
+    ``stop_trigger=None`` omits the price-stop leg (an OTO bracket) — a soft
+    event leg stands in as the required hard... no: a hard time leg keeps the
+    at-least-one-hard-leg invariant satisfied without a price stop.
+    """
+    legs: tuple[InvalidationLeg, ...]
+    rationale: tuple[InvalidationRationale, ...]
+    if stop_trigger is not None:
+        legs = (
+            InvalidationLeg(
+                leg_id="INV-1",
+                type="price",
+                is_hard=True,
+                condition=PriceCondition(
+                    underlying_trigger=Symbol(ticker),
+                    comparator=stop_comparator,  # type: ignore[arg-type]
+                    trigger_price=price(stop_trigger),
+                ),
+                order_parameters=OrderParameters(order_type="market"),
+            ),
+        )
+        rationale = (InvalidationRationale(leg_id="INV-1", rationale="Break contradicts thesis."),)
+    else:
+        legs = (
+            InvalidationLeg(
+                leg_id="INV-1",
+                type="time",
+                is_hard=True,
+                condition=TimeCondition(deadline=_ts("2026-04-24T20:00:00Z")),
+                order_parameters=OrderParameters(order_type="market"),
+            ),
+        )
+        rationale = (InvalidationRationale(leg_id="INV-1", rationale="Horizon resolves thesis."),)
+    return _make_recommendation(
+        instrument=InstrumentEquity(
+            asset_type="equity",
+            ticker=Symbol(ticker),
+            direction=direction,  # type: ignore[arg-type]
+        ),
+        underlying=ticker,
+        sector="financials",
+        conviction_level=3,
+        entry_order=entry,
+        position_size=PositionSize(
+            quantity=quantity, dollar_value=money(dollar_value), pct_of_portfolio=2.6
+        ),
+        target=Target(
+            target_type="absolute_price", price=price(target_price), dollar_pl_target=money(100.0)
+        ),
+        invalidation_legs=legs,
+        invalidation_rationale=rationale,
+        entry_window=entry_window,
+        entry_window_rationale=entry_window_rationale,
+    )
+
+
+class TestBracketPriceCoherence:
+    """ALP-742 — a stale price anchor produces bracket geometry that fails to
+    straddle the live ohlcv close, which the broker then rejects. The validator
+    flags it before submission so the analyst redrafts."""
+
+    def test_jpm_short_stale_anchor_below_live_is_directional_error(self) -> None:
+        """REC-1 JPM short (inv-20260529T153000Z): market entry sized at ~$260,
+        target $250, protective stop $270 while JPM traded $297.56. The stop sits
+        *below* the live price — incoherent for a short — so the broker rejected
+        ``stop_loss.stop_price must be >= base_price + 0.01``."""
+        rec = _equity_rec(
+            ticker="JPM",
+            direction="short",
+            entry=EntryOrder(type="market"),
+            target_price=250.0,
+            stop_trigger=270.0,
+            stop_comparator=">=",
+            quantity=10.0,
+            dollar_value=2600.0,
+        )
+        result = validate_analyst_output(
+            _make_output(recommendations=(rec,)),
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            underlying_prices={"JPM": 297.5601},
+        )
+        assert result.is_valid is False
+        rules = [e.rule for e in result.errors]
+        assert "bracket_directional_coherence" in rules
+
+    def test_crwd_long_target_at_or_below_live_is_directional_error(self) -> None:
+        """REC-1 CRWD long (inv-20260529T040000Z): +6% target $466 was already
+        at/below the live price, so the broker rejected ``take_profit.limit_price
+        must be >= base_price + 0.01``."""
+        rec = _equity_rec(
+            ticker="CRWD",
+            direction="long",
+            entry=EntryOrder(type="market"),
+            target_price=466.0,
+            stop_trigger=415.0,
+            stop_comparator="<=",
+            quantity=5.0,
+            dollar_value=2200.0,
+        )
+        result = validate_analyst_output(
+            _make_output(recommendations=(rec,)),
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            underlying_prices={"CRWD": 466.50},
+        )
+        assert result.is_valid is False
+        rules = [e.rule for e in result.errors]
+        assert "bracket_directional_coherence" in rules
+
+    def test_coherent_short_passes(self) -> None:
+        """A short whose stop sits above and target below the live close is
+        coherent — no directional error."""
+        rec = _equity_rec(
+            ticker="JPM",
+            direction="short",
+            entry=EntryOrder(type="market"),
+            target_price=285.0,
+            stop_trigger=305.0,
+            stop_comparator=">=",
+            quantity=10.0,
+            dollar_value=2975.0,
+        )
+        result = validate_analyst_output(
+            _make_output(recommendations=(rec,)),
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            underlying_prices={"JPM": 297.56},
+        )
+        assert [e.rule for e in result.errors] == []
+
+    def test_coherent_long_passes(self) -> None:
+        """A long whose target sits above and stop below the live close is
+        coherent — no directional error."""
+        rec = _equity_rec(
+            ticker="CRWD",
+            direction="long",
+            entry=EntryOrder(type="market"),
+            target_price=460.0,
+            stop_trigger=420.0,
+            stop_comparator="<=",
+            quantity=5.0,
+            dollar_value=2200.0,
+        )
+        result = validate_analyst_output(
+            _make_output(recommendations=(rec,)),
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            underlying_prices={"CRWD": 440.0},
+        )
+        assert [e.rule for e in result.errors] == []
+
+    def test_stale_sizing_anchor_with_straddling_geometry_is_staleness_error(self) -> None:
+        """Geometry can straddle the live close (directional check passes) while
+        the *sizing* anchor — ``dollar_value / quantity`` — has drifted past
+        tolerance. The staleness guard catches that calibration drift on its own:
+        anchor ~$282 (2820/10) vs live $300 is 6% > 5%."""
+        rec = _equity_rec(
+            ticker="JPM",
+            direction="short",
+            entry=EntryOrder(type="market"),
+            target_price=285.0,
+            stop_trigger=310.0,
+            stop_comparator=">=",
+            quantity=10.0,
+            dollar_value=2820.0,
+        )
+        result = validate_analyst_output(
+            _make_output(recommendations=(rec,)),
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            underlying_prices={"JPM": 300.0},
+        )
+        assert result.is_valid is False
+        rules = [e.rule for e in result.errors]
+        assert "reference_price_staleness" in rules
+        assert "bracket_directional_coherence" not in rules
+
+    def test_stop_limit_breakout_long_above_live_passes(self) -> None:
+        """A breakout long triggers *above* the live quote on purpose: the
+        bracket is coherent against the trigger price, so neither check fires."""
+        rec = _equity_rec(
+            ticker="JPM",
+            direction="long",
+            entry=EntryOrder(type="stop_limit", limit_price=price(320.0), stop_price=price(320.0)),
+            target_price=340.0,
+            stop_trigger=310.0,
+            stop_comparator="<=",
+            quantity=10.0,
+            dollar_value=3200.0,
+        )
+        result = validate_analyst_output(
+            _make_output(recommendations=(rec,)),
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            underlying_prices={"JPM": 300.0},
+        )
+        rules = [e.rule for e in result.errors]
+        assert "bracket_directional_coherence" not in rules
+        assert "reference_price_staleness" not in rules
+
+    def test_patient_retest_limit_away_from_live_passes(self) -> None:
+        """A patient-retest limit (limit + entry_window) deliberately rests away
+        from the live quote — coherence is judged against the limit, and
+        staleness is exempt."""
+        rec = _equity_rec(
+            ticker="JPM",
+            direction="long",
+            entry=EntryOrder(type="limit", limit_price=price(280.0)),
+            target_price=295.0,
+            stop_trigger=270.0,
+            stop_comparator="<=",
+            quantity=10.0,
+            dollar_value=2800.0,
+            entry_window=EntryWindow(
+                deadline=_ts("2026-04-24T12:00:00Z"),
+                decay_type="gradual",
+                rationale="Wait for a pullback to the retest level.",
+            ),
+            entry_window_rationale="Pullback to the retest level is the intended entry.",
+        )
+        result = validate_analyst_output(
+            _make_output(recommendations=(rec,)),
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            underlying_prices={"JPM": 300.0},
+        )
+        rules = [e.rule for e in result.errors]
+        assert "bracket_directional_coherence" not in rules
+        assert "reference_price_staleness" not in rules
+
+    def test_missing_live_price_skips_checks(self) -> None:
+        """A ticker absent from ``underlying_prices`` is skipped — the guardrail
+        tool already gates unpriced tickers upstream."""
+        rec = _equity_rec(
+            ticker="JPM",
+            direction="short",
+            entry=EntryOrder(type="market"),
+            target_price=250.0,
+            stop_trigger=270.0,
+            stop_comparator=">=",
+            quantity=10.0,
+            dollar_value=2600.0,
+        )
+        result = validate_analyst_output(
+            _make_output(recommendations=(rec,)),
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            underlying_prices={},
+        )
+        rules = [e.rule for e in result.errors]
+        assert "bracket_directional_coherence" not in rules
+        assert "reference_price_staleness" not in rules
 
 
 # ---------------------------------------------------------------------------

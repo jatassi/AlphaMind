@@ -19,6 +19,8 @@ from unittest.mock import patch
 
 import pytest
 
+from alphamind._kernel.ids import InvocationId, RecommendationId, Symbol
+from alphamind._kernel.money import money, price
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -35,7 +37,19 @@ from alphamind.decision.analyst.harness import (
     TimeoutFailure,
     invoke_analyst,
 )
-from alphamind.decision.analyst.models import AnalystOutput
+from alphamind.decision.analyst.models import (
+    AnalystOutput,
+    EntryOrder,
+    GuardrailValidationResult,
+    InstrumentEquity,
+    InvalidationLeg,
+    InvalidationRationale,
+    OrderParameters,
+    PositionSize,
+    PriceCondition,
+    Recommendation,
+    Target,
+)
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.risk_guardrails.guardrail_evaluation import (
@@ -48,6 +62,8 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     LibraryConfig,
     MarketInputs,
     PortfolioStateSnapshot,
+    RuleProjection,
+    Status,
 )
 from alphamind.risk_guardrails.state_delivery.validation_tool import ValidationToolState
 
@@ -1224,3 +1240,136 @@ async def test_tokens_used_accumulates_across_retry(
     assert result.tool_calls_used == 3
     assert result.tokens_used.input_tokens == 180
     assert result.tokens_used.output_tokens == 170
+
+
+# ---------------------------------------------------------------------------
+# Bracket price-coherence wiring (ALP-742): the harness threads the live-close
+# map (MarketInputs.underlying_prices) into the validator, so a stale-anchor
+# bracket is rejected pre-emit and the analyst redrafts / fails closed.
+# ---------------------------------------------------------------------------
+
+
+def _abc_short_payload(*, target: float, stop: float, dollar_value: float) -> dict[str, Any]:
+    """A full normal-mode payload: one ABC short with the given bracket geometry.
+
+    ABC is priced at ``_SPOT`` (100.0) by the ``_market`` fixture. Built from the
+    typed model and dumped to JSON so the parser round-trips it without
+    hand-coding the schema shape.
+    """
+    rec = Recommendation(
+        recommendation_id=RecommendationId("REC-1"),
+        instrument=InstrumentEquity(asset_type="equity", ticker=Symbol("ABC"), direction="short"),
+        underlying=Symbol("ABC"),
+        sector="tech",
+        conviction_level=3,
+        entry_order=EntryOrder(type="market"),
+        position_size=PositionSize(
+            quantity=10, dollar_value=money(dollar_value), pct_of_portfolio=2.6
+        ),
+        target=Target(
+            target_type="absolute_price", price=price(target), dollar_pl_target=money(100.0)
+        ),
+        invalidation_legs=(
+            InvalidationLeg(
+                leg_id="INV-1",
+                type="price",
+                is_hard=True,
+                condition=PriceCondition(
+                    underlying_trigger=Symbol("ABC"), comparator=">=", trigger_price=price(stop)
+                ),
+                order_parameters=OrderParameters(order_type="market"),
+            ),
+        ),
+        time_expectation_hours=18.0,
+        guardrail_validation_result=GuardrailValidationResult(
+            overall="PASS",
+            per_rule=(
+                RuleProjection(
+                    rule="single_short_max_pct",
+                    status=Status.PASS,
+                    current=0.0,
+                    limit=5.0,
+                    projected_after=2.6,
+                    headroom_remaining=2.4,
+                    unit="% of portfolio",
+                ),
+            ),
+            checked_at=datetime(2026, 4, 28, 14, 31, tzinfo=UTC),
+        ),
+        thesis_narrative="ABC is the lone laggard versus its sector breadth.",
+        target_rationale="Continuation of the active divergence for one more session.",
+        invalidation_rationale=(
+            InvalidationRationale(
+                leg_id="INV-1", rationale="A rally through the stop breaks the thesis."
+            ),
+        ),
+        position_size_rationale="Conviction-3 sizing inside the advisory band.",
+        counterarguments_acknowledged="Bear case is partially priced.",
+    )
+    out = AnalystOutput(
+        invocation_id=InvocationId("inv-abc"),
+        timestamp=datetime(2026, 4, 28, 14, 31, tzinfo=UTC),
+        mode="normal",
+        recommendations=(rec,),
+    )
+    return out.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_stale_anchor_bracket_fails_closed_after_retry(
+    agent_config: BaseAgentConfig,
+    archive_root: Path,
+    initial_validation_state: ValidationToolState,
+    retrieval_store: RetrievalStore,
+    active_sectors: frozenset[str],
+) -> None:
+    """A short whose stop ($85) sits below the live close ($100) — sized at a
+    stale ~$80 anchor — is rejected pre-emit on both attempts, so the harness
+    fails closed (MalformedOutputFailure) and emits nothing."""
+    incoherent = _abc_short_payload(target=75.0, stop=85.0, dollar_value=800.0)
+    stub = _make_stub_query([_make_sdk_response(incoherent), _make_sdk_response(incoherent)])
+
+    with pytest.raises(MalformedOutputFailure):
+        await invoke_analyst(
+            agent_config=agent_config,
+            user_message="Produce analyst output.",
+            invocation_id="inv-abc",
+            initial_validation_state=initial_validation_state,
+            retrieval_store=retrieval_store,
+            active_sectors=active_sectors,
+            archive_root=archive_root,
+            as_of=_AS_OF,
+            sdk_query_fn=stub,
+        )
+
+
+@pytest.mark.asyncio
+async def test_stale_anchor_bracket_redrafted_to_coherent_succeeds(
+    agent_config: BaseAgentConfig,
+    archive_root: Path,
+    initial_validation_state: ValidationToolState,
+    retrieval_store: RetrievalStore,
+    active_sectors: frozenset[str],
+) -> None:
+    """Attempt 1 ships the stale-anchor bracket (rejected); the corrective retry
+    re-anchors to the live close ($100) with a coherent bracket and succeeds."""
+    incoherent = _abc_short_payload(target=75.0, stop=85.0, dollar_value=800.0)
+    coherent = _abc_short_payload(target=90.0, stop=110.0, dollar_value=1000.0)
+    stub = _make_stub_query([_make_sdk_response(incoherent), _make_sdk_response(coherent)])
+
+    result = await invoke_analyst(
+        agent_config=agent_config,
+        user_message="Produce analyst output.",
+        invocation_id="inv-abc",
+        initial_validation_state=initial_validation_state,
+        retrieval_store=retrieval_store,
+        active_sectors=active_sectors,
+        archive_root=archive_root,
+        as_of=_AS_OF,
+        sdk_query_fn=stub,
+    )
+
+    assert isinstance(result, HarnessSuccess)
+    assert result.retry_count == 1
+    assert result.output.recommendations is not None
+    assert float(result.output.recommendations[0].target.price) == 90.0
