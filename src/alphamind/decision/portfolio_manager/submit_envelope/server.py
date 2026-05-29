@@ -14,6 +14,7 @@ closure.
 from __future__ import annotations
 
 import dataclasses
+import logging
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -40,6 +41,7 @@ from alphamind.decision.portfolio_manager.submit_envelope.process import (
     _process_commands,
     _safe_derive_pm_command_id,
     _serialize_response,
+    _strip_analyst_only_command_fields,
     _unwrap_envelope_args,
     _validate_envelope_payload,
 )
@@ -66,6 +68,8 @@ if TYPE_CHECKING:
 
 _SERVER_NAME = "alphamind_execution_oms_submit"
 _TOOL_NAME = "submit_envelope"
+
+logger = logging.getLogger(__name__)
 
 
 def build_broker_routing_kwargs(
@@ -309,6 +313,24 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
     raw_args_for_log = dict(args)
     args = _unwrap_envelope_args(args)
 
+    # Step 0.5: tolerant strip of analyst-only fields the PM copies verbatim
+    # from the analyst Recommendation into an OPEN command (ALP-736). The
+    # analyst schema is a superset of the OMS command schema, so
+    # ``delta_adjusted_exposure`` / ``leg_id`` / event-leg ``order_parameters``
+    # ride along into the ``extra="forbid"`` command sub-models and reject the
+    # whole command — silently losing a PM-*approved* recommendation when the
+    # self-repair retry loop stalls on a field it doesn't know to drop.
+    # ``entry_window`` is deliberately preserved (ALP-737 threads it to the
+    # bracket). The strip is logged so the normalization is never invisible.
+    args, stripped_paths = _strip_analyst_only_command_fields(args)
+    if stripped_paths:
+        logger.info(
+            "submit_envelope normalized %d analyst-only field(s) off PM command(s) "
+            "before validation: %s",
+            len(stripped_paths),
+            ", ".join(stripped_paths),
+        )
+
     # Step 1: Layer-1 — coerce to PMEnvelope.
     try:
         envelope = _validate_envelope_payload(args)
@@ -324,6 +346,20 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
             raw_args=raw_args_for_log,
             validation_error_repr=str(exc),
             command_id=synthetic_command_id,
+        )
+        # Surface every parse failure to the operator log (ALP-736). The
+        # production scheduler path runs with ``defer_writeback=True``, so the
+        # ``envelope_parse_failed`` activity-log write below is skipped there and
+        # the rejection would otherwise be visible ONLY in
+        # ``failed_submission_log.json`` — the silent-drop the issue describes.
+        # A WARNING reaches ``collector.log`` regardless of the writeback gate so
+        # a lost PM-approved recommendation is never buried.
+        logger.warning(
+            "submit_envelope Layer-1 parse failure (command_id=%s): %s — the "
+            "PM-authored envelope was not submitted; see failed_submission_log "
+            "for the full payload.",
+            synthetic_command_id,
+            _format_first_error(exc),
         )
         state = dataclasses.replace(
             state,

@@ -9,6 +9,7 @@ test_validation_tool_mcp.py shape.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -1364,6 +1365,98 @@ async def test_layer_0_unwrap_skipped_when_envelope_value_not_dict() -> None:
     failed_log = get_failed_submission_log(get_state())
     assert len(failed_log) == 1
     assert failed_log[0].raw_args == non_dict_envelope
+
+
+# ---------------------------------------------------------------------------
+# 11c. Layer-0.5 analyst-only-field strip (ALP-736)
+# ---------------------------------------------------------------------------
+
+
+def _inject_analyst_only_fields(raw: dict[str, Any]) -> dict[str, Any]:
+    """Mutate a dumped analyst envelope's OPEN command to carry the analyst-only
+    leaf fields the PM copies verbatim from the analyst Recommendation — the
+    real MRVL ``inv-20260528T080000Z`` failure shape (``delta_adjusted_exposure``
+    + per-leg ``leg_id`` + an ``entry_window`` block)."""
+    command = raw["commands"][0]
+    command["position_size"]["delta_adjusted_exposure"] = 2000
+    command["position_size"]["pct_of_portfolio"] = 1.0
+    for leg_index, leg in enumerate(command["invalidation_legs"]):
+        leg["leg_id"] = f"INV-{leg_index + 1}"
+    command["entry_window"] = {
+        "deadline": "2026-05-28T19:55:00Z",
+        "decay_type": "gradual",
+        "rationale": "Edge attenuates with time per [SA-TECH-TC-1].",
+    }
+    return raw
+
+
+@pytest.mark.asyncio
+async def test_layer_0_5_strips_analyst_only_fields_so_approved_open_is_accepted() -> None:
+    """ALP-736: an OPEN command carrying analyst-only ``delta_adjusted_exposure``
+    and ``leg_id`` fields — which previously rejected with ``extra_forbidden``
+    and silently lost the PM-approved trade — is now normalized at the parse
+    boundary and accepted. The MRVL 2026-05-28 loss no longer reproduces."""
+    envelope = _make_analyst_envelope()
+    get_state, server, _ = _build_state_and_server(envelope_for_routing=envelope)
+
+    raw_args = _inject_analyst_only_fields(envelope.model_dump(mode="json"))
+
+    text, is_error = await _invoke_mcp_tool(server, "submit_envelope", raw_args)
+    assert not is_error, text
+
+    payload = json.loads(text)
+    assert payload["submission_results"][0]["status"] == "accepted"
+    # The recommendation reached the broker path (cumulative state advanced),
+    # not the failed_submission_log.
+    assert len(get_state().validation_state.accumulated_deltas) == 1
+
+
+@pytest.mark.asyncio
+async def test_layer_0_5_strip_threads_entry_window_through_to_the_command() -> None:
+    """ALP-736 / ALP-737: ``entry_window`` is preserved (not stripped) through
+    normalization, so the parsed command carries the analyst's deadline into the
+    submission log on its way to the bracket's ``entry_window_deadline``."""
+    from alphamind.decision.portfolio_manager.submit_envelope import get_submission_log
+
+    envelope = _make_analyst_envelope()
+    get_state, server, _ = _build_state_and_server(envelope_for_routing=envelope)
+
+    raw_args = _inject_analyst_only_fields(envelope.model_dump(mode="json"))
+
+    _text, is_error = await _invoke_mcp_tool(server, "submit_envelope", raw_args)
+    assert not is_error
+
+    logged = get_submission_log(get_state())[-1].envelope
+    open_command = logged.commands[0]
+    assert isinstance(open_command, OpenCommand)
+    assert open_command.entry_window is not None
+    assert open_command.entry_window.deadline == datetime(2026, 5, 28, 19, 55, tzinfo=UTC)
+    assert open_command.entry_window.decay_type == "gradual"
+
+
+@pytest.mark.asyncio
+async def test_layer_1_parse_failure_is_logged_for_operator(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """ALP-736: a residual Layer-1 parse failure (one normalization can't
+    repair) is surfaced to the operator log as a WARNING — not buried in
+    ``failed_submission_log.json``. The production scheduler path defers the
+    activity-log writeback, so this WARNING is the signal that reaches
+    ``collector.log`` regardless of the writeback gate."""
+    _get_state, server, _ = _build_state_and_server()
+
+    bogus_args: dict[str, Any] = {"garbage": "value"}
+
+    with caplog.at_level(
+        logging.WARNING,
+        logger="alphamind.decision.portfolio_manager.submit_envelope.server",
+    ):
+        _text, _is_error = await _invoke_mcp_tool(server, "submit_envelope", bogus_args)
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("Layer-1 parse failure" in r.getMessage() for r in warnings), [
+        r.getMessage() for r in warnings
+    ]
 
 
 # ---------------------------------------------------------------------------
