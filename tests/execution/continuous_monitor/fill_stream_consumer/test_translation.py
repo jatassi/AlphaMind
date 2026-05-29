@@ -102,6 +102,28 @@ class TestEquityFillEvent:
         assert record.regt_attribution is None
         assert record.live_execution_estimate is None
 
+    def test_oms_order_id_override_sets_order_id_and_redrives_fill_id(self) -> None:
+        """ALP-746 — when the consumer resolves the local PK by broker UUID, the
+        override sets ``order_id`` and the ``fill_id`` is derived from it (so the
+        same logical fill dedupes identically regardless of resolution path)."""
+        report = _equity_fill_report(
+            client_order_id="alpaca-generated-child-id",
+            alpaca_order_id=AlpacaOrderId("313f54b3-f429-431d-bce4-b291b17a5e72"),
+            event_type="filled",
+        )
+
+        report_derived = fill_report_to_fill_record(report)
+        resolved = fill_report_to_fill_record(report, oms_order_id="ORD-NVDA-target-abc")
+
+        assert report_derived is not None
+        assert resolved is not None
+        assert report_derived.order_id == "alpaca-generated-child-id"
+        assert resolved.order_id == "ORD-NVDA-target-abc"
+        # gateway_reference still carries the broker UUID for reconciliation.
+        assert resolved.gateway_reference == "313f54b3-f429-431d-bce4-b291b17a5e72"
+        # fill_id keys off order_id, so the resolved record gets a distinct id.
+        assert resolved.fill_id != report_derived.fill_id
+
 
 class TestNonFillEvents:
     @pytest.mark.parametrize(

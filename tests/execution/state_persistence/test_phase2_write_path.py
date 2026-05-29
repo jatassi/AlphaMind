@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from alphamind._kernel.ids import (
     AlpacaOrderId,
     BracketId,
+    ClientOrderId,
     EnvelopeId,
     InvocationId,
     OrderId,
@@ -53,6 +54,8 @@ from alphamind.commands.command_models import (
     PriceLeg,
     Target,
     Thesis,
+    TimeCondition,
+    TimeLeg,
 )
 from alphamind.commands.command_models import (
     ThesisComponent as OMSThesisComponent,
@@ -75,6 +78,7 @@ from alphamind.decision.portfolio_manager.submit_envelope import (
     FailedSubmissionEntry,
     SubmissionResult,
 )
+from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -418,6 +422,7 @@ def _open_command(
     dollar_value: float = 10_000.0,
     entry_window: EntryWindow | None = None,
     entry_order: EntryOrder | None = None,
+    invalidation_legs: tuple[PriceLeg | TimeLeg, ...] | None = None,
 ) -> OpenCommand:
     return OpenCommand(
         command_type="open",
@@ -432,7 +437,8 @@ def _open_command(
             pl_dollar=None,
             order_type="limit",
         ),
-        invalidation_legs=(
+        invalidation_legs=invalidation_legs
+        or (
             PriceLeg(
                 type="price",
                 is_hard=True,
@@ -1996,6 +2002,82 @@ async def test_open_command_persists_target_and_invalidation_legs(
         # bracket has TAKE_PROFIT + PRICE_STOP legs.
         assert "TAKE_PROFIT" in leg_types
         assert "PRICE_STOP" in leg_types
+
+
+async def test_open_command_stamps_captured_leg_ids_on_protective_orders(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-746 — a dispatch result's ``leg_alpaca_order_ids`` stamp the real
+    broker child ids onto the TAKE_PROFIT and PRICE_STOP orders; the entry
+    carries its own captured id and the TIME_STOP keeps the synthetic
+    placeholder (no broker counterpart)."""
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    entry_uuid = "20bd94b5-8586-4bcc-a175-8490e29a17aa"
+    tp_uuid = "313f54b3-f429-431d-bce4-b291b17a5e72"
+    sl_uuid = "fe223177-96c7-48b5-a402-98a5c7bfb558"
+
+    command = _open_command(
+        underlying=Symbol("NVDA"),
+        invalidation_legs=(
+            PriceLeg(
+                type="price",
+                is_hard=True,
+                condition=PriceCondition(
+                    underlying_trigger="NVDA", comparator="<=", trigger_price=price(750.0)
+                ),
+                order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
+            ),
+            TimeLeg(
+                type="time",
+                is_hard=True,
+                condition=TimeCondition(deadline=_NOW + timedelta(days=2)),
+                order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
+            ),
+        ),
+    )
+    envelope = _make_analyst_envelope(commands=(command,))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+    dispatch = BrokerDispatchResult(
+        alpaca_order_id=AlpacaOrderId(entry_uuid),
+        client_order_id=ClientOrderId(f"inv-{_INV_ID}.ENV-REC-1.0.0"),
+        status="accepted",
+        order_class="bracket",
+        payload_kind="equity",
+        raw_submission=None,
+        leg_alpaca_order_ids={
+            "take_profit": AlpacaOrderId(tp_uuid),
+            "stop_loss": AlpacaOrderId(sl_uuid),
+        },
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        dispatch_results=(dispatch,),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        rows = (await sess.execute(select(OrderRow))).scalars().all()
+        by_role = {r.order_role: r for r in rows}
+        assert by_role["ENTRY"].alpaca_order_id == entry_uuid
+        assert by_role["TAKE_PROFIT"].alpaca_order_id == tp_uuid
+        assert by_role["PRICE_STOP"].alpaca_order_id == sl_uuid
+        # TIME_STOP has no broker counterpart → synthetic placeholder retained.
+        assert by_role["TIME_STOP"].alpaca_order_id.startswith("alp-")
+        # The chain head must match the stamped id (OrderRecord invariant).
+        assert by_role["TAKE_PROFIT"].alpaca_order_id_chain_json == f'["{tp_uuid}"]'
+        assert by_role["PRICE_STOP"].alpaca_order_id_chain_json == f'["{sl_uuid}"]'
 
 
 async def test_adjust_command_cancels_old_protective_order_and_submits_new(

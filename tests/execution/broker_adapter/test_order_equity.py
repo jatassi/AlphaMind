@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from alpaca.trading.enums import OrderClass, OrderSide, OrderStatus, TimeInForce
+from alpaca.trading.enums import OrderType as AlpacaOrderType
 from alpaca.trading.requests import (
     LimitOrderRequest,
     MarketOrderRequest,
@@ -57,6 +58,7 @@ from alphamind.config.models.execution import (
     PaperHarness,
 )
 from alphamind.execution.broker_adapter import (
+    EquityLegAck,
     EquitySubmission,
     GatewaySubmissionFailed,
     Submitted,
@@ -209,6 +211,7 @@ def _make_fake_order(
     order_class: OrderClass = OrderClass.BRACKET,
     status: OrderStatus = OrderStatus.ACCEPTED,
     client_order_id: str = _CLIENT_ORDER_ID_INV,
+    legs: list[Any] | None = None,
 ) -> MagicMock:
     """Build a fake alpaca Order object with the fields submit_equity_* reads."""
     order = MagicMock()
@@ -216,7 +219,18 @@ def _make_fake_order(
     order.client_order_id = client_order_id
     order.status = status
     order.order_class = order_class
+    # alpaca-py returns ``list[Order] | None``; an explicit value keeps the
+    # leg-capture path (ALP-746) reading a real list rather than a MagicMock.
+    order.legs = legs
     return order
+
+
+def _make_fake_leg(order_type: AlpacaOrderType) -> MagicMock:
+    """A fake alpaca child Order carrying the fields leg capture reads."""
+    leg = MagicMock()
+    leg.id = uuid.uuid4()
+    leg.order_type = order_type
+    return leg
 
 
 # ---------------------------------------------------------------------------
@@ -474,6 +488,102 @@ async def test_open_bracket_stop_only_no_limit_price() -> None:
     req = captured[0]
     assert req.order_class == OrderClass.BRACKET
     assert req.stop_loss.limit_price is None
+
+
+# ---------------------------------------------------------------------------
+# ALP-746: capture native bracket / OTO protective-child ids at submission
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_open_bracket_captures_take_profit_and_stop_loss_leg_acks() -> None:
+    """A native BRACKET returns its TP (LIMIT) + SL (STOP) children on
+    ``Order.legs``; submission captures both real ids classified by role."""
+    tp_leg = _make_fake_leg(AlpacaOrderType.LIMIT)
+    sl_leg = _make_fake_leg(AlpacaOrderType.STOP)
+    fake_order = _make_fake_order(order_class=OrderClass.BRACKET, legs=[tp_leg, sl_leg])
+    client = MagicMock()
+    client.submit_order = MagicMock(return_value=fake_order)
+
+    cmd = _make_open_command(
+        target=_make_target(200.0), invalidation_legs=(_make_price_leg(trigger=150.0),)
+    )
+    result = await submit_equity_open(
+        cmd,
+        client=client,
+        execution=_make_execution_config(),
+        client_order_id=_CLIENT_ORDER_ID_INV,
+    )
+
+    assert isinstance(result, Submitted)
+    acks = result.payload.leg_acks
+    assert acks == (
+        EquityLegAck(alpaca_order_id=AlpacaOrderId(str(tp_leg.id)), role="take_profit"),
+        EquityLegAck(alpaca_order_id=AlpacaOrderId(str(sl_leg.id)), role="stop_loss"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_open_bracket_stop_limit_child_classified_as_stop_loss() -> None:
+    """A STOP_LIMIT protective child still classifies as the stop-loss leg."""
+    tp_leg = _make_fake_leg(AlpacaOrderType.LIMIT)
+    sl_leg = _make_fake_leg(AlpacaOrderType.STOP_LIMIT)
+    fake_order = _make_fake_order(order_class=OrderClass.BRACKET, legs=[tp_leg, sl_leg])
+    client = MagicMock()
+    client.submit_order = MagicMock(return_value=fake_order)
+
+    result = await submit_equity_open(
+        _make_open_command(),
+        client=client,
+        execution=_make_execution_config(),
+        client_order_id=_CLIENT_ORDER_ID_INV,
+    )
+
+    assert isinstance(result, Submitted)
+    assert {a.role for a in result.payload.leg_acks} == {"take_profit", "stop_loss"}
+    sl = next(a for a in result.payload.leg_acks if a.role == "stop_loss")
+    assert sl.alpaca_order_id == AlpacaOrderId(str(sl_leg.id))
+
+
+@pytest.mark.asyncio
+async def test_open_oto_captures_take_profit_leg_ack_only() -> None:
+    """An OTO (target, no price-stop) returns just the TP child → one ack."""
+    tp_leg = _make_fake_leg(AlpacaOrderType.LIMIT)
+    fake_order = _make_fake_order(order_class=OrderClass.OTO, legs=[tp_leg])
+    client = MagicMock()
+    client.submit_order = MagicMock(return_value=fake_order)
+
+    # target + time-only invalidation (no PriceLeg) → OTO
+    cmd = _make_open_command(invalidation_legs=(_make_time_leg(),))
+    result = await submit_equity_open(
+        cmd,
+        client=client,
+        execution=_make_execution_config(),
+        client_order_id=_CLIENT_ORDER_ID_INV,
+    )
+
+    assert isinstance(result, Submitted)
+    assert result.payload.leg_acks == (
+        EquityLegAck(alpaca_order_id=AlpacaOrderId(str(tp_leg.id)), role="take_profit"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_open_with_no_broker_legs_yields_empty_leg_acks() -> None:
+    """No ``Order.legs`` (SIMPLE / None payload) → no leg acks captured."""
+    fake_order = _make_fake_order(order_class=OrderClass.SIMPLE, legs=None)
+    client = MagicMock()
+    client.submit_order = MagicMock(return_value=fake_order)
+
+    result = await submit_equity_open(
+        _make_open_command(),
+        client=client,
+        execution=_make_execution_config(),
+        client_order_id=_CLIENT_ORDER_ID_INV,
+    )
+
+    assert isinstance(result, Submitted)
+    assert result.payload.leg_acks == ()
 
 
 # ---------------------------------------------------------------------------

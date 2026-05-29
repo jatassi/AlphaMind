@@ -30,6 +30,7 @@ from alpaca.trading.enums import (
     PositionIntent,
     TimeInForce,
 )
+from alpaca.trading.enums import OrderType as AlpacaOrderType
 from alpaca.trading.requests import (
     LimitOrderRequest,
     MarketOrderRequest,
@@ -281,13 +282,22 @@ def _make_fake_alpaca_order(
     order_class: OrderClass = OrderClass.SIMPLE,
     status: OrderStatus = OrderStatus.ACCEPTED,
     client_order_id: str = _CLIENT_ORDER_ID,
+    legs: list[MagicMock] | None = None,
 ) -> MagicMock:
     order = MagicMock()
     order.id = uuid.uuid4()
     order.client_order_id = client_order_id
     order.status = status
     order.order_class = order_class
+    order.legs = legs
     return order
+
+
+def _make_fake_leg(order_type: AlpacaOrderType) -> MagicMock:
+    leg = MagicMock()
+    leg.id = uuid.uuid4()
+    leg.order_type = order_type
+    return leg
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +371,50 @@ async def test_dispatch_open_equity_routes_to_submit_equity_open() -> None:
     assert submitted.symbol == "AAPL"
     assert submitted.order_class == OrderClass.BRACKET
     assert submitted.side == OrderSide.BUY
+
+
+@pytest.mark.asyncio
+async def test_dispatch_open_equity_bracket_carries_leg_alpaca_order_ids() -> None:
+    """A native bracket's captured protective children surface on the
+    BrokerDispatchResult as a role→real-id map (ALP-746)."""
+    tp_leg = _make_fake_leg(AlpacaOrderType.LIMIT)
+    sl_leg = _make_fake_leg(AlpacaOrderType.STOP)
+    fake_order = _make_fake_alpaca_order(order_class=OrderClass.BRACKET, legs=[tp_leg, sl_leg])
+    client = MagicMock()
+    client.submit_order = MagicMock(return_value=fake_order)
+
+    outcome = await dispatch_command_to_broker(
+        _equity_open_command(),
+        client=client,
+        queries=MagicMock(),
+        execution=_execution_config(),
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+    )
+
+    assert isinstance(outcome, Submitted)
+    assert outcome.payload.leg_alpaca_order_ids == {
+        "take_profit": str(tp_leg.id),
+        "stop_loss": str(sl_leg.id),
+    }
+
+
+@pytest.mark.asyncio
+async def test_dispatch_open_equity_simple_has_empty_leg_alpaca_order_ids() -> None:
+    """A SIMPLE equity submission carries no protective-leg map."""
+    fake_order = _make_fake_alpaca_order(order_class=OrderClass.SIMPLE, legs=None)
+    client = MagicMock()
+    client.submit_order = MagicMock(return_value=fake_order)
+
+    outcome = await dispatch_command_to_broker(
+        _equity_open_command(),
+        client=client,
+        queries=MagicMock(),
+        execution=_execution_config(),
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+    )
+
+    assert isinstance(outcome, Submitted)
+    assert outcome.payload.leg_alpaca_order_ids == {}
 
 
 # ---------------------------------------------------------------------------

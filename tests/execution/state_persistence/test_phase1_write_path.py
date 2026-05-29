@@ -966,6 +966,76 @@ async def test_exit_fill_closes_position_and_resolves_thesis(
     assert EventType.ORDER_FILLED.value in types
 
 
+async def test_take_profit_leg_fill_marks_leg_filled_and_closes_position(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-746 — a protective TAKE_PROFIT leg fill (the fill the consumer now
+    resolves to the leg row by captured UUID) integrates through Phase 1: the
+    leg order transitions to FILLED and the OPEN position closes out."""
+    from alphamind.execution.write_paths.phase1 import (
+        process_unprocessed_fills,
+    )
+    from tests.state._fk_substrate import stub_order_row
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    tp_order = _make_pending_entry_order(
+        order_id=OrderId("ord-tp-1"),
+        role=OrderRole.TAKE_PROFIT,
+        direction=OrderDirection.SELL,
+        position_id=PositionId("pos-1"),
+    )
+    entry_order = _make_pending_entry_order()
+    thesis_row, component_rows = thesis_record_to_rows(_make_thesis_with_resolved_components())
+    bracket_row, leg_rows = bracket_record_to_rows(_make_active_bracket())
+    leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
+    seeded_order_ids: set[str] = {entry_order.order_id, tp_order.order_id}
+    async with factory() as sess:
+        sess.add(position_record_to_row(_make_open_position()))
+        sess.add(thesis_row)
+        for crow in component_rows:
+            sess.add(crow)
+        sess.add(order_record_to_row(entry_order))
+        sess.add(order_record_to_row(tp_order))
+        for oid in leg_order_ids:
+            if oid not in seeded_order_ids:
+                sess.add(stub_order_row(oid, bracket_row.bracket_id))
+                seeded_order_ids.add(oid)
+        sess.add(bracket_row)
+        await sess.flush()
+        for lrow in leg_rows:
+            sess.add(lrow)
+        await sess.commit()
+    await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=98_500.0))
+    await _seed_drawdown_state(factory)
+    await _append_fill(
+        factory,
+        _make_unprocessed_fill(
+            fill_id="fill-tp-1",
+            order_id=OrderId("ord-tp-1"),
+            fill_price=160.0,
+            fill_quantity=10.0,
+        ),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        tp_row = await sess.get(OrderRow, "ord-tp-1")
+        assert tp_row is not None
+        assert tp_row.status == OrderStatus.FILLED.value
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        assert position_row_to_record(pos_row).status == PositionStatus.CLOSED
+
+
 async def test_multi_fill_ordering_produces_cumulative_state(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:

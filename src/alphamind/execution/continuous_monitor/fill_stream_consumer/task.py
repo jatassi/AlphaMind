@@ -46,6 +46,7 @@ from alphamind.execution.write_paths.order_status_sync import (
 )
 from alphamind.state.records import FillRecord
 from alphamind.state.tables.fill_records import FillRecordRow
+from alphamind.state.tables.orders import OrderRow
 
 log = logging.getLogger(__name__)
 
@@ -192,9 +193,30 @@ async def _persist_one(
     if record is None:
         await _sync_terminal_status_if_any(report, session_factory=session_factory)
         return
-    if enrichment_callable is not None:
-        record = await enrichment_callable(record)
     async with session_factory() as db:
+        # Resolve the local ``orders`` PK this fill applies to. The broker's
+        # client_order_id does not round-trip the OMS order id for equity
+        # entries (it carries the command id) or for native-bracket protective
+        # children (Alpaca generates it), so fall back to the captured broker
+        # UUID (ALP-746). Skip (with a loud log) when no local order matches —
+        # the fill_records.order_id FK would otherwise reject the insert.
+        oms_order_id = await _resolve_oms_order_id(db, report)
+        if oms_order_id is None:
+            log.warning(
+                "fill references no local order: client_order_id=%s alpaca_order_id=%s "
+                "event=%s — skipping (no orders row to attribute it to)",
+                report.client_order_id,
+                report.alpaca_order_id,
+                report.event_type,
+            )
+            return
+        if oms_order_id != record.order_id:
+            # Re-derive so ``order_id`` + ``fill_id`` reflect the resolved PK.
+            record = fill_report_to_fill_record(report, oms_order_id=oms_order_id)
+            if record is None:  # pragma: no cover — gates are identical to the first call
+                return
+        if enrichment_callable is not None:
+            record = await enrichment_callable(record)
         await append_fill_record(db, record)
         await db.commit()
 
@@ -227,8 +249,21 @@ async def _sync_terminal_status_if_any(
         return
     if report.cumulative_filled_quantity > 0:
         return
-    order_id = order_id_for_report(report)
     async with session_factory() as db:
+        # Resolve by broker UUID when the client_order_id doesn't name a local
+        # PK — this is the path an OCO sibling-cancel takes (the broker cancels
+        # the unfired protective leg, whose client_order_id Alpaca generated;
+        # only the captured leg UUID locates the local row). ALP-746.
+        order_id = await _resolve_oms_order_id(db, report)
+        if order_id is None:
+            log.debug(
+                "terminal status for unknown order: client_order_id=%s alpaca_order_id=%s "
+                "status=%s — skipping",
+                report.client_order_id,
+                report.alpaca_order_id,
+                terminal_status.value,
+            )
+            return
         transitioned = await sync_terminal_order_status(
             db,
             order_id=order_id,
@@ -242,6 +277,34 @@ async def _sync_terminal_status_if_any(
             order_id,
             terminal_status.value,
         )
+
+
+async def _resolve_oms_order_id(db: AsyncSession, report: FillReport) -> str | None:
+    """Resolve the local ``orders`` PK a fill / terminal event applies to.
+
+    Two-step resolution (ALP-746):
+
+    1. Treat the report-derived id (``parent_client_order_id or client_order_id``)
+       as a candidate PK — the historical / already-aligned path (and the only
+       path the test substrate exercises by hand-aligning the two).
+    2. Otherwise resolve by the broker UUID of the order that owns the local
+       row: for an mleg per-leg child that is the parent's
+       ``parent_alpaca_order_id`` (legs do not own ``orders`` rows); for an
+       equity entry / close / native-bracket protective child it is the report's
+       own ``alpaca_order_id``. The captured-at-submission UUID was written onto
+       that row (entry / close / TAKE_PROFIT / PRICE_STOP), so the lookup hits.
+
+    Returns ``None`` when neither resolves — the caller declines to attribute
+    the event rather than violate the ``fill_records.order_id`` FK.
+    """
+    candidate_pk = order_id_for_report(report)
+    row = await db.get(OrderRow, candidate_pk)
+    if row is not None:
+        return row.order_id
+    uuid_key = report.parent_alpaca_order_id or report.alpaca_order_id
+    stmt = select(OrderRow).where(OrderRow.alpaca_order_id == uuid_key)
+    row = (await db.execute(stmt)).scalars().first()
+    return row.order_id if row is not None else None
 
 
 async def _replay_recovery(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
@@ -115,6 +117,7 @@ async def _writeback_open(
     command: OpenCommand,
     result: SubmissionResult,
     submitted_alpaca_order_id: str | None = None,
+    submitted_leg_alpaca_order_ids: Mapping[str, str] | None = None,
 ) -> None:
     """OPEN: insert position (PENDING), thesis (ACTIVE w/ components), bracket
     (PENDING_ENTRY), entry order, take-profit + invalidation leg orders.
@@ -134,9 +137,19 @@ async def _writeback_open(
 
     When ``submitted_alpaca_order_id`` is supplied (broker-routing coordinated
     swap, story 03e / ALP-390), the persisted entry order carries the broker's
-    real Alpaca order id; protective leg orders keep the synthetic
-    ``alp-{order_id}`` placeholder until ``trade_updates`` ack each child leg.
+    real Alpaca order id.
+
+    ``submitted_leg_alpaca_order_ids`` (ALP-746) maps a native bracket / OTO's
+    protective role (``"take_profit"`` / ``"stop_loss"``) to the broker's real
+    child id, captured at submission off ``Order.legs``. The take-profit id
+    stamps the TAKE_PROFIT order and the stop-loss id stamps the first
+    PRICE_STOP order, so a later protective fill / OCO sibling-cancel resolves
+    to the local leg row. Legs with no broker counterpart — TIME_STOP and the
+    advisory EVENT legs (and any PRICE_STOP beyond the one Alpaca brackets,
+    which submits a single stop child) — keep the synthetic ``alp-{order_id}``
+    placeholder.
     """
+    leg_ids = submitted_leg_alpaca_order_ids or {}
     ticker = _instrument_ticker_key(command.instrument)
     timestamp = datetime.now(UTC)
     ids = _new_open_ids(ticker, command_id=result.command_id)
@@ -210,36 +223,22 @@ async def _writeback_open(
         role=OrderRole.ENTRY,
         alpaca_order_id_override=submitted_alpaca_order_id,
     )
-    target_order = _build_take_profit_order(
-        order_id=target_order_id,
-        position_id=ids["position_id"],
-        bracket_id=ids["bracket_id"],
-        thesis_id=ids["thesis_id"],
+    target_order, invalidation_orders = _build_protective_orders(
+        context=_ProtectiveOrderContext(
+            position_id=ids["position_id"],
+            bracket_id=ids["bracket_id"],
+            thesis_id=ids["thesis_id"],
+            quantity=command.position_size.quantity,
+            order_direction=close_order_direction,
+            instrument_spec=entry_instrument_spec,
+            pm_command_id=result.command_id,
+            timestamp=timestamp,
+        ),
         target=command.target,
-        quantity=command.position_size.quantity,
-        order_direction=close_order_direction,
-        instrument_spec=entry_instrument_spec,
-        pm_command_id=result.command_id,
-        timestamp=timestamp,
+        target_order_id=target_order_id,
+        invalidation_leg_orders=invalidation_leg_orders,
+        leg_alpaca_order_ids=leg_ids,
     )
-    invalidation_orders: list[OrderRecord] = []
-    for wire_leg, leg_order_id in invalidation_leg_orders:
-        if leg_order_id is None or isinstance(wire_leg, EventLeg):
-            continue
-        invalidation_orders.append(
-            _build_invalidation_leg_order(
-                order_id=leg_order_id,
-                position_id=ids["position_id"],
-                bracket_id=ids["bracket_id"],
-                thesis_id=ids["thesis_id"],
-                wire_leg=wire_leg,
-                quantity=command.position_size.quantity,
-                order_direction=close_order_direction,
-                instrument_spec=entry_instrument_spec,
-                pm_command_id=result.command_id,
-                timestamp=timestamp,
-            )
-        )
 
     handle.session.add(position_record_to_row(position))
     parent_thesis_row, child_rows = thesis_record_to_rows(thesis)
@@ -345,6 +344,85 @@ def _new_open_ids(ticker: str, *, command_id: str) -> dict[str, str]:
     }
 
 
+@dataclass(frozen=True)
+class _ProtectiveOrderContext:
+    """Shared identifiers + sizing for a bracket's protective-leg orders.
+
+    Bundled so :func:`_build_protective_orders` threads one context object
+    rather than re-listing every id / sizing field per builder call.
+    """
+
+    position_id: str
+    bracket_id: str
+    thesis_id: str
+    quantity: float
+    order_direction: OrderDirection | None
+    instrument_spec: InstrumentSpec
+    pm_command_id: str
+    timestamp: datetime
+
+
+def _build_protective_orders(
+    *,
+    context: _ProtectiveOrderContext,
+    target: Target,
+    target_order_id: str,
+    invalidation_leg_orders: Sequence[tuple[InvalidationLeg, str | None]],
+    leg_alpaca_order_ids: Mapping[str, str],
+) -> tuple[OrderRecord, list[OrderRecord]]:
+    """Build the TAKE_PROFIT order + one order per price/time invalidation leg.
+
+    Native bracket / OTO protective children captured at submission
+    (``leg_alpaca_order_ids``, ALP-746) stamp their real broker ids: the
+    ``take_profit`` id onto the TAKE_PROFIT order, the ``stop_loss`` id onto the
+    first PriceLeg's PRICE_STOP order (Alpaca's native bracket carries exactly
+    one stop child, mapped from the first PriceLeg by
+    ``order_equity._bracket_params``). A TimeLeg (TIME_STOP), the advisory
+    EVENT legs, and any PRICE_STOP beyond the first have no broker counterpart
+    and keep the synthetic ``alp-{order_id}`` placeholder.
+    """
+    c = context
+    target_order = _build_take_profit_order(
+        order_id=target_order_id,
+        position_id=c.position_id,
+        bracket_id=c.bracket_id,
+        thesis_id=c.thesis_id,
+        target=target,
+        quantity=c.quantity,
+        order_direction=c.order_direction,
+        instrument_spec=c.instrument_spec,
+        pm_command_id=c.pm_command_id,
+        timestamp=c.timestamp,
+        alpaca_order_id_override=leg_alpaca_order_ids.get("take_profit"),
+    )
+    stop_loss_override = leg_alpaca_order_ids.get("stop_loss")
+    invalidation_orders: list[OrderRecord] = []
+    for wire_leg, leg_order_id in invalidation_leg_orders:
+        if leg_order_id is None or isinstance(wire_leg, EventLeg):
+            continue
+        if isinstance(wire_leg, PriceLeg) and stop_loss_override is not None:
+            leg_override: str | None = stop_loss_override
+            stop_loss_override = None
+        else:
+            leg_override = None
+        invalidation_orders.append(
+            _build_invalidation_leg_order(
+                order_id=leg_order_id,
+                position_id=c.position_id,
+                bracket_id=c.bracket_id,
+                thesis_id=c.thesis_id,
+                wire_leg=wire_leg,
+                quantity=c.quantity,
+                order_direction=c.order_direction,
+                instrument_spec=c.instrument_spec,
+                pm_command_id=c.pm_command_id,
+                timestamp=c.timestamp,
+                alpaca_order_id_override=leg_override,
+            )
+        )
+    return target_order, invalidation_orders
+
+
 def _build_take_profit_order(  # noqa: PLR0913 — distinct identifiers + sizing must thread through.
     *,
     order_id: str,
@@ -357,12 +435,17 @@ def _build_take_profit_order(  # noqa: PLR0913 — distinct identifiers + sizing
     instrument_spec: InstrumentSpec,
     pm_command_id: str,
     timestamp: datetime,
+    alpaca_order_id_override: str | None = None,
 ) -> OrderRecord:
     """Build the persisted take-profit order from a canonical Target.
 
     For a strategy position ``order_direction`` is ``None`` and
     ``instrument_spec`` is the parent :class:`StrategyInstrumentSpec`; the
     leg is persisted as the MLEG envelope that exits the strategy (ALP-614).
+
+    ``alpaca_order_id_override`` (ALP-746) carries the native bracket / OTO's
+    take-profit child id captured at submission; ``None`` falls back to the
+    synthetic placeholder (no broker counterpart, e.g. a strategy MLEG exit).
     """
     if target.order_type == "market":
         order_type = OrderType.MARKET
@@ -385,6 +468,7 @@ def _build_take_profit_order(  # noqa: PLR0913 — distinct identifiers + sizing
         pm_command_id=pm_command_id,
         thesis_id=thesis_id,
         timestamp=timestamp,
+        alpaca_order_id_override=alpaca_order_id_override,
     )
 
 
@@ -400,12 +484,17 @@ def _build_invalidation_leg_order(  # noqa: PLR0913 — leg construction threads
     instrument_spec: InstrumentSpec,
     pm_command_id: str,
     timestamp: datetime,
+    alpaca_order_id_override: str | None = None,
 ) -> OrderRecord:
     """Build the persisted protective-leg order for a price/time invalidation leg.
 
     For a strategy position ``order_direction`` is ``None`` and
     ``instrument_spec`` is the parent :class:`StrategyInstrumentSpec`; the
     leg is persisted as the MLEG envelope that exits the strategy (ALP-614).
+
+    ``alpaca_order_id_override`` (ALP-746) carries the native bracket's stop
+    child id for the PRICE_STOP leg; a TIME_STOP (TimeLeg) has no broker
+    counterpart and is always called with ``None`` (synthetic placeholder).
     """
     persisted_order_type = _BRACKET_ORDER_TYPE_TO_PERSISTED[wire_leg.order_parameters.order_type]
     if isinstance(wire_leg, PriceLeg):
@@ -440,6 +529,7 @@ def _build_invalidation_leg_order(  # noqa: PLR0913 — leg construction threads
         pm_command_id=pm_command_id,
         thesis_id=thesis_id,
         timestamp=timestamp,
+        alpaca_order_id_override=alpaca_order_id_override,
     )
 
 

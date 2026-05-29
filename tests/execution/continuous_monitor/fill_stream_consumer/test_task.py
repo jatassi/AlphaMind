@@ -42,9 +42,11 @@ from alphamind._kernel.ids import BracketId, OrderId, PositionId, ThesisId
 from alphamind._kernel.money import money, price
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.broker_adapter import OrderSnapshot
+from alphamind.execution.broker_adapter.fill_stream import translate_trade_update
 from alphamind.execution.continuous_monitor.fill_stream_consumer import (
     run_fill_stream_consumer,
 )
+from alphamind.execution.continuous_monitor.fill_stream_consumer.task import _persist_one
 from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
@@ -928,3 +930,150 @@ async def _status_and_ts(
         row = await session.get(OrderRow, order_id)
         assert row is not None
         return row.status, row.last_update_timestamp
+
+
+# ---------------------------------------------------------------------------
+# ALP-746 — resolve the local orders row by captured broker UUID when the
+# client_order_id doesn't name a local PK (native-bracket protective children,
+# OCO sibling-cancels, and equity entries whose client_order_id is the command
+# id).
+# ---------------------------------------------------------------------------
+
+
+async def _seed_leg_order(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    order_id: str,
+    role: str,
+    status: str,
+    alpaca_order_id: str,
+) -> None:
+    """Add a protective-leg / entry order to the seeded bracket-1 cluster."""
+    async with session_factory() as session:
+        session.add(
+            stub_order_row(
+                order_id,
+                "bracket-1",
+                position_id="pos-1",
+                role=role,
+                direction="SELL",
+                status=status,
+                alpaca_order_id=alpaca_order_id,
+            )
+        )
+        await session.commit()
+
+
+def _report_from_order(order: Order, *, event: str, price: float | None, qty: float | None) -> Any:
+    """Translate a single alpaca order event into its FillReport (equity → one)."""
+    reports = translate_trade_update(_trade_update(event=event, order=order, price=price, qty=qty))
+    assert len(reports) == 1
+    return reports[0]
+
+
+class TestUuidResolution:
+    async def test_bracket_protective_fill_resolves_to_leg_row_by_uuid(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A take-profit fill arrives keyed on the child's Alpaca UUID with an
+        Alpaca-generated client_order_id; it resolves to the local leg row whose
+        captured ``alpaca_order_id`` matches, and the fill_records row carries
+        the OMS leg id (so Phase 1 integrates it)."""
+        tp_uuid = uuid4()
+        await _seed_leg_order(
+            session_factory,
+            order_id="ORD-NVDA-target-1",
+            role="TAKE_PROFIT",
+            status="PENDING",
+            alpaca_order_id=str(tp_uuid),
+        )
+        report = _report_from_order(
+            _build_order(order_id=tp_uuid, client_order_id="alpaca-generated-child-tp"),
+            event="fill",
+            price=200.0,
+            qty=1.0,
+        )
+
+        await _persist_one(report, session_factory=session_factory, enrichment_callable=None)
+
+        rows = await _read_fill_records(session_factory)
+        assert len(rows) == 1
+        assert rows[0].order_id == "ORD-NVDA-target-1"
+        # The broker UUID is preserved on gateway_reference for reconciliation.
+        assert rows[0].gateway_reference == str(tp_uuid)
+
+    async def test_oco_sibling_cancel_resolves_to_leg_row_by_uuid(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """When the take-profit fills, Alpaca OCO-cancels the price-stop sibling;
+        that ``canceled`` event (Alpaca client_order_id, zero fills) resolves to
+        the local stop row by captured UUID and transitions it to CANCELLED."""
+        sl_uuid = uuid4()
+        await _seed_leg_order(
+            session_factory,
+            order_id="ORD-NVDA-inv0-1",
+            role="PRICE_STOP",
+            status="PENDING",
+            alpaca_order_id=str(sl_uuid),
+        )
+        report = _report_from_order(
+            _build_order(
+                order_id=sl_uuid,
+                client_order_id="alpaca-generated-child-sl",
+                qty="1",
+                filled_qty="0",
+                status=AlpacaOrderStatus.CANCELED,
+            ),
+            event="canceled",
+            price=None,
+            qty=None,
+        )
+
+        await _persist_one(report, session_factory=session_factory, enrichment_callable=None)
+
+        status, _ = await _status_and_ts(session_factory, "ORD-NVDA-inv0-1")
+        assert status == "CANCELLED"
+        # A cancel appends no fill record.
+        assert await _read_fill_records(session_factory) == []
+
+    async def test_entry_fill_resolves_by_uuid_when_client_order_id_is_command_id(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """An entry fill's client_order_id is the command id (not the OMS PK);
+        resolution falls back to the captured entry UUID to find the row."""
+        entry_uuid = uuid4()
+        await _seed_leg_order(
+            session_factory,
+            order_id="ORD-NVDA-entry-1",
+            role="ENTRY",
+            status="PENDING",
+            alpaca_order_id=str(entry_uuid),
+        )
+        report = _report_from_order(
+            _build_order(order_id=entry_uuid, client_order_id="inv-20260529.ENV-REC-1.0.0"),
+            event="fill",
+            price=150.0,
+            qty=1.0,
+        )
+
+        await _persist_one(report, session_factory=session_factory, enrichment_callable=None)
+
+        rows = await _read_fill_records(session_factory)
+        assert len(rows) == 1
+        assert rows[0].order_id == "ORD-NVDA-entry-1"
+
+    async def test_fill_for_unknown_order_is_skipped(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A fill that matches no local order by PK or UUID is skipped (logged),
+        not inserted — the fill_records FK would otherwise reject it."""
+        report = _report_from_order(
+            _build_order(order_id=uuid4(), client_order_id="totally-unknown"),
+            event="fill",
+            price=200.0,
+            qty=1.0,
+        )
+
+        await _persist_one(report, session_factory=session_factory, enrichment_callable=None)
+
+        assert await _read_fill_records(session_factory) == []

@@ -98,8 +98,11 @@ async def persist_envelope_outcome(
     story 03e / ALP-390), each accepted command's writeback consumes the
     matching :class:`BrokerDispatchResult` so the persisted entry / close /
     add / adjust order carries Alpaca's real ``alpaca_order_id`` rather than
-    the synthetic ``alp-{order_id}`` placeholder. ``None`` entries (legacy
-    callers and per-command failures) fall back to the synthetic id.
+    the synthetic ``alp-{order_id}`` placeholder. For a native equity bracket /
+    OTO OPEN, the dispatch result's ``leg_alpaca_order_ids`` additionally stamp
+    the real broker ids onto the TAKE_PROFIT / first-PRICE_STOP rows (ALP-746).
+    ``None`` entries (legacy callers and per-command failures) fall back to the
+    synthetic id.
     """
     del config  # No knobs consumed at this story; signature is forward-shaped.
 
@@ -294,8 +297,17 @@ async def _dispatch_command_writeback(
 ) -> None:
     submitted_id = dispatch_result.alpaca_order_id if dispatch_result is not None else None
     if isinstance(command, OpenCommand):
+        # ALP-746 — thread the native bracket / OTO protective-child ids so the
+        # TAKE_PROFIT / PRICE_STOP rows carry their real broker ids.
+        submitted_leg_ids = (
+            dict(dispatch_result.leg_alpaca_order_ids) if dispatch_result is not None else None
+        )
         await _writeback_open(
-            handle, command=command, result=result, submitted_alpaca_order_id=submitted_id
+            handle,
+            command=command,
+            result=result,
+            submitted_alpaca_order_id=submitted_id,
+            submitted_leg_alpaca_order_ids=submitted_leg_ids,
         )
         return
     if isinstance(command, CloseCommand):

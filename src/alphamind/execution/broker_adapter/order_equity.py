@@ -67,18 +67,47 @@ def _require_equity_instrument(instrument: object, *, command_kind: str) -> Equi
     return instrument
 
 
+LegRole = Literal["take_profit", "stop_loss"]
+
+
+@dataclass(frozen=True)
+class EquityLegAck:
+    """Real Alpaca id for a protective child of a native BRACKET / OTO order.
+
+    A native equity ``order_class=BRACKET`` returns its take-profit (a LIMIT
+    child) and price-stop (a STOP / STOP_LIMIT child) on ``Order.legs``; an OTO
+    returns just the take-profit child. Alpaca generates each child's id and
+    ``client_order_id`` server-side — the OMS never sends one and the child
+    orders never round-trip an OMS id — so the children's real ids must be
+    captured here at submission, classified by ``order_type`` (LIMIT →
+    take-profit, STOP / STOP_LIMIT → stop-loss). The Phase 2 OPEN writeback
+    then stamps each captured id onto the matching protective-leg ``orders``
+    row, replacing the synthetic ``alp-…`` placeholder so a later protective
+    fill / OCO sibling-cancel resolves to the local row (ALP-746).
+    """
+
+    alpaca_order_id: AlpacaOrderId
+    role: LegRole
+
+
 @dataclass(frozen=True)
 class EquitySubmission:
     """Alpaca's acknowledgment record for a submitted equity order.
 
     Fields mirror what the OMS needs for end-to-end correlation and
     order-record hydration (story 03e).
+
+    ``leg_acks`` carries the real ids of any native BRACKET / OTO protective
+    children read off ``Order.legs`` at submission (empty for SIMPLE orders and
+    for instruments with no broker-side protective child); the OMS threads them
+    onto the persisted protective-leg rows (ALP-746).
     """
 
     alpaca_order_id: AlpacaOrderId
     client_order_id: ClientOrderId
     status: str  # Alpaca's reported status: accepted | new | pending_new | …
     order_class: str  # simple | bracket | oco | oto
+    leg_acks: tuple[EquityLegAck, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -346,8 +375,40 @@ async def _submit_and_map(
                     client_order_id=ClientOrderId(order.client_order_id),
                     status=order.status.value,
                     order_class=order.order_class.value,
+                    leg_acks=_classify_leg_acks(order.legs),
                 ),
                 attempt_count=n,
             )
         case GatewaySubmissionFailed():
             return outcome
+
+
+# alpaca-py ``OrderType`` value → OMS protective-leg classification. A native
+# bracket / OTO returns its take-profit as a LIMIT child and its price-stop as
+# a STOP / STOP_LIMIT child; nothing else is a protective leg we capture.
+_LEG_ROLE_BY_ORDER_TYPE: dict[str, LegRole] = {
+    "limit": "take_profit",
+    "stop": "stop_loss",
+    "stop_limit": "stop_loss",
+}
+
+
+def _classify_leg_acks(legs: object) -> tuple[EquityLegAck, ...]:
+    """Capture real ids for the protective children on a native BRACKET / OTO.
+
+    ``order.legs`` is alpaca-py ``list[Order] | None``; defensively narrowed to
+    ``list`` (a SIMPLE order has no children, and a fake/None payload yields no
+    acks). Each child is classified by ``order_type`` — LIMIT is the take-profit,
+    STOP / STOP_LIMIT is the price-stop; any other child type is skipped rather
+    than misclassified.
+    """
+    if not isinstance(legs, list):
+        return ()
+    acks: list[EquityLegAck] = []
+    for leg in legs:
+        order_type = getattr(leg.order_type, "value", leg.order_type)
+        role = _LEG_ROLE_BY_ORDER_TYPE.get(order_type)
+        if role is None:
+            continue
+        acks.append(EquityLegAck(alpaca_order_id=AlpacaOrderId(str(leg.id)), role=role))
+    return tuple(acks)
