@@ -18,6 +18,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import AlpacaOrderId, BracketId, OrderId, PositionId, Symbol
+from alphamind._kernel.money import price
 from alphamind.config.models.execution import (
     ExecutionConfig,
     FeeSchedule,
@@ -28,9 +29,14 @@ from alphamind.config.models.execution import OrderType as ExecOrderType
 from alphamind.execution.continuous_monitor.entry_window.canceller import (
     BrokerCancelClassification,
 )
+from alphamind.execution.continuous_monitor.entry_window.repricer import (
+    BrokerReplaceClassification,
+)
 from alphamind.execution.continuous_monitor.entry_window.wiring import (
     AlpacaEntryCancel,
+    AlpacaEntryReplace,
     SqlPendingEntryBracketReader,
+    make_reprice_target_resolver,
     register_entry_window_watcher_task,
 )
 from alphamind.execution.continuous_monitor.session import new_session
@@ -244,3 +250,144 @@ async def test_alpaca_entry_cancel_classifies_broker_answers(
         execution_config=_execution_config(),
     )
     assert await canceller(AlpacaOrderId("alpaca-uuid-xyz")) is expected
+
+
+class _FakeOrder:
+    """Minimal alpaca-py Order surrogate for a successful replace_order_by_id."""
+
+    def __init__(self, order_id: str) -> None:
+        self.id = order_id
+        self.client_order_id = "client-xyz"
+        self.status = "replaced"
+
+
+class _ReplaceClient:
+    def __init__(self, *, raise_status: int | None = None) -> None:
+        self._raise_status = raise_status
+        self.calls: list[str] = []
+
+    def replace_order_by_id(self, order_id: str, order_data: object = None) -> _FakeOrder:
+        del order_data
+        self.calls.append(order_id)
+        if self._raise_status is not None:
+            raise _FakeAPIError(self._raise_status)
+        return _FakeOrder("alpaca-new-uuid")
+
+
+class _ReplaceClientFactory:
+    def __init__(self, client: _ReplaceClient) -> None:
+        self._client = client
+
+    def build_trading_client(self) -> _ReplaceClient:
+        return self._client
+
+
+@pytest.mark.parametrize(
+    ("raise_status", "expected"),
+    [
+        (None, BrokerReplaceClassification.REPLACED),  # 2xx accept
+        (404, BrokerReplaceClassification.REJECTED),  # order gone — cannot escalate
+        (422, BrokerReplaceClassification.REJECTED),  # validation / not replaceable
+        (403, BrokerReplaceClassification.REJECTED),  # insufficient buying power
+        (400, BrokerReplaceClassification.REJECTED),  # malformed
+    ],
+)
+async def test_alpaca_entry_replace_classifies_broker_answers(
+    raise_status: int | None, expected: BrokerReplaceClassification
+) -> None:
+    """A confirmed replace is REPLACED (with the new broker id); any classified
+    4xx is REJECTED so the repricer falls back to the terminal cancel rather
+    than chasing a doomed escalation (ALP-740 — guarantees loop termination)."""
+    replace = AlpacaEntryReplace(
+        client_factory=_ReplaceClientFactory(_ReplaceClient(raise_status=raise_status)),
+        execution_config=_execution_config(),
+    )
+    result = await replace(AlpacaOrderId("alpaca-uuid-xyz"), price("99.95"))
+    assert result.classification is expected
+    if expected is BrokerReplaceClassification.REPLACED:
+        assert result.new_alpaca_order_id == "alpaca-new-uuid"
+    else:
+        assert result.new_alpaca_order_id is None
+
+
+async def test_make_reprice_target_resolver_projects_equity_limit_entry(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """The resolver decodes a resting equity LIMIT entry into the projection the
+    repricer branches on: equity-limit flag, ticker, buy/sell side, the
+    modification_count loop bound, and no recorded fills."""
+    from alphamind.portfolio_state.records.orders import (
+        EquityInstrumentSpec,
+        OrderClass,
+        OrderDirection,
+        OrderDuration,
+        OrderRecord,
+        OrderRole,
+        OrderStatus,
+        OrderType,
+        PriceParameters,
+    )
+    from alphamind.state.tables.orders_codec import (
+        record_to_row as order_record_to_row,
+    )
+
+    _, factory = db
+    bracket = _bracket(bracket_id="BRK-RP", status=BracketStatus.PENDING_ENTRY, deadline=_DEADLINE)
+    entry = OrderRecord(
+        order_id=OrderId("BRK-RP-ord-entry"),
+        position_id=PositionId("POS-BRK-RP"),
+        bracket_id=BracketId("BRK-RP"),
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("ZS")),
+        direction=OrderDirection.SELL,
+        order_type=OrderType.LIMIT,
+        order_class=OrderClass.BRACKET,
+        price_parameters=PriceParameters(limit_price=price("100.0")),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId("alpaca-real-uuid"),
+        alpaca_order_id_chain=(AlpacaOrderId("alpaca-real-uuid"),),
+        submission_timestamp=_DEADLINE,
+        last_update_timestamp=_DEADLINE,
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=1,
+        originating_thesis_id=None,
+        originating_pm_command_id=None,
+        age_hours=1.0,
+    )
+    bracket_row, leg_rows = bracket_record_to_rows(bracket)
+    async with factory() as session:
+        session.add(stub_position_row(bracket.position_id, bracket_id=bracket.bracket_id))
+        session.add(order_record_to_row(entry))
+        for lrow in leg_rows:
+            if lrow.order_id is not None:
+                session.add(
+                    stub_order_row(
+                        lrow.order_id, bracket.bracket_id, position_id=bracket.position_id
+                    )
+                )
+        session.add(bracket_row)
+        await session.flush()
+        for lrow in leg_rows:
+            session.add(lrow)
+        await session.commit()
+
+    target = await make_reprice_target_resolver(factory)("BRK-RP-ord-entry")
+
+    assert target is not None
+    assert target.is_equity_limit is True
+    assert target.ticker == "ZS"
+    assert target.side == "sell"
+    assert target.modification_count == 1
+    assert target.alpaca_order_id == "alpaca-real-uuid"
+    assert target.has_recorded_fills is False
+
+
+async def test_make_reprice_target_resolver_returns_none_for_missing_order(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    _, factory = db
+    assert await make_reprice_target_resolver(factory)("does-not-exist") is None

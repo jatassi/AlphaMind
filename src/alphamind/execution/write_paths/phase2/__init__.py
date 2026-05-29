@@ -52,6 +52,9 @@ from alphamind.execution.write_paths.phase2.cancel import (
 )
 from alphamind.execution.write_paths.phase2.close import _writeback_close
 from alphamind.execution.write_paths.phase2.open import _writeback_open
+from alphamind.execution.write_paths.phase2.reprice import (
+    persist_entry_window_reprice,
+)
 from alphamind.portfolio_state.events.activity_log import (
     CommandAbandonedDetail,
     EnvelopeParseFailedDetail,
@@ -357,6 +360,7 @@ __all__ = [
     "persist_command_abandoned",
     "persist_engine_envelope_outcome",
     "persist_entry_window_cancel",
+    "persist_entry_window_reprice",
     "persist_envelope_outcome",
     "persist_envelope_parse_failure",
     "persist_envelope_rejection",

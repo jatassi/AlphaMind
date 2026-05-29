@@ -16,7 +16,7 @@ from alphamind.execution.continuous_monitor.entry_window.canceller import (
     BrokerCancelClassification,
     BrokerEntryWindowCanceller,
     EntryCancelTarget,
-    EntryWindowCancelOutcome,
+    EntryWindowDeadlineOutcome,
 )
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
@@ -94,7 +94,7 @@ async def test_confirmed_cancel_with_no_fills_dissolves_and_returns_cancelled() 
     )
     outcome = await _canceller(rec).cancel(bracket=_bracket(), now=_NOW)
 
-    assert outcome is EntryWindowCancelOutcome.CANCELLED
+    assert outcome is EntryWindowDeadlineOutcome.CANCELLED
     assert rec.cancelled == ["alpaca-uuid-xyz"]
     assert rec.written_back == [("ORD-entry-1", "entry_window_expired")]
 
@@ -109,7 +109,7 @@ async def test_recorded_fill_skips_cancel_and_writeback() -> None:
     )
     outcome = await _canceller(rec).cancel(bracket=_bracket(), now=_NOW)
 
-    assert outcome is EntryWindowCancelOutcome.SKIPPED_FILLED
+    assert outcome is EntryWindowDeadlineOutcome.SKIPPED_FILLED
     assert rec.cancelled == []  # never asked the broker to cancel a filled entry
     assert rec.written_back == []
 
@@ -124,7 +124,7 @@ async def test_synthetic_broker_id_is_retried_not_dissolved() -> None:
     )
     outcome = await _canceller(rec).cancel(bracket=_bracket(), now=_NOW)
 
-    assert outcome is EntryWindowCancelOutcome.FAILED
+    assert outcome is EntryWindowDeadlineOutcome.FAILED
     assert rec.cancelled == []
     assert rec.written_back == []
 
@@ -140,7 +140,7 @@ async def test_retryable_broker_answer_skips_writeback() -> None:
     )
     outcome = await _canceller(rec).cancel(bracket=_bracket(), now=_NOW)
 
-    assert outcome is EntryWindowCancelOutcome.FAILED
+    assert outcome is EntryWindowDeadlineOutcome.FAILED
     assert rec.written_back == []
 
 
@@ -148,6 +148,6 @@ async def test_missing_order_returns_failed_without_cancelling() -> None:
     rec = _Recorder(target=None)
     outcome = await _canceller(rec).cancel(bracket=_bracket(), now=_NOW)
 
-    assert outcome is EntryWindowCancelOutcome.FAILED
+    assert outcome is EntryWindowDeadlineOutcome.FAILED
     assert rec.cancelled == []
     assert rec.written_back == []

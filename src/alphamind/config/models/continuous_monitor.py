@@ -19,6 +19,11 @@ pre-resolved decision (E):
   ``entry_window_deadline``. A patient-entry deadline is coarse (hours), so the
   default is far slower than the price-driven bracket-stop cadence. Added by
   ALP-737.
+* ``entry_window_max_reprices`` — how many times the entry-window watcher may
+  reprice/escalate a still-resting patient-retest limit toward the market
+  before giving up and cancelling it (ALP-740). Bounds the reprice loop so an
+  unfilled entry cannot chase the market indefinitely; ``0`` disables repricing
+  and restores ALP-737's plain cancel-at-deadline behaviour.
 * ``underlying_stream_provider`` — single-value ``Literal`` today; story 02b
   may extend the union if a second provider gets validated.
 * ``subscription_refresh_seconds`` — cadence at which the underlying-price
@@ -61,6 +66,15 @@ class ContinuousMonitorConfig(BaseModel):
     greeks_refresh_inspection_cadence_seconds: int = Field(default=30, ge=1)
     bracket_stop_evaluation_cadence_seconds: float = Field(default=1.0, gt=0.0)
     entry_window_evaluation_cadence_seconds: float = Field(default=60.0, gt=0.0)
+    entry_window_max_reprices: int = Field(
+        default=2,
+        ge=0,
+        description=(
+            "Maximum times the entry-window watcher reprices/escalates a still-"
+            "resting patient-retest limit toward the market before cancelling it "
+            "(ALP-740). 0 disables repricing (ALP-737 cancel-at-deadline)."
+        ),
+    )
     underlying_stream_provider: Literal["alpaca-iex"]
     subscription_refresh_seconds: int = Field(default=30, ge=1)
     max_reconnect_attempts: int = Field(ge=1)

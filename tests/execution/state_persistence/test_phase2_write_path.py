@@ -2723,6 +2723,180 @@ async def test_persist_entry_window_cancel_dissolves_pending_entry_bracket(
     assert any("entry_window_expired" in r.detail_json for r in cancel_rows)
 
 
+def _pending_entry_limit_order_rec(
+    *,
+    limit_price: str = "100.0",
+    quantity: float = 10.0,
+    modification_count: int = 0,
+    alpaca_order_id: str = "alp-ord-entry-1",
+) -> Any:
+    """A resting ``PENDING_ENTRY`` LIMIT entry order (ALP-740 reprice target)."""
+    from alphamind.portfolio_state.records.orders import (
+        EquityInstrumentSpec,
+        OrderClass,
+        OrderDirection,
+        OrderDuration,
+        OrderRecord,
+        OrderRole,
+        OrderStatus,
+        OrderType,
+        PriceParameters,
+    )
+
+    return OrderRecord(
+        order_id=OrderId("ord-entry-1"),
+        position_id=PositionId("POS-NVDA-001"),
+        bracket_id=BracketId("BRK-NVDA-1"),
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("NVDA")),
+        direction=OrderDirection.SELL,
+        order_type=OrderType.LIMIT,
+        order_class=OrderClass.BRACKET,
+        price_parameters=PriceParameters(limit_price=price(limit_price)),
+        quantity=quantity,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(alpaca_order_id),
+        alpaca_order_id_chain=(AlpacaOrderId(alpaca_order_id),),
+        submission_timestamp=_NOW - timedelta(hours=1),
+        last_update_timestamp=_NOW - timedelta(hours=1),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=quantity,
+        modification_count=modification_count,
+        originating_thesis_id=ThesisId("THE-NVDA-1"),
+        originating_pm_command_id=None,
+        age_hours=1.0,
+    )
+
+
+async def test_persist_entry_window_reprice_keeps_bracket_pending_and_reconciles(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-740 AC2: the non-terminal reprice writeback moves the entry limit
+    toward the market, extends the broker id chain, bumps ``modification_count``,
+    and *adjusts* (does not release) reserved capital — while leaving the bracket
+    ``PENDING_ENTRY`` and the thesis unresolved (a fill is still being pursued).
+
+    A short entry repriced down from 100 -> 95 over 10 shares frees notional
+    ``(95-100)*10 = -50``, so reserved capital drops by 50, not the full 1000 a
+    terminal cancel would release.
+    """
+    from alphamind.execution.write_paths.phase2 import (
+        persist_entry_window_reprice,
+    )
+    from alphamind.portfolio_state.records.orders import OrderStatus
+    from alphamind.state.tables.orders_codec import (
+        row_to_record as order_row_to_record,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
+    await _seed_position_cluster(
+        factory,
+        _open_position(),
+        _active_thesis(),
+        _pending_entry_bracket_with_event_leg(),
+        _pending_entry_limit_order_rec(limit_price="100.0"),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await persist_entry_window_reprice(
+        handle,
+        entry_order_id="ord-entry-1",
+        new_limit_price=price("95.0"),
+        new_alpaca_order_id="alpaca-new-uuid",
+        reprice_reason="entry_window_reprice",
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        entry_row = await sess.get(OrderRow, "ord-entry-1")
+        assert entry_row is not None
+        # The entry order is repriced in place — same OMS order_id, still PENDING.
+        assert entry_row.status == OrderStatus.PENDING.value
+        entry = order_row_to_record(entry_row)
+        assert entry.price_parameters.limit_price == price("95.0")
+        assert entry.alpaca_order_id == "alpaca-new-uuid"
+        assert entry.alpaca_order_id_chain == (
+            AlpacaOrderId("alp-ord-entry-1"),
+            AlpacaOrderId("alpaca-new-uuid"),
+        )
+        assert entry.modification_count == 1
+
+        # Bracket stays PENDING_ENTRY; thesis is NOT resolved — fill still pursued.
+        bracket = await sess.get(BracketRow, "BRK-NVDA-1")
+        assert bracket is not None
+        assert bracket.status == BracketStatus.PENDING_ENTRY.value
+        thesis = await sess.get(ThesisRow, "THE-NVDA-1")
+        assert thesis is not None
+        assert thesis.status == ThesisRecordStatus.ACTIVE.value
+        assert thesis.resolution_category is None
+
+        # Reservation adjusted by the notional delta (-50), not released in full.
+        cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash is not None
+        assert cash.reserved_capital_usd == pytest.approx(950.0)
+
+    rows = await _read_activity_log_for(factory, handle.invocation_id)
+    types = {r.event_type for r in rows}
+    assert EventType.ORDER_MODIFIED.value in types
+    assert EventType.CAPITAL_RELEASED.value in types
+    # Non-terminal: never dissolves the bracket nor resolves the thesis.
+    assert EventType.BRACKET_DISSOLVED.value not in types
+    assert EventType.THESIS_RESOLVED.value not in types
+    modified_rows = [r for r in rows if r.event_type == EventType.ORDER_MODIFIED.value]
+    assert modified_rows
+    assert any("entry_window_reprice" in r.detail_json for r in modified_rows)
+    assert any("limit_price" in r.detail_json for r in modified_rows)
+
+
+async def test_persist_entry_window_reprice_raising_limit_reserves_more_capital(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-740: a long entry repriced *up* toward the ask (100 -> 110 over 10
+    shares) reserves the extra notional ``(110-100)*10 = +100`` rather than
+    releasing — the reservation tracks the live limit in both directions."""
+    from alphamind.execution.write_paths.phase2 import (
+        persist_entry_window_reprice,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
+    await _seed_position_cluster(
+        factory,
+        _open_position(),
+        _active_thesis(),
+        _pending_entry_bracket_with_event_leg(),
+        _pending_entry_limit_order_rec(limit_price="100.0"),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await persist_entry_window_reprice(
+        handle,
+        entry_order_id="ord-entry-1",
+        new_limit_price=price("110.0"),
+        new_alpaca_order_id="alpaca-new-uuid",
+        reprice_reason="entry_window_reprice",
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash is not None
+        assert cash.reserved_capital_usd == pytest.approx(1_100.0)
+        bracket = await sess.get(BracketRow, "BRK-NVDA-1")
+        assert bracket is not None
+        assert bracket.status == BracketStatus.PENDING_ENTRY.value
+
+    rows = await _read_activity_log_for(factory, handle.invocation_id)
+    types = {r.event_type for r in rows}
+    assert EventType.CAPITAL_RESERVED.value in types
+    assert EventType.CAPITAL_RELEASED.value not in types
+
+
 async def test_cancel_entry_dissolve_cancels_all_legs_and_reloads(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
