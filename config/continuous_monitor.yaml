@@ -38,6 +38,14 @@ bracket_stop_evaluation_cadence_seconds: 1.0
 # than the price-driven bracket-stop cadence — a once-a-minute sweep is ample.
 entry_window_evaluation_cadence_seconds: 60.0
 
+# Maximum times the entry-window watcher reprices a still-resting patient-retest
+# limit toward the market (escalate to a marketable limit through the touch)
+# before giving up and cancelling it with the no-fill alert (ALP-740). Bounds
+# the reprice loop so an unfilled accepted thesis is pursued — but cannot chase
+# the market indefinitely. modification_count on the entry order is the counter.
+# Set to 0 to disable repricing and restore ALP-737's cancel-at-deadline.
+entry_window_max_reprices: 2
+
 # Live underlying-price stream provider. Single-value Literal today; decision (B)
 # pins Alpaca StockDataStream / IEX after the 2026-05-10 paper-account smoke
 # test. Story 02b's vendor surface lives here.

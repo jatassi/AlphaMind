@@ -66,11 +66,19 @@ class BrokerCancelClassification(Enum):
     RETRYABLE = "retryable"
 
 
-class EntryWindowCancelOutcome(Enum):
-    """Outcome of attempting to cancel one expired entry window."""
+class EntryWindowDeadlineOutcome(Enum):
+    """Outcome of handling one ``PENDING_ENTRY`` bracket past its deadline.
+
+    The terminal canceller (:class:`BrokerEntryWindowCanceller`) returns the
+    cancel / skip / fail members; the repricer (ALP-740,
+    :class:`...repricer.BrokerEntryWindowRepricer`) adds ``REPRICED`` — a
+    non-terminal escalation that re-pegs the resting limit toward the market
+    and is re-evaluated on the next cycle.
+    """
 
     CANCELLED = "cancelled"  # cancel confirmed + no fills + state written back; do not re-fire
     SKIPPED_FILLED = "skipped_filled"  # entry already filled; reconciliation handles it
+    REPRICED = "repriced"  # entry escalated toward the market; non-terminal, re-evaluate next cycle
     FAILED = "failed"  # transient / not-yet-routed; retry on a later cycle
 
 
@@ -89,11 +97,16 @@ class EntryCancelTarget:
 
 @runtime_checkable
 class EntryWindowCanceller(Protocol):
-    """The seam the watcher cycle fires on an expired ``PENDING_ENTRY`` bracket."""
+    """The terminal cancel seam for an expired ``PENDING_ENTRY`` bracket.
+
+    Fired directly by the watcher when repricing is disabled, and delegated to
+    by the repricer (ALP-740) once its escalation budget is spent or the entry
+    is not a repriceable equity limit.
+    """
 
     async def cancel(
         self, *, bracket: BracketRecord, now: datetime
-    ) -> EntryWindowCancelOutcome: ...
+    ) -> EntryWindowDeadlineOutcome: ...
 
 
 # entry_order_id → the broker order id + recorded-fill state (None when the
@@ -127,7 +140,7 @@ class BrokerEntryWindowCanceller:
     broker_cancel: BrokerCancel
     writeback: CancelWriteback
 
-    async def cancel(self, *, bracket: BracketRecord, now: datetime) -> EntryWindowCancelOutcome:
+    async def cancel(self, *, bracket: BracketRecord, now: datetime) -> EntryWindowDeadlineOutcome:
         del now  # the deadline check already fired; provenance lives in the reason
         target = await self.resolve_target(bracket.entry_order_id)
         if target is None:
@@ -136,7 +149,7 @@ class BrokerEntryWindowCanceller:
                 bracket.entry_order_id,
                 bracket.bracket_id,
             )
-            return EntryWindowCancelOutcome.FAILED
+            return EntryWindowDeadlineOutcome.FAILED
         if target.has_recorded_fills:
             # The entry filled — never cancel/dissolve a filled entry; the next
             # scheduled reconciliation activates the bracket.
@@ -144,7 +157,7 @@ class BrokerEntryWindowCanceller:
                 "entry_window: bracket %s entry has recorded fills; leaving for reconciliation",
                 bracket.bracket_id,
             )
-            return EntryWindowCancelOutcome.SKIPPED_FILLED
+            return EntryWindowDeadlineOutcome.SKIPPED_FILLED
         if _is_synthetic(target.alpaca_order_id):
             # Not yet routed to the broker — nothing to cancel yet; retry once it
             # is acked rather than misreading a placeholder 404 as terminal.
@@ -153,14 +166,14 @@ class BrokerEntryWindowCanceller:
                 bracket.bracket_id,
                 target.alpaca_order_id,
             )
-            return EntryWindowCancelOutcome.FAILED
+            return EntryWindowDeadlineOutcome.FAILED
         classification = await self.broker_cancel(target.alpaca_order_id)
         if classification is BrokerCancelClassification.RETRYABLE:
             log.warning(
                 "entry_window: broker cancel not confirmed for bracket %s; retrying next cycle",
                 bracket.bracket_id,
             )
-            return EntryWindowCancelOutcome.FAILED
+            return EntryWindowDeadlineOutcome.FAILED
         # CANCEL_CONFIRMED with no recorded fills → the resting entry was cancelled
         # (or already gone) without filling. Dissolve the bracket.
         await self.writeback(bracket.entry_order_id, _CANCEL_REASON)
@@ -168,13 +181,13 @@ class BrokerEntryWindowCanceller:
             "entry_window: cancelled never-filled entry for bracket %s (window elapsed)",
             bracket.bracket_id,
         )
-        return EntryWindowCancelOutcome.CANCELLED
+        return EntryWindowDeadlineOutcome.CANCELLED
 
 
 __all__ = [
     "BrokerCancelClassification",
     "BrokerEntryWindowCanceller",
     "EntryCancelTarget",
-    "EntryWindowCancelOutcome",
     "EntryWindowCanceller",
+    "EntryWindowDeadlineOutcome",
 ]

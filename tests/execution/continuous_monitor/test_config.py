@@ -169,6 +169,7 @@ class TestContinuousMonitorYamlWiring:
         assert cm.underlying_stream_provider == "alpaca-iex"
         assert cm.subscription_refresh_seconds == 30
         assert cm.max_reconnect_attempts == 5
+        assert cm.entry_window_max_reprices == 2  # ALP-740 reprice budget
 
     def test_malformed_yaml_raises_validation_error(
         self,

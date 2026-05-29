@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 from pydantic import TypeAdapter
@@ -25,7 +26,7 @@ from alphamind._kernel.ids import (
     ThesisId,
     make_symbol,
 )
-from alphamind._kernel.money import Money, money, signed_money
+from alphamind._kernel.money import Money, Price, money, signed_money
 from alphamind.commands.command_models import (
     EntryOrder,
     EntryOrderType,
@@ -379,6 +380,19 @@ async def _read_cash_row(handle: InvocationHandle) -> CashLedgerRow:
         msg = "cash_ledger singleton missing — Phase 2 cannot reserve capital"
         raise ValueError(msg)
     return row
+
+
+def _order_notional_usd(*, price: Price, remaining_quantity: float) -> Money:
+    """Capital-notional estimate ``price * remaining_quantity`` as ``Money``.
+
+    The single basis the CANCEL release (``cancel._order_notional_estimate``) and
+    the entry-window reprice adjustment (``reprice._adjust_reservation_for_reprice``,
+    ALP-740) share, so a repriced-then-cancelled entry's reservation deltas and
+    final release stay mutually consistent. ``remaining_quantity`` may be a float
+    in the legacy record types; cast through ``str`` so binary drift never enters
+    the monetary computation.
+    """
+    return money(Decimal(str(price)) * Decimal(str(remaining_quantity)))
 
 
 async def _reserve_capital(handle: InvocationHandle, *, amount_usd: Money) -> None:

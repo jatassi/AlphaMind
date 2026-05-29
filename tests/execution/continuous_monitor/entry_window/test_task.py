@@ -1,10 +1,10 @@
-"""Tests for the entry-window expiry watcher cycle (ALP-737).
+"""Tests for the entry-window expiry watcher cycle (ALP-737 + ALP-740).
 
 The run-forever task exposes its single-iteration kernel
 (``_run_entry_window_cycle``) for testability: each test drives one cycle with
-a fake bracket reader + a capturing fake canceller and asserts which brackets
-fired. The canceller seam (broker cancel + writeback) is exercised separately
-in ``test_canceller.py``.
+a fake bracket reader + a capturing fake handler and asserts which brackets
+latched in ``fired``. The handler seams (reprice / cancel) are exercised
+separately in ``test_repricer.py`` and ``test_canceller.py``.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from alphamind._kernel.ids import BracketId, OrderId, PositionId, Symbol
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.continuous_monitor.entry_window.canceller import (
-    EntryWindowCancelOutcome,
+    EntryWindowDeadlineOutcome,
 )
 from alphamind.execution.continuous_monitor.entry_window.task import (
     _run_entry_window_cycle,
@@ -68,11 +68,11 @@ class _FakeReader:
 
 
 @dataclass
-class _FakeCanceller:
-    outcome: EntryWindowCancelOutcome = EntryWindowCancelOutcome.CANCELLED
+class _FakeHandler:
+    outcome: EntryWindowDeadlineOutcome = EntryWindowDeadlineOutcome.CANCELLED
     calls: list[str] = field(default_factory=list)
 
-    async def cancel(self, *, bracket: BracketRecord, now: datetime) -> EntryWindowCancelOutcome:
+    async def handle(self, *, bracket: BracketRecord, now: datetime) -> EntryWindowDeadlineOutcome:
         del now
         self.calls.append(bracket.bracket_id)
         return self.outcome
@@ -94,18 +94,18 @@ async def test_cycle_cancels_only_expired_brackets() -> None:
     future-deadline bracket is left to keep resting (ALP-737 AC2)."""
     expired = _pending_entry_bracket(bracket_id="BRK-EXPIRED", deadline=_NOW - timedelta(hours=1))
     future = _pending_entry_bracket(bracket_id="BRK-FUTURE", deadline=_NOW + timedelta(hours=1))
-    canceller = _FakeCanceller()
+    handler = _FakeHandler()
     fired: set[str] = set()
 
     await _run_entry_window_cycle(
         config=_config(),
         bracket_reader=_FakeReader((expired, future)),
-        canceller=canceller,
+        handler=handler,
         now=_NOW,
         fired=fired,
     )
 
-    assert canceller.calls == ["BRK-EXPIRED"]
+    assert handler.calls == ["BRK-EXPIRED"]
     assert fired == {"BRK-EXPIRED"}
 
 
@@ -113,18 +113,18 @@ async def test_cycle_does_not_fire_at_exact_deadline() -> None:
     """A bracket exactly at its deadline does NOT fire — the contract is a
     strict ``now() > deadline`` (orders.py BracketRecord lifecycle)."""
     at_deadline = _pending_entry_bracket(bracket_id="BRK-AT", deadline=_NOW)
-    canceller = _FakeCanceller()
+    handler = _FakeHandler()
     fired: set[str] = set()
 
     await _run_entry_window_cycle(
         config=_config(),
         bracket_reader=_FakeReader((at_deadline,)),
-        canceller=canceller,
+        handler=handler,
         now=_NOW,
         fired=fired,
     )
 
-    assert canceller.calls == []
+    assert handler.calls == []
     assert fired == set()
 
 
@@ -132,36 +132,36 @@ async def test_cycle_skips_already_fired_brackets() -> None:
     """A bracket already cancelled this session is not re-fired even while the
     DB still shows it ``PENDING_ENTRY`` (pre-reconciliation)."""
     expired = _pending_entry_bracket(bracket_id="BRK-1", deadline=_NOW - timedelta(hours=1))
-    canceller = _FakeCanceller()
+    handler = _FakeHandler()
     fired = {"BRK-1"}
 
     await _run_entry_window_cycle(
         config=_config(),
         bracket_reader=_FakeReader((expired,)),
-        canceller=canceller,
+        handler=handler,
         now=_NOW,
         fired=fired,
     )
 
-    assert canceller.calls == []
+    assert handler.calls == []
 
 
 async def test_cycle_failed_outcome_is_retried_next_cycle() -> None:
     """A transient broker failure does NOT mark the bracket fired, so the next
     cycle attempts the cancel again."""
     expired = _pending_entry_bracket(bracket_id="BRK-1", deadline=_NOW - timedelta(hours=1))
-    canceller = _FakeCanceller(outcome=EntryWindowCancelOutcome.FAILED)
+    handler = _FakeHandler(outcome=EntryWindowDeadlineOutcome.FAILED)
     fired: set[str] = set()
 
     await _run_entry_window_cycle(
         config=_config(),
         bracket_reader=_FakeReader((expired,)),
-        canceller=canceller,
+        handler=handler,
         now=_NOW,
         fired=fired,
     )
 
-    assert canceller.calls == ["BRK-1"]
+    assert handler.calls == ["BRK-1"]
     assert fired == set()
 
 
@@ -169,13 +169,13 @@ async def test_cycle_already_filled_outcome_is_not_retried() -> None:
     """When the broker says the entry already filled, the bracket is marked
     handled (reconciliation will activate it) and is not re-fired."""
     expired = _pending_entry_bracket(bracket_id="BRK-1", deadline=_NOW - timedelta(hours=1))
-    canceller = _FakeCanceller(outcome=EntryWindowCancelOutcome.SKIPPED_FILLED)
+    handler = _FakeHandler(outcome=EntryWindowDeadlineOutcome.SKIPPED_FILLED)
     fired: set[str] = set()
 
     await _run_entry_window_cycle(
         config=_config(),
         bracket_reader=_FakeReader((expired,)),
-        canceller=canceller,
+        handler=handler,
         now=_NOW,
         fired=fired,
     )
@@ -183,35 +183,55 @@ async def test_cycle_already_filled_outcome_is_not_retried() -> None:
     assert fired == {"BRK-1"}
 
 
-async def test_cycle_swallows_per_bracket_canceller_error() -> None:
-    """A canceller exception is logged and skipped — one bad bracket never
+async def test_cycle_swallows_per_bracket_handler_error() -> None:
+    """A handler exception is logged and skipped — one bad bracket never
     stalls the rest of the cycle, and it is retried (not marked fired)."""
 
     @dataclass
-    class _RaisingCanceller:
+    class _RaisingHandler:
         calls: list[str] = field(default_factory=list)
 
-        async def cancel(
+        async def handle(
             self, *, bracket: BracketRecord, now: datetime
-        ) -> EntryWindowCancelOutcome:
+        ) -> EntryWindowDeadlineOutcome:
             del now
             self.calls.append(bracket.bracket_id)
             if bracket.bracket_id == "BRK-BAD":
                 raise RuntimeError("broker exploded")
-            return EntryWindowCancelOutcome.CANCELLED
+            return EntryWindowDeadlineOutcome.CANCELLED
 
     bad = _pending_entry_bracket(bracket_id="BRK-BAD", deadline=_NOW - timedelta(hours=1))
     good = _pending_entry_bracket(bracket_id="BRK-GOOD", deadline=_NOW - timedelta(hours=1))
-    canceller = _RaisingCanceller()
+    handler = _RaisingHandler()
     fired: set[str] = set()
 
     await _run_entry_window_cycle(
         config=_config(),
         bracket_reader=_FakeReader((bad, good)),
-        canceller=canceller,
+        handler=handler,
         now=_NOW,
         fired=fired,
     )
 
-    assert canceller.calls == ["BRK-BAD", "BRK-GOOD"]
+    assert handler.calls == ["BRK-BAD", "BRK-GOOD"]
     assert fired == {"BRK-GOOD"}  # the bad one is retried, not marked handled
+
+
+async def test_cycle_repriced_outcome_is_not_latched() -> None:
+    """ALP-740: a REPRICED outcome is non-terminal — the re-pegged entry is left
+    out of ``fired`` so the next cycle re-evaluates it (it filled, or the reprice
+    budget is now spent and it cancels)."""
+    expired = _pending_entry_bracket(bracket_id="BRK-1", deadline=_NOW - timedelta(hours=1))
+    handler = _FakeHandler(outcome=EntryWindowDeadlineOutcome.REPRICED)
+    fired: set[str] = set()
+
+    await _run_entry_window_cycle(
+        config=_config(),
+        bracket_reader=_FakeReader((expired,)),
+        handler=handler,
+        now=_NOW,
+        fired=fired,
+    )
+
+    assert handler.calls == ["BRK-1"]
+    assert fired == set()

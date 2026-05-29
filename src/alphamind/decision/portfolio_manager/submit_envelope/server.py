@@ -23,6 +23,7 @@ from pydantic import ValidationError
 
 from alphamind._kernel.ids import CommandId, EnvelopeId
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
+from alphamind.commands.pm_envelope import PMEnvelope
 from alphamind.commands.protocols import BrokerDispatch
 from alphamind.decision.portfolio_manager.submit_envelope.dispatch import (
     _AbandonedCommandEntry,
@@ -48,6 +49,7 @@ from alphamind.decision.portfolio_manager.submit_envelope.process import (
 from alphamind.decision.portfolio_manager.submit_envelope.types import (
     FailedSubmissionEntry,
     SubmissionLogEntry,
+    SubmissionResult,
     SubmitEnvelopeState,
 )
 from alphamind.decision.portfolio_manager.validation import validate_pm_envelope
@@ -417,45 +419,25 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
         position_lookup=_build_position_lookup(pm_view),
     )
 
-    # Step 4: optionally route accepted commands through the broker adapter
-    # (broker-routing coordinated swap, story 03e / ALP-390). Returns per-command
-    # dispatch outcomes alongside (possibly mutated) submission results — a
-    # validated-but-broker-rejected command flips from accepted → rejected, and
-    # its dispatch entry carries a gateway-failure marker the writeback step
-    # uses to skip persistence + emit ``command_abandoned``.
-    dispatch_results: tuple[BrokerDispatchResult | None, ...] | None = None
-    abandoned_entries: tuple[_AbandonedCommandEntry, ...] = ()
-    if client is not None and queries is not None and execution_config is not None:
-        # Step 3.5 (ALP-738): re-price "enter-now" equity entries (a limit with
-        # no analyst entry_window) into marketable limits through the live touch
-        # so a working short thesis fills at the quote instead of resting above a
-        # falling market. Rewriting the envelope here — before both broker
-        # dispatch and Phase-2 writeback — keeps the persisted order row and the
-        # broker order in agreement. ``submission_results`` validated against the
-        # original commands stay aligned by ordinal (guardrails don't read
-        # limit_price). A no-op when no enter-now entry is present or no quote
-        # source was wired (fixture path).
-        if quote_source is not None:
-            from alphamind.execution.broker_adapter.entry_pricing import (
-                rewrite_enter_now_entries,
-            )
-
-            new_commands = await rewrite_enter_now_entries(
-                envelope.commands,
-                quote_source=quote_source,
-                bps_through_touch=execution_config.marketable_entry_bps_through_touch,
-            )
-            if new_commands != envelope.commands:
-                envelope = envelope.model_copy(update={"commands": new_commands})
-        submission_results, dispatch_results, abandoned_entries = await _route_through_broker(
-            envelope=envelope,
-            submission_results=submission_results,
-            client=client,
-            queries=queries,
-            execution_config=execution_config,
-            invocation_handle=invocation_handle,
-            broker_dispatch=broker_dispatch,
-        )
+    # Step 4: optionally re-price enter-now entries + route accepted commands
+    # through the broker adapter (story 03e / ALP-390, ALP-738). Extracted to a
+    # helper so this orchestrator stays under the complexity gate; see its
+    # docstring for the broker-rejection / enter-now-rewrite semantics.
+    (
+        envelope,
+        submission_results,
+        dispatch_results,
+        abandoned_entries,
+    ) = await _maybe_route_accepted_commands(
+        envelope=envelope,
+        submission_results=submission_results,
+        client=client,
+        queries=queries,
+        execution_config=execution_config,
+        quote_source=quote_source,
+        invocation_handle=invocation_handle,
+        broker_dispatch=broker_dispatch,
+    )
 
     # Step 5: append to submission log (post-broker outcome). ALP-711 scope (C):
     # ``dispatch_results`` rides on the log entry so the orchestrator's
@@ -509,6 +491,73 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
         ],
     }
     return response, state
+
+
+async def _maybe_route_accepted_commands(
+    *,
+    envelope: PMEnvelope,
+    submission_results: tuple[SubmissionResult, ...],
+    client: TradingClient | None,
+    queries: AccountStateQueries | None,
+    execution_config: ExecutionConfig | None,
+    quote_source: QuoteSource | None,
+    invocation_handle: Any | None,
+    broker_dispatch: BrokerDispatch | None,
+) -> tuple[
+    PMEnvelope,
+    tuple[SubmissionResult, ...],
+    tuple[BrokerDispatchResult | None, ...] | None,
+    tuple[_AbandonedCommandEntry, ...],
+]:
+    """Re-price enter-now entries, then route accepted commands to the broker.
+
+    Returns ``(envelope, submission_results, dispatch_results, abandoned_entries)``.
+    A no-op (broker triple absent — the fixture-only path) returns the inputs
+    unchanged with ``dispatch_results=None`` and no abandoned entries.
+
+    When the broker triple (``client`` + ``queries`` + ``execution_config``) is
+    present (broker-routing coordinated swap, story 03e / ALP-390):
+
+    * Step 3.5 (ALP-738): re-price "enter-now" equity entries (a limit with no
+      analyst ``entry_window``) into marketable limits through the live touch so
+      a working short thesis fills at the quote instead of resting above a
+      falling market. Rewriting the envelope here — before both broker dispatch
+      and Phase-2 writeback — keeps the persisted order row and the broker order
+      in agreement. ``submission_results`` validated against the original
+      commands stay aligned by ordinal (guardrails don't read ``limit_price``).
+      A no-op when no enter-now entry is present or no quote source was wired.
+    * dispatch returns per-command outcomes alongside (possibly mutated)
+      submission results — a validated-but-broker-rejected command flips from
+      accepted → rejected, and its dispatch entry carries a gateway-failure
+      marker the writeback step uses to skip persistence + emit
+      ``command_abandoned``.
+    """
+    dispatch_results: tuple[BrokerDispatchResult | None, ...] | None = None
+    abandoned_entries: tuple[_AbandonedCommandEntry, ...] = ()
+    if client is None or queries is None or execution_config is None:
+        return envelope, submission_results, dispatch_results, abandoned_entries
+    if quote_source is not None:
+        from alphamind.execution.broker_adapter.entry_pricing import (
+            rewrite_enter_now_entries,
+        )
+
+        new_commands = await rewrite_enter_now_entries(
+            envelope.commands,
+            quote_source=quote_source,
+            bps_through_touch=execution_config.marketable_entry_bps_through_touch,
+        )
+        if new_commands != envelope.commands:
+            envelope = envelope.model_copy(update={"commands": new_commands})
+    submission_results, dispatch_results, abandoned_entries = await _route_through_broker(
+        envelope=envelope,
+        submission_results=submission_results,
+        client=client,
+        queries=queries,
+        execution_config=execution_config,
+        invocation_handle=invocation_handle,
+        broker_dispatch=broker_dispatch,
+    )
+    return envelope, submission_results, dispatch_results, abandoned_entries
 
 
 def _build_position_lookup(pm_view: PortfolioManagerView) -> PositionLookup:
