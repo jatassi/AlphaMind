@@ -401,6 +401,12 @@ def _classify_leg_acks(legs: object) -> tuple[EquityLegAck, ...]:
     acks). Each child is classified by ``order_type`` — LIMIT is the take-profit,
     STOP / STOP_LIMIT is the price-stop; any other child type is skipped rather
     than misclassified.
+
+    A native bracket carries exactly one take-profit + one price-stop child and
+    an OTO exactly one take-profit; the parent/entry order is NOT in ``legs``.
+    So each role appears at most once, which is the invariant the role-keyed
+    ``leg_alpaca_order_ids`` map in ``broker_dispatch._wrap_equity`` relies on
+    (a second ack of the same role would silently overwrite).
     """
     if not isinstance(legs, list):
         return ()

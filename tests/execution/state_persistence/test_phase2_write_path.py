@@ -2080,6 +2080,72 @@ async def test_open_command_stamps_captured_leg_ids_on_protective_orders(
         assert by_role["PRICE_STOP"].alpaca_order_id_chain_json == f'["{sl_uuid}"]'
 
 
+async def test_open_command_stamps_stop_id_on_first_price_leg_only(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-746 — Alpaca's native bracket carries exactly one stop child (mapped
+    from the first PriceLeg by ``order_equity._bracket_params``). With two
+    PriceLegs, only the first PRICE_STOP gets the captured stop UUID; the second
+    keeps the synthetic placeholder."""
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    sl_uuid = "fe223177-96c7-48b5-a402-98a5c7bfb558"
+
+    def _price_leg(trigger: float) -> PriceLeg:
+        return PriceLeg(
+            type="price",
+            is_hard=True,
+            condition=PriceCondition(
+                underlying_trigger="NVDA", comparator="<=", trigger_price=price(trigger)
+            ),
+            order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
+        )
+
+    command = _open_command(
+        underlying=Symbol("NVDA"),
+        invalidation_legs=(_price_leg(750.0), _price_leg(700.0)),
+    )
+    envelope = _make_analyst_envelope(commands=(command,))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+    dispatch = BrokerDispatchResult(
+        alpaca_order_id=AlpacaOrderId("20bd94b5-8586-4bcc-a175-8490e29a17aa"),
+        client_order_id=ClientOrderId(f"inv-{_INV_ID}.ENV-REC-1.0.0"),
+        status="accepted",
+        order_class="bracket",
+        payload_kind="equity",
+        raw_submission=None,
+        leg_alpaca_order_ids={"stop_loss": AlpacaOrderId(sl_uuid)},
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        dispatch_results=(dispatch,),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        stop_rows = (
+            (await sess.execute(select(OrderRow).where(OrderRow.order_role == "PRICE_STOP")))
+            .scalars()
+            .all()
+        )
+        assert len(stop_rows) == 2
+        stop_ids = {r.alpaca_order_id for r in stop_rows}
+        # Exactly one carries the real broker stop id; the other keeps synthetic.
+        assert sl_uuid in stop_ids
+        assert any(sid.startswith("alp-") for sid in stop_ids)
+
+
 async def test_adjust_command_cancels_old_protective_order_and_submits_new(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:

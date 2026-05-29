@@ -296,6 +296,12 @@ async def _resolve_oms_order_id(db: AsyncSession, report: FillReport) -> str | N
 
     Returns ``None`` when neither resolves — the caller declines to attribute
     the event rather than violate the ``fill_records.order_id`` FK.
+
+    ``alpaca_order_id`` is expected unique across ``orders`` rows (captured
+    broker UUIDs are distinct per order; synthetic ``alp-{order_id}`` placeholders
+    are unique per PK), so the UUID lookup uses ``one_or_none`` — a duplicate
+    surfaces loudly as a ``MultipleResultsFound`` invariant breach rather than
+    silently attributing the event to an arbitrary row.
     """
     candidate_pk = order_id_for_report(report)
     row = await db.get(OrderRow, candidate_pk)
@@ -303,7 +309,7 @@ async def _resolve_oms_order_id(db: AsyncSession, report: FillReport) -> str | N
         return row.order_id
     uuid_key = report.parent_alpaca_order_id or report.alpaca_order_id
     stmt = select(OrderRow).where(OrderRow.alpaca_order_id == uuid_key)
-    row = (await db.execute(stmt)).scalars().first()
+    row = (await db.execute(stmt)).scalars().one_or_none()
     return row.order_id if row is not None else None
 
 
