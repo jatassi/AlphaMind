@@ -653,6 +653,16 @@ class TestCancelledStatusRules:
             )
         assert "execution_history" in str(exc_info.value)
 
+    def test_cancelled_with_realized_pnl_fails(self) -> None:
+        with pytest.raises((ValueError, TypeError)) as exc_info:
+            _make_position(
+                status=PositionStatus.CANCELLED,
+                entry_timestamp=None,
+                execution_history=(),
+                realized_pnl_to_date_usd=0.0,
+            )
+        assert "realized_pnl_to_date_usd" in str(exc_info.value)
+
 
 # ---------------------------------------------------------------------------
 # Direction / equity short-only fields tests

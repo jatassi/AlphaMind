@@ -78,14 +78,27 @@ def upgrade() -> None:
             _check_in("status", new_statuses),
         )
 
-    # Backfill the known stranded rows. Guarded on status='PENDING' so the
-    # statement is idempotent and never disturbs a row that already transitioned.
-    id_list = ", ".join(repr(pid) for pid in _STRANDED_POSITION_IDS)
-    op.execute(
+    # Backfill the known stranded rows. The WHERE clause mirrors the runtime
+    # cancel path's guard (``_cancel_never_filled_position``): only a PENDING row
+    # with an empty execution_history becomes CANCELLED. CANCELLED means
+    # never-filled, and the PositionRecord validator rejects a CANCELLED row that
+    # carries fills — so were a named row to have gained a fill between the
+    # 2026-05-29 evidence snapshot and the deploy, skipping it here avoids
+    # writing a row the read codec would later reject (the ALP-731 class of
+    # unreadable-row corruption). The status guard also keeps the statement
+    # idempotent. Variable values are bound (the id list / status literal),
+    # matching the downgrade's parameterized style.
+    bind = op.get_bind()
+    id_params = {f"pid{idx}": pid for idx, pid in enumerate(_STRANDED_POSITION_IDS)}
+    placeholders = ", ".join(f":{name}" for name in id_params)
+    bind.execute(
         sa.text(
-            f"UPDATE positions SET status = '{_NEW_STATUS}' "
-            f"WHERE status = 'PENDING' AND position_id IN ({id_list})"
-        )
+            "UPDATE positions SET status = :new_status "
+            "WHERE status = 'PENDING' "
+            "AND execution_history_json IN ('[]', '') "
+            f"AND position_id IN ({placeholders})"
+        ),
+        {"new_status": _NEW_STATUS, **id_params},
     )
 
 

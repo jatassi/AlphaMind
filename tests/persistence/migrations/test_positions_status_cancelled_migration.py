@@ -41,11 +41,14 @@ def _insert_position(
     position_id: str,
     status: str,
     direction: str = "SHORT",
+    execution_history_json: str = "[]",
 ) -> None:
-    """Insert a never-filled equity position row (empty history, no entry).
+    """Insert an equity position row (empty history / no entry by default).
 
     thesis_id / bracket_id are left NULL so no FK into theses / brackets needs
-    satisfying — the migration's backfill keys on status + position_id only.
+    satisfying — the migration's backfill keys on status + empty history +
+    position_id only. ``execution_history_json`` overrides the default empty
+    history to exercise the backfill's empty-history guard.
     """
     eng = make_engine(str(db_path))
     try:
@@ -60,9 +63,14 @@ def _insert_position(
                     "corporate_action_adjustment_needed, parent_position_id, origin"
                     ") VALUES ("
                     ":pid, NULL, NULL, :status, :direction, NULL, 'EQUITY', '{}', "
-                    "'[]', NULL, 0, NULL, NULL)"
+                    ":hist, NULL, 0, NULL, NULL)"
                 ),
-                {"pid": position_id, "status": status, "direction": direction},
+                {
+                    "pid": position_id,
+                    "status": status,
+                    "direction": direction,
+                    "hist": execution_history_json,
+                },
             )
             session.commit()
     finally:
@@ -140,6 +148,24 @@ class TestPositionsStatusCancelledMigration:
         assert _read_status(db_path, _ZS) == "CANCELLED"
         # An ordinary still-resting PENDING position must not be swept up.
         assert _read_status(db_path, "pos-healthy-pending") == "PENDING"
+
+    def test_backfill_skips_stranded_row_that_has_fills(self, tmp_path: Path) -> None:
+        """A named stranded row that gained a fill before deploy must NOT be
+        backfilled — CANCELLED forbids fills, so writing it would persist a row
+        the read codec rejects. The backfill's empty-history guard skips it."""
+        db_path = tmp_path / "alembic.db"
+        cfg = _alembic_config(db_path)
+        command.upgrade(cfg, _PREVIOUS)
+        _insert_position(
+            db_path,
+            position_id=_SCHW,
+            status="PENDING",
+            execution_history_json='[{"fill_quantity": 1.0}]',
+        )
+
+        command.upgrade(cfg, _REVISION)
+
+        assert _read_status(db_path, _SCHW) == "PENDING"
 
     def test_check_constraint_present_after_upgrade(self, tmp_path: Path) -> None:
         """The recreated CHECK constraint shows up in the schema with CANCELLED."""

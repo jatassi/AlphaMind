@@ -334,12 +334,17 @@ class PositionRecord:
             msg = "realized_pnl_to_date_usd must be non-None when status is CLOSED"
             raise ValueError(msg)
         # CANCELLED is the never-opened terminal state (ALP-744): the entry never
-        # filled, so there can be no fills. Unlike PENDING — which exempts
-        # strategy positions that accumulate per-leg fills while awaiting the
-        # atomic open — CANCELLED forbids any fill for every instrument type, so
-        # a partially-filled position can never be mislabelled "never opened".
+        # filled, so there can be no fills and no realized P&L. Unlike PENDING —
+        # which exempts strategy positions that accumulate per-leg fills while
+        # awaiting the atomic open — CANCELLED forbids any fill for every
+        # instrument type, so a partially-filled position can never be
+        # mislabelled "never opened". The realized-P&L clause mirrors CLOSED's
+        # (which requires it non-None): a never-opened position realized nothing.
         if self.status == PositionStatus.CANCELLED and self.execution_history:
             msg = "execution_history must be empty when status is CANCELLED"
+            raise ValueError(msg)
+        if self.status == PositionStatus.CANCELLED and self.realized_pnl_to_date_usd is not None:
+            msg = "realized_pnl_to_date_usd must be None when status is CANCELLED"
             raise ValueError(msg)
 
     def _check_equity_direction_fields(self) -> None:

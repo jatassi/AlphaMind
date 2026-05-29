@@ -2870,6 +2870,63 @@ async def test_persist_entry_window_cancel_marks_never_filled_position_cancelled
         assert bracket.status == BracketStatus.DISSOLVED.value
 
 
+async def test_cancel_command_leaves_partially_filled_strategy_pending(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-744 guard: cancelling the entry of a PENDING *strategy* that has
+    already accumulated a per-leg fill must NOT mark it CANCELLED. CANCELLED
+    means *never opened*; a partially-filled strategy parent stays PENDING (and
+    writing CANCELLED on a row with fills would violate the PositionRecord
+    invariant — the ALP-731 unreadable-row class)."""
+    import dataclasses
+
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    # A PENDING strategy parent carrying one per-leg fill — valid per the
+    # PENDING invariant's strategy exemption.
+    strategy_pending = dataclasses.replace(
+        _strategy_position(),
+        status=PositionStatus.PENDING,
+        entry_timestamp=None,
+    )
+    assert strategy_pending.execution_history  # precondition: it has a fill
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
+    await _seed_position_cluster(
+        factory,
+        strategy_pending,
+        _active_thesis(),
+        _active_bracket(),
+        _pending_entry_limit_order_rec(),
+    )
+
+    envelope = _make_strategist_envelope(
+        commands=(_cancel_command(order_id=OrderId("ord-entry-1")),)
+    )
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        position = await sess.get(PositionRow, "POS-NVDA-001")
+        assert position is not None
+        # Partially-filled: stays PENDING, NOT swept to CANCELLED.
+        assert position.status == PositionStatus.PENDING.value
+
+        # The bracket still dissolves — only the position-status guard differs.
+        bracket = await sess.get(BracketRow, "BRK-NVDA-1")
+        assert bracket is not None
+        assert bracket.status == BracketStatus.DISSOLVED.value
+
+
 def _pending_entry_limit_order_rec(
     *,
     limit_price: str = "100.0",
