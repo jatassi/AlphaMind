@@ -381,12 +381,13 @@ class TestReadActiveUniversePrices:
 
         assert prices == {"CSCO": 50.0, "MSFT": 410.0}
 
-    async def test_finer_timeframe_wins_when_period_start_ties(
+    async def test_coarser_timeframe_wins_when_period_start_ties(
         self,
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        """On an equal ``period_start`` across timeframes the finer-grained bar
-        wins, so selection stays deterministic and reproducible (ALP-747 AC4)."""
+        """On an equal ``period_start`` across timeframes the coarser-grained bar
+        wins: its window closes later, so its close is the more recent price.
+        Selection stays deterministic and reproducible (ALP-747 AC4)."""
         from alphamind.scheduler import phase1_inputs as module
 
         async with async_factory() as seed_session:
@@ -395,7 +396,8 @@ class TestReadActiveUniversePrices:
             seed_session.add_all(
                 [
                     # Both bars start at the same instant (a top-of-hour open).
-                    # The 15min bar is the more granular / recent price.
+                    # The 1h bar's window closes later (14:00 vs 13:15), so its
+                    # close is the more recent price and it must win.
                     _make_ohlcv_bar(
                         "NVDA",
                         period_start="2026-05-07T13:00:00+00:00",
@@ -415,7 +417,7 @@ class TestReadActiveUniversePrices:
         async with async_factory() as session:
             prices = await module._read_active_universe_prices(session, as_of=_NOW)
 
-        assert prices == {"NVDA": 905.0}
+        assert prices == {"NVDA": 900.0}
 
     async def test_drops_stale_bars_past_the_age_bound(
         self,

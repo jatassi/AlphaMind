@@ -73,7 +73,7 @@ _US_EASTERN = ZoneInfo("US/Eastern")
 _OHLCV_DAILY_TIMEFRAME = "1d"
 
 # ALP-715 review F3 — staleness ceiling for the per-ticker closing print.
-# Mirrors ``scheduler.phase1_inputs._MAX_EOD_BAR_AGE_SECONDS`` (7 calendar
+# Mirrors ``scheduler.phase1_inputs._MAX_REFERENCE_BAR_AGE_SECONDS`` (7 calendar
 # days). The longest US market-holiday weekend is ~4 days; 7 days clears
 # that yet still drops a ticker whose OHLCV feed has genuinely stalled
 # (data-source outage, ticker delisted). A dropped ticker then becomes

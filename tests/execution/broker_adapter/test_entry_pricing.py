@@ -412,6 +412,27 @@ def test_stop_limit_breakout_is_exempt() -> None:
     assert live_bracket_incoherence_reason(command, quote=_LIVE_AROUND_226) is None
 
 
+def test_market_entry_with_entry_window_is_still_checked() -> None:
+    """A market order fills at the live quote regardless of any (vestigial)
+    entry_window, so it stays in scope — a stale market bracket is still caught."""
+    window = EntryWindow(
+        deadline=datetime(2026, 6, 1, 17, 30, tzinfo=UTC),
+        decay_type="gradual",
+        rationale="Window annotation that does not apply to a market fill.",
+    )
+    command = _equity_open(
+        ticker="ORCL",
+        direction="long",
+        entry_order=EntryOrder(type="market", limit_price=None),
+        target_price=price("212.0"),
+        stop_trigger=price("187.0"),
+        entry_window=window,
+    )
+    reason = live_bracket_incoherence_reason(command, quote=_LIVE_AROUND_226)
+    assert reason is not None
+    assert "ORCL" in reason
+
+
 def test_subpenny_tick_below_one_dollar() -> None:
     """Below $1.00 the limit rounds to the sub-penny ($0.0001) increment."""
     quote = TouchQuote(bid=price("0.5000"), ask=price("0.5020"))

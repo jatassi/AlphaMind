@@ -88,19 +88,23 @@ _DTB3_SERIES_ID = "DTB3"
 _DEFAULT_RISK_FREE_RATE = 0.045
 
 
-# ALP-747 — per-timeframe granularity rank used to break a ``period_start``
-# tie when selecting the freshest reference bar. A top-of-hour open can carry a
-# 15min and a 1h bar starting at the same instant; the finer-grained bar is the
-# more recent price, so it wins (lower rank). The ranks mirror the timeframes
-# the OHLCV collector writes (see ``data_sources/polygon/equity.py``); an
-# unrecognized timeframe sorts last. Keeping the tiebreak deterministic keeps
-# the chosen reference reproducible from the archived bars (ALP-747 AC4).
+# ALP-747 — per-timeframe rank used to break a ``period_start`` tie when
+# selecting the freshest reference bar. Two timeframes can share a ``period_start``
+# only at a boundary (a top-of-hour where a 15min and a 1h bar both open at, say,
+# 13:00). On such a tie the *coarser* timeframe wins (lower rank): its window
+# closes later, so its close is the more recent price (the collector stamps
+# ``period_end == period_start`` for every bar — see ``data_sources/polygon/
+# equity.py`` — so ``period_end`` cannot disambiguate). The tie is effectively
+# unreachable in healthy operation: finer bars within a completed coarser window
+# carry strictly later starts and win on ``period_start`` alone. The rank only
+# guarantees a deterministic, reproducible winner (ALP-747 AC4) for a degenerate
+# backfill. An unrecognized timeframe sorts last.
 _TIMEFRAME_GRANULARITY_RANK: dict[str, int] = {
-    "15min": 0,
-    "1h": 1,
+    "1w": 0,
+    "1d": 1,
     "4h": 2,
-    "1d": 3,
-    "1w": 4,
+    "1h": 3,
+    "15min": 4,
 }
 _UNKNOWN_TIMEFRAME_RANK = 99
 
@@ -231,10 +235,15 @@ async def _read_active_universe_prices(
     proxy; that imprecision is accepted for guardrail projection, which is a
     coarse pre-trade notional/margin check rather than a fill-quality gate.
 
-    "Freshest" is the maximum ``period_start`` across all timeframes; on a tie
-    (a top-of-hour open shared by a 15min and a 1h bar) the finer-grained bar
-    wins (:data:`_TIMEFRAME_GRANULARITY_RANK`), keeping selection deterministic
-    and the run reproducible from the archived bars (ALP-747 AC4).
+    "Freshest" is the maximum ``period_start`` across all timeframes; a
+    ``period_start`` tie is broken toward the coarser timeframe
+    (:data:`_TIMEFRAME_GRANULARITY_RANK`), keeping selection deterministic and
+    the run reproducible from the archived bars (ALP-747 AC4). Any session is
+    eligible, so an off-hours (pre-market / after-hours / overnight) bar can be
+    the freshest reference — intentional, since an after-hours gap is exactly the
+    kind of fast move the daily close lags; the dispatch-time live-quote check
+    (ALP-747) is the real-time backstop for a thin off-hours print that misleads
+    the bracket geometry.
 
     A ticker whose freshest bar is older than ``max_bar_age_seconds`` is
     dropped: the validation tool's ``UNAVAILABLE`` / ``missing_market_price``
@@ -249,9 +258,9 @@ async def _read_active_universe_prices(
     """
     cutoff_iso = (as_of - timedelta(seconds=max_bar_age_seconds)).replace(microsecond=0).isoformat()
     # Rank each in-window bar within its ticker by recency (period_start desc),
-    # breaking a period_start tie toward the finer-grained timeframe, then keep
-    # the top row per ticker. A row_number window avoids the MAX-per-group
-    # self-join's ambiguity when two timeframes share the maximum period_start.
+    # breaking a period_start tie toward the coarser timeframe, then keep the top
+    # row per ticker. A row_number window avoids the MAX-per-group self-join's
+    # ambiguity when two timeframes share the maximum period_start.
     rank_case = case(
         _TIMEFRAME_GRANULARITY_RANK,
         value=OhlcvBars.timeframe,
@@ -290,10 +299,11 @@ def _build_market_inputs(
 ) -> MarketInputs:
     """Compose ``MarketInputs`` from universe + broker-position prices.
 
-    ``underlying_prices`` merges two layers: ``universe_prices`` — latest
-    EOD closes for every active-universe ticker (ALP-587) — forms the base,
-    and each held position's ``current_price`` overrides it on overlap (a
-    live broker quote beats an EOD bar). The base layer lets the decision
+    ``underlying_prices`` merges two layers: ``universe_prices`` — the freshest
+    recorded close of any timeframe for every active-universe ticker (ALP-587 /
+    ALP-747; an intraday bar when one is fresher than the daily close) — forms
+    the base, and each held position's ``current_price`` overrides it on overlap
+    (a live broker quote beats a recorded bar). The base layer lets the decision
     agents validate proposals against active-universe tickers they do not
     yet hold; without it the validation tool returns ``UNAVAILABLE`` /
     ``missing_market_price`` for any unheld candidate.
@@ -310,7 +320,7 @@ def _build_market_inputs(
     position_prices: dict[str, float] = {
         pos.symbol: float(pos.current_price) for pos in positions if pos.current_price is not None
     }
-    # Held-position live quotes override universe EOD closes on overlap.
+    # Held-position live quotes override universe recorded-bar closes on overlap.
     underlying_prices: dict[str, float] = {**universe_prices, **position_prices}
     return MarketInputs(
         underlying_prices=underlying_prices,

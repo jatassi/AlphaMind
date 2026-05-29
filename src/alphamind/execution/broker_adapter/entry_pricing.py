@@ -178,6 +178,14 @@ async def _rewrite_one(command: OMSCommand, *, quote_source: QuoteSource, bps: f
     return command.model_copy(update={"entry_order": new_entry})
 
 
+def _first_price_leg(command: OpenCommand) -> PriceLeg | None:
+    """The bracket's protective-stop leg — the first price-invalidation leg, or
+    ``None`` for an OTO bracket (only a hard time leg). Mirrors
+    ``validation._protective_stop_price`` and the equity OPEN bracket builder,
+    which both take the first price leg as the bracket's stop."""
+    return next((leg for leg in command.invalidation_legs if isinstance(leg, PriceLeg)), None)
+
+
 def _preserves_bracket_geometry(
     direction: Direction, new_limit: Price, command: OpenCommand
 ) -> bool:
@@ -197,7 +205,7 @@ def _preserves_bracket_geometry(
     """
     target = command.target.price
     assert target is not None  # Target validator guarantees a price for every target_type.
-    price_leg = next((leg for leg in command.invalidation_legs if isinstance(leg, PriceLeg)), None)
+    price_leg = _first_price_leg(command)
     stop = price_leg.condition.trigger_price if price_leg is not None else None
     if direction == "short":
         if new_limit <= target:
@@ -211,21 +219,25 @@ def _preserves_bracket_geometry(
 def fills_at_live_quote_equity(command: OMSCommand) -> bool:
     """True when *command* is an equity OPEN whose entry fills at the live quote.
 
-    Scope mirrors :func:`_is_enter_now_equity` plus ``market`` entries: a
-    ``market`` order or an enter-now ``limit`` (a limit with no ``entry_window``)
-    both transact at the prevailing quote, so their bracket must straddle the
-    live touch. A patient-retest ``limit`` (carries an ``entry_window``) and a
-    ``stop_limit`` breakout deliberately rest away from the touch and are exempt;
-    non-equity and non-OPEN commands are out of scope. Callers gate the
-    dispatch-time live-coherence check (:func:`live_bracket_incoherence_reason`)
-    on this predicate so a quote is fetched only when the check can apply.
+    A ``market`` order fills at the prevailing quote unconditionally — any
+    ``entry_window`` annotation on it is vestigial (a market order never rests),
+    so it is always in scope. An enter-now ``limit`` (a ``limit`` with no
+    ``entry_window``) is repriced to marketable by ALP-738 and likewise fills at
+    the touch, so it is in scope too. A patient-retest ``limit`` (carries an
+    ``entry_window``) and a ``stop_limit`` breakout deliberately rest away from
+    the touch and are exempt; non-equity and non-OPEN commands are out of scope.
+    Callers gate the dispatch-time live-coherence check
+    (:func:`live_bracket_incoherence_reason`) on this predicate so a quote is
+    fetched only when the check can apply.
     """
-    return (
-        isinstance(command, OpenCommand)
-        and isinstance(command.instrument, EquityInstrument)
-        and command.entry_order.type in ("market", "limit")
-        and command.entry_window is None
-    )
+    if not (isinstance(command, OpenCommand) and isinstance(command.instrument, EquityInstrument)):
+        return False
+    entry_type = command.entry_order.type
+    if entry_type == "market":
+        return True
+    if entry_type == "limit":
+        return command.entry_window is None
+    return False  # stop_limit breakout — anchors away from the touch
 
 
 def live_bracket_incoherence_reason(command: OpenCommand, *, quote: TouchQuote) -> str | None:
@@ -252,12 +264,11 @@ def live_bracket_incoherence_reason(command: OpenCommand, *, quote: TouchQuote) 
         return None
     assert isinstance(command.instrument, EquityInstrument)
     target = command.target.price
-    if target is None:  # non-price target shape — nothing to check against the touch.
-        return None
+    assert target is not None  # Target validator guarantees a price for every target_type.
     direction = command.instrument.direction
     ticker = command.instrument.ticker
     base = quote.ask if direction == "long" else quote.bid
-    price_leg = next((leg for leg in command.invalidation_legs if isinstance(leg, PriceLeg)), None)
+    price_leg = _first_price_leg(command)
     stop = price_leg.condition.trigger_price if price_leg is not None else None
     if direction == "long":
         return _long_bracket_incoherence(ticker, target=target, stop=stop, base=base)
