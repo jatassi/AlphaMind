@@ -74,6 +74,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
+import yaml
 from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -980,24 +981,26 @@ def _write_verify_command_center_yaml(
     verbatim from the repo config — the verify run uses production
     rule + WebAuthn settings against in-memory backends.
     """
+    # Serialize via yaml.safe_dump rather than templating quoted scalars:
+    # Windows paths carry backslashes (``C:\\Users\\...``) which a
+    # double-quoted YAML scalar interprets as escape sequences (``\\U`` →
+    # bad unicode escape), breaking the load. safe_dump quotes each value
+    # correctly for whatever characters it contains.
+    payload = {
+        "bind": {"host": bind_host, "port": bind_port},
+        "db": {"alphamind_db_path": str(db_path)},
+        "frontend": {"dist_path": str(frontend_dist_path)},
+        "pipeline": {
+            "control_url": "http://127.0.0.1:8765",
+            "events_url": "http://127.0.0.1:8765",
+        },
+        "monitor": {
+            "control_url": "http://127.0.0.1:8766",
+            "events_url": "http://127.0.0.1:8766",
+        },
+    }
     cc_yaml = config_dir / "command-center.yaml"
-    cc_yaml.write_text(
-        f"""bind:
-  host: "{bind_host}"
-  port: {bind_port}
-db:
-  alphamind_db_path: "{db_path}"
-frontend:
-  dist_path: "{frontend_dist_path}"
-pipeline:
-  control_url: "http://127.0.0.1:8765"
-  events_url: "http://127.0.0.1:8765"
-monitor:
-  control_url: "http://127.0.0.1:8766"
-  events_url: "http://127.0.0.1:8766"
-""",
-        encoding="utf-8",
-    )
+    cc_yaml.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
     (config_dir / "security.yaml").write_bytes((repo_config_dir / "security.yaml").read_bytes())
     (config_dir / "alerts.yaml").write_bytes((repo_config_dir / "alerts.yaml").read_bytes())
 
@@ -1268,7 +1271,15 @@ async def _run_checks(args: argparse.Namespace) -> int:
     checks would fail trivially against a non-bound server).
     """
     results: list[CheckResult] = []
-    with tempfile.TemporaryDirectory() as tmpdir:
+    # ignore_cleanup_errors: the command center boots its own aiosqlite
+    # engine against the temp verify DB, and on Windows that worker
+    # thread's file handle does not release synchronously when the
+    # supervisor stops — so rmtree of the temp dir races the handle and
+    # raises PermissionError [WinError 32]. All checks (including
+    # clean_teardown) have completed by the time cleanup runs; the leftover
+    # temp DB is reclaimed by the OS. Without this the gate always exits
+    # non-zero on Windows even on a full 7/7 pass.
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         setup = _prepare_run_setup(args, Path(tmpdir))
         context = VerifyContext(app_port=setup.bind_port, base_url=setup.base_url)
         return await _drive_one_run(setup=setup, context=context, results=results)
