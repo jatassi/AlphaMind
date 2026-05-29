@@ -45,7 +45,7 @@ From the repo root in PowerShell (elevated — NSSM control needs admin):
 ### 1.1 Pull main
 
 ```powershell
-cd $env:USERPROFILE\Git\AlphaMind   # or wherever the prod checkout lives
+cd $env:USERPROFILE\AlphaMind        # the prod checkout (NSSM AppDirectory points here)
 git fetch origin
 git status                          # MUST be on `main` and clean
 git pull --ff-only origin main
@@ -598,14 +598,24 @@ uv run python -c "
 import sqlite3, os
 db = sqlite3.connect(os.path.expandvars(r'%USERPROFILE%\AlphaMind\data\alphamind.db'))
 db.row_factory = sqlite3.Row
-for row in db.execute('SELECT invocation_id, run_type, trigger_source, started_at, ended_at, status, exit_reason, commands_submitted FROM invocations ORDER BY started_at DESC LIMIT 20').fetchall():
+for row in db.execute('SELECT invocation_id, trigger_type, trigger_source, trigger_reason, start_at, phase1_completed_at, phase2_completed_at, git_sha_at_invocation, staleness_flag FROM invocations ORDER BY start_at DESC LIMIT 20').fetchall():
     print(dict(row))
 "
 ```
 
-Useful columns: `status` (`succeeded` / `failed` / `aborted`), `exit_reason`
-(free-form, names the failing layer), `staleness_flag`,
-`resolved_config_snapshot_path` (points into the archive directory).
+The table does **not** carry a single `status` column. Completion is read
+from the phase timestamps: a row with a non-null `phase2_completed_at`
+succeeded through Phase 2; a row with `start_at` set but
+`phase2_completed_at` NULL either is still in-flight or aborted mid-pipeline
+(cross-check the SSE stream / `pipeline.log`). Useful columns:
+`trigger_type` (the run-type — `pre_open`, `market_hours_rolling`, etc.),
+`trigger_source` (`scheduled` / manual / `emergency_trigger`),
+`trigger_reason` (free-form), `phase1_completed_at` / `phase2_completed_at`
+(lifecycle), `git_sha_at_invocation` (the repo HEAD when the invocation
+ran — useful for confirming which code version a run executed under),
+`command_execution_summary_json` (PM command-submission detail),
+`staleness_flag`, and `resolved_config_snapshot_path` (points into the
+archive directory).
 
 ### 5.6 Per-invocation archive directory
 
