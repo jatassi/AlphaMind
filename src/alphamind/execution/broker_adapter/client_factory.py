@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from alpaca.data.historical.corporate_actions import CorporateActionsClient
+from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.trading.client import TradingClient
 from alpaca.trading.stream import TradingStream
 
@@ -94,6 +95,20 @@ class AlpacaClientFactory:
             secret_key=self._credentials.api_secret,
             paper=(self._credentials.mode == "paper"),
             url_override=self._credentials.ws_url,
+        )
+
+    def build_stock_data_client(self) -> StockHistoricalDataClient:
+        """Return a fresh ``StockHistoricalDataClient`` for latest-quote snapshots.
+
+        Used by the marketable-entry rewrite (ALP-738) to price a limit through
+        the touch. The Stock Market Data API shares the Trading API key / secret
+        (no separate market-data credential) and targets the documented Data API
+        base URL, so we pass no ``url_override``.
+        """
+        return StockHistoricalDataClient(
+            api_key=self._credentials.api_key,
+            secret_key=self._credentials.api_secret,
+            raw_data=False,
         )
 
     def build_corporate_actions_client(self) -> CorporateActionsClient:

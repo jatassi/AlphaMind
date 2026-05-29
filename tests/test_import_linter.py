@@ -463,6 +463,11 @@ def test_decision_not_execution_contract_with_composition_root_exception() -> No
         f"{pkg}.process -> alphamind.execution.oms.command_ids",
         f"{pkg}.server -> alphamind.execution.broker_adapter.client_factory",
         f"{pkg}.server -> alphamind.execution.broker_adapter.queries",
+        # ALP-738 added two more runtime edges from the composition root: the
+        # server builds the Alpaca-backed quote source and lazily imports the
+        # marketable-entry rewrite to re-price enter-now entries before dispatch.
+        f"{pkg}.server -> alphamind.execution.broker_adapter.entry_pricing",
+        f"{pkg}.server -> alphamind.execution.broker_adapter.quotes",
         "alphamind.state.config -> alphamind.execution.corporate_actions.config",
     }
     assert set(ignored) == expected_edges, (

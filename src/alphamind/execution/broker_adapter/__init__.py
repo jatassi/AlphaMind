@@ -33,6 +33,12 @@ from alphamind.execution.broker_adapter.client_factory import (
 from alphamind.execution.broker_adapter.corporate_actions_queries import (
     CorporateActionsQueries,
 )
+from alphamind.execution.broker_adapter.entry_pricing import (
+    QuoteSource,
+    TouchQuote,
+    marketable_limit_price,
+    rewrite_enter_now_entries,
+)
 from alphamind.execution.broker_adapter.errors import (
     PermanentRejection,
     PermanentRejectionCode,
@@ -85,6 +91,7 @@ from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
 )
+from alphamind.execution.broker_adapter.quotes import AlpacaQuoteSource
 from alphamind.execution.broker_adapter.recovery import (
     order_snapshot_to_fill_reports,
     recover_missed_fills_since,
@@ -100,6 +107,7 @@ __all__ = [
     "AccountStateQueries",
     "ActivitySnapshot",
     "AlpacaClientFactory",
+    "AlpacaQuoteSource",
     "AssetSnapshot",
     "CalendarDay",
     "CancellationAck",
@@ -119,17 +127,21 @@ __all__ = [
     "PermanentRejection",
     "PermanentRejectionCode",
     "PositionSnapshot",
+    "QuoteSource",
     "ReplaceFields",
     "ReplacementAck",
     "ResolvedCredentials",
     "SubmissionOutcome",
     "Submitted",
+    "TouchQuote",
     "TradeAccountSnapshot",
     "build_occ_symbol",
     "classify_alpaca_error",
     "is_transient",
+    "marketable_limit_price",
     "order_snapshot_to_fill_reports",
     "recover_missed_fills_since",
+    "rewrite_enter_now_entries",
     "strategy_legs_to_close_acks",
     "submit_cancel",
     "submit_equity_add",

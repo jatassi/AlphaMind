@@ -190,7 +190,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # config/continuous_monitor.yaml and ContinuousMonitorConfig (the entry-window
     # expiry watcher's cadence); this value is the combined hash with ALP-732's
     # knob present after the merge into main.
-    expected = "0613a138c7dea3b665ed9dd00aab736e394326aaf4adaf3368d8ef33f12b22b4"
+    # Pin updated 2026-05-28 (marketable_entry_bps_through_touch knob, ALP-738):
+    # ALP-738 added marketable_entry_bps_through_touch: 5.0 to config/execution.yaml
+    # and ExecutionConfig (basis points past the touch when re-pricing an enter-now
+    # entry into a marketable limit), shifting the resolved-config canonical bytes.
+    expected = "eff7ae9fc83dc1e94758e1eb18e36bcf920ce58d130f4c17f702364d33bec2fb"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."
