@@ -43,7 +43,10 @@ class TestCommandCenterConfig:
     def test_bind_host_and_port_are_present(self, config_dir: Path) -> None:
         config = load_command_center_config(config_dir)
         assert config.bind.host == "127.0.0.1"
-        assert config.bind.port == 8080
+        # Moved off 8080: SlipStream holds IPv6 [::1]:8080, which wins the
+        # `localhost` lookup over the CC's IPv4 bind. 8090 is free on both
+        # stacks (see config/command-center.yaml).
+        assert config.bind.port == 8090
 
     def test_db_alphamind_db_path_present(self, config_dir: Path) -> None:
         config = load_command_center_config(config_dir)
@@ -247,7 +250,9 @@ class TestAccessConfig:
         # sensible localhost-derived for zero-config v1 installs
         assert cfg.access.scheme == "http"
         assert cfg.access.host == "localhost"
-        assert cfg.access.port == 8080
+        # access block now pinned to the moved bind port (8090) so the
+        # WebAuthn expected_origin matches what the operator types.
+        assert cfg.access.port == 8090
 
     def test_load_cc_succeeds_on_new_style_lan_access(self, tmp_path: Path) -> None:
         # AC4: new-style LAN YAMLs load

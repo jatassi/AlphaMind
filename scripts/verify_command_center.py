@@ -973,7 +973,7 @@ def _write_verify_command_center_yaml(
 ) -> None:
     """Materialize a per-run ``command-center.yaml`` under *config_dir*.
 
-    The production config pins the bind to ``127.0.0.1:8080``; verify
+    The production config pins the bind to ``127.0.0.1:8090``; verify
     runs pick a free ephemeral port to avoid colliding with a real
     command center process the operator may already have running.
 
