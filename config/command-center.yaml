@@ -9,17 +9,22 @@ bind:
                               # recipe (hostname choice, exact YAML, re-enroll,
                               # firewall). The old direct "switch to LAN IP" path
                               # is superseded by the access: decoupling (ALP-725).
-  port: 8080
+  port: 8090                  # Moved off 8080: the SlipStream app holds IPv6 [::1]:8080,
+                              # which wins the `localhost` lookup over the command
+                              # center's IPv4 127.0.0.1 bind, so the browser was
+                              # reaching SlipStream's passkey page instead. 8090 is free
+                              # on both stacks, so `http://localhost:8090` connection-
+                              # refuses on ::1 and falls through to this IPv4 listener.
+                              # rpId stays "localhost" (host unchanged) — no passkey
+                              # re-enrollment required.
 
-# access:                     # Public browser-visible origin (ALP-725 / LAN plan).
-#   scheme: "http"            # "http" for typical LAN (no TLS); "https" if you
-#   host: "alphamind.local"   # terminate TLS locally. The hostname operators
-#   port: 8080                # type in the browser + WebAuthn rpId. mDNS *.local
-#                             # or hosts-file entry. Must match
-#                             # security.yaml.webauthn.relying_party_id.
-#                             # See RUNBOOK for full LAN steps + hostname
-#                             # suggestion. Omitting the block preserves v1
-#                             # localhost defaults (zero-config compat).
+# Public browser-visible origin (ALP-725). Pinned to the moved port so the WebAuthn
+# expected_origin + cookie flags match what the operator types. host stays "localhost"
+# to match security.yaml webauthn.relying_party_id (loopback v1; no re-enrollment).
+access:
+  scheme: "http"
+  host: "localhost"
+  port: 8090
 
 db:
   alphamind_db_path: "%USERPROFILE%/AlphaMind/data/alphamind.db"
