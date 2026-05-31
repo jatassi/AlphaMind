@@ -21,12 +21,7 @@ _spec.loader.exec_module(gen)
 
 
 def test_module_tables_are_fresh() -> None:
-    stale = [
-        str(p.relative_to(REPO_ROOT))
-        for p in gen.marked_files()
-        if gen.apply(p, write=False)
-    ]
+    stale = [str(p.relative_to(REPO_ROOT)) for p in gen.marked_files() if gen.apply(p, write=False)]
     assert not stale, (
-        "Stale module tables — run `uv run python scripts/gen_package_nav.py`:\n"
-        + "\n".join(stale)
+        "Stale module tables — run `uv run python scripts/gen_package_nav.py`:\n" + "\n".join(stale)
     )

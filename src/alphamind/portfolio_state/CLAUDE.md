@@ -13,7 +13,7 @@ read: `records/`, `aggregates/`, `computations/`, `views/`, `consumers/`, `event
 | `aggregates/` | Tier 3 — derived/aggregate records per `state-persistence.md` § Tier 3. |
 | `assembler.py` | Snapshot assembler — orchestrates production of a PortfolioStateSnapshot (story 06). |
 | `computations/` | Portfolio-state read-time computation helpers. |
-| `consumers/` | — |
+| `consumers/` | Read-side consumers of portfolio-state snapshots. |
 | `events/` | Tier 2 — append-only lifecycle/event records per `state-persistence.md` § Tier 2. |
 | `freshness.py` | Freshness contract for portfolio state snapshots (story 08). |
 | `pricing.py` | Price provider protocols and supporting types for portfolio state. |

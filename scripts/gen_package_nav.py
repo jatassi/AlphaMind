@@ -79,9 +79,7 @@ def render_block(pkg: Path) -> str:
 
 
 def marked_files() -> list[Path]:
-    return sorted(
-        p for p in SRC.rglob("CLAUDE.md") if BEGIN in p.read_text(encoding="utf-8")
-    )
+    return sorted(p for p in SRC.rglob("CLAUDE.md") if BEGIN in p.read_text(encoding="utf-8"))
 
 
 def apply(path: Path, *, write: bool) -> bool:
