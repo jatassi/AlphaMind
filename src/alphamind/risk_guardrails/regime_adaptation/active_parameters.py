@@ -100,11 +100,14 @@ def load_prior_active_risk_parameters(snapshot_path: str) -> ActiveRiskParameter
     the snapshot assembler reads the same values the decision pipeline
     consumed at the time the prior invocation wrote that snapshot.
 
-    Raises :class:`FileNotFoundError` when the snapshot file is missing;
-    the fallback to the current parameter set is the repository-provider's
-    responsibility, not the loader's. Raises :class:`json.JSONDecodeError`
-    on a corrupt snapshot — defensive fallback would mask a contract
-    violation by substituting an unrelated set.
+    Raises :class:`FileNotFoundError` when the snapshot file is missing (and,
+    on a blank or directory path, other :class:`OSError` subclasses such as
+    ``IsADirectoryError`` / ``PermissionError``); the fallback to the current
+    parameter set is the repository-provider's responsibility, not the
+    loader's — the provider treats any :class:`OSError` as "no usable prior
+    snapshot". Raises :class:`json.JSONDecodeError` on a corrupt snapshot —
+    defensive fallback would mask a contract violation by substituting an
+    unrelated set.
     """
     payload = json.loads(Path(snapshot_path).read_text(encoding="utf-8"))
     return build_active_risk_parameters(

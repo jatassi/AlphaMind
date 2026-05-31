@@ -1436,6 +1436,47 @@ async def test_get_prior_invocation_context_returns_most_recent_prior(
     assert result.prior_phase1_committed_at == _PHASE1_AT
 
 
+async def test_get_prior_invocation_context_skips_maintenance_tick(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A pathless maintenance tick is skipped as a regime-adaptation prior.
+
+    ``borrow_accrual`` ticks (ALP-754) write an ``invocations`` row for lineage
+    but never resolve a config, so their ``resolved_config_snapshot_path`` is
+    the empty string. The most-recent prior for a pipeline run is typically
+    that evening's tick; selecting it and handing its empty path to the prior
+    provider crashed Phase 1. Selection must skip it and anchor on the most
+    recent invocation that actually ran the pipeline.
+    """
+    _, factory = db
+    pipeline_path = "/tmp/provenance/prior/resolved.json"
+    pipeline_prior = _make_invocation_record(
+        invocation_id=_PRIOR_INV_ID,
+        start_at=_NOW - timedelta(hours=2),
+        resolved_config_snapshot_path=pipeline_path,
+    )
+    maintenance_tick = _make_invocation_record(
+        invocation_id="inv-2026-05-08T11:30:00Z-tick",
+        start_at=_NOW - timedelta(minutes=90),
+        phase1_completed_at=None,
+        resolved_config_snapshot_path="",
+    )
+    current = _make_invocation_record()
+    await _seed_minimal_invocation(factory, invocation=pipeline_prior)
+    await _seed_minimal_invocation_extra(factory, maintenance_tick)
+    await _seed_minimal_invocation_extra(factory, current)
+
+    prior_params = _make_active_risk_parameters(rule_value=900.0)
+    repo = _build_repo(
+        factory,
+        prior_active_risk_parameters_for_path={pipeline_path: prior_params},
+    )
+    result = repo.get_prior_invocation_context()
+
+    assert result.prior_invocation_id == _PRIOR_INV_ID
+    assert result.prior_active_risk_parameters == prior_params
+
+
 # ---------------------------------------------------------------------------
 # Tier 3 — derived/aggregate methods
 # ---------------------------------------------------------------------------
