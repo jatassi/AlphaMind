@@ -1,4 +1,4 @@
-"""Auth surface for the command center (story 03 / ALP-667).
+"""Auth surface for the command center.
 
 Single-operator WebAuthn (passkey) authentication with signed-cookie
 sessions and double-submit CSRF protection.

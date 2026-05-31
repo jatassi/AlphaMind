@@ -1,4 +1,4 @@
-"""Calibration state and fallback framework — story 02-distillation/04, ALP-540.
+"""Calibration state and fallback framework.
 
 Every per-category distillation computation routes its output through this
 module so a uniform three-state ``calibration_state`` tag accompanies the

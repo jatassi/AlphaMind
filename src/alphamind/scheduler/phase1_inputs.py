@@ -1,4 +1,4 @@
-"""Phase 1 input gatherer (story 03b / ALP-445; refactored ALP-494).
+"""Phase 1 input gatherer.
 
 Assembles the typed bundle ``process_unprocessed_fills`` consumes — Alpaca
 account + positions, v1beta1 corporate-action activities, and the

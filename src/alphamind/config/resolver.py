@@ -1,4 +1,4 @@
-"""Composition resolver for the configuration tree (story 05).
+"""Composition resolver for the configuration tree.
 
 Pure function that folds the runtime-resolved identity dimensions (active
 regime, active mode, active overlays, firing trigger) into the operator-pinned

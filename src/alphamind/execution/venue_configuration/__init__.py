@@ -1,4 +1,4 @@
-"""Venue configuration runtime — settlement / sessions / margin / fees (ALP-121).
+"""Venue configuration runtime — settlement / sessions / margin / fees.
 
 This package owns the in-code venue-state surface the OMS consumes for
 accounting per ``docs/design/05-execution-layer/venue-configuration.md``:

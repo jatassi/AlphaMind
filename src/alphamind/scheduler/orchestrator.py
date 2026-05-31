@@ -1,4 +1,4 @@
-"""End-to-end phase orchestrator — ``run_invocation`` (ALP-449 three-tx model).
+"""End-to-end phase orchestrator — ``run_invocation``.
 
 Single async entrypoint the APScheduler driver (story 04a), the emergency
 receiver (story 04b), and the CLI ``--once`` path call. Per the design's

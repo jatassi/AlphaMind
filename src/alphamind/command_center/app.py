@@ -1,4 +1,4 @@
-"""FastAPI app composition for the command center (story 02 / ALP-666).
+"""FastAPI app composition for the command center.
 
 This is the composition root for the command-center FastAPI app —
 the only module that wires routers, lifespan, and dependencies. The

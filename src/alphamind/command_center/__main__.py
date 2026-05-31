@@ -1,4 +1,4 @@
-"""Entry point for ``python -m alphamind.command_center`` (story 02 / ALP-666).
+"""Entry point for ``python -m alphamind.command_center``.
 
 Boots the FastAPI app under Uvicorn inside the supervised
 :class:`CommandCenterSupervisor` task tree, records a

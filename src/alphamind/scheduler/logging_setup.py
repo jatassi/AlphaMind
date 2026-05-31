@@ -1,4 +1,4 @@
-"""``pipeline.log`` rotation setup for the scheduler (story 01).
+"""``pipeline.log`` rotation setup for the scheduler.
 
 Mirrors ``alphamind.collector.scheduler._configure_logging`` shape — same
 ``TimedRotatingFileHandler``, same 30-day retention, same shared root

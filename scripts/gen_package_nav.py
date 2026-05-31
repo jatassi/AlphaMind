@@ -2,25 +2,21 @@
 
 For each ``CLAUDE.md`` under ``src/alphamind/`` that contains the ``BEGIN``/``END``
 markers, this lists the package's immediate children (subpackages + top-level modules)
-with each child's *docstring first line*, rendered as a markdown table between the
-markers. The descriptions are therefore sourced from the code itself — to change a row,
-edit that module's docstring, not this table.
+with each child's *docstring first line*, rendered verbatim as a markdown table between
+the markers. The cell text IS the docstring summary — to change a row, edit that
+module's docstring, not this table (and not this script).
 
     uv run python scripts/gen_package_nav.py            # rewrite tables in place
     uv run python scripts/gen_package_nav.py --check    # exit 1 if any table is stale
 
 The ``--check`` mode backs ``tests/docs/test_package_nav_fresh.py`` so a stale table
 fails CI. Add the marker pair to a package's CLAUDE.md to opt it into a table.
-
-Linear/story tracking refs (``ALP-1234``, ``story 02/05``) and RST roles are stripped
-from the rendered cells — they are navigation noise.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
-import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -43,24 +39,9 @@ def _doc_first_line(py: Path) -> str:
     return doc.strip().splitlines()[0].strip()
 
 
-# Tracking refs and RST roles are navigation noise — strip them from each cell.
-_RST_ROLE = re.compile(r":[a-z]+:`")
-_PAREN_REF = re.compile(r"\s*\([^()]*(?:\bALP-\d+|\bstor(?:y|ies)\b)[^()]*\)")
-_TRAIL_REF = re.compile(r"\s*[—-]\s*(?:stor(?:y|ies)\b|ALP-\d+)[^—]*$", re.IGNORECASE)
-_INLINE_ALP = re.compile(r"\s*\bALP-\d+\b")
-
-
 def _summary(py: Path) -> str:
-    text = _doc_first_line(py)
-    text = _RST_ROLE.sub("`", text).replace("``", "`")
-    prev = ""
-    while prev != text:
-        prev = text
-        text = _PAREN_REF.sub("", text)
-        text = _TRAIL_REF.sub("", text)
-    text = _INLINE_ALP.sub("", text)
-    text = re.sub(r"\s{2,}", " ", text).strip(" —-").strip()
-    return text.replace("|", r"\|") or "—"
+    # Verbatim docstring summary; only escape the table delimiter.
+    return _doc_first_line(py).replace("|", r"\|") or "—"
 
 
 def _children(pkg: Path) -> list[tuple[str, Path]]:

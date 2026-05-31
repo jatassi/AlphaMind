@@ -1,4 +1,4 @@
-"""Pure-function position-model utilities (story 01c et al.)."""
+"""Pure-function position-model utilities."""
 
 from alphamind.execution.position_model.strategy_payoff import (
     compute_strategy_breakeven_levels,

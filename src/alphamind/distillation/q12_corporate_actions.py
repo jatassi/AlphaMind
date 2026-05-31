@@ -1,4 +1,4 @@
-"""Q12 corporate-actions deterministic signals — story 02-distillation-layer/08e.
+"""Q12 corporate-actions deterministic signals.
 
 Implements the four detection paths in
 ``docs/implementation/02-distillation-layer/08e-q12-corporate-actions-signals.md``

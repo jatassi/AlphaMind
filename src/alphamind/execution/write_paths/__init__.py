@@ -1,4 +1,4 @@
-"""Phase 1 and Phase 2 write-path helpers (populated in stories 07 and 08).
+"""Phase 1 and Phase 2 write-path helpers.
 
 The Phase 1 entry point ``process_unprocessed_fills`` lives in
 ``write_paths.phase1`` and is imported directly by callers — eager

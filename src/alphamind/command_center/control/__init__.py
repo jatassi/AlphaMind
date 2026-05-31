@@ -1,4 +1,4 @@
-"""Browser-facing ``/api/control/*`` proxy + audit (story 04a / ALP-668).
+"""Browser-facing ``/api/control/*`` proxy + audit.
 
 Surface shape (one module per concern):
 

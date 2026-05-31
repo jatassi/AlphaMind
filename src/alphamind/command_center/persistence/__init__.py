@@ -1,4 +1,4 @@
-"""Command-center persistence layer (story 02 / ALP-666).
+"""Command-center persistence layer.
 
 Three modules:
 

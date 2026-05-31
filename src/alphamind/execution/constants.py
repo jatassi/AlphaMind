@@ -1,4 +1,4 @@
-"""Listed-options execution-layer constants (ALP-401).
+"""Listed-options execution-layer constants.
 
 Constants here are structurally fixed by the listed-options market itself —
 not configurable, not venue-specific. They live alongside (but distinct from)

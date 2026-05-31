@@ -1,4 +1,4 @@
-"""Q6 macro indicators and funding-stress composite — re-export shim (ALP-485).
+"""Q6 macro indicators and funding-stress composite — re-export shim.
 
 ALP-485 split the implementation into the ``alphamind.distillation.q6``
 sub-package along the compute/load boundary. This module survives as a

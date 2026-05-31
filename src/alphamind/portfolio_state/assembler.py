@@ -1,4 +1,4 @@
-"""Snapshot assembler — orchestrates production of a PortfolioStateSnapshot (story 06).
+"""Snapshot assembler — orchestrates production of a PortfolioStateSnapshot.
 
 ``assemble_snapshot`` is the single public entry point. It fetches raw records
 from the repository, enriches per-position and per-order computed fields using

@@ -1,4 +1,4 @@
-"""Resolved-config snapshot persistence (story 07).
+"""Resolved-config snapshot persistence.
 
 Serializes a ``ResolvedConfig`` to canonical-form JSON, hashes it (SHA-256),
 and writes it atomically to the per-invocation provenance directory laid out in

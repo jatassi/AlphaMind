@@ -1,4 +1,4 @@
-"""Asyncio supervisor for the pipeline scheduler process (story 01).
+"""Asyncio supervisor for the pipeline scheduler process.
 
 Owns the long-running task tree. Registers a coroutine factory per moving
 part, installs SIGINT/SIGTERM handlers, and supervises every task under

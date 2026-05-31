@@ -1,4 +1,4 @@
-"""End-to-end configuration loader entry point (story 08).
+"""End-to-end configuration loader entry point.
 
 Single function the pipeline calls at invocation start to:
 

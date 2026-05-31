@@ -1,4 +1,4 @@
-"""Per-ticker realized-vol substrate (ALP-530).
+"""Per-ticker realized-vol substrate.
 
 Stands up the missing producer that supplies a per-underlying scalar
 realized volatility to the IV-fallback consumer (``IvProvider``

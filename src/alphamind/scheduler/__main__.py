@@ -1,4 +1,4 @@
-"""Entry point for ``python -m alphamind.scheduler`` (stories 01 + 03b).
+"""Entry point for ``python -m alphamind.scheduler``.
 
 Subcommands
 -----------

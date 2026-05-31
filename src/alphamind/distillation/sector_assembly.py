@@ -1,4 +1,4 @@
-"""Sector-scoped output assembly — story 02-distillation-layer/11a.
+"""Sector-scoped output assembly.
 
 Produces the per-sector document each domain researcher agent
 (``tech_semis`` / ``financials`` / ``energy``) consumes per

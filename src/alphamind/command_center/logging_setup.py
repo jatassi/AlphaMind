@@ -1,4 +1,4 @@
-"""``command_center.log`` rotation setup (story 02 / ALP-666).
+"""``command_center.log`` rotation setup.
 
 Mirrors :func:`alphamind.scheduler.logging_setup.configure_pipeline_logging`
 shape: ``TimedRotatingFileHandler`` writing daily-rotated UTF-8 files

@@ -1,4 +1,4 @@
-"""Anomaly aggregation and per-consumer partitioning — story 02-distillation/10.
+"""Anomaly aggregation and per-consumer partitioning.
 
 Pure in-memory aggregation layer that sits between the per-category
 producers (stories 08*, 09) and the per-consumer document assemblers

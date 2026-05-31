@@ -1,4 +1,4 @@
-"""Frozen-dataclass mirror of ``config.models.DistillationConfig`` (ALP-471).
+"""Frozen-dataclass mirror of ``config.models.DistillationConfig``.
 
 The Pydantic model at the YAML-load boundary stays in
 :mod:`alphamind.config.models.distillation`; once the YAML has been validated

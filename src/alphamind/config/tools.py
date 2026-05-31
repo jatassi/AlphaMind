@@ -1,4 +1,4 @@
-"""Registered-tool registry for cross-reference validation (story 06a).
+"""Registered-tool registry for cross-reference validation.
 
 The set enumerates every tool name an agent's ``tools`` allowlist (and the
 adaptive researcher's ``tool_caps`` map) may reference. Cross-reference

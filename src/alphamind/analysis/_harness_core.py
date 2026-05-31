@@ -1,4 +1,4 @@
-"""Shared infrastructure for the four analysis-layer LLM harnesses (ALP-466).
+"""Shared infrastructure for the four analysis-layer LLM harnesses.
 
 The four agent harnesses — ``domain_researchers``, ``qualitative_research``,
 ``adaptive_research``, and ``synthesizer`` — duplicated ~3,250 LOC of

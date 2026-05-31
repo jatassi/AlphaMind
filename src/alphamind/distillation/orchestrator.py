@@ -1,4 +1,4 @@
-"""Distillation orchestrator entry point — story 02-distillation-layer/12.
+"""Distillation orchestrator entry point.
 
 The single ``async`` entry point the pipeline process calls during its
 distillation phase. The orchestrator sequences seven phases per

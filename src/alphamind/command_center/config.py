@@ -1,4 +1,4 @@
-"""Pydantic config models for the command center (story 02 / ALP-666).
+"""Pydantic config models for the command center.
 
 Three models map 1:1 to three YAML files under ``config/``:
 

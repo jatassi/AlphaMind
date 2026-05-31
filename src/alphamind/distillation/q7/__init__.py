@@ -1,4 +1,4 @@
-"""Q7 cross-asset and correlation computations — story 02-distillation-layer/08d.
+"""Q7 cross-asset and correlation computations.
 
 ALP-486 split this sub-package along the compute/load boundary so the
 orchestrator's Phase 2 can run q7 in parallel with q1 / q3 / q6 /

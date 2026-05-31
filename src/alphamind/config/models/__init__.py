@@ -1,4 +1,4 @@
-"""Public re-exports for alphamind.config.models package (story 02)."""
+"""Public re-exports for alphamind.config.models package."""
 
 from pathlib import Path
 

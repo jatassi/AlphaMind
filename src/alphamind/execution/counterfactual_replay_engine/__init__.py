@@ -1,4 +1,4 @@
-"""Counterfactual replay engine — placeholder namespace (scheduled for ALP-129)."""
+"""Counterfactual replay engine — placeholder namespace."""
 
 from __future__ import annotations
 

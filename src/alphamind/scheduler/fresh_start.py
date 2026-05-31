@@ -1,4 +1,4 @@
-"""First-run bootstrap of the cash_ledger + drawdown_state singletons (ALP-620).
+"""First-run bootstrap of the cash_ledger + drawdown_state singletons.
 
 When the operator flips the switch on a freshly-reset Alpaca paper account,
 the local DB has no ``cash_ledger`` row and no ``drawdown_state`` row.

@@ -1,4 +1,4 @@
-"""Pipeline ``/control`` + ``/events`` HTTP surface (ALP-664 / story 01b).
+"""Pipeline ``/control`` + ``/events`` HTTP surface.
 
 Loopback-bound FastAPI + Uvicorn server hosted alongside APScheduler in
 the pipeline-scheduler process.  Exposes the five ``POST /control/*``

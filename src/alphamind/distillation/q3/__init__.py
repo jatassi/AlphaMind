@@ -1,4 +1,4 @@
-"""Q3 options-flow indicators and cross-ticker signals — story 02-distillation/08b.
+"""Q3 options-flow indicators and cross-ticker signals.
 
 The implementation is split across this sub-package so each concern lives in
 its own module. The top-level entry point

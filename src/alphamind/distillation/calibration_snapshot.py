@@ -1,4 +1,4 @@
-"""Calibration-state snapshot writer — story 02-distillation-layer/17.
+"""Calibration-state snapshot writer.
 
 Reduces every :class:`OutputBlock` carried by a :class:`DistillationOutputs`
 into the per-invocation JSON file documented in

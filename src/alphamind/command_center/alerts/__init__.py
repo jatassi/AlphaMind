@@ -1,4 +1,4 @@
-"""Alert engine + channels + APIs for the command center (story 05a / ALP-671).
+"""Alert engine + channels + APIs for the command center.
 
 Subpackage layout:
 

@@ -1,4 +1,4 @@
-"""PortfolioStateRepository protocol, stub, and invocation-scaffolding value objects (story 04b)."""
+"""PortfolioStateRepository protocol, stub, and invocation-scaffolding value objects."""
 
 from __future__ import annotations
 

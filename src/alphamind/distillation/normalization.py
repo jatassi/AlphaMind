@@ -1,4 +1,4 @@
-"""Deterministic normalization primitives — story 02-distillation/06.
+"""Deterministic normalization primitives.
 
 The seven pure functions exposed here are the unit/time/volatility/macro
 normalizers every per-category computation reuses. Each takes its inputs as

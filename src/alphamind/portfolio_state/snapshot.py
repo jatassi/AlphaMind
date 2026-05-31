@@ -1,4 +1,4 @@
-"""Master snapshot aggregate for portfolio state (story 04a)."""
+"""Master snapshot aggregate for portfolio state."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Debug-e2e mode package — two-symbol public surface (story ALP-500 / 03).
+"""Debug-e2e mode package — two-symbol public surface.
 
 Per the design doc § 6 P9, only the factory and the settings dataclass
 are exported. The seeder, log-only broker shims, JSONL emitter, and
