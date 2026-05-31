@@ -123,3 +123,58 @@ def test_prior_provider_corrupt_snapshot_propagates(tmp_path: Path) -> None:
     _active, prior = make_repository_providers(current)
     with pytest.raises(json.JSONDecodeError):
         prior(str(corrupt))
+
+
+def test_prior_provider_empty_path_falls_back_to_current() -> None:
+    """An empty snapshot path falls back to the current parameter set.
+
+    A ``borrow_accrual`` maintenance tick (ALP-754) writes an ``invocations``
+    row with an empty ``resolved_config_snapshot_path``. ``Path('').read_text()``
+    raises ``FileNotFoundError`` on POSIX but ``PermissionError`` on Windows
+    (``Path('')`` resolves to ``'.'``), which previously propagated past the
+    ``FileNotFoundError``-only catch and aborted Phase 1. A blank path means
+    "no prior snapshot" and must degrade to the current set.
+    """
+    from alphamind.config.models.regimes import Regime
+    from alphamind.risk_guardrails.regime_adaptation import (
+        build_active_risk_parameters,
+    )
+    from alphamind.risk_guardrails.regime_adaptation.repository_providers import (
+        make_repository_providers,
+    )
+
+    current = build_active_risk_parameters(
+        rule_values={"daily_drawdown_pct": 0.05},
+        regime=Regime.normal,
+    )
+
+    _active, prior = make_repository_providers(current)
+
+    assert prior("") is current
+    assert prior("   ") is current
+
+
+def test_prior_provider_directory_path_falls_back_to_current(tmp_path: Path) -> None:
+    """A path that resolves to a directory falls back to the current set.
+
+    Reading a directory raises ``IsADirectoryError`` on POSIX and
+    ``PermissionError`` on Windows — both ``OSError`` subclasses but neither a
+    ``FileNotFoundError``. This is the cross-platform analogue of the empty-path
+    crash and exercises the broadened path-resolution fallback (ALP-754).
+    """
+    from alphamind.config.models.regimes import Regime
+    from alphamind.risk_guardrails.regime_adaptation import (
+        build_active_risk_parameters,
+    )
+    from alphamind.risk_guardrails.regime_adaptation.repository_providers import (
+        make_repository_providers,
+    )
+
+    current = build_active_risk_parameters(
+        rule_values={"daily_drawdown_pct": 0.05},
+        regime=Regime.normal,
+    )
+
+    _active, prior = make_repository_providers(current)
+
+    assert prior(str(tmp_path)) is current

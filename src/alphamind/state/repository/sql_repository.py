@@ -467,6 +467,12 @@ class SqlPortfolioStateRepository:
                 select(InvocationRow)
                 .where(
                     InvocationRow.invocation_id != self._invocation_id,
+                    # Skip pathless maintenance ticks (e.g. ``borrow_accrual``,
+                    # ALP-754): they write a lineage row but never resolve a
+                    # config, so their snapshot path is empty and they carry no
+                    # regime-adaptation parameters to anchor hysteresis on. The
+                    # prior must be a run that actually resolved a config.
+                    InvocationRow.resolved_config_snapshot_path != "",
                     InvocationRow.start_at
                     < (
                         select(InvocationRow.start_at)

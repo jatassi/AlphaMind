@@ -9,10 +9,11 @@ the scheduler (and continuous-monitor substrate) consume.
 Both closures are synchronous per ALP-454 Pre-resolved decision (C):
 the SQL repository surface is sync, so its provider seam is too. The prior
 provider rehydrates via :func:`load_prior_active_risk_parameters` and falls
-back to the current set when the snapshot file is missing (first-ever
-invocation, archive relocation); corrupt JSON propagates so an actual
-contract violation aborts the invocation rather than silently substituting
-an unrelated set.
+back to the current set when there is no usable prior snapshot — a blank path
+(a pathless maintenance tick such as ``borrow_accrual``, ALP-754), a missing
+file (first-ever invocation, archive relocation), or any other path-resolution
+failure; corrupt JSON propagates so an actual contract violation aborts the
+invocation rather than silently substituting an unrelated set.
 """
 
 from __future__ import annotations
@@ -39,9 +40,10 @@ def make_repository_providers(
     ``prior_active_risk_parameters_provider`` takes the prior invocation's
     resolved-config snapshot path and rehydrates the
     :class:`ActiveRiskParameterSet` that was active at that point. When the
-    snapshot file is missing on disk (first-ever invocation, archive
-    relocation), the prior provider falls back to the current set so the
-    snapshot assembler stays operational.
+    prior carries no usable snapshot — a blank path (pathless maintenance
+    tick), a missing file (first-ever invocation, archive relocation), or any
+    other path-resolution failure — the prior provider falls back to the
+    current set so the snapshot assembler stays operational.
 
     Both closures are synchronous per ALP-454 Pre-resolved decision (C):
     the SQL repository surface is sync, so its provider seam is too.
@@ -51,9 +53,22 @@ def make_repository_providers(
         return active_risk_parameters
 
     def _prior_provider(snapshot_path: str) -> ActiveRiskParameterSet:
+        # A pathless prior — e.g. a ``borrow_accrual`` maintenance tick that
+        # wrote an invocations row for lineage but never resolved a config
+        # (ALP-754) — has no regime-adaptation snapshot to rehydrate. Treat a
+        # blank path as "no prior snapshot" and fall back to the current set,
+        # same as a missing file. (``Path('')`` resolves to ``'.'`` and reading
+        # it raises ``IsADirectoryError`` on POSIX / ``PermissionError`` on
+        # Windows — neither a ``FileNotFoundError`` — so guard before loading.)
+        if not snapshot_path.strip():
+            return active_risk_parameters
         try:
             return load_prior_active_risk_parameters(snapshot_path)
-        except FileNotFoundError:
+        except OSError:
+            # Missing file (first-ever invocation, archive relocation) or any
+            # path-resolution failure. Corrupt JSON raises json.JSONDecodeError
+            # (a ValueError, not an OSError) and still propagates — a corrupt
+            # snapshot is a real contract violation, not a missing prior.
             return active_risk_parameters
 
     return _active_provider, _prior_provider
