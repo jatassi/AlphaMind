@@ -18,6 +18,7 @@ invocation rather than silently substituting an unrelated set.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
@@ -26,6 +27,8 @@ from alphamind.risk_guardrails.regime_adaptation.active_parameters import (
 )
 
 __all__ = ["make_repository_providers"]
+
+logger = logging.getLogger(__name__)
 
 
 def make_repository_providers(
@@ -64,11 +67,24 @@ def make_repository_providers(
             return active_risk_parameters
         try:
             return load_prior_active_risk_parameters(snapshot_path)
-        except OSError:
+        except OSError as exc:
             # Missing file (first-ever invocation, archive relocation) or any
             # path-resolution failure. Corrupt JSON raises json.JSONDecodeError
             # (a ValueError, not an OSError) and still propagates — a corrupt
-            # snapshot is a real contract violation, not a missing prior.
+            # snapshot is a real contract violation, not a missing prior. A
+            # FileNotFoundError on a non-blank path is the routine "no prior on
+            # disk" case; any other OSError (e.g. a real PermissionError or a
+            # transient fault on the SMB-mounted prod volume) means a prior
+            # snapshot we expected to read was unreadable, so warn — silent
+            # substitution of the current set should leave a trail.
+            if not isinstance(exc, FileNotFoundError):
+                logger.warning(
+                    "prior-snapshot rehydrate failed for path=%r (%s: %s); "
+                    "falling back to the current active risk parameters",
+                    snapshot_path,
+                    type(exc).__name__,
+                    exc,
+                )
             return active_risk_parameters
 
     return _active_provider, _prior_provider
