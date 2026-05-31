@@ -11,6 +11,9 @@ edit that module's docstring, not this table.
 
 The ``--check`` mode backs ``tests/docs/test_package_nav_fresh.py`` so a stale table
 fails CI. Add the marker pair to a package's CLAUDE.md to opt it into a table.
+
+Linear/story tracking refs (``ALP-1234``, ``story 02/05``) and RST roles are stripped
+from the rendered cells — they are navigation noise.
 """
 
 from __future__ import annotations
@@ -40,10 +43,11 @@ def _doc_first_line(py: Path) -> str:
     return doc.strip().splitlines()[0].strip()
 
 
-# Trailing tracking refs and RST roles are navigation noise — strip them for the table.
-_TICKET_PAREN = re.compile(r"\s*\((?:story\s+)?[^)]*\bALP-\d+[^)]*\)\.?\s*$")
-_STORY_CLAUSE = re.compile(r"\s*[—-]\s*stor(?:y|ies)\b.*$", re.IGNORECASE)
+# Tracking refs and RST roles are navigation noise — strip them from each cell.
 _RST_ROLE = re.compile(r":[a-z]+:`")
+_PAREN_REF = re.compile(r"\s*\([^()]*(?:\bALP-\d+|\bstor(?:y|ies)\b)[^()]*\)")
+_TRAIL_REF = re.compile(r"\s*[—-]\s*(?:stor(?:y|ies)\b|ALP-\d+)[^—]*$", re.IGNORECASE)
+_INLINE_ALP = re.compile(r"\s*\bALP-\d+\b")
 
 
 def _summary(py: Path) -> str:
@@ -52,10 +56,11 @@ def _summary(py: Path) -> str:
     prev = ""
     while prev != text:
         prev = text
-        text = _TICKET_PAREN.sub("", text)
-        text = _STORY_CLAUSE.sub("", text)
-    text = text.strip().replace("|", r"\|")
-    return text or "—"
+        text = _PAREN_REF.sub("", text)
+        text = _TRAIL_REF.sub("", text)
+    text = _INLINE_ALP.sub("", text)
+    text = re.sub(r"\s{2,}", " ", text).strip(" —-").strip()
+    return text.replace("|", r"\|") or "—"
 
 
 def _children(pkg: Path) -> list[tuple[str, Path]]:

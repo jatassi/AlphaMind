@@ -17,4 +17,4 @@ code): `docs/design/01-data-layer/`.
 Append gotchas here as you hit them — non-obvious traps not evident from one file. Keep
 each to a line or two; delete any that no longer hold.
 
-- Scripts/tests that exercise a live client need `.env` loaded (`load_dotenv()` / `source .env`); production does not auto-source it.
+- (none recorded yet)

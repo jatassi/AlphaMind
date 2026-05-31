@@ -15,4 +15,4 @@ intent (historical): `docs/design/01-data-layer/collector/`.
 Append gotchas here as you hit them — non-obvious traps not evident from one file. Keep
 each to a line or two; delete any that no longer hold.
 
-- Production logs live at `/Volumes/Users/jacks/AlphaMind/logs/collector.log` (read-only over SMB from the dev Mac).
+- (none recorded yet)

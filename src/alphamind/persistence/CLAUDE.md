@@ -14,4 +14,4 @@ the single SQLite database (WAL mode). Design intent (historical):
 Append gotchas here as you hit them — non-obvious traps not evident from one file. Keep
 each to a line or two; delete any that no longer hold.
 
-- Early creation-migrations build CHECK constraints from the live enum, so adding an enum member retroactively changes them on fresh DBs — test a status-widening migration via downgrade→reject→upgrade→accept, not by upgrading forward.
+- (none recorded yet)

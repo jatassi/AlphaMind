@@ -11,16 +11,16 @@ read: `records/`, `aggregates/`, `computations/`, `views/`, `consumers/`, `event
 | Module | Responsibility |
 |---|---|
 | `aggregates/` | Tier 3 — derived/aggregate records per `state-persistence.md` § Tier 3. |
-| `assembler.py` | Snapshot assembler — orchestrates production of a PortfolioStateSnapshot (story 06). |
+| `assembler.py` | Snapshot assembler — orchestrates production of a PortfolioStateSnapshot. |
 | `computations/` | Portfolio-state read-time computation helpers. |
 | `consumers/` | Read-side consumers of portfolio-state snapshots. |
 | `events/` | Tier 2 — append-only lifecycle/event records per `state-persistence.md` § Tier 2. |
-| `freshness.py` | Freshness contract for portfolio state snapshots (story 08). |
+| `freshness.py` | Freshness contract for portfolio state snapshots. |
 | `pricing.py` | Price provider protocols and supporting types for portfolio state. |
 | `protocols/` | Structural Protocols for the design's position/order/thesis abstractions. |
 | `records/` | Tier 1 — core mutable entities per `state-persistence.md` § Logical entities. |
-| `repository.py` | PortfolioStateRepository protocol, stub, and invocation-scaffolding value objects (story 04b). |
-| `snapshot.py` | Master snapshot aggregate for portfolio state (story 04a). |
+| `repository.py` | PortfolioStateRepository protocol, stub, and invocation-scaffolding value objects. |
+| `snapshot.py` | Master snapshot aggregate for portfolio state. |
 | `views/` | Per-invocation view records — mutable across invocations, not persisted on Tier 1. |
 <!-- END modules -->
 
