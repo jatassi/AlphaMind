@@ -1,4 +1,4 @@
-"""Pipeline-side YAML loaders for the cascading bundles (story 04*).
+"""Pipeline-side YAML loaders for the cascading bundles.
 
 Each ``load_*`` helper reads every file in a bundle subdirectory, parses each
 into the matching Pydantic variant, and returns a frozen mapping. Missing files

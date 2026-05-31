@@ -1,4 +1,4 @@
-"""Backward-compat shim for the qualitative-derived classifiers (ALP-487).
+"""Backward-compat shim for the qualitative-derived classifiers.
 
 ALP-487 decomposed the legacy single-file module into the
 :mod:`alphamind.distillation.qualitative` package

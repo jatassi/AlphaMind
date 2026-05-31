@@ -1,4 +1,4 @@
-"""Emergency-invocation receiver task (story 04b / ALP-447).
+"""Emergency-invocation receiver task.
 
 Polls ``activity_log`` for ``EMERGENCY_INVOCATION_REQUESTED`` entries written
 by the continuous monitor per ``docs/design/06-risk-guardrails/breach-behavior.md``

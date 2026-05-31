@@ -1,4 +1,4 @@
-"""Qualitative-derived deterministic computations — ALP-487 package decomposition.
+"""Qualitative-derived deterministic computations.
 
 This package decomposes the legacy single-file
 :mod:`alphamind.distillation.qualitative_derived` into per-classifier

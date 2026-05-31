@@ -1,4 +1,4 @@
-"""APScheduler driver for the pipeline scheduler (story 04a — ALP-446).
+"""APScheduler driver for the pipeline scheduler.
 
 Registers one ``AsyncIOScheduler`` cron job per ``scheduler.yaml`` trigger
 key, gates each fire on the NYSE trading calendar (weekday triggers only)

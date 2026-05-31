@@ -1,4 +1,4 @@
-"""Per-invocation views over ``resolved.assets.sectors`` (ALP-472 lift).
+"""Per-invocation views over ``resolved.assets.sectors``.
 
 The composition layer needs four parallel projections of the resolved
 assets-config sector map:

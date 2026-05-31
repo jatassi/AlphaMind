@@ -1,4 +1,4 @@
-"""Q1 price/volume indicator and anomaly computations — story 02-distillation/08a.
+"""Q1 price/volume indicator and anomaly computations.
 
 The package implements the deterministic price/volume computations from
 ``docs/design/02-distillation-layer/external.md`` § 2 From price and volume

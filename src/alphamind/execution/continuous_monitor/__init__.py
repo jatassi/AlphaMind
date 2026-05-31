@@ -1,4 +1,4 @@
-"""AlphaMind continuous-monitor package (story 01 — ALP-432).
+"""AlphaMind continuous-monitor package.
 
 Public surface re-exported here mirrors what the story acceptance criteria
 pin: ``MonitorSession`` + ``new_session`` for per-process handles,

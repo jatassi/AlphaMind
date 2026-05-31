@@ -1,4 +1,4 @@
-"""Empty-window diagnostic for the news pipeline — ALP-567.
+"""Empty-window diagnostic for the news pipeline.
 
 The qualitative-research news digest, the ``news_search`` on-demand tool, and
 each domain researcher's per-sector input bundle all read from

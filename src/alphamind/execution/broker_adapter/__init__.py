@@ -1,4 +1,4 @@
-"""Broker adapter — thin Alpaca surface for the OMS (ALP-121).
+"""Broker adapter — thin Alpaca surface for the OMS.
 
 Story 01 (ALP-378) ships the foundational substrate:
 

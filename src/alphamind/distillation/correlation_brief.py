@@ -1,4 +1,4 @@
-"""Correlation/regime brief assembler — story 02-distillation/11b.
+"""Correlation/regime brief assembler.
 
 Produces the document the synthesizer agent consumes (reference prefix
 ``CR``). The brief packs the volatility regime label (universal context),

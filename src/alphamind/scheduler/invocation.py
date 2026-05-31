@@ -1,4 +1,4 @@
-"""Per-invocation row composition (story 03a / ALP-449 three-tx model).
+"""Per-invocation row composition.
 
 Builds the 22-field ``InvocationRecord`` every pipeline invocation writes
 and inserts it via :func:`insert_invocation_row` in its own short

@@ -1,4 +1,4 @@
-"""Q6 macro indicators and funding-stress composite (story 02-distillation-layer/08c).
+"""Q6 macro indicators and funding-stress composite.
 
 Implements the deterministic macro computations from
 ``docs/design/02-distillation-layer/external.md`` § 2 From macro and rates

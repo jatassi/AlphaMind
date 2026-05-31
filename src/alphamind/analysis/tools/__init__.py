@@ -1,4 +1,4 @@
-"""On-demand tool registry for qualitative researcher agents — ALP-247.
+"""On-demand tool registry for qualitative researcher agents.
 
 Exports ``TOOLS``: a dict keyed by tool name mapping to :class:`ToolDefinition`
 instances. Story 04b's harness uses this registry to build the SDK option set.

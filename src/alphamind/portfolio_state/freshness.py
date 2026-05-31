@@ -1,4 +1,4 @@
-"""Freshness contract for portfolio state snapshots (story 08).
+"""Freshness contract for portfolio state snapshots.
 
 Three frozen-dataclass value objects and one pure function:
 

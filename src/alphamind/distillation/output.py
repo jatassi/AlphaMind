@@ -1,4 +1,4 @@
-"""Per-block output envelope and structured-text formatter — story 02-distillation/05.
+"""Per-block output envelope and structured-text formatter.
 
 Every distillation output is an :class:`OutputBlock` carrying a freshness
 timestamp, a calibration tag (story 04), zero or more anomaly flags, an

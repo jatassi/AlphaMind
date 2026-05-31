@@ -1,4 +1,4 @@
-"""Pure-compute helpers for the calibration framework (ALP-467 extraction).
+"""Pure-compute helpers for the calibration framework.
 
 The cross-sectional fallback functions (``sector_pooled_*``,
 ``universe_pooled_*``) live in :mod:`alphamind.distillation.calibration`

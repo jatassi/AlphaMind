@@ -1,4 +1,4 @@
-"""Volatility regime classification — story 02-distillation-layer/09.
+"""Volatility regime classification.
 
 Implements the composite four-tier volatility regime label, the
 four-state transition machine, the regime-skip emergency trigger, the

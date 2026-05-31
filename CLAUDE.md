@@ -1,183 +1,83 @@
-# CLAUDE.md
+# AlphaMind Agent Documentation
 
-## Linting
+AlphaMind: autonomous LLM swing-trading system (4–72h horizon, ~60–80 US equities),
+currently in the paper-trading phase. This file is project-wide rules + a navigation
+map. Process playbooks live in `docs/agents/`; per-package orientation lives in nested
+`CLAUDE.md` files; design intent (point-in-time, **not** code-truth) in `docs/design/`.
 
-Run the linter after every batch of changes:
+## Navigation
 
-```bash
-uv run ruff check .
-uv run ruff format .
-uv run mypy
-uv run lint-imports
-```
+Pipeline: **data → distillation → analysis (LLM) → decision (LLM) → execution**, with
+**risk guardrails** cross-cutting. Two long-running processes share one SQLite DB: the
+deliberative **pipeline** (`scheduler/`, ~3 runs/trading day) and the **continuous
+monitor** (`execution/continuous_monitor/`, real-time risk on open positions).
 
-`lint-imports` (import-linter) enforces the architectural layer rules declared in `.importlinter`. Contracts will tighten as the architecture-refactoring work tree (ALP-454) lands; until then, each `ignore_imports` entry carries a comment naming the punch-list item that will retire it.
+| Layer | Code (`src/alphamind/`) | 
+|---|---|
+| Data | `data_sources/` `collector/` `state/` `portfolio_state/` |
+| Distillation | `distillation/` |
+| Analysis (LLM) | `analysis/` |
+| Decision (LLM) | `decision/` `commands/` |
+| Execution | `execution/` |
+| Risk (cross-cutting) | `risk_guardrails/` |
+| Orchestration | `scheduler/` `pipeline/` |
+| Persistence / config | `persistence/` `config/` |
+| Command center | `command_center/` |
+| Feedback loop | `feedback_loop/` |
 
-Alert the user before disabling the linter or any rule in any form — including `ignore`, `per-file-ignores`, `# noqa`, `# type: ignore`, and `ignore_imports`. If a subagent suppresses the linter, do not pause execution to alert user. Instead, assess whether each suppression was warranted and fix unwarranted suppressions.
+Each top-level package has a `CLAUDE.md` — read it before editing there, and append any new gotcha you hit. Opaque/large packages also carry a generated `Modules`
+table; grep `Concerns:` across the nested files to find which package owns a
+cross-cutting behavior. Import direction is downward-only and **enforced** by `.importlinter` (the authoritative layering spec). Run the pipeline with `python -m alphamind.scheduler`.
 
-### Frontend (command center)
-
-Frontend toolchain is **bun** (not npm). Lockfile is `bun.lock`. Run the frontend linter
-+ formatter + typecheck + tests after every batch of TypeScript / React changes in
-`src/alphamind/command_center/frontend/`:
-
-```bash
-cd src/alphamind/command_center/frontend
-bun install                 # idempotent; ensures node_modules reflects bun.lock
-bun run lint                # ESLint 9 flat config — must exit zero
-bun run format:check        # Prettier 3 — must exit zero (use `bun run format` to autofix)
-bun run typecheck           # tsc -b --noEmit — must exit zero
-bun run test                # Vitest run mode — must exit zero
-```
-
-Config files are `eslint.config.js` and `.prettierrc`, mirrored verbatim from `~/Git/SlipStream/web/`.
-Same rule customizations apply (max-lines 350, max-lines-per-function 50, max-depth 3, max-params 3,
-complexity 10, banned TS enums in favor of `as const` objects, kebab-case filenames). The alert
-discipline from the Python side carries over: never disable a rule (via `// eslint-disable-*` or
-`eslintrc` overrides) without alerting the operator first.
-
-Build commands:
+## Linting — run after every batch
 
 ```bash
-bun run dev                 # Vite dev server :5173, proxies API/auth/events/healthz to FastAPI :8080
-bun run build               # tsc -b && vite build → dist/ (consumed by FastAPI StaticFiles mount)
-bun run generate-types      # openapi-typescript codegen from /openapi.json → src/api/openapi.d.ts
+uv run ruff check . && uv run ruff format . && uv run mypy && uv run lint-imports
 ```
 
-Dev workflow runs Vite + FastAPI side-by-side. Set `COMMAND_CENTER_DEV_MODE=1` on the FastAPI
-daemon so its StaticFiles mount is skipped (Vite serves the SPA at :5173 and proxies API calls
-through to FastAPI at :8080).
+Alert the user before disabling the linter or any rule in any form (`ignore`,
+`per-file-ignores`, `# noqa`, `# type: ignore`, `ignore_imports`). If a subagent
+suppresses a rule, don't pause — assess each and fix the unwarranted ones. The frontend
+has its own toolchain — see `command_center/frontend/CLAUDE.md`.
 
 ## Testing
 
-**Do not run the full pytest suite locally.** CI (`.github/workflows/ci.yml`) runs the full suite on a Windows runner against every PR and every push to `main`; that is the authoritative gate. Local full-suite runs are too resource-intensive to do on every change, so they are forbidden by default — the CI run is what blesses the diff.
-
-**Narrow, scoped pytest is fine and encouraged** while implementing or debugging. Run only the tests directly relevant to the file or area you are changing:
+CI (Windows, `-n auto`) is the authoritative full-suite gate. **Never run the full suite
+locally** unless the user explicitly asks. Scoped runs are encouraged while
+implementing:
 
 ```bash
-uv run pytest tests/<sub-path>/ -n auto                 # scoped run
-uv run pytest tests/path/to/test_thing.py::test_case    # single test
+uv run pytest tests/<sub-path>/ -n auto
+uv run pytest tests/path/to/test_x.py::test_case
 ```
 
-Use `-n auto` on scoped runs to keep them fast. Scope tightly — single file, single directory, single test node-id. Treat the local pytest invocation as a TDD red-green loop or a targeted regression check, not as a release gate.
-
-**The full suite (`uv run pytest -n auto`) runs locally ONLY when the operator explicitly asks for it** — e.g., "run the full suite", "do a full pytest before pushing", "I want to see all tests pass locally". Otherwise push the branch, let CI run it, and act on the CI result. Subagent dispatch prompts, skill files, story acceptance criteria, and PR test plans must NOT include unscoped `uv run pytest` invocations; the CI run is the singular full-suite check.
-
-If a test passes locally but fails under xdist on CI, the cause is test-order dependence (typically `sys.modules` mutation or shared filesystem state). Fix the test — do not fall back to serial.
+Passes locally but fails under xdist on CI = test-order dependence — fix the test, don't
+fall back to serial.
 
 ## Branch policy
 
-`main` is PR-only. All changes land via pull request and require CI green (the `ci` workflow: ruff + ruff format + mypy + import-linter + Windows pytest). Do not push directly to `main`. Do not merge a PR until the `ci` workflow run completes successfully.
+`main` is PR-only — never push directly; open a PR. Squash-merge every PR. Don't merge
+until the `ci` workflow is green. Docs/tooling-only PRs skip CI (`paths-ignore`:
+`**.md`, `docs/**`, `.archive/**`, `.claude/**`, `audit-*.html`). The CI watch/merge
+loop and the GitHub usage-limit fallback live in `docs/agents/ci.md`.
 
-Branch protection is not currently enforced server-side (the repo is on GitHub Free and rulesets need GitHub Pro for private repos). The policy holds anyway — treat it as a hard rule, not an aspirational one. If you find yourself about to `git push origin main`, stop and open a PR instead.
+## Subagents
 
-Squash-merge every PR (see "Git / GitHub Instructions" below). The CI workflow uses `paths-ignore` for `**.md`, `docs/**`, `.archive/**`, `.claude/**`, and `audit-*.html` — pure docs/tooling PRs skip the test run and can merge as soon as you open them. Any change touching `src/`, `tests/`, `config/`, `prompts/`, `scripts/`, `pyproject.toml`, `uv.lock`, `.importlinter`, `alembic.ini`, or `.github/workflows/**` triggers the full CI run.
+Mechanical changes → Sonnet; everything else → Opus. Always background (async) mode. Put
+the model in the title: `[Sonnet|Opus|Grok] <Title>`. Subagents must commit before reporting
+done — verify with `git log main..HEAD`.
 
-**`paths-ignore` on `pull_request` evaluates the PR's full diff, not the latest commit's diff.** Pushing a docs-only follow-up commit to a PR that already contains code changes will trigger a fresh CI run, because the PR's overall diff still has non-ignored paths. The only way to "skip CI" for a follow-up is to open a separate docs-only PR. This matters because `concurrency.cancel-in-progress: true` is set on the workflow — a fresh trigger cancels any in-flight run, so an unnecessary docs-only push to a busy PR throws away the in-flight test run's progress. If you must add a docs commit to a PR mid-CI, accept that the in-flight run will be cancelled and a fresh one will start.
+## Environment
 
-### Watching CI on a PR
+**macOS = dev machine. Windows = production server.** Production is read-only over SMB
+from the dev Mac (WAL-mode SQLite; writes only run on prod):
 
-**Do NOT invoke `gh pr checks <PR> --watch` immediately after `git push`.** GitHub takes 3–8 seconds to register the new workflow run as a check on the PR, and `--watch` interprets the empty pre-registration window as "no checks → exit." The watch exits with status 0 reporting "no checks reported on the '<branch>' branch" and the iterate-until-green loop falsely believes CI is done.
+- DB: `/Volumes/Users/jacks/AlphaMind/data/alphamind.db`
+- Logs: `/Volumes/Users/jacks/AlphaMind/logs/` (`bootstrap.out`, `collector.log`, `collector.err.log`, `collector.out.log`)
 
-The reliable pattern is to **fetch the run ID directly and watch it by ID** — `gh run watch` blocks until the run reaches a terminal state, with no pre-registration race:
+Alert the user if these aren't accessible. Scripts that hit vendor APIs need `.env`
+loaded (`load_dotenv()` / `source .env`) — prod doesn't auto-source.
 
-```bash
-# After git push, give the run a moment to register, then watch it by ID.
-sleep 5
-RUN_ID=$(gh run list --branch <feature-branch> --workflow ci.yml --limit 1 --json databaseId -q '.[0].databaseId')
-gh run watch "$RUN_ID" --exit-status     # --exit-status returns non-zero on failure
-```
+## Linear
 
-`--exit-status` is critical for the iterate-until-green loop: it makes the watch propagate the run's pass/fail as the command's exit code, so a shell pipeline like `gh run watch "$RUN_ID" --exit-status && gh pr merge ...` short-circuits correctly on failure.
-
-If you must use `gh pr checks --watch` (e.g., because multiple workflows gate the PR and you want their joint status), guard against the pre-registration race with a poll-until-checks-appear preamble:
-
-```bash
-until [ "$(gh pr checks <PR> --json status -q 'length' 2>/dev/null)" -gt 0 ]; do sleep 2; done
-gh pr checks <PR> --watch
-```
-
-On a failed run, fetch logs via `gh run view <RUN_ID> --log-failed --job <JOB_ID>` (the failed-job ID is printed by `gh run watch`). `--log-failed` filters to just the failing job's output so you don't have to scroll through gigabytes of passing-test noise.
-
-### GitHub CI usage-limit fallback
-
-GitHub disables Actions runs when the account's billing fails or the spending limit is hit. When this happens, **every job in the run reports `conclusion: failure` with an empty `steps: []` array** (the jobs never actually started, so no steps exist), and `gh run view <RUN_ID>` prints the literal sentinel string:
-
-```
-The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings
-```
-
-Example: https://github.com/jatassi/AlphaMind/actions/runs/26486954374 — all three jobs (`bun lint + format-check + typecheck + test (frontend)`, `ruff + mypy + import-linter`, `pytest (windows)`) failed with empty step arrays and the sentinel above.
-
-To detect this programmatically before falling back:
-
-```bash
-gh run view <RUN_ID> 2>&1 | grep -q "The job was not started because recent account payments have failed or your spending limit needs to be increased" \
-  && echo "USAGE LIMIT — fall back to local CI" \
-  || echo "Real CI failure — debug normally"
-```
-
-If — and only if — the sentinel is present, GitHub CI is unavailable as the gate. Run the full CI chain locally, mirroring every step in `.github/workflows/ci.yml`:
-
-```bash
-# Python lint job (Linux in CI) — every step from the `lint` job
-uv sync
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy
-uv run lint-imports
-
-# Python test job (Windows in CI) — single-threaded locally
-uv run pytest                 # NO -n auto — CI runs `-n auto`; local must NOT (run single-threaded)
-
-# Frontend job — ONLY required if the PR's diff touches src/alphamind/command_center/frontend/**
-#                (the `frontend` CI job has a path filter and skips on Python-only PRs).
-cd src/alphamind/command_center/frontend
-bun install --frozen-lockfile
-bun run lint                  # ESLint
-bun run format:check          # Prettier
-bun run typecheck             # tsc -b --noEmit
-bun run test                  # Vitest run mode
-cd -
-```
-
-Iterate until every step is green locally. Once everything passes, bypass GitHub CI and merge the PR (e.g., `gh pr merge --squash --admin <PR>`). This fallback applies **only** when the sentinel above is present — for any other CI failure (real test failure, infra flake, runner timeout, etc.), fix the underlying issue and let CI re-run as normal.
-
-## Spawning Subagents
-
-- For mechanical changes, use Sonnet
-- For all other changes, use Opus
-- Always spawn subagents in background (async) mode
-- Always list model name (Sonnet or Opus) in subagent title like this: [Sonnet | Opus] <Title>
-
-## Git / GitHub Instructions
-
-- always use squash merge
-
-## Your Location
-If you are running on Windows, you are on the production server. 
-
-If you are running on MacOS, you are on the development machine. Production database and logs are located here:
-- Database: `/Volumes/Users/jacks/AlphaMind/data/alphamind.db`
-- Logs: 
-    - `/Volumes/Users/jacks/AlphaMind/logs/bootstrap.out` 
-    - `/Volumes/Users/jacks/AlphaMind/logs/collector.err.log`
-    - `/Volumes/Users/jacks/AlphaMind/logs/collector.log`
-    - `/Volumes/Users/jacks/AlphaMind/logs/collector.out.log`
-If these locations aren't accessible, alert the user
-
-## Working with Linear
-Issue hierarchy:
-- **Project** — one per section header in `docs/project-tracker.md`.
-- **Issue** (feature, e.g., ALP-212 "Breach behavior") — one per bullet under "Ready for implementation". The body holds design-doc links, cross-feature `blockedBy`, the dependency graph, and orchestrator-specific notes.
-- **Sub-issue** (user story, e.g., ALP-230 "04a — Zone classifier") — one per implementation step, drafted via `/draft-user-stories` using the User Story format: `Goal` / `Reading` / `Depends on` / `Scope` / `Acceptance criteria` / `Verification`.
-
-### Linear MCP gotchas
-
-- **Relation fields on `save_issue` are append-only.** Passing a different `blockedBy` / `blocks` / `relatedTo` / `links` list does NOT remove existing relations — it adds. Use `removeBlockedBy` / `removeBlocks` / `removeRelatedTo` to clear; pass both add and remove in the same call to swap atomically. Most common silent-corruption hazard when updating an issue's dependency graph.
-- **Marking a duplicate requires both `state="Duplicate"` and `duplicateOf=<canonical-id>`** on `save_issue`. The state alone leaves the issue canceled but unlinked.
-- **Status names are case-sensitive.** AlphaMind team statuses: `Backlog`, `Todo`, `In Progress`, `In Review`, `Blocked`, `Done`, `Canceled`, `Duplicate`. Pass via the `state` parameter; `"todo"` or `"To Do"` will not match.
-- **`list_issues` truncates long descriptions** (with a `(truncated, use 'get_issue' for full description)` marker). For the full body of any issue, call `get_issue` directly.
-- **`get_issue` omits `blockedBy`/`blocks`/`relatedTo` by default.** Pass `includeRelations=true` to see the dependency graph.
-- **Linear Projects mirror `docs/project-tracker.md` section headers verbatim** — `Foundation`, `Data layer`, `Distillation layer`, `Risk guardrails`, `Analysis layer`, `Decision layer`, `Execution layer`, `Operational tooling`. Use these names directly for the `project` parameter.
-- **The Linear renderer silently drops content in several markdown patterns.** (1) Sub-bullet lists nested under numbered list items keep only the first bullet. (2) Bullet lists directly following a colon-ending paragraph keep only the first bullet — use inline prose or insert a heading before the list. (3) Long runs of same-prefix sub-headings interleaved with code blocks (e.g., `## Scope — Part A`, `## Scope — Part B`, `## Scope — Part C` …) can drop intermediate headings and their content; use bold-text labels (`**(A) Title.**`) under a single heading instead. Re-fetch and verify after every `save_issue`.
+Read `docs/agents/linear.md` before using Linear tools.

@@ -1,4 +1,4 @@
-"""Corporate-actions integration package (ALP-409 / ALP-410).
+"""Corporate-actions integration package.
 
 Imports are lazy to avoid a circular-import cycle between this package and
 ``state_persistence.config`` (which imports ``corporate_actions.config`` during

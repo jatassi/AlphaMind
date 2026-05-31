@@ -1,4 +1,4 @@
-"""Rolling baseline refresh primitive — story 02-distillation-layer/07.
+"""Rolling baseline refresh primitive.
 
 Class B refresh: read current state, append the newest underlying observation,
 incrementally update the rolling mean / stdev / observation count via

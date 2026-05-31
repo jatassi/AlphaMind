@@ -1,4 +1,4 @@
-"""Phase 2 envelope dispatcher (ALP-449 three-tx model).
+"""Phase 2 envelope dispatcher.
 
 Iterates the PM's ``submission_log`` from the decision-pipeline result and
 persists each envelope's outcome via :func:`persist_envelope_outcome` **in

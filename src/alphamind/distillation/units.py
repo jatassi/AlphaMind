@@ -1,4 +1,4 @@
-"""Unit-conversion constants for the distillation layer — story 02-distillation/06.
+"""Unit-conversion constants for the distillation layer.
 
 Centralizes the basis-points / percent / ratio conventions referenced by every
 per-category computation so callers reach for a named constant rather than

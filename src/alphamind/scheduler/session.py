@@ -1,4 +1,4 @@
-"""``PipelineSession`` — frozen handle for one pipeline-process lifetime (story 01).
+"""``PipelineSession`` — frozen handle for one pipeline-process lifetime.
 
 A ``PipelineSession`` is passed to every task the supervisor registers; it
 carries the FK to ``process_lifetimes`` (so per-invocation rows can stamp
