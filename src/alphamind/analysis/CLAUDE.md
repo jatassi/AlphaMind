@@ -17,12 +17,12 @@ primary input to the decision layer). Shared agent helpers in `tools/`. Design i
 | `_sdk_subprocess.py` | Subprocess-isolated SDK call wrapper. |
 | `_sdk_subprocess_worker.py` | SDK subprocess worker — entry point for one isolated harness invocation. |
 | `_shared.py` | Shared types across the analysis layer. |
-| `adaptive_research/` | — |
-| `domain_researchers/` | — |
+| `adaptive_research/` | Adaptive-research agent: anomaly-driven investigation — the pipeline's curiosity layer. |
+| `domain_researchers/` | Domain-researcher agents: per-sector (tech/semis, financials, energy) equity analysis. |
 | `news_clustering/` | — |
 | `news_freshness.py` | Empty-window diagnostic for the news pipeline — ALP-567. |
-| `qualitative_research/` | — |
-| `synthesizer/` | — |
+| `qualitative_research/` | Qualitative-research agent: always-on headlines, sentiment, and prediction-market sweep. |
+| `synthesizer/` | Synthesizer agent: unified market snapshot — the primary input to the decision layer. |
 | `tools/` | On-demand tool registry for qualitative researcher agents — ALP-247. |
 <!-- END modules -->
 

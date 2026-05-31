@@ -11,7 +11,7 @@ Design intent (historical): `docs/design/configuration-management.md`.
 | Module | Responsibility |
 |---|---|
 | `assets_views.py` | Per-invocation views over `resolved.assets.sectors` |
-| `control_handlers/` | — |
+| `control_handlers/` | Runtime config-change handlers applied via the command center's control surface. |
 | `guardrails_helpers.py` | Shared loader for the cumulative-drawdown progressive tiers. |
 | `load.py` | End-to-end configuration loader entry point (story 08). |
 | `loaders.py` | Pipeline-side YAML loaders for the cascading bundles (story 04*). |

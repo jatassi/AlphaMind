@@ -20,7 +20,7 @@ touching TS/React).
 | `auth/` | Auth surface for the command center |
 | `config.py` | Pydantic config models for the command center |
 | `control/` | Browser-facing `/api/control/*` proxy + audit |
-| `events/` | — |
+| `events/` | Command-center event-stream surface for the operator UI. |
 | `logging_setup.py` | `command_center.log` rotation setup |
 | `persistence/` | Command-center persistence layer |
 | `session.py` | `ProcessSession` — frozen handle for one command-center-process lifetime. |
