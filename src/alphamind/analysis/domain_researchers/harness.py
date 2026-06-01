@@ -240,7 +240,15 @@ def _build_sdk_options(
         # needs turn 2 to emit the closing ``end_turn``. ``max_turns=1``
         # starves the close-out and the SDK reports ``is_error=True`` even
         # when the structured payload was produced successfully.
-        max_turns=2,
+        #
+        # ``max_turns=2`` covers only the happy path. If the first
+        # ``StructuredOutput`` payload fails schema validation, the SDK returns
+        # a ``ToolResultBlock`` with ``is_error=True`` and the model spends a
+        # corrective turn re-emitting it — which overruns a 2-turn budget and
+        # aborts with ``error_max_turns`` even though the retry's payload
+        # validated (observed 2026-05-31, financials researcher). ``max_turns=5``
+        # leaves slack for a couple of structured-output correction cycles.
+        max_turns=5,
         setting_sources=[],
         extra_args={"strict-mcp-config": None},
         env={"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(agent_config.output_token_budget)},

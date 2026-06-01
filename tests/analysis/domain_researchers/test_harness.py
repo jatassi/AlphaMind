@@ -777,7 +777,7 @@ async def test_harness_claude_agent_options_structure(
     options = captured_options[0]
 
     assert options.allowed_tools == []
-    assert options.max_turns == 2
+    assert options.max_turns == 5
     assert isinstance(options.system_prompt, str)
     assert options.system_prompt  # non-empty
     # ``setting_sources=[]`` blocks .claude/settings.json from loading hooks/permissions.
