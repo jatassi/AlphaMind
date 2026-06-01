@@ -40,11 +40,8 @@ _BRIEF_HEADER = "=== SYNTHESIZER BRIEF PREVIEW (full brief via retrieve_brief) =
 _REFERENCE_PRICES_HEADER = "=== REFERENCE PRICES (authoritative bracket anchors) ==="
 
 _REFERENCE_PRICES_GUIDANCE = (
-    "Anchor every equity entry, target, and protective-stop level to its ticker's "
-    "reference price below. These are the exact per-ticker prices the guardrail "
-    "validator checks your brackets against; a bracket sized against any other "
-    "number for that ticker is rejected before it can fill. Do not invent a price "
-    "or carry one over from a brief or a prior session."
+    "Anchor each equity entry, target, and protective stop to its ticker's price "
+    "below — the exact number your brackets are validated against."
 )
 
 _REFERENCE_PRICES_NONE = "  None (no reference prices available this invocation)"

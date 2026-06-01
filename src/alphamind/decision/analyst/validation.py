@@ -410,8 +410,8 @@ def _check_bracket_directional_coherence(
             rule="bracket_directional_coherence",
             message=(
                 f"short {rec.underlying} ({rec.recommendation_id}): target {target} must be below "
-                f"the entry reference {base} ({rec.underlying} reference price {live}); a short "
-                "profits as price falls"
+                f"the entry reference {base:.2f} ({rec.underlying} reference price {live:.2f}); "
+                "a short profits as price falls"
             ),
         )
     elif not is_short and target <= base:
@@ -420,8 +420,8 @@ def _check_bracket_directional_coherence(
             rule="bracket_directional_coherence",
             message=(
                 f"long {rec.underlying} ({rec.recommendation_id}): target {target} must be above "
-                f"the entry reference {base} ({rec.underlying} reference price {live}); a long "
-                "profits as price rises"
+                f"the entry reference {base:.2f} ({rec.underlying} reference price {live:.2f}); "
+                "a long profits as price rises"
             ),
         )
 
@@ -433,8 +433,8 @@ def _check_bracket_directional_coherence(
             rule="bracket_directional_coherence",
             message=(
                 f"short {rec.underlying} ({rec.recommendation_id}): protective stop {stop} must "
-                f"be above the entry reference {base} ({rec.underlying} reference price {live}); "
-                "a short is stopped out as price rises"
+                f"be above the entry reference {base:.2f} ({rec.underlying} reference price "
+                f"{live:.2f}); a short is stopped out as price rises"
             ),
         )
     elif not is_short and stop >= base:
@@ -443,8 +443,8 @@ def _check_bracket_directional_coherence(
             rule="bracket_directional_coherence",
             message=(
                 f"long {rec.underlying} ({rec.recommendation_id}): protective stop {stop} must "
-                f"be below the entry reference {base} ({rec.underlying} reference price {live}); "
-                "a long is stopped out as price falls"
+                f"be below the entry reference {base:.2f} ({rec.underlying} reference price "
+                f"{live:.2f}); a long is stopped out as price falls"
             ),
         )
 
@@ -508,9 +508,9 @@ def _check_reference_price_staleness(
             rule="reference_price_staleness",
             message=(
                 f"{rec.underlying} ({rec.recommendation_id}): {rec.underlying} reference price "
-                f"= {live}; your entry anchor {anchor:.4f} is {drift_pct:.1f}% off (tolerance "
+                f"= {live:.2f}; your entry anchor {anchor:.2f} is {drift_pct:.1f}% off (tolerance "
                 f"{tolerance_pct}%) — the bracket was sized against a different price. Re-anchor "
-                f"entry/target/stop for {rec.underlying} to {live}."
+                f"entry/target/stop for {rec.underlying} to {live:.2f}."
             ),
         )
 
