@@ -126,6 +126,31 @@ _UNKNOWN_TIMEFRAME_RANK = 99
 _MAX_REFERENCE_BAR_AGE_SECONDS = 7 * 24 * 60 * 60
 
 
+# ALP-759 — sanity bounds for a phase-1 live-quote mid before it becomes the
+# active-universe reference price. Off-hours (weekend / pre-market / after-hours)
+# the free-tier IEX feed routinely returns a two-sided quote with one broken side
+# or an absurd spread (the 2026-05-31 weekend scan: MU $52.51 bid vs a real
+# ~$964, a $509 mid; INTU a $450 ask vs a $302 bid on a ~$331 stock), so the mid
+# is a meaningless number that must never silently anchor the decision layer —
+# the more so once the reference is surfaced to the analyst (ALP-758).
+#
+# Two complementary distrust checks (see :func:`_quote_distrust_reason`):
+#   * bar divergence — ``|mid - bar| / bar`` beyond this bound when a recorded
+#     bar exists. Set generously: its job is to catch a broken mid (MU ~47%),
+#     not to second-guess a legitimate fast intraday move, so it is deliberately
+#     far wider than the analyst's 5% staleness tolerance
+#     (``DEFAULT_PRICE_STALENESS_TOLERANCE_PCT``) — a genuine gap is never gated.
+#   * relative spread — ``(ask - bid) / mid`` beyond this bound, checkable even
+#     with no bar, catching a pathologically wide quote (INTU ~39%) the mid alone
+#     would hide.
+#
+# Both mirror the ``DEFAULT_PRICE_STALENESS_TOLERANCE_PCT`` pattern: a module
+# default the caller of :func:`_merge_quote_and_bar_prices` may override; not
+# (yet) YAML-wired.
+_DEFAULT_QUOTE_BAR_DIVERGENCE_TOLERANCE_PCT: float = 20.0
+_DEFAULT_QUOTE_MAX_RELATIVE_SPREAD_PCT: float = 25.0
+
+
 @dataclass(frozen=True, slots=True)
 class Phase1Inputs:
     """Bundle the orchestrator hands to ``process_unprocessed_fills``.
@@ -335,11 +360,52 @@ async def _read_active_universe_tickers(session: AsyncSession) -> tuple[str, ...
     return tuple(str(ticker) for ticker in rows)
 
 
+def _quote_distrust_reason(
+    *,
+    quote: TouchQuote,
+    bar: float | None,
+    divergence_tolerance_pct: float,
+    max_relative_spread_pct: float,
+) -> str | None:
+    """Why a phase-1 live-quote mid should not be trusted as the reference (ALP-759).
+
+    Returns a human-readable reason string when the quote trips a distrust check,
+    else ``None`` (the mid is trustworthy). The off-hours IEX failure modes the
+    checks guard against:
+
+    * **bar divergence** — the mid sits implausibly far from the freshest recorded
+      bar (MU weekend: a $509 mid vs a real ~$964 close, the $52.51 bid side
+      broken). Only checkable when a positive bar exists; the bound is generous so
+      a genuine fast intraday gap is never gated. Checked first so the MU-style
+      broken-mid case is attributed to divergence even when its spread is also wide.
+    * **broken spread** — the two-sided quote's relative spread ``(ask - bid) /
+      mid`` is pathological (INTU weekend: a $450 ask vs a $302 bid on a ~$331
+      stock), so the mid is meaningless even with no bar to compare against.
+    """
+    mid = float(quote.mid)
+    if bar is not None and bar > 0:
+        divergence_pct = abs(mid - bar) / bar * 100.0
+        if divergence_pct > divergence_tolerance_pct:
+            return (
+                f"mid {mid:.4f} diverges {divergence_pct:.1f}% from recorded bar "
+                f"{bar:.4f} (> {divergence_tolerance_pct:.0f}% bound)"
+            )
+    relative_spread_pct = float(quote.ask - quote.bid) / mid * 100.0
+    if relative_spread_pct > max_relative_spread_pct:
+        return (
+            f"relative spread {relative_spread_pct:.1f}% exceeds {max_relative_spread_pct:.0f}% "
+            f"bound (bid {float(quote.bid):.4f} / ask {float(quote.ask):.4f})"
+        )
+    return None
+
+
 def _merge_quote_and_bar_prices(
     *,
     active_tickers: Sequence[str],
     bar_prices: Mapping[str, float],
     quotes: Mapping[str, TouchQuote],
+    divergence_tolerance_pct: float = _DEFAULT_QUOTE_BAR_DIVERGENCE_TOLERANCE_PCT,
+    max_relative_spread_pct: float = _DEFAULT_QUOTE_MAX_RELATIVE_SPREAD_PCT,
 ) -> dict[str, float]:
     """Active-universe reference price per ticker: live quote mid primary, bar fallback.
 
@@ -349,36 +415,73 @@ def _merge_quote_and_bar_prices(
     bar's ``unadj_close`` (the :func:`_read_active_universe_prices` result). A
     ticker with neither a quote nor a bar is omitted (the validation tool's
     ``UNAVAILABLE`` path, unchanged from ALP-587). The mid mirrors the held
-    path's single ``current_price``; the count of bar fallbacks is logged for
-    observability. When ``quotes`` is empty (the degraded path) this reproduces
-    the pure bar-based layer exactly.
+    path's single ``current_price``. When ``quotes`` is empty (the degraded path)
+    this reproduces the pure bar-based layer exactly.
+
+    ALP-759 — a captured mid is sanity-checked via :func:`_quote_distrust_reason`
+    before it is trusted: an off-hours IEX quote whose mid diverges too far from
+    the recorded bar, or whose two-sided spread is pathological, is *distrusted* —
+    the ticker uses its recorded bar instead (or is marked unavailable when it has
+    no bar) and a warning is logged. The count of distrusted (gated) quotes is
+    surfaced alongside the live / bar-fallback / unpriced counts. The bounds are
+    module defaults the caller may override.
     """
     universe_prices: dict[str, float] = {}
     quoted_count = 0
     fallback_count = 0
+    gated_count = 0
     for ticker in active_tickers:
         quote = quotes.get(ticker)
+        bar_close = bar_prices.get(ticker)
         if quote is not None:
+            distrust_reason = _quote_distrust_reason(
+                quote=quote,
+                bar=bar_close,
+                divergence_tolerance_pct=divergence_tolerance_pct,
+                max_relative_spread_pct=max_relative_spread_pct,
+            )
+            if distrust_reason is not None:
+                gated_count += 1
+                if bar_close is not None:
+                    universe_prices[ticker] = bar_close
+                    log.warning(
+                        "phase1_inputs: distrusting live quote for %s — %s; "
+                        "using recorded bar %.4f as the reference instead",
+                        ticker,
+                        distrust_reason,
+                        bar_close,
+                    )
+                else:
+                    log.warning(
+                        "phase1_inputs: distrusting live quote for %s — %s; no recorded "
+                        "bar to fall back to, marking the ticker unavailable",
+                        ticker,
+                        distrust_reason,
+                    )
+                continue
             universe_prices[ticker] = float(quote.mid)
             quoted_count += 1
             continue
-        bar_close = bar_prices.get(ticker)
         if bar_close is not None:
             universe_prices[ticker] = bar_close
             fallback_count += 1
     total = len(active_tickers)
-    # Report three disjoint counts (live / bar-fallback / unpriced) rather than a
-    # single "N/M fell back" line: the unpriced tickers (no quote AND no bar) are
-    # absent from universe_prices and surface as the validation tool's UNAVAILABLE,
-    # so folding them into a fallback denominator would hide that coverage gap.
+    # Report four disjoint counts (live / bar-fallback / distrusted-gated /
+    # unpriced) rather than a single "N/M fell back" line: a distrusted quote
+    # (ALP-759) and an unpriced ticker (no quote AND no bar) are operationally
+    # distinct from a plain bar fallback, and folding either into one denominator
+    # would hide a data-quality signal. A gated quote with no bar is counted under
+    # gated, not unpriced, even though both are absent from universe_prices.
     log.info(
         "phase1_inputs: active-universe reference prices for %d active ticker(s) — "
         "%d via live quote, %d via recorded-bar fallback (no live quote), "
-        "%d unpriced (no quote and no recorded bar)",
+        "%d via recorded bar after distrusting the live quote (bar-divergence / "
+        "broken-spread gate), %d unpriced (no quote and no recorded bar)",
         total,
         quoted_count,
         fallback_count,
-        total - quoted_count - fallback_count,
+        gated_count,
+        total - quoted_count - fallback_count - gated_count,
     )
     return universe_prices
 

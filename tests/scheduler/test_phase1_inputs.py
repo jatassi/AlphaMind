@@ -10,6 +10,7 @@ any broker-side failure degrades the bundle (returning no-op defaults +
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -503,11 +504,12 @@ class TestMergeQuoteAndBarPrices:
         quotes = {
             # AAA: quote only -> mid (10.00 + 10.04) / 2 = 10.02
             "AAA": TouchQuote(bid=price("10.00"), ask=price("10.04")),
-            # CCC: quote present even though a bar exists -> quote mid wins
+            # CCC: quote present alongside a bar within the divergence bound
+            # (mid 100.0 vs bar 99.5, ~0.5% off) -> quote mid wins.
             "CCC": TouchQuote(bid=price("99.98"), ask=price("100.02")),
         }
-        # BBB: bar only -> fallback. CCC: bar present but overridden by quote.
-        bar_prices = {"BBB": 48.5, "CCC": 12.0}
+        # BBB: bar only -> fallback. CCC: bar present but the trusted quote wins.
+        bar_prices = {"BBB": 48.5, "CCC": 99.5}
 
         merged = module._merge_quote_and_bar_prices(
             active_tickers=active_tickers,
@@ -530,6 +532,133 @@ class TestMergeQuoteAndBarPrices:
         )
 
         assert merged == {"AAA": 47.0, "BBB": 48.5}
+
+    def test_divergent_quote_mid_gated_to_bar(self, caplog: pytest.LogCaptureFixture) -> None:
+        """ALP-759 — a quote whose mid diverges from the freshest bar beyond the
+        bound (MU-style: a $506 mid against a real ~$964 close) is distrusted: the
+        recorded bar is used as the reference and a warning is logged. The quote's
+        spread is tight here so the divergence check — not the spread floor — is
+        the gate that fires."""
+        from alphamind.scheduler import phase1_inputs as module
+
+        with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.phase1_inputs"):
+            merged = module._merge_quote_and_bar_prices(
+                active_tickers=("MU",),
+                bar_prices={"MU": 964.0},
+                quotes={"MU": TouchQuote(bid=price("505.00"), ask=price("507.00"))},
+            )
+
+        assert merged == {"MU": 964.0}  # the bar, not the $506 mid
+        assert any(
+            "distrusting live quote for MU" in r.message and "diverges" in r.message
+            for r in caplog.records
+        )
+
+    def test_quote_within_bound_keeps_mid_over_bar(self) -> None:
+        """ALP-759 — a quote whose mid is only modestly off the bar (AVGO-style:
+        a $457.65 mid vs a $446 bar, ~2.6%, and a ~5.4% spread) passes both
+        distrust checks untouched and is still preferred over the bar."""
+        from alphamind.scheduler import phase1_inputs as module
+
+        merged = module._merge_quote_and_bar_prices(
+            active_tickers=("AVGO",),
+            bar_prices={"AVGO": 446.0},
+            quotes={"AVGO": TouchQuote(bid=price("445.30"), ask=price("470.00"))},
+        )
+
+        assert merged == {"AVGO": 457.65}  # quote mid, within bound -> trusted
+
+    def test_broken_spread_quote_gated_to_bar(self, caplog: pytest.LogCaptureFixture) -> None:
+        """ALP-759 — a quote whose mid is within the divergence bound but whose
+        relative spread is pathological (INTU-style: a $450 ask vs a $302 bid on a
+        ~$331 stock, a ~39% spread while the $376 mid is only ~13.5% off the bar)
+        is distrusted by the spread floor and resolves to the recorded bar."""
+        from alphamind.scheduler import phase1_inputs as module
+
+        with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.phase1_inputs"):
+            merged = module._merge_quote_and_bar_prices(
+                active_tickers=("INTU",),
+                bar_prices={"INTU": 331.0},
+                quotes={"INTU": TouchQuote(bid=price("302.07"), ask=price("450.00"))},
+            )
+
+        assert merged == {"INTU": 331.0}  # the bar, not the $376 mid
+        assert any(
+            "distrusting live quote for INTU" in r.message and "spread" in r.message
+            for r in caplog.records
+        )
+
+    def test_pathological_quote_without_bar_marked_unavailable(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """ALP-759 — a distrusted quote with no recorded bar to fall back to is
+        omitted entirely (the validation tool's ``UNAVAILABLE`` path) rather than
+        anchoring the agents on a meaningless mid."""
+        from alphamind.scheduler import phase1_inputs as module
+
+        with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.phase1_inputs"):
+            merged = module._merge_quote_and_bar_prices(
+                active_tickers=("WIDE",),
+                bar_prices={},
+                quotes={"WIDE": TouchQuote(bid=price("10.00"), ask=price("20.00"))},
+            )
+
+        assert merged == {}  # no bar -> unavailable, not the $15 mid
+        assert any(
+            "distrusting live quote for WIDE" in r.message and "unavailable" in r.message
+            for r in caplog.records
+        )
+
+    def test_divergence_bound_is_configurable(self) -> None:
+        """ALP-759 — the divergence bound is a module default the caller may
+        override. A 10%-off quote is trusted under the generous default but gated
+        once the caller tightens the bound below that divergence."""
+        from alphamind.scheduler import phase1_inputs as module
+
+        active_tickers = ("XYZ",)
+        # mid 110.0 vs bar 100.0 -> 10% divergence; tight spread.
+        quotes = {"XYZ": TouchQuote(bid=price("109.95"), ask=price("110.05"))}
+        bar_prices = {"XYZ": 100.0}
+
+        trusted = module._merge_quote_and_bar_prices(
+            active_tickers=active_tickers, bar_prices=bar_prices, quotes=quotes
+        )
+        assert trusted == {"XYZ": 110.0}  # within the 20% default -> quote wins
+
+        gated = module._merge_quote_and_bar_prices(
+            active_tickers=active_tickers,
+            bar_prices=bar_prices,
+            quotes=quotes,
+            divergence_tolerance_pct=5.0,
+        )
+        assert gated == {"XYZ": 100.0}  # 10% > 5% override -> gated to the bar
+
+    def test_gated_count_reported_in_log_line(self, caplog: pytest.LogCaptureFixture) -> None:
+        """ALP-759 — the phase-1 reference-price summary line reports the number of
+        distrusted (gated) quotes as its own disjoint count."""
+        from alphamind.scheduler import phase1_inputs as module
+
+        with caplog.at_level(logging.INFO, logger="alphamind.scheduler.phase1_inputs"):
+            module._merge_quote_and_bar_prices(
+                # GOOD: trusted quote. GATED: divergent quote -> bar. BARONLY: no
+                # quote -> bar fallback. NONE: neither -> unpriced.
+                active_tickers=("GOOD", "GATED", "BARONLY", "NONE"),
+                bar_prices={"GOOD": 10.0, "GATED": 964.0, "BARONLY": 5.0},
+                quotes={
+                    "GOOD": TouchQuote(bid=price("10.00"), ask=price("10.02")),
+                    "GATED": TouchQuote(bid=price("505.00"), ask=price("507.00")),
+                },
+            )
+
+        summary = next(
+            r.getMessage()
+            for r in caplog.records
+            if "active-universe reference prices" in r.message
+        )
+        assert "1 via live quote" in summary
+        assert "1 via recorded-bar fallback" in summary
+        assert "1 via recorded bar after distrusting the live quote" in summary
+        assert "1 unpriced" in summary
 
 
 class TestBuildMarketInputs:
@@ -1029,11 +1158,12 @@ class TestGatherPhase1Inputs:
             seed_session.add(_make_universe_row("AAPL"))
             await seed_session.flush()
             seed_session.add(
-                _make_ohlcv_bar("AAPL", period_start="2026-05-07T13:00:00+00:00", unadj_close=999.0)
+                _make_ohlcv_bar("AAPL", period_start="2026-05-07T13:00:00+00:00", unadj_close=200.0)
             )
             await seed_session.commit()
 
-        # A live quote for AAPL (mid 210.05) that the held overlay must beat.
+        # A live quote for AAPL (mid 210.05, within the divergence bound of the
+        # 200.0 bar so it is trusted) that the held overlay must still beat.
         quote_source = _StubQuoteSource(
             {"AAPL": TouchQuote(bid=price("210.00"), ask=price("210.10"))}
         )
@@ -1059,5 +1189,5 @@ class TestGatherPhase1Inputs:
         finally:
             await session.close()
 
-        # Held current_price (175.0) beats both the quote mid (210.05) and bar (999.0).
+        # Held current_price (175.0) beats both the quote mid (210.05) and bar (200.0).
         assert dict(inputs.market_inputs.underlying_prices)["AAPL"] == 175.0
