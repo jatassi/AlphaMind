@@ -10,7 +10,7 @@ in any per-field population is caught immediately.
 from __future__ import annotations
 
 import json
-import subprocess
+import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -39,6 +39,7 @@ from alphamind.scheduler.invocation import (
 from alphamind.state.invocation_context.records import (
     InvocationRecord,
 )
+from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 SHIPPED_CONFIG_DIR = REPO_ROOT / "config"
@@ -49,6 +50,9 @@ _VENUE_ENV_KEYS: tuple[str, ...] = (
     "ALPACA_LIVE_KEY",
     "ALPACA_LIVE_SECRET",
 )
+
+# Sentinel process_lifetime_id used by all _build calls.
+_BUILD_PROCESS_LIFETIME_ID = "proc-build-1"
 
 
 def _write_placeholder_env(env_path: Path) -> None:
@@ -65,21 +69,6 @@ def env_path(tmp_path: Path) -> Path:
 @pytest.fixture
 def archive_root(tmp_path: Path) -> Path:
     return tmp_path / "archive"
-
-
-def _read_repo_head_sha() -> str:
-    """Return the SHA at ``HEAD`` for the repository hosting these tests.
-
-    Wrapped in a sync helper so async tests can call it without tripping the
-    ``ASYNC221`` rule against blocking subprocess calls in ``async`` bodies.
-    """
-    return subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=True,
-        cwd=REPO_ROOT,
-    ).stdout.strip()
 
 
 def _baseline_runtime() -> RuntimeDimensions:
@@ -132,29 +121,65 @@ async def async_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[Asyn
         await async_engine.dispose()
 
 
+async def _seed_process_lifetime(
+    async_factory: async_sessionmaker[AsyncSession],
+    *,
+    git_sha: str,
+) -> None:
+    """Insert a minimal ``process_lifetimes`` row for ``_BUILD_PROCESS_LIFETIME_ID``."""
+    async with async_factory() as session:
+        session.add(
+            ProcessLifetimeRow(
+                process_lifetime_id=_BUILD_PROCESS_LIFETIME_ID,
+                process_role="pipeline",
+                process_start_at="2026-05-07T14:00:00Z",
+                process_pid=12345,
+                hostname="test-host",
+                git_sha=git_sha,
+                git_branch="main",
+                git_dirty=0,
+                python_version="3.13.0",
+                pip_freeze_hash="a" * 64,
+                pip_freeze_snapshot_path="/tmp/pip_freeze.txt",
+                anthropic_sdk_version="0.0.0",
+                claude_agent_sdk_version="0.0.0",
+                os_release="macOS",
+            )
+        )
+        await session.commit()
+
+
 async def _build(
     *,
     pipeline_config: PipelineConfig,
     archive_root: Path,
-    session: AsyncSession,
+    async_factory: async_sessionmaker[AsyncSession],
     runtime: RuntimeDimensions | None = None,
     invocation_id: str = "inv-build-test",
     now: datetime | None = None,
+    process_git_sha: str = "a" * 40,
 ) -> InvocationRecord:
-    """Convenience wrapper that pins all the inputs each test does not vary."""
-    return await build_invocation_record(
-        session=session,
-        process_lifetime_id="proc-build-1",
-        trigger_type="scheduled",
-        trigger_source="morning-cron",
-        trigger_reason="0 9 * * 1-5",
-        firing_run_type=RunType.pre_open,
-        runtime=runtime if runtime is not None else _baseline_runtime(),
-        pipeline_config=pipeline_config,
-        archive_root=archive_root,
-        invocation_id=invocation_id,
-        now=now if now is not None else datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC),
-    )
+    """Convenience wrapper that pins all the inputs each test does not vary.
+
+    Seeds a ``process_lifetimes`` row for ``_BUILD_PROCESS_LIFETIME_ID`` before
+    calling ``build_invocation_record``, which now reads the process SHA from
+    that row instead of shelling out to ``git rev-parse HEAD``.
+    """
+    await _seed_process_lifetime(async_factory, git_sha=process_git_sha)
+    async with async_factory() as session:
+        return await build_invocation_record(
+            session=session,
+            process_lifetime_id=_BUILD_PROCESS_LIFETIME_ID,
+            trigger_type="scheduled",
+            trigger_source="morning-cron",
+            trigger_reason="0 9 * * 1-5",
+            firing_run_type=RunType.pre_open,
+            runtime=runtime if runtime is not None else _baseline_runtime(),
+            pipeline_config=pipeline_config,
+            archive_root=archive_root,
+            invocation_id=invocation_id,
+            now=now if now is not None else datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC),
+        )
 
 
 class TestBuildInvocationRecord:
@@ -164,12 +189,11 @@ class TestBuildInvocationRecord:
         archive_root: Path,
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        async with async_factory() as session:
-            record = await _build(
-                pipeline_config=pipeline_config,
-                archive_root=archive_root,
-                session=session,
-            )
+        record = await _build(
+            pipeline_config=pipeline_config,
+            archive_root=archive_root,
+            async_factory=async_factory,
+        )
 
         assert record.start_at == "2026-05-07T14:30:00Z"
 
@@ -179,18 +203,17 @@ class TestBuildInvocationRecord:
         archive_root: Path,
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        async with async_factory() as session:
-            record = await _build(
-                pipeline_config=pipeline_config,
-                archive_root=archive_root,
-                session=session,
-                runtime=RuntimeDimensions(
-                    active_regime=Regime.normal,
-                    active_mode=Mode.normal,
-                    active_overlays=(),
-                    firing_trigger=RunType.pre_open,
-                ),
-            )
+        record = await _build(
+            pipeline_config=pipeline_config,
+            archive_root=archive_root,
+            async_factory=async_factory,
+            runtime=RuntimeDimensions(
+                active_regime=Regime.normal,
+                active_mode=Mode.normal,
+                active_overlays=(),
+                firing_trigger=RunType.pre_open,
+            ),
+        )
 
         assert record.active_mode == "normal"
 
@@ -218,13 +241,12 @@ class TestBuildInvocationRecord:
             as_of=_AS_OF,
         )
 
-        async with async_factory() as session:
-            record = await _build(
-                pipeline_config=halt_config,
-                archive_root=archive_root,
-                session=session,
-                runtime=halt_runtime,
-            )
+        record = await _build(
+            pipeline_config=halt_config,
+            archive_root=archive_root,
+            async_factory=async_factory,
+            runtime=halt_runtime,
+        )
 
         assert record.active_mode == "halted"
 
@@ -241,13 +263,12 @@ class TestBuildInvocationRecord:
             firing_trigger=RunType.pre_open,
         )
 
-        async with async_factory() as session:
-            record = await _build(
-                pipeline_config=pipeline_config,
-                archive_root=archive_root,
-                session=session,
-                runtime=runtime,
-            )
+        record = await _build(
+            pipeline_config=pipeline_config,
+            archive_root=archive_root,
+            async_factory=async_factory,
+            runtime=runtime,
+        )
 
         assert record.active_overlays_json == '["pre_event", "stress"]'
 
@@ -257,12 +278,11 @@ class TestBuildInvocationRecord:
         archive_root: Path,
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        async with async_factory() as session:
-            record = await _build(
-                pipeline_config=pipeline_config,
-                archive_root=archive_root,
-                session=session,
-            )
+        record = await _build(
+            pipeline_config=pipeline_config,
+            archive_root=archive_root,
+            async_factory=async_factory,
+        )
 
         assert record.active_overlays_json == "[]"
 
@@ -272,60 +292,56 @@ class TestBuildInvocationRecord:
         archive_root: Path,
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        async with async_factory() as session:
-            record = await _build(
-                pipeline_config=pipeline_config,
-                archive_root=archive_root,
-                session=session,
-            )
+        record = await _build(
+            pipeline_config=pipeline_config,
+            archive_root=archive_root,
+            async_factory=async_factory,
+        )
 
         expected = json.dumps(pipeline_config.snapshot.feature_flags_snapshot, sort_keys=True)
         assert record.feature_flags_snapshot_json == expected
 
-    async def test_git_sha_at_invocation_matches_repo_head(
+    async def test_git_sha_at_invocation_uses_process_sha_not_head(
         self,
         pipeline_config: PipelineConfig,
         archive_root: Path,
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        expected_sha = _read_repo_head_sha()
+        """git_sha_at_invocation reflects the process-start SHA, not current HEAD.
 
-        async with async_factory() as session:
-            record = await _build(
+        Uses a sentinel SHA that cannot match any real commit so the assertion
+        proves the DB value is used rather than the live HEAD.
+        """
+        process_sha = "0" * 40
+
+        record = await _build(
+            pipeline_config=pipeline_config,
+            archive_root=archive_root,
+            async_factory=async_factory,
+            process_git_sha=process_sha,
+        )
+
+        assert record.git_sha_at_invocation == process_sha
+
+    async def test_divergence_between_head_and_process_sha_emits_warning(
+        self,
+        pipeline_config: PipelineConfig,
+        archive_root: Path,
+        async_factory: async_sessionmaker[AsyncSession],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A pull-without-restart is surfaced as a WARNING in the pipeline log."""
+        process_sha = "0" * 40  # sentinel — cannot match a real HEAD commit
+
+        with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.invocation"):
+            await _build(
                 pipeline_config=pipeline_config,
                 archive_root=archive_root,
-                session=session,
+                async_factory=async_factory,
+                process_git_sha=process_sha,
             )
 
-        assert record.git_sha_at_invocation == expected_sha
-
-    async def test_git_rev_parse_nonzero_exit_raises_called_process_error(
-        self,
-        pipeline_config: PipelineConfig,
-        archive_root: Path,
-        async_factory: async_sessionmaker[AsyncSession],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Force ``git rev-parse HEAD`` to fail and confirm the error propagates.
-
-        Patches ``subprocess.run`` on the module so the failure surfaces from
-        the helper without depending on the host filesystem layout.
-        """
-
-        def _failing_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-            raise subprocess.CalledProcessError(
-                returncode=128, cmd=["git", "rev-parse", "HEAD"], stderr="fatal"
-            )
-
-        monkeypatch.setattr("alphamind.scheduler.invocation.subprocess.run", _failing_run)
-
-        async with async_factory() as session:
-            with pytest.raises(subprocess.CalledProcessError):
-                await _build(
-                    pipeline_config=pipeline_config,
-                    archive_root=archive_root,
-                    session=session,
-                )
+        assert any("differs from process-launch SHA" in msg for msg in caplog.messages)
 
     async def test_data_source_freshness_json_populated_from_session(
         self,
@@ -346,12 +362,11 @@ class TestBuildInvocationRecord:
             )
             await session.commit()
 
-        async with async_factory() as session:
-            record = await _build(
-                pipeline_config=pipeline_config,
-                archive_root=archive_root,
-                session=session,
-            )
+        record = await _build(
+            pipeline_config=pipeline_config,
+            archive_root=archive_root,
+            async_factory=async_factory,
+        )
 
         payload = json.loads(record.data_source_freshness_json)
         assert payload["polygon"] == "2026-05-07T10:00:00Z"
@@ -363,13 +378,12 @@ class TestBuildInvocationRecord:
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         """build_invocation_record persists the calibration snapshot under archive_root."""
-        async with async_factory() as session:
-            record = await _build(
-                pipeline_config=pipeline_config,
-                archive_root=archive_root,
-                session=session,
-                invocation_id="inv-20260507T143000Z-feedface",
-            )
+        record = await _build(
+            pipeline_config=pipeline_config,
+            archive_root=archive_root,
+            async_factory=async_factory,
+            invocation_id="inv-20260507T143000Z-feedface",
+        )
 
         expected = (
             archive_root
@@ -387,12 +401,11 @@ class TestBuildInvocationRecord:
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         """All 22 fields populated; 5 designated columns are None at insert."""
-        async with async_factory() as session:
-            record = await _build(
-                pipeline_config=pipeline_config,
-                archive_root=archive_root,
-                session=session,
-            )
+        record = await _build(
+            pipeline_config=pipeline_config,
+            archive_root=archive_root,
+            async_factory=async_factory,
+        )
 
         # The five fields that must be ``None`` at insert per the spec.
         expected_none = {

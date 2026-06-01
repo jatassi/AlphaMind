@@ -19,6 +19,7 @@ configuration decisions (J) for the bootstrap path on first-ever invocation.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import subprocess
 from datetime import UTC, datetime
@@ -43,6 +44,9 @@ from alphamind.state.invocation_context.records import (
     TriggerType,
 )
 from alphamind.state.invocation_id import mint_invocation_id
+from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
+
+_logger = logging.getLogger(__name__)
 
 
 async def build_invocation_record(  # noqa: PLR0913 — signature pinned by story 03a spec
@@ -74,7 +78,7 @@ async def build_invocation_record(  # noqa: PLR0913 — signature pinned by stor
         raise ValueError(msg)
 
     start_at = _isoformat_z(now)
-    git_sha = _git_rev_parse_head()
+    git_sha = await _fetch_process_git_sha(session, process_lifetime_id)
     calibration_path = _persist_data_calibration_snapshot(
         archive_root=archive_root, invocation_id=invocation_id, as_of=now
     )
@@ -106,6 +110,45 @@ async def build_invocation_record(  # noqa: PLR0913 — signature pinned by stor
         staleness_flag=None,
         snapshot_metadata_json=None,
     )
+
+
+async def _fetch_process_git_sha(session: AsyncSession, process_lifetime_id: str) -> str:
+    """Return the git SHA recorded when this process started.
+
+    Reads ``process_lifetimes.git_sha`` for ``process_lifetime_id`` rather than
+    shelling out to ``git rev-parse HEAD``. A long-lived pipeline process holds
+    its already-imported code in memory; if the operator pulls without restarting,
+    HEAD advances while the executing code does not. The process-start SHA is the
+    authoritative version for provenance — HEAD is not.
+
+    Also performs a best-effort HEAD comparison and logs a WARNING when the two
+    diverge, making a pull-without-restart visible in the pipeline log.
+    """
+    result = await session.execute(
+        select(ProcessLifetimeRow.git_sha).where(
+            ProcessLifetimeRow.process_lifetime_id == process_lifetime_id
+        )
+    )
+    process_sha = result.scalar_one_or_none()
+    if process_sha is None:
+        msg = f"process_lifetime_id={process_lifetime_id!r} not found in process_lifetimes"
+        raise ValueError(msg)
+
+    try:
+        head_sha = _git_rev_parse_head()
+    except Exception:
+        return process_sha
+
+    if head_sha != process_sha:
+        _logger.warning(
+            "git HEAD (%s) differs from process-launch SHA (%s) for %s — "
+            "the operator may have pulled without restarting the pipeline process",
+            head_sha,
+            process_sha,
+            process_lifetime_id,
+        )
+
+    return process_sha
 
 
 def _isoformat_z(now: datetime) -> str:
