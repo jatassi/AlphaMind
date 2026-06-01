@@ -33,9 +33,13 @@ from alphamind.execution.broker_adapter import (
 )
 from alphamind.execution.broker_adapter.client_factory import ExecutionMode
 from alphamind.execution.continuous_monitor.fill_stream_consumer.translation import (
+    derive_broker_fill_key,
     fill_report_to_fill_record,
     order_id_for_report,
     terminal_order_status_for,
+)
+from alphamind.execution.continuous_monitor.fill_stream_consumer.unattributed_drain import (
+    drain_unattributed_fills,
 )
 from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.execution.write_paths.fill_persistence import (
@@ -44,11 +48,22 @@ from alphamind.execution.write_paths.fill_persistence import (
 from alphamind.execution.write_paths.order_status_sync import (
     sync_terminal_order_status,
 )
-from alphamind.state.records import FillRecord
+from alphamind.execution.write_paths.unattributed_fill_persistence import (
+    append_unattributed_fill,
+    mark_unattributed_fill_alerted,
+)
+from alphamind.state.records import FillRecord, UnattributedFill
 from alphamind.state.tables.fill_records import FillRecordRow
 from alphamind.state.tables.orders import OrderRow
 
 log = logging.getLogger(__name__)
+
+# Short in-process re-resolution schedule (seconds) to absorb a sub-second
+# order-commit race: a fill-bearing event can land microseconds before the
+# deferred Phase-2 ``orders`` writeback commits. Kept well under ~2s total so
+# the consumer never blocks on the websocket loop — the long race is handled
+# by the reconnect-driven drain, not by stalling here.
+_RESOLVE_RETRY_DELAYS: tuple[float, ...] = (0.5, 1.0)
 
 # Type aliases for the factory parameters. The trading-stream and trading-
 # client factories are mode-keyed builders that mint fresh alpaca-py objects.
@@ -96,6 +111,19 @@ async def run_fill_stream_consumer(
 
     attempt = 0
     while True:
+        # Opportunistic recovery of quarantined fills (ALP-763): a fill parked
+        # because its ``orders`` row had not yet committed integrates as soon as
+        # that row exists. Run it each reconnect cycle alongside REST recovery.
+        # A drain error must not crash the consumer loop — matching the
+        # reconnect-supervisor tolerance below.
+        try:
+            await drain_unattributed_fills(
+                session_factory=session_factory,
+                enrichment_callable=enrichment_callable,
+            )
+        except Exception:
+            log.exception("unattributed-fill drain failed; continuing")
+
         # Startup + post-disconnect recovery: replay missed events from REST.
         since = await _latest_fill_timestamp(session_factory)
         if since is not None:
@@ -193,23 +221,24 @@ async def _persist_one(
     if record is None:
         await _sync_terminal_status_if_any(report, session_factory=session_factory)
         return
+    # Resolve the local ``orders`` PK this fill applies to. The broker's
+    # client_order_id does not round-trip the OMS order id for equity entries
+    # (it carries the command id) or for native-bracket protective children
+    # (Alpaca generates it), so fall back to the captured broker UUID
+    # (ALP-746). A fill-bearing event can also arrive *before* the deferred
+    # Phase-2 ``orders`` writeback commits — re-resolve a couple of times to
+    # absorb that sub-second race (ALP-763).
     async with session_factory() as db:
-        # Resolve the local ``orders`` PK this fill applies to. The broker's
-        # client_order_id does not round-trip the OMS order id for equity
-        # entries (it carries the command id) or for native-bracket protective
-        # children (Alpaca generates it), so fall back to the captured broker
-        # UUID (ALP-746). Skip (with a loud log) when no local order matches —
-        # the fill_records.order_id FK would otherwise reject the insert.
         oms_order_id = await _resolve_oms_order_id(db, report)
-        if oms_order_id is None:
-            log.warning(
-                "fill references no local order: client_order_id=%s alpaca_order_id=%s "
-                "event=%s — skipping (no orders row to attribute it to)",
-                report.client_order_id,
-                report.alpaca_order_id,
-                report.event_type,
-            )
-            return
+    if oms_order_id is None:
+        oms_order_id = await _retry_resolve_oms_order_id(report, session_factory=session_factory)
+    if oms_order_id is None:
+        # Never drop: park the raw report on the retry queue and alert. A later
+        # drain integrates it once the order materializes (race); a fill that
+        # never resolves (out-of-band manual order) stays queued + alerted.
+        await _quarantine_unattributed_fill(report, session_factory=session_factory)
+        return
+    async with session_factory() as db:
         if oms_order_id != record.order_id:
             # Re-derive so ``order_id`` + ``fill_id`` reflect the resolved PK.
             record = fill_report_to_fill_record(report, oms_order_id=oms_order_id)
@@ -218,6 +247,71 @@ async def _persist_one(
         if enrichment_callable is not None:
             record = await enrichment_callable(record)
         await append_fill_record(db, record)
+        await db.commit()
+
+
+async def _retry_resolve_oms_order_id(
+    report: FillReport,
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> str | None:
+    """Re-resolve a few times with brief sleeps to absorb a commit race.
+
+    Each attempt re-opens a fresh session so it observes any ``orders`` row the
+    deferred Phase-2 writeback committed in the interim. Total wait is bounded
+    by :data:`_RESOLVE_RETRY_DELAYS` (well under two seconds); the long race is
+    the drain's job, not this hot path's.
+    """
+    for delay in _RESOLVE_RETRY_DELAYS:
+        await asyncio.sleep(delay)
+        async with session_factory() as db:
+            oms_order_id = await _resolve_oms_order_id(db, report)
+        if oms_order_id is not None:
+            return oms_order_id
+    return None
+
+
+async def _quarantine_unattributed_fill(
+    report: FillReport,
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Park an unresolvable fill on the retry queue and emit a one-time alert.
+
+    Idempotent on ``broker_fill_key`` so a websocket + recovery replay of the
+    same fill collapses to one row. The alert is a loud, greppable
+    ``log.warning`` — the continuous monitor has no invocation-handle alert
+    channel, so collector.log WARNINGs are the operator's alert surface. It
+    fires once: ``append_unattributed_fill`` is the only path that newly
+    inserts the row, so we alert + mark on that path and skip on re-park.
+    """
+    now = datetime.now(UTC)
+    record = UnattributedFill(
+        broker_fill_key=derive_broker_fill_key(report),
+        alpaca_order_id=report.alpaca_order_id,
+        client_order_id=report.client_order_id,
+        event_type=report.event_type,
+        fill_timestamp=report.fill_timestamp,
+        fill_price=report.fill_price or 0.0,
+        fill_quantity=report.fill_quantity or 0.0,
+        raw_report_json=report.model_dump_json(),
+        first_seen_at=now,
+        last_retry_at=None,
+        retry_count=0,
+        alerted=False,
+    )
+    async with session_factory() as db:
+        await append_unattributed_fill(db, record)
+        log.warning(
+            "QUARANTINED unattributed fill: broker_fill_key=%s client_order_id=%s "
+            "alpaca_order_id=%s event=%s — no local order row to attribute it to; "
+            "parked for drain (race) or operator review (out-of-band order)",
+            record.broker_fill_key,
+            report.client_order_id,
+            report.alpaca_order_id,
+            report.event_type,
+        )
+        await mark_unattributed_fill_alerted(db, record.broker_fill_key)
         await db.commit()
 
 

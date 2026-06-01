@@ -1062,11 +1062,16 @@ class TestUuidResolution:
         assert len(rows) == 1
         assert rows[0].order_id == "ORD-NVDA-entry-1"
 
-    async def test_fill_for_unknown_order_is_skipped(
+    async def test_fill_for_unknown_order_is_quarantined_not_dropped(
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """A fill that matches no local order by PK or UUID is skipped (logged),
-        not inserted — the fill_records FK would otherwise reject it."""
+        """A fill that matches no local order by PK or UUID is never dropped
+        (ALP-763): it is parked on the ``unattributed_fills`` queue and alerted,
+        not inserted into ``fill_records`` (the FK would reject it there)."""
+        from alphamind.execution.write_paths.unattributed_fill_persistence import (
+            list_unattributed_fills,
+        )
+
         report = _report_from_order(
             _build_order(order_id=uuid4(), client_order_id="totally-unknown"),
             event="fill",
@@ -1077,3 +1082,7 @@ class TestUuidResolution:
         await _persist_one(report, session_factory=session_factory, enrichment_callable=None)
 
         assert await _read_fill_records(session_factory) == []
+        async with session_factory() as session:
+            queued = await list_unattributed_fills(session)
+        assert len(queued) == 1
+        assert queued[0].alerted is True
