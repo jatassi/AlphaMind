@@ -419,10 +419,29 @@ as scheduled runs — under
 **Do not pass `--fresh-start`.** That flag is reserved for the one-time
 bootstrap in § 2.4; it hard-fails when the singletons already exist.
 
-To watch the invocation live, use the same surfaces documented for scheduled
-runs in § 5 — the structured `pipeline.log`, the scheduler's `/events` SSE
-stream, and the command center's Live Run dashboard all work identically
-whether the invocation came from the daemon or from `--once`.
+**A manual `--once` run is NOT observable on the SSE streams.** The
+`--once` code path (`_run_once` in `src/alphamind/scheduler/__main__.py`)
+runs the invocation in your shell as its own process; it never constructs
+the `SSEEventEmitter` or the `/control` + `/events` HTTP server — those exist
+only in the daemon path (`_run_daemon`). So while a manual run executes, the
+scheduler daemon's `127.0.0.1:8765/events` stream (§ 5.1) and the command
+center's Live Run dashboard (§ 5.3) — which consumes that same stream — show
+only heartbeats. They reflect the daemon, and the daemon is idle; your run is
+elsewhere. (Don't be fooled into thinking the run stalled: collect → distill
+then SSE silence is exactly what a healthy out-of-process run looks like on
+those surfaces.)
+
+To watch a manual `--once` invocation live, use:
+
+- **The process's own stdout/stderr** — the terminal you launched it in. This
+  is the richest live view: per-phase `distillation.orchestrator` completions,
+  per-agent `analysis.*.runner` lines, Phase 2 dispatch, and the final exit
+  code all stream here.
+- **The structured `pipeline.log`** (§ 5.4) — `_run_once` does call
+  `configure_pipeline_logging()`, so records land in the rotating log
+  alongside the daemon's (filter by the invocation id).
+- **The `invocations` DB row** (§ 5.5) and **per-invocation archive** (§ 5.6),
+  which are written identically to a scheduled run.
 
 ---
 
@@ -509,7 +528,11 @@ or free-form log records.
 
 ### 5.1 Real-time: the scheduler's `/events` SSE stream (canonical)
 
-This is the primary live-monitoring surface for agents and operators.
+This is the primary live-monitoring surface for agents and operators —
+**for daemon-driven invocations only** (scheduled fires + emergency
+cascades). A manual `--once` CLI run is a separate process and does not
+publish here; watch it via its process stdout / `pipeline.log` instead
+(§ 3).
 
 ```bash
 curl -N http://127.0.0.1:8765/events
@@ -519,7 +542,7 @@ Emits SSE frames for each of these event types:
 
 | Event                   | When                                                     |
 |-------------------------|----------------------------------------------------------|
-| `invocation_started`    | A scheduled or manual invocation begins                  |
+| `invocation_started`    | A daemon-driven invocation begins (scheduled / emergency; NOT a manual `--once` CLI run) |
 | `phase_transition`      | The orchestrator advances to a new pipeline phase        |
 | `agent_started`         | An SDK call begins (analyst, strategist, PM, etc.)       |
 | `agent_succeeded`       | The SDK call returned a valid response                   |
