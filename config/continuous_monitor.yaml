@@ -76,6 +76,23 @@ supervisor_shutdown_timeout_seconds: 5
 # Source: ALP-715 § Pre-resolved decision (E).
 borrow_accrual_tick_local_time: "16:00"
 
+# Cadence (seconds) of the periodic fill-backfill backstop (ALP-763). Each
+# sweep reuses the disconnect-recovery primitive with an independent `since`
+# bound to recover any Alpaca fill missing from fill_records — even when no
+# websocket disconnect occurred. A fast Phase-2 entry fill can be quarantined
+# before its order row commits and the reconnect-driven recovery (which keys
+# off max(fill_timestamp)) permanently excludes it once a later fill lands;
+# this interval-driven sweep is the backstop. 15 min keeps the divergence
+# window short without hammering GET /v2/orders.
+fill_backfill_interval_seconds: 900
+
+# Independent, generous lookback (seconds) for each backfill sweep's `since`
+# bound (ALP-763). Deliberately NOT max(fill_timestamp). 72h (259200s) spans
+# the upper end of the 4-72h swing-trading horizon, so a fill dropped any time
+# earlier in a still-open position's life is still re-captured. append_fill_record
+# dedupes, so the wide window only costs redundant reads, never duplicate rows.
+fill_backfill_lookback_seconds: 259200
+
 # Number of consecutive failed breach-loop ticks before the loop emits a
 # degraded operator health signal (ALP-732). One bad tick must not alert —
 # transient blips (a momentary DB lock, a single regime-provider timeout)

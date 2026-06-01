@@ -3,7 +3,7 @@
 The seam tests cover the contract surfaces individually:
 
 * ``fill_stream_consumer/test_task.py::TestEnrichmentCallable`` exercises
-  ``_persist_one`` with a fake ``enrichment_callable``.
+  ``persist_fill_report`` with a fake ``enrichment_callable``.
 * ``test_paper_enrichment_wiring.py`` exercises ``_build_enrichment_callable``
   + production adapters with no live consumer running.
 

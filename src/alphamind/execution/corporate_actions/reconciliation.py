@@ -46,10 +46,18 @@ this reconciler skips.
 
 Scope narrows:
 
-* OPEN-only auto-correct. PENDING positions carry ``share_count`` /
-  ``contract_count`` = 0 by the status-rule invariant; comparing against
-  an Alpaca-side missing entry produces no drift in practice, but we
-  exclude PENDING from the writeback unconditionally as a defensive narrow.
+* OPEN-only ``share_count`` / ``contract_count`` writeback. PENDING
+  positions carry quantity = 0 by the status-rule invariant, so the standard
+  drift writeback is OPEN-only. A PENDING equity position whose Alpaca holding
+  is nonzero is a likely dropped/unintegrated entry fill; the reconciler
+  ESCALATES it as a distinct ``pending_with_broker_holding`` drift alert and
+  does nothing else — see :func:`_escalate_pending_equity`. The reconciler's
+  job is drift DETECTION, not authoring portfolio state: recovery is owned by
+  the fill drain/periodic backfill, which writes the real fill into
+  ``fill_records`` so the next Phase-1 integrates it and flips the position
+  PENDING → OPEN with the correct basis. The reconciler never flips status,
+  writes share_count, synthesizes a fill, or emits a correction for this case.
+  Options carry no PENDING escalation.
 * Positive-evidence gate, split per asset class (ALP-662). The
   positions endpoint can legitimately hand back a snapshot tuple that
   is missing an entire asset class — either the operator truly holds
@@ -137,10 +145,10 @@ _QTY_EPSILON = 1e-9
 # warrants operator attention. Same threshold gates ALERT and CORRECTION.
 _CASH_EPSILON = 0.01
 
-# Position statuses the reconciler sweeps. Auto-correct narrows further to
-# OPEN-only in both equity and options branches (PENDING by invariant has
-# share_count / contract_count == 0, so no drift fires; the narrow is
-# defensive against future invariant changes).
+# Position statuses the reconciler sweeps. Auto-correct is OPEN-only (PENDING
+# by invariant has quantity == 0, so no drift fires). PENDING rows are still
+# swept so the equity branch can ESCALATE a PENDING-with-nonzero-Alpaca-holding
+# as a distinct drift alert (ALP-763) — a likely dropped entry fill.
 _LIVE_STATUSES = (PositionStatus.OPEN.value, PositionStatus.PENDING.value)
 
 
@@ -228,8 +236,9 @@ async def reconcile(
                 ticker=details.ticker,
                 local_qty=details.share_count,
                 local_direction=record.direction,
+                local_status=record.status,
                 alpaca=alpaca_by_symbol.get(details.ticker),
-                autocorrect=autocorrect_equity and record.status == PositionStatus.OPEN,
+                equity_evidence=autocorrect_equity,
             )
         elif isinstance(details, OptionsPositionDetails):
             occ_symbol = _alpaca_occ_symbol(details)
@@ -289,8 +298,9 @@ async def _reconcile_equity(
     ticker: str,
     local_qty: float,
     local_direction: Direction | None,
+    local_status: PositionStatus,
     alpaca: PositionSnapshot | None,
-    autocorrect: bool,
+    equity_evidence: bool,
 ) -> int:
     """Emit alert(s) and (optionally) auto-correct ``share_count`` on drift.
 
@@ -303,7 +313,45 @@ async def _reconcile_equity(
     surfaced as a separate ALERT and skips auto-correction — a flipped side
     is semantically distinct from a quantity drift and demands operator
     review.
+
+    Auto-correction is gated on positive equity evidence (``equity_evidence``;
+    a ``us_equity`` snapshot is present) per the ALP-619 / ALP-662 writeback
+    rationale. Within that gate the status drives the behavior:
+
+    * OPEN — ``share_count`` drift writes back ``abs(alpaca.qty)`` (the
+      standard ALP-619 path).
+    * PENDING with a nonzero Alpaca holding — ALP-763 drift escalation: a
+      likely dropped/unintegrated entry fill. Emit a distinct
+      ``pending_with_broker_holding`` alert and nothing else. See
+      :func:`_escalate_pending_equity`.
     """
+    # ALP-763 — PENDING-with-broker-holding escalation. A PENDING row carries
+    # share_count=0 by invariant; a nonzero Alpaca holding means the entry fill
+    # was likely dropped before integration. The reconciler's job is drift
+    # DETECTION, not authoring portfolio state — so it escalates this as a
+    # distinct alert and returns. Recovery is owned by the fill drain/periodic
+    # backfill, which writes the real fill into ``fill_records`` so the next
+    # Phase-1 integrates it and flips the position PENDING → OPEN with the
+    # correct basis. Firing this branch before the direction/quantity
+    # comparison also keeps a wrong-direction PENDING row from being treated as
+    # ordinary quantity drift.
+    if (
+        local_status == PositionStatus.PENDING
+        and equity_evidence
+        and alpaca is not None
+        and abs(alpaca.qty) > _QTY_EPSILON
+    ):
+        return await _escalate_pending_equity(
+            handle,
+            position_row=position_row,
+            ticker=ticker,
+            alpaca=alpaca,
+        )
+
+    # OPEN-only auto-correct from here down (PENDING with no/zero Alpaca
+    # holding has share_count=0 by invariant, so no drift fires anyway).
+    autocorrect = equity_evidence and local_status == PositionStatus.OPEN
+
     alerts = 0
 
     # Vanished local position (no Alpaca match) — compare against zero.
@@ -358,6 +406,41 @@ async def _reconcile_equity(
             )
 
     return alerts
+
+
+async def _escalate_pending_equity(
+    handle: InvocationHandle,
+    *,
+    position_row: PositionRow,
+    ticker: str,
+    alpaca: PositionSnapshot,
+) -> int:
+    """ALP-763 — escalate a PENDING equity row with a nonzero Alpaca holding.
+
+    A PENDING row carries ``share_count=0`` by invariant; a nonzero Alpaca
+    holding means the entry fill was likely dropped/unintegrated. The
+    reconciler only DETECTS drift, so it emits a single distinct
+    ``pending_with_broker_holding`` alert and mutates nothing — no status flip,
+    no share_count write, no synthesized fill, no correction. The honest
+    recovery is the fill drain/periodic backfill: it writes the real fill into
+    ``fill_records`` so the next Phase-1 integrates it and flips the position
+    PENDING → OPEN with the correct basis. Returns the alert count (always 1).
+    """
+    alpaca_qty_unsigned = abs(alpaca.qty)
+    await _emit_alert(
+        handle,
+        position_id=position_row.position_id,
+        domain="position",
+        field_name="pending_with_broker_holding",
+        local_value=0.0,
+        alpaca_value=alpaca_qty_unsigned,
+        delta_description=(
+            f"{ticker}: PENDING local position has nonzero Alpaca holding "
+            f"qty={alpaca_qty_unsigned} — likely a dropped/unintegrated entry "
+            f"fill awaiting recovery"
+        ),
+    )
+    return 1
 
 
 async def _reconcile_options(

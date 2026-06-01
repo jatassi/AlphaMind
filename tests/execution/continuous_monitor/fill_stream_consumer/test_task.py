@@ -46,7 +46,9 @@ from alphamind.execution.broker_adapter.fill_stream import translate_trade_updat
 from alphamind.execution.continuous_monitor.fill_stream_consumer import (
     run_fill_stream_consumer,
 )
-from alphamind.execution.continuous_monitor.fill_stream_consumer.task import _persist_one
+from alphamind.execution.continuous_monitor.fill_stream_consumer.persistence import (
+    persist_fill_report,
+)
 from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
@@ -994,7 +996,7 @@ class TestUuidResolution:
             qty=1.0,
         )
 
-        await _persist_one(report, session_factory=session_factory, enrichment_callable=None)
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
 
         rows = await _read_fill_records(session_factory)
         assert len(rows) == 1
@@ -1029,7 +1031,7 @@ class TestUuidResolution:
             qty=None,
         )
 
-        await _persist_one(report, session_factory=session_factory, enrichment_callable=None)
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
 
         status, _ = await _status_and_ts(session_factory, "ORD-NVDA-inv0-1")
         assert status == "CANCELLED"
@@ -1056,17 +1058,22 @@ class TestUuidResolution:
             qty=1.0,
         )
 
-        await _persist_one(report, session_factory=session_factory, enrichment_callable=None)
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
 
         rows = await _read_fill_records(session_factory)
         assert len(rows) == 1
         assert rows[0].order_id == "ORD-NVDA-entry-1"
 
-    async def test_fill_for_unknown_order_is_skipped(
+    async def test_fill_for_unknown_order_is_quarantined_not_dropped(
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """A fill that matches no local order by PK or UUID is skipped (logged),
-        not inserted — the fill_records FK would otherwise reject it."""
+        """A fill that matches no local order by PK or UUID is never dropped
+        (ALP-763): it is parked on the ``unattributed_fills`` queue and alerted,
+        not inserted into ``fill_records`` (the FK would reject it there)."""
+        from alphamind.execution.write_paths.unattributed_fill_persistence import (
+            list_unattributed_fills,
+        )
+
         report = _report_from_order(
             _build_order(order_id=uuid4(), client_order_id="totally-unknown"),
             event="fill",
@@ -1074,6 +1081,10 @@ class TestUuidResolution:
             qty=1.0,
         )
 
-        await _persist_one(report, session_factory=session_factory, enrichment_callable=None)
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
 
         assert await _read_fill_records(session_factory) == []
+        async with session_factory() as session:
+            queued = await list_unattributed_fills(session)
+        assert len(queued) == 1
+        assert queued[0].alerted is True

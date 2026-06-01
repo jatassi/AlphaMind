@@ -44,6 +44,9 @@ from alphamind.config.models.guardrails import BreachResponse, GuardrailsConfig,
 from alphamind.config.models.venue import VenueConfig
 from alphamind.distillation.realized_vol import read_realized_vol_map
 from alphamind.execution.broker_adapter import AccountStateQueries, AlpacaClientFactory
+from alphamind.execution.continuous_monitor.activities_backfill import (
+    register_fill_backfill_task,
+)
 from alphamind.execution.continuous_monitor.borrow_accrual import (
     register_borrow_accrual_task,
 )
@@ -476,6 +479,18 @@ async def _run_daemon(*, mode: MonitorMode) -> None:  # noqa: PLR0915 — compos
         emitter=sse_emitter, inner=enrichment_callable
     )
     _register_fill_stream_consumer(
+        supervisor,
+        venue_config=venue_config,
+        db_session_factory=db_session_factory,
+        enrichment_callable=sse_wrapped_enrichment,
+    )
+    # ALP-763 — periodic fill-backfill backstop. Sweeps Alpaca on an interval
+    # (no websocket disconnect needed) with an independent generous lookback
+    # bound to recover any fill missing from fill_records — closing the gap the
+    # reconnect-driven recovery leaves once a later fill advances the
+    # max(fill_timestamp) bound past an earlier dropped one. Reuses the same
+    # broker factories + enrichment wedge as the fill consumer.
+    register_fill_backfill_task(
         supervisor,
         venue_config=venue_config,
         db_session_factory=db_session_factory,

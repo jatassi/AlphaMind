@@ -208,6 +208,25 @@ def _raw_payload_has_legs(payload: dict[str, object] | None) -> bool:
     return isinstance(top_legs, list) and len(top_legs) > 0
 
 
+def derive_broker_fill_key(report: FillReport) -> str:
+    """Derive the deterministic ``unattributed_fills`` primary key for *report*.
+
+    Identity is the broker-fill tuple ``(alpaca_order_id, fill_timestamp,
+    fill_quantity, fill_price)`` — the ``fill_records`` dedupe key MINUS
+    ``order_id`` (the order id is exactly what is unresolved at quarantine
+    time). Mirrors :func:`_derive_fill_id`'s SHA-256 → first-16-hex style so
+    the consumer's transient retry and the reconnect-driven drain/backfill all
+    converge to a single queue row. Fill-bearing events always populate
+    ``fill_price`` / ``fill_quantity``; the ``or 0.0`` only guards a malformed
+    payload (which the translator filters before this is reached anyway).
+    """
+    h = hashlib.sha256(
+        f"{report.alpaca_order_id}|{report.fill_timestamp.isoformat()}"
+        f"|{report.fill_quantity or 0.0}|{report.fill_price or 0.0}".encode()
+    )
+    return f"ufill-{h.hexdigest()[:16]}"
+
+
 def _derive_fill_id(
     *,
     order_id: str,

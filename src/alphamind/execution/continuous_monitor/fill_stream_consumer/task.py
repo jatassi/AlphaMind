@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -32,21 +32,15 @@ from alphamind.execution.broker_adapter import (
     subscribe_trade_updates,
 )
 from alphamind.execution.broker_adapter.client_factory import ExecutionMode
-from alphamind.execution.continuous_monitor.fill_stream_consumer.translation import (
-    fill_report_to_fill_record,
-    order_id_for_report,
-    terminal_order_status_for,
+from alphamind.execution.continuous_monitor.fill_stream_consumer.persistence import (
+    EnrichmentCallable,
+    persist_fill_report,
+)
+from alphamind.execution.continuous_monitor.fill_stream_consumer.unattributed_drain import (
+    drain_unattributed_fills,
 )
 from alphamind.execution.continuous_monitor.session import MonitorSession
-from alphamind.execution.write_paths.fill_persistence import (
-    append_fill_record,
-)
-from alphamind.execution.write_paths.order_status_sync import (
-    sync_terminal_order_status,
-)
-from alphamind.state.records import FillRecord
 from alphamind.state.tables.fill_records import FillRecordRow
-from alphamind.state.tables.orders import OrderRow
 
 log = logging.getLogger(__name__)
 
@@ -59,11 +53,6 @@ log = logging.getLogger(__name__)
 TradingStreamFactory = Callable[[ExecutionMode], object]
 TradingClientFactory = Callable[[ExecutionMode], object]
 AccountStateQueriesFactory = Callable[[object], object]
-# Per ALP-528 (paper-evaluation harness wedge): paper-mode wiring passes a
-# callable that enriches each translated FillRecord with a
-# ``live_execution_estimate`` before persistence. Live-mode passes ``None`` so
-# the hot path is unchanged.
-EnrichmentCallable = Callable[[FillRecord], Awaitable[FillRecord]]
 
 
 async def run_fill_stream_consumer(
@@ -96,6 +85,19 @@ async def run_fill_stream_consumer(
 
     attempt = 0
     while True:
+        # Opportunistic recovery of quarantined fills (ALP-763): a fill parked
+        # because its ``orders`` row had not yet committed integrates as soon as
+        # that row exists. Run it each reconnect cycle alongside REST recovery.
+        # A drain error must not crash the consumer loop — matching the
+        # reconnect-supervisor tolerance below.
+        try:
+            await drain_unattributed_fills(
+                session_factory=session_factory,
+                enrichment_callable=enrichment_callable,
+            )
+        except Exception:
+            log.exception("unattributed-fill drain failed; continuing")
+
         # Startup + post-disconnect recovery: replay missed events from REST.
         since = await _latest_fill_timestamp(session_factory)
         if since is not None:
@@ -161,156 +163,13 @@ async def _consume_stream(
     gen = subscribe_trade_updates(stream)  # type: ignore[arg-type]
     try:
         async for report in gen:
-            await _persist_one(
+            await persist_fill_report(
                 report,
                 session_factory=session_factory,
                 enrichment_callable=enrichment_callable,
             )
     finally:
         await gen.aclose()
-
-
-async def _persist_one(
-    report: FillReport,
-    *,
-    session_factory: async_sessionmaker[AsyncSession],
-    enrichment_callable: EnrichmentCallable | None,
-) -> None:
-    """Translate a single ``FillReport`` and append it in its own transaction.
-
-    Paper-mode wiring (per ALP-528) injects ``enrichment_callable`` so each
-    translated :class:`FillRecord` is enriched with a
-    ``live_execution_estimate`` before persistence. Live mode passes ``None``;
-    the column persists as NULL and the hot path is unchanged.
-    """
-    record = fill_report_to_fill_record(report)
-    log.debug(
-        "fill report received: event_type=%s client_order_id=%s fill_timestamp=%s",
-        report.event_type,
-        report.client_order_id,
-        report.fill_timestamp.isoformat(),
-    )
-    if record is None:
-        await _sync_terminal_status_if_any(report, session_factory=session_factory)
-        return
-    async with session_factory() as db:
-        # Resolve the local ``orders`` PK this fill applies to. The broker's
-        # client_order_id does not round-trip the OMS order id for equity
-        # entries (it carries the command id) or for native-bracket protective
-        # children (Alpaca generates it), so fall back to the captured broker
-        # UUID (ALP-746). Skip (with a loud log) when no local order matches —
-        # the fill_records.order_id FK would otherwise reject the insert.
-        oms_order_id = await _resolve_oms_order_id(db, report)
-        if oms_order_id is None:
-            log.warning(
-                "fill references no local order: client_order_id=%s alpaca_order_id=%s "
-                "event=%s — skipping (no orders row to attribute it to)",
-                report.client_order_id,
-                report.alpaca_order_id,
-                report.event_type,
-            )
-            return
-        if oms_order_id != record.order_id:
-            # Re-derive so ``order_id`` + ``fill_id`` reflect the resolved PK.
-            record = fill_report_to_fill_record(report, oms_order_id=oms_order_id)
-            if record is None:  # pragma: no cover — gates are identical to the first call
-                return
-        if enrichment_callable is not None:
-            record = await enrichment_callable(record)
-        await append_fill_record(db, record)
-        await db.commit()
-
-
-async def _sync_terminal_status_if_any(
-    report: FillReport,
-    *,
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    """Reflect a broker terminal non-fill event in ``orders.status`` (ALP-739).
-
-    ``canceled`` / ``expired`` events append no fill but must update the local
-    order row — otherwise an accepted entry that expires / cancels unfilled
-    stays ``PENDING`` and the ``entry_no_fill`` alert never fires. Every other
-    non-fill event (``new`` / ``replaced`` / …) carries no terminal
-    disposition and no-ops here. Its own short-lived transaction, mirroring
-    the per-fill write.
-
-    Scoped to **zero-fill** terminals (``cumulative_filled_quantity == 0``): a
-    partially-filled-then-terminal order is left to the fill path + Phase 1,
-    which own ``filled_quantity`` and integrate the partials. Stamping a
-    terminal status here for a partially-filled order would (a) read
-    ``filled_quantity == 0`` until Phase 1 catches up and fire a false
-    no-fill alert, and (b) be reverted to ``PARTIALLY_FILLED`` by Phase 1's
-    fill integration anyway. The no-fill case is the one the fill path does
-    not cover, so it is the only one this sync owns.
-    """
-    terminal_status = terminal_order_status_for(report)
-    if terminal_status is None:
-        return
-    if report.cumulative_filled_quantity > 0:
-        return
-    async with session_factory() as db:
-        # Resolve by broker UUID when the client_order_id doesn't name a local
-        # PK — this is the path an OCO sibling-cancel takes (the broker cancels
-        # the unfired protective leg, whose client_order_id Alpaca generated;
-        # only the captured leg UUID locates the local row). ALP-746.
-        order_id = await _resolve_oms_order_id(db, report)
-        if order_id is None:
-            log.debug(
-                "terminal status for unknown order: client_order_id=%s alpaca_order_id=%s "
-                "status=%s — skipping",
-                report.client_order_id,
-                report.alpaca_order_id,
-                terminal_status.value,
-            )
-            return
-        transitioned = await sync_terminal_order_status(
-            db,
-            order_id=order_id,
-            terminal_status=terminal_status,
-            observed_at=datetime.now(UTC),
-        )
-        await db.commit()
-    if transitioned:
-        log.info(
-            "synced terminal order status: order_id=%s status=%s",
-            order_id,
-            terminal_status.value,
-        )
-
-
-async def _resolve_oms_order_id(db: AsyncSession, report: FillReport) -> str | None:
-    """Resolve the local ``orders`` PK a fill / terminal event applies to.
-
-    Two-step resolution (ALP-746):
-
-    1. Treat the report-derived id (``parent_client_order_id or client_order_id``)
-       as a candidate PK — the historical / already-aligned path (and the only
-       path the test substrate exercises by hand-aligning the two).
-    2. Otherwise resolve by the broker UUID of the order that owns the local
-       row: for an mleg per-leg child that is the parent's
-       ``parent_alpaca_order_id`` (legs do not own ``orders`` rows); for an
-       equity entry / close / native-bracket protective child it is the report's
-       own ``alpaca_order_id``. The captured-at-submission UUID was written onto
-       that row (entry / close / TAKE_PROFIT / PRICE_STOP), so the lookup hits.
-
-    Returns ``None`` when neither resolves — the caller declines to attribute
-    the event rather than violate the ``fill_records.order_id`` FK.
-
-    ``alpaca_order_id`` is expected unique across ``orders`` rows (captured
-    broker UUIDs are distinct per order; synthetic ``alp-{order_id}`` placeholders
-    are unique per PK), so the UUID lookup uses ``one_or_none`` — a duplicate
-    surfaces loudly as a ``MultipleResultsFound`` invariant breach rather than
-    silently attributing the event to an arbitrary row.
-    """
-    candidate_pk = order_id_for_report(report)
-    row = await db.get(OrderRow, candidate_pk)
-    if row is not None:
-        return row.order_id
-    uuid_key = report.parent_alpaca_order_id or report.alpaca_order_id
-    stmt = select(OrderRow).where(OrderRow.alpaca_order_id == uuid_key)
-    row = (await db.execute(stmt)).scalars().one_or_none()
-    return row.order_id if row is not None else None
 
 
 async def _replay_recovery(
@@ -326,7 +185,7 @@ async def _replay_recovery(
     # we don't pin to ``AccountStateQueries`` and can swap in a stub.
     gen: AsyncIterator[FillReport] = recover_missed_fills_since(queries, since=since)  # type: ignore[arg-type]
     async for report in gen:
-        await _persist_one(
+        await persist_fill_report(
             report,
             session_factory=session_factory,
             enrichment_callable=enrichment_callable,

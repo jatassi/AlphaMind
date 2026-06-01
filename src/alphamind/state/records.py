@@ -119,9 +119,41 @@ class FillRecord(BaseModel):
         return self
 
 
+class UnattributedFill(BaseModel):
+    """Frozen typed handle for an ``unattributed_fills`` row (ALP-763).
+
+    A raw broker fill event parked because its local ``orders`` row was not yet
+    committed when the continuous monitor received it. The drain replays
+    ``raw_report_json`` (the serialized broker ``FillReport``, opaque text at
+    this layer) through the normal fill-integration path once the order
+    materializes, then deletes the row.
+
+    ``broker_fill_key`` is the deterministic identity derived from
+    ``(alpaca_order_id, fill_timestamp, fill_quantity, fill_price)`` — the
+    ``fill_records`` dedupe key minus ``order_id``. The consumer computes it;
+    this record only carries it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    broker_fill_key: str
+    alpaca_order_id: str
+    client_order_id: str
+    event_type: str
+    fill_timestamp: datetime
+    fill_price: float
+    fill_quantity: float
+    raw_report_json: str
+    first_seen_at: datetime
+    last_retry_at: datetime | None
+    retry_count: int
+    alerted: bool
+
+
 __all__ = [
     "CorporateActionLedgerStatus",
     "FillProcessingStatus",
     "FillRecord",
     "RegTMarginAttribution",
+    "UnattributedFill",
 ]

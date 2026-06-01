@@ -12,9 +12,12 @@ pin: the pure translator :func:`fill_report_to_fill_record` and the
 run-forever :func:`run_fill_stream_consumer` task.
 """
 
+from alphamind.execution.continuous_monitor.fill_stream_consumer.persistence import (
+    EnrichmentCallable,
+    persist_fill_report,
+)
 from alphamind.execution.continuous_monitor.fill_stream_consumer.task import (
     AccountStateQueriesFactory,
-    EnrichmentCallable,
     TradingClientFactory,
     TradingStreamFactory,
     run_fill_stream_consumer,
@@ -32,6 +35,7 @@ __all__ = [
     "TradingStreamFactory",
     "fill_report_to_fill_record",
     "order_id_for_report",
+    "persist_fill_report",
     "run_fill_stream_consumer",
     "terminal_order_status_for",
 ]

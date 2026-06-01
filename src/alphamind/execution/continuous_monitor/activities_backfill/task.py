@@ -1,0 +1,163 @@
+"""Periodic fill-backfill backstop (ALP-763).
+
+A fast Phase-2 entry fill can be dropped / quarantined before its ``orders``
+row commits. The websocket disconnect-recovery
+(:func:`recover_missed_fills_since`) only runs on a websocket RECONNECT and
+keys its ``since`` off ``max(fill_records.fill_timestamp)`` — which, once a
+LATER fill lands, permanently excludes the earlier dropped fill.
+
+This task is the backstop: a sweep that runs ON AN INTERVAL (no disconnect
+needed) with an INDEPENDENT, generous lookback bound (``now - lookback``,
+NOT max-fill-timestamp), feeding any Alpaca fill missing from ``fill_records``
+through the normal persist path and then draining the unattributed-fills queue.
+
+It REUSES the tested primitives rather than inventing a parallel translator:
+
+* :func:`recover_missed_fills_since` (ALP-389) — the get_orders → OrderSnapshot
+  → FillReport recovery routine;
+* :func:`persist_fill_report` (the shared persist entry) — resolve → append OR
+  quarantine, never drops (``retry_resolve=False`` here: no per-fill retry);
+* :func:`drain_unattributed_fills` — integrate any queued fill whose order row
+  now exists.
+
+``append_fill_record``'s dedupe makes re-feeding an already-persisted fill a
+no-op, so the generous lookback window costs only redundant reads, never
+duplicate rows.
+
+The loop owns the run-forever lifecycle: a sweep error logs and continues to
+the next interval (matching the reconnect-supervisor tolerance in the fill
+consumer); ``asyncio.CancelledError`` exits cleanly.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
+from alphamind.execution.broker_adapter import FillReport, recover_missed_fills_since
+from alphamind.execution.broker_adapter.client_factory import ExecutionMode
+from alphamind.execution.continuous_monitor.fill_stream_consumer.persistence import (
+    EnrichmentCallable,
+    persist_fill_report,
+)
+from alphamind.execution.continuous_monitor.fill_stream_consumer.unattributed_drain import (
+    drain_unattributed_fills,
+)
+from alphamind.execution.continuous_monitor.session import MonitorSession
+
+log = logging.getLogger(__name__)
+
+# Factory aliases mirror ``fill_stream_consumer.task`` so the wiring reuses the
+# same seams: a mode-keyed trading-client builder and an account-state-queries
+# wrapper over it. The recovery primitive consumes only the queries' async
+# ``get_orders`` (its ``_OrdersSource`` Protocol), so tests swap in a stub.
+TradingClientFactory = Callable[[ExecutionMode], object]
+AccountStateQueriesFactory = Callable[[object], object]
+NowProvider = Callable[[], datetime]
+SleepCallable = Callable[[float], Awaitable[None]]
+
+
+async def run_fill_backfill(
+    session: MonitorSession,
+    config: ContinuousMonitorConfig,
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    trading_client_factory: TradingClientFactory,
+    account_state_queries_factory: AccountStateQueriesFactory,
+    enrichment_callable: EnrichmentCallable | None = None,
+    now: NowProvider = lambda: datetime.now(UTC),
+    sleep: SleepCallable = asyncio.sleep,
+) -> None:
+    """Run-forever periodic fill-backfill backstop.
+
+    Lifecycle per the story spec:
+
+    1. Build the queries surface via the same factory pattern the fill
+       consumer uses (``account_state_queries_factory(trading_client_factory(mode))``).
+    2. Loop: run one sweep, then sleep ``fill_backfill_interval_seconds``.
+    3. Each sweep computes an INDEPENDENT ``since = now - lookback`` (NOT
+       max-fill-timestamp), recovers every Alpaca fill in the window through
+       :func:`persist_fill_report`, then drains the unattributed-fills queue.
+    4. A sweep error logs and continues to the next interval — it must not
+       crash the task. ``asyncio.CancelledError`` propagates for clean
+       shutdown.
+    """
+    queries = account_state_queries_factory(trading_client_factory(session.mode))
+    lookback = timedelta(seconds=config.fill_backfill_lookback_seconds)
+    interval = float(config.fill_backfill_interval_seconds)
+
+    while True:
+        try:
+            await _run_sweep(
+                queries,
+                lookback=lookback,
+                session_factory=session_factory,
+                enrichment_callable=enrichment_callable,
+                now=now,
+            )
+        except asyncio.CancelledError:
+            log.info("fill_backfill cancelled cleanly")
+            raise
+        except Exception:
+            # A sweep failure (broker outage, transient DB error) must not
+            # crash the backstop — log and retry on the next interval, matching
+            # the fill consumer's reconnect-supervisor tolerance.
+            log.exception("fill_backfill sweep failed; retrying next interval")
+        await sleep(interval)
+
+
+async def _run_sweep(
+    queries: object,
+    *,
+    lookback: timedelta,
+    session_factory: async_sessionmaker[AsyncSession],
+    enrichment_callable: EnrichmentCallable | None,
+    now: NowProvider,
+) -> None:
+    """Run one backfill sweep: recover missing fills, then drain the queue.
+
+    The ``since`` bound is independent of ``fill_records`` state — a generous
+    ``now - lookback`` so a fill dropped earlier in the swing-trading horizon
+    is still in-window. Each recovered ``FillReport`` flows through the shared
+    :func:`persist_fill_report` (resolve → append OR quarantine), so a fill
+    whose order row exists is appended (dedupe collapses re-feeds of
+    already-persisted fills) and one whose row is still missing is parked. The
+    trailing :func:`drain_unattributed_fills` then integrates any previously
+    quarantined fill whose order row has since materialized.
+
+    ``retry_resolve=False``: the backfill skips the live consumer's
+    sub-second in-process retry. The backfill is itself the slow path and
+    recovers fills that may never resolve (out-of-band orders); paying a
+    multi-second sleep per unresolved fill is pure waste here. A fill whose
+    row commits late is integrated by the trailing drain instead.
+    """
+    until = now()
+    since = until - lookback
+    # ``recover_missed_fills_since`` honours the ``_OrdersSource`` Protocol
+    # (async ``get_orders``); cast through ``object`` so we don't pin to
+    # ``AccountStateQueries`` and can swap in a stub.
+    gen: AsyncIterator[FillReport] = recover_missed_fills_since(queries, since=since, until=until)  # type: ignore[arg-type]
+    async for report in gen:
+        await persist_fill_report(
+            report,
+            session_factory=session_factory,
+            enrichment_callable=enrichment_callable,
+            retry_resolve=False,
+        )
+    await drain_unattributed_fills(
+        session_factory=session_factory,
+        enrichment_callable=enrichment_callable,
+    )
+
+
+__all__ = [
+    "AccountStateQueriesFactory",
+    "EnrichmentCallable",
+    "TradingClientFactory",
+    "run_fill_backfill",
+]
