@@ -2387,12 +2387,14 @@ async def test_strategy_add_recomputes_parent_payoff_metrics(
 # ---------------------------------------------------------------------------
 
 
-async def test_strategy_fill_failure_rolls_back_all_state(
+async def test_strategy_fill_failure_quarantined_state_unchanged(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """Failure mid-integration (close fill claiming more contracts than the
-    leg holds) rolls back: per-leg fills stay unprocessed; cash unchanged;
-    no activity-log entries persisted."""
+    """A strategy close fill claiming more contracts than the leg holds is
+    quarantined, not propagated (ALP-761). The per-fill savepoint rolls back its
+    partial mutations so the strategy position and cash are untouched, the fill
+    row is QUARANTINED, a single reconciliation alert is emitted, and Phase-1
+    completes normally."""
     from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
@@ -2450,26 +2452,27 @@ async def test_strategy_fill_failure_rolls_back_all_state(
 
     ctx, handle = await _open_handle(factory)
     invocation_id = handle.invocation_id
-    try:
-        with pytest.raises(ValueError, match="exit fill quantity"):
-            await process_unprocessed_fills(
-                handle,
-                market_inputs=_make_market_inputs(),
-                config=_make_state_persistence_config(),
-            )
-    finally:
-        await ctx.__aexit__(ValueError, ValueError("forced"), None)
+    summary = await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
+    # Phase-1 returns normally — the ValueError did not escape.
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.fills_processed == 0
+    assert summary.fills_quarantined == 1
 
     async with factory() as sess:
-        # Fill row remains UNPROCESSED.
         fill_row = (
             await sess.execute(
                 select(FillRecordRow).where(FillRecordRow.fill_id == "fill-bad-close")
             )
         ).scalar_one()
-        assert fill_row.processing_status == FillProcessingStatus.UNPROCESSED.value
+        assert fill_row.processing_status == FillProcessingStatus.QUARANTINED.value
 
-        # Strategy position is unchanged (still OPEN, 2 contracts each leg).
+        # Strategy position is unchanged (still OPEN, 2 contracts each leg) — the
+        # savepoint rolled back the partial mutation.
         pos_row = (
             await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-strat-1"))
         ).scalar_one()
@@ -2484,7 +2487,7 @@ async def test_strategy_fill_failure_rolls_back_all_state(
         assert cash_row is not None
         assert cash_row.current_cash_usd == 100_000.0
 
-        # No activity log entries persisted under this invocation.
+        # The only activity-log entry is the reconciliation alert surfacing the orphan.
         log_rows = (
             (
                 await sess.execute(
@@ -2494,4 +2497,4 @@ async def test_strategy_fill_failure_rolls_back_all_state(
             .scalars()
             .all()
         )
-        assert log_rows == []
+        assert [r.event_type for r in log_rows] == [EventType.RECONCILIATION_ALERT.value]

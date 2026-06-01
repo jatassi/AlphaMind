@@ -223,9 +223,18 @@ def test_l4_broad_except_count_below_audit_baseline(antipattern_findings: Script
     # of AccountStateQueries, which propagates raw alpaca errors — latest_quotes
     # translates precisely because the phase-1 caller catches RuntimeError only.)
     # Carries an inline rationale comment.
-    assert l4 <= 63, (
-        f"L4 (broad except) count drift: {l4}. Post-ALP-753 "
-        f"ceiling is 63. If this count climbs above 63, audit each new "
+    # Ceiling raised from 63 to 64 (2026-06-01, ALP-761 phase-1 per-fill isolation):
+    # +1 warranted per-fill defense-in-depth — write_paths/phase1.py
+    # _integrate_or_quarantine_fill wraps one fill's resolution + integration so any
+    # unexpected failure quarantines that single fill (+ reconciliation alert) and the
+    # batch continues, rather than one poison-pill fill aborting the whole invocation
+    # and wedging the pipeline. Narrowed by intent: StateInconsistencyError (structural
+    # FK corruption) is re-raised before the broad catch, and compute_attribution runs
+    # outside the handler so a systemic market-data gap still aborts for retry. Carries
+    # an inline rationale comment.
+    assert l4 <= 64, (
+        f"L4 (broad except) count drift: {l4}. Post-ALP-761 "
+        f"ceiling is 64. If this count climbs above 64, audit each new "
         f"handler against ALP-480's warranted-residue list."
     )
 
