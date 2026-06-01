@@ -4,8 +4,8 @@ The fill-stream consumer used to silently drop a fill-bearing event that
 arrived before its local ``orders`` row was committed (deferred Phase-2
 writeback) — a permanent position/cash divergence. The fix never drops:
 
-* ``_persist_one`` does a short in-process retry, then quarantines the raw
-  ``FillReport`` to the ``unattributed_fills`` queue and emits a one-time
+* ``persist_fill_report`` does a short in-process retry, then quarantines the
+  raw ``FillReport`` to the ``unattributed_fills`` queue and emits a one-time
   loud ``log.warning`` alert.
 * ``drain_unattributed_fills`` re-resolves each queued fill and integrates it
   the moment its order row exists; a fill that never resolves (out-of-band
@@ -39,7 +39,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alphamind._kernel.ids import BracketId, OrderId, PositionId, ThesisId
 from alphamind.execution.broker_adapter import FillReport
 from alphamind.execution.broker_adapter.fill_stream import translate_trade_update
-from alphamind.execution.continuous_monitor.fill_stream_consumer.task import _persist_one
+from alphamind.execution.continuous_monitor.fill_stream_consumer.persistence import (
+    persist_fill_report,
+)
 from alphamind.execution.continuous_monitor.fill_stream_consumer.translation import (
     derive_broker_fill_key,
 )
@@ -178,7 +180,7 @@ class TestFillBeforeOrderCommitRace:
             qty=1.0,
         )
 
-        await _persist_one(report, session_factory=session_factory, enrichment_callable=None)
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
 
         # Not dropped: parked in the queue, zero fill_records.
         assert await _read_fill_records(session_factory) == []
@@ -219,7 +221,7 @@ class TestTrulyUnknownOrder:
             qty=1.0,
         )
 
-        await _persist_one(report, session_factory=session_factory, enrichment_callable=None)
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
 
         async with session_factory() as session:
             queued = await list_unattributed_fills(session)
@@ -251,7 +253,7 @@ class TestTrulyUnknownOrder:
             price=150.0,
             qty=1.0,
         )
-        await _persist_one(report, session_factory=session_factory, enrichment_callable=None)
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
         await _seed_order_row_for(
             session_factory,
             order_id="ORD-DEFERRED-2",
@@ -310,14 +312,99 @@ class TestRetryAbsorbsRace:
                 seeded["done"] = True
 
         monkeypatch.setattr(
-            "alphamind.execution.continuous_monitor.fill_stream_consumer.task.asyncio.sleep",
+            "alphamind.execution.continuous_monitor.fill_stream_consumer.persistence.asyncio.sleep",
             fake_sleep,
         )
 
-        await _persist_one(report, session_factory=session_factory, enrichment_callable=None)
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
 
         rows = await _read_fill_records(session_factory)
         assert len(rows) == 1
         assert rows[0].order_id == "ORD-RACE-1"
         async with session_factory() as session:
             assert await list_unattributed_fills(session) == []
+
+
+class TestQuarantineAlertOnce:
+    """ALP-763 #3 — the loud QUARANTINED warning + alerted mark fire exactly
+    once, on the genuine first park, not on every re-delivery of the same
+    fill (which ON CONFLICT DO NOTHING collapses onto the existing row)."""
+
+    async def test_re_park_does_not_re_alert(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        report = _fill_report(
+            order_id=uuid4(),
+            client_order_id="manual-out-of-band",
+            price=200.0,
+            qty=1.0,
+        )
+
+        logger = "alphamind.execution.continuous_monitor.fill_stream_consumer.persistence"
+        # First park: one loud warning, row inserted + alerted.
+        with caplog.at_level("WARNING", logger=logger):
+            await persist_fill_report(
+                report, session_factory=session_factory, enrichment_callable=None
+            )
+        first_warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(first_warnings) == 1
+        assert "QUARANTINED" in first_warnings[0].getMessage()
+        async with session_factory() as session:
+            queued = await list_unattributed_fills(session)
+        assert len(queued) == 1
+        assert queued[0].alerted is True
+
+        # Re-deliver the SAME fill (websocket + recovery overlap). The append
+        # no-ops via ON CONFLICT; the alert must NOT re-fire.
+        caplog.clear()
+        with caplog.at_level("WARNING", logger=logger):
+            await persist_fill_report(
+                report, session_factory=session_factory, enrichment_callable=None
+            )
+        assert [r for r in caplog.records if r.levelname == "WARNING"] == []
+        async with session_factory() as session:
+            queued = await list_unattributed_fills(session)
+        assert len(queued) == 1
+
+
+class TestQuarantineWriteFailureDoesNotCrash:
+    """ALP-763 #4 — a quarantine-write failure (transient DB lock, etc.) must
+    NOT propagate: it would otherwise reach the consumer's reconnect-budget
+    supervisor and burn an attempt / crash the task. Degrade, don't crash."""
+
+    async def test_quarantine_write_error_is_swallowed_and_logged(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        report = _fill_report(
+            order_id=uuid4(),
+            client_order_id="manual-out-of-band",
+            price=200.0,
+            qty=1.0,
+        )
+
+        async def boom(*_args: object, **_kwargs: object) -> bool:
+            raise RuntimeError("database is locked")
+
+        monkeypatch.setattr(
+            "alphamind.execution.continuous_monitor.fill_stream_consumer."
+            "persistence.append_unattributed_fill",
+            boom,
+        )
+
+        logger = "alphamind.execution.continuous_monitor.fill_stream_consumer.persistence"
+        with caplog.at_level("ERROR", logger=logger):
+            # Must return normally — no exception escapes to the consumer loop.
+            await persist_fill_report(
+                report, session_factory=session_factory, enrichment_callable=None
+            )
+
+        errors = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert len(errors) == 1
+        assert "failed to quarantine" in errors[0].getMessage()
+        # The write failed, so nothing landed — but the consumer survived.
+        assert await _read_fill_records(session_factory) == []

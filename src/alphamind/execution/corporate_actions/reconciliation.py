@@ -46,15 +46,18 @@ this reconciler skips.
 
 Scope narrows:
 
-* OPEN-only ``share_count`` / ``contract_count`` writeback, with one
-  equity exception. PENDING positions carry quantity = 0 by the status-rule
-  invariant, so the standard drift writeback is OPEN-only. The exception is
-  the ALP-763 equity backstop: a PENDING equity position whose Alpaca
-  holding is nonzero is AUTO-OPENED (PENDING → OPEN, broker qty + basis
-  written) as a last resort for a dropped entry fill — see
-  :func:`_escalate_pending_equity`. This is honest because the OPEN
-  writeback already laid down the thesis + bracket + order scaffolding;
-  only the fill is missing. Options carry no such backstop.
+* OPEN-only ``share_count`` / ``contract_count`` writeback. PENDING
+  positions carry quantity = 0 by the status-rule invariant, so the standard
+  drift writeback is OPEN-only. A PENDING equity position whose Alpaca holding
+  is nonzero is a likely dropped/unintegrated entry fill; the reconciler
+  ESCALATES it as a distinct ``pending_with_broker_holding`` drift alert and
+  does nothing else — see :func:`_escalate_pending_equity`. The reconciler's
+  job is drift DETECTION, not authoring portfolio state: recovery is owned by
+  the fill drain/periodic backfill, which writes the real fill into
+  ``fill_records`` so the next Phase-1 integrates it and flips the position
+  PENDING → OPEN with the correct basis. The reconciler never flips status,
+  writes share_count, synthesizes a fill, or emits a correction for this case.
+  Options carry no PENDING escalation.
 * Positive-evidence gate, split per asset class (ALP-662). The
   positions endpoint can legitimately hand back a snapshot tuple that
   is missing an entire asset class — either the operator truly holds
@@ -97,7 +100,6 @@ from typing import Literal
 
 from sqlalchemy import select
 
-from alphamind._kernel.money import money, signed_money
 from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
@@ -115,7 +117,6 @@ from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
     OptionContractType,
     OptionsPositionDetails,
-    PositionFill,
     PositionStatus,
 )
 from alphamind.state.invocation_context.activity_log import (
@@ -144,10 +145,10 @@ _QTY_EPSILON = 1e-9
 # warrants operator attention. Same threshold gates ALERT and CORRECTION.
 _CASH_EPSILON = 0.01
 
-# Position statuses the reconciler sweeps. The options branch narrows
-# auto-correct to OPEN-only (PENDING by invariant has contract_count == 0, so
-# no drift fires). The equity branch also handles the ALP-763 PENDING backstop
-# (auto-open from a nonzero Alpaca holding), so PENDING rows must be swept.
+# Position statuses the reconciler sweeps. Auto-correct is OPEN-only (PENDING
+# by invariant has quantity == 0, so no drift fires). PENDING rows are still
+# swept so the equity branch can ESCALATE a PENDING-with-nonzero-Alpaca-holding
+# as a distinct drift alert (ALP-763) — a likely dropped entry fill.
 _LIVE_STATUSES = (PositionStatus.OPEN.value, PositionStatus.PENDING.value)
 
 
@@ -315,24 +316,25 @@ async def _reconcile_equity(
 
     Auto-correction is gated on positive equity evidence (``equity_evidence``;
     a ``us_equity`` snapshot is present) per the ALP-619 / ALP-662 writeback
-    rationale. Within that gate the status drives which correction fires:
+    rationale. Within that gate the status drives the behavior:
 
     * OPEN — ``share_count`` drift writes back ``abs(alpaca.qty)`` (the
       standard ALP-619 path).
-    * PENDING with a nonzero Alpaca holding — ALP-763 last-resort backstop:
-      the entry fill was dropped, leaving the position wedged PENDING with
-      ``share_count=0`` while Alpaca already holds the shares. Auto-open it
-      (PENDING → OPEN, write the broker qty + basis). See
-      :func:`_open_pending_equity_from_alpaca`.
+    * PENDING with a nonzero Alpaca holding — ALP-763 drift escalation: a
+      likely dropped/unintegrated entry fill. Emit a distinct
+      ``pending_with_broker_holding`` alert and nothing else. See
+      :func:`_escalate_pending_equity`.
     """
-    # ALP-763 — PENDING last-resort backstop. The primary recovery integrates
-    # the dropped fill through Phase 1 first (which flips the position to OPEN
-    # with the true basis), so in the normal case the position is already OPEN
-    # and the branch below handles it. This branch only fires when that didn't
-    # happen and the row is STILL PENDING at reconcile time with a nonzero
-    # Alpaca holding — flipping to OPEN + writing the broker qty is honest
-    # because the OPEN writeback already laid down the thesis + bracket + order
-    # scaffolding; only the fill is missing.
+    # ALP-763 — PENDING-with-broker-holding escalation. A PENDING row carries
+    # share_count=0 by invariant; a nonzero Alpaca holding means the entry fill
+    # was likely dropped before integration. The reconciler's job is drift
+    # DETECTION, not authoring portfolio state — so it escalates this as a
+    # distinct alert and returns. Recovery is owned by the fill drain/periodic
+    # backfill, which writes the real fill into ``fill_records`` so the next
+    # Phase-1 integrates it and flips the position PENDING → OPEN with the
+    # correct basis. Firing this branch before the direction/quantity
+    # comparison also keeps a wrong-direction PENDING row from being treated as
+    # ordinary quantity drift.
     if (
         local_status == PositionStatus.PENDING
         and equity_evidence
@@ -343,7 +345,6 @@ async def _reconcile_equity(
             handle,
             position_row=position_row,
             ticker=ticker,
-            local_qty=local_qty,
             alpaca=alpaca,
         )
 
@@ -412,37 +413,32 @@ async def _escalate_pending_equity(
     *,
     position_row: PositionRow,
     ticker: str,
-    local_qty: float,
     alpaca: PositionSnapshot,
 ) -> int:
-    """ALP-763 — auto-open a wedged PENDING equity row from Alpaca's holding.
+    """ALP-763 — escalate a PENDING equity row with a nonzero Alpaca holding.
 
-    Emits the paired ``RECONCILIATION_ALERT`` + ``RECONCILIATION_CORRECTION``
-    (the same pattern as the OPEN drift path) and flips the row PENDING → OPEN
-    with the broker's authoritative quantity and cost basis. Returns the alert
-    count (always 1) so the caller threads it into the running total.
+    A PENDING row carries ``share_count=0`` by invariant; a nonzero Alpaca
+    holding means the entry fill was likely dropped/unintegrated. The
+    reconciler only DETECTS drift, so it emits a single distinct
+    ``pending_with_broker_holding`` alert and mutates nothing — no status flip,
+    no share_count write, no synthesized fill, no correction. The honest
+    recovery is the fill drain/periodic backfill: it writes the real fill into
+    ``fill_records`` so the next Phase-1 integrates it and flips the position
+    PENDING → OPEN with the correct basis. Returns the alert count (always 1).
     """
     alpaca_qty_unsigned = abs(alpaca.qty)
     await _emit_alert(
         handle,
         position_id=position_row.position_id,
         domain="position",
-        field_name="share_count",
-        local_value=local_qty,
+        field_name="pending_with_broker_holding",
+        local_value=0.0,
         alpaca_value=alpaca_qty_unsigned,
         delta_description=(
-            f"{ticker}: PENDING local position auto-opened from nonzero Alpaca "
-            f"holding (local share_count={local_qty} vs Alpaca qty={alpaca_qty_unsigned})"
+            f"{ticker}: PENDING local position has nonzero Alpaca holding "
+            f"qty={alpaca_qty_unsigned} — likely a dropped/unintegrated entry "
+            f"fill awaiting recovery"
         ),
-    )
-    _open_pending_equity_from_alpaca(position_row, alpaca=alpaca)
-    await _emit_correction(
-        handle,
-        position_id=position_row.position_id,
-        domain="position",
-        field_name="share_count",
-        prior_local_value=local_qty,
-        applied_alpaca_value=alpaca_qty_unsigned,
     )
     return 1
 
@@ -569,60 +565,6 @@ def _rewrite_equity_share_count(row: PositionRow, *, new_share_count: float) -> 
     new_details = dataclasses.replace(record.details, share_count=new_share_count)
     new_record = dataclasses.replace(record, details=new_details)
     row.details_json = position_record_to_row(new_record).details_json
-
-
-def _open_pending_equity_from_alpaca(row: PositionRow, *, alpaca: PositionSnapshot) -> None:
-    """Flip a PENDING equity ``row`` to OPEN from Alpaca's holding (ALP-763).
-
-    Round-trips through the codec like :func:`_rewrite_equity_share_count` so
-    the codec stays the single source of truth for the row's JSON layout. The
-    new record carries:
-
-    * ``status = OPEN``, ``share_count = abs(alpaca.qty)``.
-    * ``average_cost_basis_per_share = alpaca.avg_entry_price`` — Alpaca reports
-      the authoritative average entry price on the snapshot, so the basis is
-      honestly sourced rather than fabricated.
-    * ``entry_timestamp`` stamped with ``datetime.now(UTC)`` only when null. We
-      lack the true fill time at this reconciliation layer (the dropped fill is
-      exactly what stranded the row), so "now" is the best honest stamp.
-    * a single synthesized ``PositionFill`` — the OPEN status-rule invariant
-      requires non-empty ``execution_history``; the fill mirrors the snapshot
-      (qty + avg price, zero slippage/fees since the broker is authoritative
-      and we have no per-fill cost breakdown to attribute).
-    """
-    record = position_row_to_record(row)
-    if not isinstance(record.details, EquityPositionDetails):
-        msg = (
-            f"_open_pending_equity_from_alpaca: expected EquityPositionDetails, "
-            f"got {type(record.details).__name__} for position_id={row.position_id!r}"
-        )
-        raise TypeError(msg)
-    new_share_count = abs(alpaca.qty)
-    new_details = dataclasses.replace(
-        record.details,
-        share_count=new_share_count,
-        average_cost_basis_per_share=float(alpaca.avg_entry_price),
-    )
-    entry_timestamp = record.entry_timestamp or datetime.now(UTC)
-    synthesized_fill = PositionFill(
-        fill_timestamp=entry_timestamp,
-        fill_price=alpaca.avg_entry_price,
-        fill_quantity=new_share_count,
-        slippage=signed_money(0.0),
-        fees=money(0.0),
-    )
-    new_record = dataclasses.replace(
-        record,
-        status=PositionStatus.OPEN,
-        entry_timestamp=entry_timestamp,
-        details=new_details,
-        execution_history=(synthesized_fill,),
-    )
-    new_row = position_record_to_row(new_record)
-    row.status = new_row.status
-    row.entry_timestamp = new_row.entry_timestamp
-    row.details_json = new_row.details_json
-    row.execution_history_json = new_row.execution_history_json
 
 
 def _rewrite_options_contract_count(row: PositionRow, *, new_contract_count: float) -> None:

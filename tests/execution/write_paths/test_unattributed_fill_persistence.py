@@ -102,6 +102,21 @@ class TestAppendUnattributedFill:
         assert len(rows) == 1
         assert rows[0].raw_report_json == '{"event":"fill"}'
 
+    async def test_returns_true_on_insert_false_on_conflict(
+        self, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """The insert reports whether a NEW row was written so the caller can
+        fire its one-time alert only on a genuine first park (ALP-763 #3)."""
+        async with factory() as session:
+            inserted = await append_unattributed_fill(session, _unattributed_fill())
+            await session.commit()
+        assert inserted is True
+        async with factory() as session:
+            # Re-deliver the same key — ON CONFLICT DO NOTHING, no new row.
+            reinserted = await append_unattributed_fill(session, _unattributed_fill())
+            await session.commit()
+        assert reinserted is False
+
 
 class TestListUnattributedFills:
     async def test_lists_ordered_by_first_seen_at(

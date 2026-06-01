@@ -395,11 +395,19 @@ def _build_mcp_wiring(  # noqa: PLR0913 — runner-facing signature mirrors per-
     (see ``submit_envelope.dispatch._dispatcher_context_for``). The
     handle is built by the PM subprocess worker against its own async
     engine; the live Alpaca ``TradingClient`` is constructed alongside
-    it on the worker side because both are non-picklable. Step 6's
-    in-tool writeback is suppressed via ``defer_writeback=True`` so the
-    orchestrator's separate ``dispatch_phase2`` stage remains the sole
-    writer of per-envelope persistence — passing a handle here would
-    otherwise produce duplicate writes.
+    it on the worker side because both are non-picklable.
+
+    ``defer_writeback=True`` is passed unconditionally, but its effect now
+    depends on whether broker routing activated (ALP-763): when the broker
+    triple is present, Step 6 performs the envelope writeback IN-TURN — right
+    after broker dispatch, on the supplied ``invocation_handle`` — to close the
+    fast-fill race against a deferred order-row commit, committing the full
+    outcome (orders + capital reservation + ``pm_decision`` + any
+    ``command_abandoned`` audit rows). The orchestrator's later
+    ``dispatch_phase2`` stage then detects that in-turn write and skips
+    re-persisting the envelope (and its abandoned audit), so there is no
+    duplication. On the deferred/log-only path (no broker triple) Step 6 does
+    not write and ``dispatch_phase2`` remains the sole writer.
     """
     validation_servers, validation_tools = build_validate_guardrail_mcp_server(
         initial_validation_state

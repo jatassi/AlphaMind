@@ -791,14 +791,19 @@ class TestDispatchPhase2Idempotency:
         assert summary.commands_submitted == 1
         assert summary.commands_rejected == 0
 
-    async def test_skip_still_emits_command_abandoned(
+    async def test_skip_does_not_re_emit_command_abandoned(
         self,
         async_factory: async_sessionmaker[AsyncSession],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A skipped (already-persisted) envelope still emits ``command_abandoned``
-        for its abandoned entries — those are not part of the in-turn writeback's
-        order/pm_decision graph and must reach the audit trail exactly once."""
+        """A skipped (already-persisted) envelope emits NO ``command_abandoned``.
+
+        On the broker-active in-turn path, ``submit_envelope`` Step 6 already
+        emitted one ``COMMAND_ABANDONED`` row per abandoned entry (and committed
+        it) alongside the order/pm_decision graph. ``dispatch_phase2`` detects the
+        in-turn writeback (``already_persisted``) and must NOT re-emit those rows,
+        else every broker-dispatch failure on the production path would produce two
+        identical audit rows (ALP-763 review finding)."""
         from types import SimpleNamespace
 
         from alphamind.scheduler import phase2_dispatch as module
@@ -835,5 +840,57 @@ class TestDispatchPhase2Idempotency:
             state_persistence_config=_make_state_persistence_config(),
         )
 
+        # The in-turn writeback already emitted the abandoned audit; this stage
+        # must not double it.
+        assert abandoned_calls == []
+
+    async def test_deferred_path_emits_command_abandoned_exactly_once(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The non-broker deferred path (no in-turn writeback) still emits exactly
+        one ``COMMAND_ABANDONED`` row per abandoned entry via ``dispatch_phase2``.
+
+        Here ``submit_envelope`` Step 6 never ran (no broker triple), so the
+        envelope is NOT already-persisted and ``dispatch_phase2`` is the sole
+        emitter of both the writeback and the abandoned audit (ALP-763)."""
+        from types import SimpleNamespace
+
+        from alphamind.scheduler import phase2_dispatch as module
+        from alphamind.scheduler.phase2_dispatch import dispatch_phase2
+
+        persist_envelope_mock = AsyncMock(return_value=None)
+        abandoned_calls: list[dict[str, Any]] = []
+
+        async def _capture_abandoned(handle: Any, **kwargs: Any) -> None:
+            abandoned_calls.append(kwargs)
+
+        monkeypatch.setattr(module, "persist_envelope_outcome", persist_envelope_mock)
+        monkeypatch.setattr(module, "persist_command_abandoned", _capture_abandoned)
+
+        envelope = SimpleNamespace(envelope_id="ENV-DEFERRED-1", source_provenance="strategist")
+        submission_results = (
+            _make_submission_result(command_ordinal=0, command_id="cmd-a", status="rejected"),
+        )
+        abandoned_entry = SimpleNamespace(
+            command_id="cmd-a",
+            command_type="OPEN",
+            failure_reason="gateway_submission_failed: timeout",
+            retry_attempt_count=3,
+        )
+        entry = SubmissionLogEntry(
+            envelope=cast(Any, envelope),
+            submission_results=submission_results,
+            abandoned_entries=(abandoned_entry,),
+        )
+
+        await dispatch_phase2(
+            session_factory=async_factory,
+            invocation_id=_INV_IDEMPOTENT,
+            pm_result=_make_pm_result(submission_log=(entry,)),
+            state_persistence_config=_make_state_persistence_config(),
+        )
+
         assert len(abandoned_calls) == 1
-        assert abandoned_calls[0]["command_id"] == "cmd-abandoned"
+        assert abandoned_calls[0]["command_id"] == "cmd-a"

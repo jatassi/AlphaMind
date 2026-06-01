@@ -20,12 +20,15 @@ failure never wedges the batch.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.execution.broker_adapter import FillReport
+from alphamind.execution.continuous_monitor.fill_stream_consumer.persistence import (
+    EnrichmentCallable,
+    _resolve_oms_order_id,
+)
 from alphamind.execution.continuous_monitor.fill_stream_consumer.translation import (
     fill_report_to_fill_record,
 )
@@ -36,11 +39,8 @@ from alphamind.execution.write_paths.unattributed_fill_persistence import (
     mark_unattributed_fill_alerted,
     touch_unattributed_fill_retry,
 )
-from alphamind.state.records import FillRecord
 
 log = logging.getLogger(__name__)
-
-EnrichmentCallable = Callable[[FillRecord], Awaitable[FillRecord]]
 
 
 async def drain_unattributed_fills(
@@ -51,20 +51,13 @@ async def drain_unattributed_fills(
     """Re-resolve every queued unattributed fill; return the count integrated.
 
     For each queued row, rehydrate the serialized :class:`FillReport` and
-    re-attempt resolution via the consumer's :func:`_resolve_oms_order_id`
-    (the same two-step PK / broker-UUID lookup the live path uses). On success
-    the fill is appended to ``fill_records`` (enriched first if a paper-mode
-    ``enrichment_callable`` is supplied, mirroring ``_persist_one``) and the
-    queue row deleted. On failure the row is touched (``retry_count`` bumped)
-    and alerted once, then left queued.
+    re-attempt resolution via the shared :func:`_resolve_oms_order_id` (the
+    same two-step PK / broker-UUID lookup the live path uses). On success the
+    fill is appended to ``fill_records`` (enriched first if a paper-mode
+    ``enrichment_callable`` is supplied, mirroring ``persist_fill_report``) and
+    the queue row deleted. On failure the row is touched (``retry_count``
+    bumped) and alerted once, then left queued.
     """
-    # Lazy import to avoid a module-level cycle: ``task`` imports this module to
-    # run the drain at reconnect, and ``_resolve_oms_order_id`` lives in
-    # ``task``. Reusing it keeps a single source of truth for resolution.
-    from alphamind.execution.continuous_monitor.fill_stream_consumer.task import (
-        _resolve_oms_order_id,
-    )
-
     async with session_factory() as db:
         queued = await list_unattributed_fills(db)
 

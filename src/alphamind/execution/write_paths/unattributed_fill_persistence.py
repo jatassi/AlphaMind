@@ -15,8 +15,9 @@ than racing through a separate existence check.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import cast
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import CursorResult, delete, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,13 +26,23 @@ from alphamind.state.tables.unattributed_fills import UnattributedFillRow
 from alphamind.state.tables.unattributed_fills_codec import record_to_row, row_to_record
 
 
-async def append_unattributed_fill(session: AsyncSession, record: UnattributedFill) -> None:
-    """Persist *record* if its ``broker_fill_key`` is new; no-op otherwise."""
+async def append_unattributed_fill(session: AsyncSession, record: UnattributedFill) -> bool:
+    """Persist *record* if its ``broker_fill_key`` is new; no-op otherwise.
+
+    Returns ``True`` when a new row was inserted and ``False`` when the
+    ``ON CONFLICT DO NOTHING`` path collapsed a re-delivered fill onto an
+    existing row. The caller uses this to fire the one-time quarantine alert
+    only on a genuine first park (a re-park must not re-alert).
+    """
     row = record_to_row(record)
     values = {col.name: getattr(row, col.name) for col in UnattributedFillRow.__table__.columns}
     stmt = sqlite_insert(UnattributedFillRow).values(**values)
     stmt = stmt.on_conflict_do_nothing(index_elements=["broker_fill_key"])
-    await session.execute(stmt)
+    # DML ``execute`` returns a ``CursorResult`` at runtime (the async facade is
+    # typed to the broader ``Result``); its ``rowcount`` is 0 when ON CONFLICT
+    # DO NOTHING suppressed the insert and 1 on a genuine insert.
+    result = cast("CursorResult[object]", await session.execute(stmt))
+    return result.rowcount > 0
 
 
 async def list_unattributed_fills(session: AsyncSession) -> list[UnattributedFill]:
@@ -61,7 +72,13 @@ async def mark_unattributed_fill_alerted(session: AsyncSession, broker_fill_key:
 async def touch_unattributed_fill_retry(
     session: AsyncSession, broker_fill_key: str, *, observed_at: datetime
 ) -> None:
-    """Record a drain attempt: bump ``retry_count`` and set ``last_retry_at``."""
+    """Record a drain attempt: bump ``retry_count`` and set ``last_retry_at``.
+
+    ``last_retry_at`` serializes via ``isoformat`` — the same datetime
+    convention ``unattributed_fills_codec.record_to_row`` uses for this table.
+    The codec projects a whole record for INSERT and cannot be reused for this
+    single-column UPDATE, so the convention is matched inline here.
+    """
     await session.execute(
         update(UnattributedFillRow)
         .where(UnattributedFillRow.broker_fill_key == broker_fill_key)

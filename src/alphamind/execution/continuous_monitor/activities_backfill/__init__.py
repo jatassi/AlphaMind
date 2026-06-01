@@ -10,7 +10,7 @@ recovery permanently excludes once a later fill lands.
 Layout mirrors the sibling ``borrow_accrual/`` sub-package:
 
 * :mod:`task` — the run-forever asyncio task (imperative shell), reusing
-  ``recover_missed_fills_since`` + the fill consumer's ``_persist_one`` +
+  ``recover_missed_fills_since`` + the shared ``persist_fill_report`` +
   ``drain_unattributed_fills``.
 * :mod:`wiring` — supervisor registration helper.
 """

@@ -34,7 +34,9 @@ from alphamind.execution.broker_adapter.fill_stream import translate_trade_updat
 from alphamind.execution.continuous_monitor.activities_backfill import (
     run_fill_backfill,
 )
-from alphamind.execution.continuous_monitor.fill_stream_consumer.task import _persist_one
+from alphamind.execution.continuous_monitor.fill_stream_consumer.persistence import (
+    persist_fill_report,
+)
 from alphamind.execution.continuous_monitor.fill_stream_consumer.translation import (
     derive_broker_fill_key,
 )
@@ -341,6 +343,67 @@ class TestIdempotent:
 # ---------------------------------------------------------------------------
 
 
+class TestBackfillSkipsRetrySleep:
+    """ALP-763 #5 — the backfill calls the shared persist with
+    ``retry_resolve=False``, so an unresolved fill is quarantined IMMEDIATELY
+    without paying the live consumer's multi-second in-process retry sleep."""
+
+    async def test_unresolved_fill_quarantines_without_sleeping(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # A fill whose order row does NOT exist (the live consumer would retry
+        # with sleeps before giving up; the backfill must not).
+        entry_uuid = str(uuid4())
+        queries = _FakeAccountStateQueries(
+            snapshots=[
+                _order_snapshot(order_id=entry_uuid, client_order_id="inv.CMD-NOROW.0.0"),
+            ]
+        )
+
+        from alphamind.execution.continuous_monitor.fill_stream_consumer.persistence import (
+            _RESOLVE_RETRY_DELAYS,
+        )
+
+        sleeps: list[float] = []
+        real_sleep = asyncio.sleep
+
+        async def recording_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+            # Preserve real yielding so the test's own poll loop still advances.
+            await real_sleep(0)
+
+        # The retry path lives in the shared persistence module; monkeypatching
+        # ``persistence.asyncio.sleep`` patches the asyncio module globally, so
+        # we filter for the retry-specific delays rather than any sleep.
+        monkeypatch.setattr(
+            "alphamind.execution.continuous_monitor.fill_stream_consumer.persistence.asyncio.sleep",
+            recording_sleep,
+        )
+
+        task = asyncio.create_task(
+            run_fill_backfill(
+                _session(),
+                _config(),
+                **_run_kwargs(session_factory, queries),
+            )
+        )
+        # Wait for the sweep to park the fill on the queue.
+        await _wait_for_queue(session_factory, expected=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # Quarantined immediately, no fill row, and crucially NO retry sleeps:
+        # none of the recorded sleeps are the persistence retry delays.
+        assert await _read_fill_records(session_factory) == []
+        async with session_factory() as session:
+            queued = await list_unattributed_fills(session)
+        assert len(queued) == 1
+        assert not any(s in _RESOLVE_RETRY_DELAYS for s in sleeps)
+
+
 class TestDrainsQueue:
     async def test_quarantined_fill_integrates_after_sweep(
         self, session_factory: async_sessionmaker[AsyncSession]
@@ -350,7 +413,7 @@ class TestDrainsQueue:
         report = _fill_report(
             order_id=entry_uuid, client_order_id="inv.CMD-3.0.0", price_=150.0, qty=1.0
         )
-        await _persist_one(report, session_factory=session_factory, enrichment_callable=None)
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
         assert await _read_fill_records(session_factory) == []
         async with session_factory() as session:
             queued = await list_unattributed_fills(session)
@@ -464,6 +527,21 @@ async def _wait_for_rows(
             return rows
         await asyncio.sleep(0.01)
     return rows
+
+
+async def _wait_for_queue(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    expected: int,
+    timeout_seconds: float = 5.0,
+) -> None:
+    deadline = asyncio.get_event_loop().time() + timeout_seconds
+    while asyncio.get_event_loop().time() < deadline:
+        async with session_factory() as session:
+            if len(await list_unattributed_fills(session)) >= expected:
+                return
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"unattributed_fills never reached {expected} rows")
 
 
 async def _wait_for_calls(

@@ -46,7 +46,9 @@ from alphamind.execution.broker_adapter.fill_stream import translate_trade_updat
 from alphamind.execution.continuous_monitor.fill_stream_consumer import (
     run_fill_stream_consumer,
 )
-from alphamind.execution.continuous_monitor.fill_stream_consumer.task import _persist_one
+from alphamind.execution.continuous_monitor.fill_stream_consumer.persistence import (
+    persist_fill_report,
+)
 from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
@@ -994,7 +996,7 @@ class TestUuidResolution:
             qty=1.0,
         )
 
-        await _persist_one(report, session_factory=session_factory, enrichment_callable=None)
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
 
         rows = await _read_fill_records(session_factory)
         assert len(rows) == 1
@@ -1029,7 +1031,7 @@ class TestUuidResolution:
             qty=None,
         )
 
-        await _persist_one(report, session_factory=session_factory, enrichment_callable=None)
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
 
         status, _ = await _status_and_ts(session_factory, "ORD-NVDA-inv0-1")
         assert status == "CANCELLED"
@@ -1056,7 +1058,7 @@ class TestUuidResolution:
             qty=1.0,
         )
 
-        await _persist_one(report, session_factory=session_factory, enrichment_callable=None)
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
 
         rows = await _read_fill_records(session_factory)
         assert len(rows) == 1
@@ -1079,7 +1081,7 @@ class TestUuidResolution:
             qty=1.0,
         )
 
-        await _persist_one(report, session_factory=session_factory, enrichment_callable=None)
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
 
         assert await _read_fill_records(session_factory) == []
         async with session_factory() as session:

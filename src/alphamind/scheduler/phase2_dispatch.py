@@ -125,9 +125,14 @@ async def dispatch_phase2(
         # happened, re-running ``persist_envelope_outcome`` here would PK-collide
         # on the order/position rows and double the (non-idempotent) capital
         # reservation — so skip the writeback for an already-persisted envelope.
-        # The ``command_abandoned`` audit + summary counts below still run: an
-        # abandoned command is never part of the in-turn order/pm_decision graph,
-        # and the counts are derived purely from ``submission_results``.
+        # The in-turn writeback commits the FULL envelope outcome, including one
+        # ``COMMAND_ABANDONED`` audit row per abandoned entry; so on the broker-
+        # active path the abandoned-audit loop below is gated off the same
+        # ``already_persisted`` flag to avoid double-emitting those rows. On the
+        # non-broker deferred path (debug-e2e / log-only) the in-turn write never
+        # ran, ``already_persisted`` is False, and ``dispatch_phase2`` is the sole
+        # emitter of both the writeback and the abandoned audit. The summary
+        # counts are derived purely from ``submission_results`` and run regardless.
         async with session_factory() as session:
             handle = InvocationHandle(session=session, invocation_id=invocation_id)
             already_persisted = await _envelope_already_persisted(
@@ -159,20 +164,24 @@ async def dispatch_phase2(
         # broker rejection implicitly performs (the rejected command never
         # wrote orders so there is no rollback artifact, but the
         # design-doc contract is "abandoned audit lands on a fresh
-        # session" regardless).
-        for abandoned in entry.abandoned_entries:
-            async with session_factory() as session:
-                handle = InvocationHandle(session=session, invocation_id=invocation_id)
-                await persist_command_abandoned(
-                    handle,
-                    envelope_id=str(entry.envelope.envelope_id),
-                    command_id=str(abandoned.command_id),
-                    originating_agent=str(entry.envelope.source_provenance),
-                    command_type=abandoned.command_type,
-                    failure_reason=str(abandoned.failure_reason),
-                    retry_attempt_count=int(abandoned.retry_attempt_count),
-                )
-                await session.commit()
+        # session" regardless). ALP-763 — gated on ``not already_persisted``:
+        # the broker-active in-turn writeback already emitted + committed these
+        # rows, so re-emitting here would produce duplicate audit rows. Only the
+        # deferred path (no in-turn write) emits them here.
+        if not already_persisted:
+            for abandoned in entry.abandoned_entries:
+                async with session_factory() as session:
+                    handle = InvocationHandle(session=session, invocation_id=invocation_id)
+                    await persist_command_abandoned(
+                        handle,
+                        envelope_id=str(entry.envelope.envelope_id),
+                        command_id=str(abandoned.command_id),
+                        originating_agent=str(entry.envelope.source_provenance),
+                        command_type=abandoned.command_type,
+                        failure_reason=str(abandoned.failure_reason),
+                        retry_attempt_count=int(abandoned.retry_attempt_count),
+                    )
+                    await session.commit()
         for result in entry.submission_results:
             if result.status == "accepted":
                 submitted += 1
