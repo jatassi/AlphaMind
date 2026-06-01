@@ -49,6 +49,10 @@ _SYNTHESIZER_BRIEF = (
 
 _TIMESTAMP = datetime(2026, 5, 4, 14, 32, 5, tzinfo=UTC)
 
+# Authoritative per-ticker reference map (ALP-758) — the same substrate the
+# ALP-742 bracket-coherence / staleness validator keys on.
+_REFERENCE_PRICES: dict[str, float] = {"NVDA": 905.12, "AVGO": 446.8, "GS": 1024.0}
+
 
 # ---------------------------------------------------------------------------
 # Fixture builders (lifted/adapted from tests/risk_guardrails/state_delivery)
@@ -230,6 +234,7 @@ def _normal_kwargs(
         "state_delivery_config": _make_state_delivery_config(),
         "synthesizer_brief_text": _SYNTHESIZER_BRIEF,
         "tool_names": _TOOL_NAMES,
+        "underlying_prices": dict(_REFERENCE_PRICES),
     }
 
 
@@ -262,6 +267,72 @@ def test_normal_mode_section_ordering() -> None:
     tools_idx = out.index("=== AVAILABLE TOOLS ===")
     brief_idx = out.index("=== SYNTHESIZER BRIEF PREVIEW (full brief via retrieve_brief) ===")
     assert envelope_idx < tools_idx < brief_idx
+
+
+# ---------------------------------------------------------------------------
+# Reference prices (ALP-758) — authoritative per-ticker anchor block
+# ---------------------------------------------------------------------------
+
+
+def test_normal_mode_reference_prices_section_present() -> None:
+    """Every ticker in ``underlying_prices`` renders as a ``  TICKER: price`` line
+    under the reference-prices header — the exact map the validator enforces."""
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(),  # type: ignore[arg-type]
+        sector_label_display=_MICRO_SECTOR_LABELS,
+    )
+    assert "=== REFERENCE PRICES (authoritative bracket anchors) ===" in out
+    assert "  NVDA: 905.12" in out
+    assert "  AVGO: 446.80" in out
+    assert "  GS: 1024.00" in out
+
+
+def test_normal_mode_reference_prices_between_guardrail_and_tools() -> None:
+    """Section order is GUARDRAIL STATE → REFERENCE PRICES → AVAILABLE TOOLS →
+    SYNTHESIZER BRIEF, matching the prompt's documented user-turn order."""
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(),  # type: ignore[arg-type]
+        sector_label_display=_MICRO_SECTOR_LABELS,
+    )
+    envelope_idx = out.index("=== GUARDRAIL STATE")
+    ref_idx = out.index("=== REFERENCE PRICES")
+    tools_idx = out.index("=== AVAILABLE TOOLS ===")
+    brief_idx = out.index("=== SYNTHESIZER BRIEF PREVIEW (full brief via retrieve_brief) ===")
+    assert envelope_idx < ref_idx < tools_idx < brief_idx
+
+
+def test_normal_mode_reference_prices_sorted_for_determinism() -> None:
+    """Ticker lines appear in sorted order regardless of input dict order."""
+    kwargs = _normal_kwargs()
+    kwargs["underlying_prices"] = {"GS": 1024.0, "AVGO": 446.8, "NVDA": 905.12}
+    out = assemble_input_bundle_normal(
+        **kwargs,  # type: ignore[arg-type]
+        sector_label_display=_MICRO_SECTOR_LABELS,
+    )
+    assert out.index("  AVGO: ") < out.index("  GS: ") < out.index("  NVDA: ")
+
+
+def test_normal_mode_empty_reference_prices_renders_none_line() -> None:
+    """An empty reference map renders a ``None`` placeholder rather than a bare
+    header — the analyst is told it has no authoritative prices this cycle."""
+    kwargs = _normal_kwargs()
+    kwargs["underlying_prices"] = {}
+    out = assemble_input_bundle_normal(
+        **kwargs,  # type: ignore[arg-type]
+        sector_label_display=_MICRO_SECTOR_LABELS,
+    )
+    ref_idx = out.index("=== REFERENCE PRICES")
+    section = out[ref_idx:].split("=== AVAILABLE TOOLS ===")[0]
+    assert "None" in section
+
+
+def test_halt_mode_omits_reference_prices_section() -> None:
+    """Watchlist mode emits no brackets, so it carries no reference-price block."""
+    out = assemble_input_bundle_halt(
+        **_halt_kwargs(),  # type: ignore[arg-type]
+        sector_label_display=_MICRO_SECTOR_LABELS,
+    )
+    assert "=== REFERENCE PRICES" not in out
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +471,9 @@ def _halt_kwargs(
         held_positions=held_positions,
         abandoned_openings=abandoned_openings,
     )
+    # The halt-mode assembler emits no brackets, so it does not take the
+    # reference-price map (ALP-758 surfaces prices in normal mode only).
+    del kwargs["underlying_prices"]
     kwargs["halt_state"] = _make_halt_state()
     return kwargs
 

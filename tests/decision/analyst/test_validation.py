@@ -1457,6 +1457,103 @@ class TestBracketPriceCoherence:
         assert "bracket_directional_coherence" not in rules
         assert "reference_price_staleness" not in rules
 
+    def test_staleness_message_names_ticker_and_reference_price(self) -> None:
+        """ALP-758: reproduce the AVGO anchor that aborted inv-…bf837231 —
+        market entry 7 @ $1960 = $280 against the AVGO reference 457.65. The
+        staleness message must name the ticker and its reference price and
+        re-anchor to that number, so the analyst cannot misread the figure as a
+        generic reference and reuse it for a different name (the GS hallucination).
+        """
+        rec = _equity_rec(
+            ticker="AVGO",
+            direction="long",
+            entry=EntryOrder(type="market"),
+            target_price=302.0,
+            stop_trigger=275.0,
+            stop_comparator="<=",
+            quantity=7.0,
+            dollar_value=1960.0,
+        )
+        result = validate_analyst_output(
+            _make_output(recommendations=(rec,)),
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            underlying_prices={"AVGO": 457.65},
+        )
+        stale = [e for e in result.errors if e.rule == "reference_price_staleness"]
+        assert stale, "expected the fabricated $280 anchor to fail closed"
+        msg = stale[0].message
+        assert "AVGO" in msg
+        assert "457.65" in msg
+        assert "re-anchor" in msg.lower()
+
+    def test_coherence_message_names_ticker(self) -> None:
+        """ALP-758: the directional-coherence message also names the ticker, so
+        the corrective retry is unambiguous about which name to re-anchor."""
+        rec = _equity_rec(
+            ticker="JPM",
+            direction="short",
+            entry=EntryOrder(type="market"),
+            target_price=250.0,
+            stop_trigger=270.0,
+            stop_comparator=">=",
+            quantity=10.0,
+            dollar_value=2600.0,
+        )
+        result = validate_analyst_output(
+            _make_output(recommendations=(rec,)),
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            underlying_prices={"JPM": 297.5601},
+        )
+        coherence = [e for e in result.errors if e.rule == "bracket_directional_coherence"]
+        assert coherence
+        assert all("JPM" in e.message for e in coherence)
+
+    def test_anchor_at_shown_reference_passes_fabricated_anchor_fails(self) -> None:
+        """ALP-758 regression: a ticker sized at its shown reference clears the
+        staleness guard, while a fabricated anchor on another ticker fails closed.
+
+        Mirrors the incident's two names: GS sized at its real reference $1024
+        passes; AVGO sized at the fabricated $280 (≈ its 52-week low) fails.
+        """
+        gs = _equity_rec(
+            ticker="GS",
+            direction="long",
+            entry=EntryOrder(type="limit", limit_price=price(1024.0)),
+            target_price=1075.0,
+            stop_trigger=985.0,
+            stop_comparator="<=",
+            quantity=2.0,
+            dollar_value=2048.0,
+        )
+        gs_result = validate_analyst_output(
+            _make_output(recommendations=(gs,)),
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            underlying_prices={"GS": 1024.0},
+        )
+        assert "reference_price_staleness" not in [e.rule for e in gs_result.errors]
+
+        avgo = _equity_rec(
+            ticker="AVGO",
+            direction="long",
+            entry=EntryOrder(type="market"),
+            target_price=302.0,
+            stop_trigger=275.0,
+            stop_comparator="<=",
+            quantity=7.0,
+            dollar_value=1960.0,
+        )
+        avgo_result = validate_analyst_output(
+            _make_output(recommendations=(avgo,)),
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            underlying_prices={"AVGO": 446.8},
+        )
+        assert avgo_result.is_valid is False
+        assert "reference_price_staleness" in [e.rule for e in avgo_result.errors]
+
 
 # ---------------------------------------------------------------------------
 # Frozen-dataclass invariants (ALP-475: 10b conversion)
