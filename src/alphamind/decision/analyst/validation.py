@@ -409,8 +409,9 @@ def _check_bracket_directional_coherence(
             field_path=f"{field_prefix}.target.price",
             rule="bracket_directional_coherence",
             message=(
-                f"short {rec.recommendation_id}: target {target} must be below the entry "
-                f"reference {base} (phase-1 reference price {live}); a short profits as price falls"
+                f"short {rec.underlying} ({rec.recommendation_id}): target {target} must be below "
+                f"the entry reference {base} ({rec.underlying} reference price {live}); a short "
+                "profits as price falls"
             ),
         )
     elif not is_short and target <= base:
@@ -418,8 +419,9 @@ def _check_bracket_directional_coherence(
             field_path=f"{field_prefix}.target.price",
             rule="bracket_directional_coherence",
             message=(
-                f"long {rec.recommendation_id}: target {target} must be above the entry "
-                f"reference {base} (phase-1 reference price {live}); a long profits as price rises"
+                f"long {rec.underlying} ({rec.recommendation_id}): target {target} must be above "
+                f"the entry reference {base} ({rec.underlying} reference price {live}); a long "
+                "profits as price rises"
             ),
         )
 
@@ -430,9 +432,9 @@ def _check_bracket_directional_coherence(
             field_path=f"{field_prefix}.invalidation_legs",
             rule="bracket_directional_coherence",
             message=(
-                f"short {rec.recommendation_id}: protective stop {stop} must be above the "
-                f"entry reference {base} (phase-1 reference price {live}); a short is stopped "
-                "out as price rises"
+                f"short {rec.underlying} ({rec.recommendation_id}): protective stop {stop} must "
+                f"be above the entry reference {base} ({rec.underlying} reference price {live}); "
+                "a short is stopped out as price rises"
             ),
         )
     elif not is_short and stop >= base:
@@ -440,9 +442,9 @@ def _check_bracket_directional_coherence(
             field_path=f"{field_prefix}.invalidation_legs",
             rule="bracket_directional_coherence",
             message=(
-                f"long {rec.recommendation_id}: protective stop {stop} must be below the "
-                f"entry reference {base} (phase-1 reference price {live}); a long is stopped "
-                "out as price falls"
+                f"long {rec.underlying} ({rec.recommendation_id}): protective stop {stop} must "
+                f"be below the entry reference {base} ({rec.underlying} reference price {live}); "
+                "a long is stopped out as price falls"
             ),
         )
 
@@ -505,10 +507,10 @@ def _check_reference_price_staleness(
             field_path=f"{field_prefix}.position_size",
             rule="reference_price_staleness",
             message=(
-                f"{rec.recommendation_id}: entry anchor {anchor:.4f} is {drift_pct:.1f}% from "
-                f"the phase-1 reference price {live} (tolerance {tolerance_pct}%); the bracket "
-                "was sized against a stale price — re-anchor entry/target/stop to the "
-                "current price"
+                f"{rec.underlying} ({rec.recommendation_id}): {rec.underlying} reference price "
+                f"= {live}; your entry anchor {anchor:.4f} is {drift_pct:.1f}% off (tolerance "
+                f"{tolerance_pct}%) — the bracket was sized against a different price. Re-anchor "
+                f"entry/target/stop for {rec.underlying} to {live}."
             ),
         )
 

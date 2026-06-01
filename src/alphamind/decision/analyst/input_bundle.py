@@ -15,6 +15,7 @@ See ``docs/design/04-decision-layer/analyst.md`` § Inputs and
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
@@ -36,6 +37,18 @@ __all__ = ["assemble_input_bundle_halt", "assemble_input_bundle_normal"]
 
 _BRIEF_HEADER = "=== SYNTHESIZER BRIEF PREVIEW (full brief via retrieve_brief) ==="
 
+_REFERENCE_PRICES_HEADER = "=== REFERENCE PRICES (authoritative bracket anchors) ==="
+
+_REFERENCE_PRICES_GUIDANCE = (
+    "Anchor every equity entry, target, and protective-stop level to its ticker's "
+    "reference price below. These are the exact per-ticker prices the guardrail "
+    "validator checks your brackets against; a bracket sized against any other "
+    "number for that ticker is rejected before it can fill. Do not invent a price "
+    "or carry one over from a brief or a prior session."
+)
+
+_REFERENCE_PRICES_NONE = "  None (no reference prices available this invocation)"
+
 
 def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_analyst_header's signature
     *,
@@ -50,12 +63,16 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_analyst_he
     state_delivery_config: StateDeliveryConfig,
     synthesizer_brief_text: str,
     tool_names: tuple[str, ...],
+    underlying_prices: Mapping[str, float],
     sector_label_display: dict[str, str] | None = None,
 ) -> str:
     """Compose the analyst's user-message text for a normal-mode invocation.
 
-    Renders the guardrail header via :func:`render_analyst_header`, then a
-    brief tool-reminder section, then the synthesizer brief verbatim.
+    Renders the guardrail header via :func:`render_analyst_header`, the
+    authoritative per-ticker reference-price block (the exact ``underlying_prices``
+    the ALP-742 validator enforces, so the analyst anchors brackets to the same
+    number it is judged against — ALP-758), a brief tool-reminder section, then
+    the synthesizer brief verbatim.
     """
     header = render_analyst_header(
         analyst_view=analyst_view,
@@ -69,8 +86,12 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_analyst_he
         config=state_delivery_config,
         sector_label_display=sector_label_display,
     )
+    reference_prices = _render_reference_prices(underlying_prices)
     tool_reminder = _render_tool_reminder(tool_names, halt_mode=False)
-    return f"{header}\n\n{tool_reminder}\n\n{_BRIEF_HEADER}\n{synthesizer_brief_text}"
+    return (
+        f"{header}\n\n{reference_prices}\n\n{tool_reminder}\n\n"
+        f"{_BRIEF_HEADER}\n{synthesizer_brief_text}"
+    )
 
 
 def assemble_input_bundle_halt(  # noqa: PLR0913 — mirrors render_analyst_header_halt_mode's signature
@@ -111,6 +132,33 @@ def assemble_input_bundle_halt(  # noqa: PLR0913 — mirrors render_analyst_head
     )
     tool_reminder = _render_tool_reminder(tool_names, halt_mode=True)
     return f"{header}\n\n{tool_reminder}\n\n{_BRIEF_HEADER}\n{synthesizer_brief_text}"
+
+
+# ---------------------------------------------------------------------------
+# Reference-prices section (ALP-758)
+# ---------------------------------------------------------------------------
+
+
+def _render_reference_prices(underlying_prices: Mapping[str, float]) -> str:
+    """Render the ``=== REFERENCE PRICES ===`` block.
+
+    One ``  TICKER: price`` line per entry in ``underlying_prices`` — the exact
+    map the ALP-742 bracket-coherence / staleness validator keys on
+    (``underlying_prices.get(rec.underlying)``). Surfacing it inline lets the
+    analyst anchor entry/target/stop to the same number it is judged against,
+    closing the ALP-758 gap where the prompt asked it to price precisely against
+    a reference it was never shown. Sorted by ticker for determinism; prices are
+    rendered to two decimals (a percentage staleness tolerance dwarfs the
+    rounding).
+    """
+    lines: list[str] = [_REFERENCE_PRICES_HEADER, _REFERENCE_PRICES_GUIDANCE]
+    if not underlying_prices:
+        lines.append(_REFERENCE_PRICES_NONE)
+        return "\n".join(lines)
+    lines.extend(
+        f"  {ticker}: {underlying_prices[ticker]:.2f}" for ticker in sorted(underlying_prices)
+    )
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

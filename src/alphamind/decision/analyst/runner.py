@@ -13,7 +13,7 @@ analyst invocation; the runner does NOT catch and degrade.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -207,6 +207,7 @@ async def run_analyst(  # noqa: PLR0913 — signature dictated by ALP-299 spec p
         active_sectors_tuple=active_sectors_tuple,
         state_delivery_config=state_delivery_config,
         synthesizer_text=synthesizer_text,
+        underlying_prices=library_market.underlying_prices,
     )
     logger.info("analyst input bundle assembled (mode=%s, chars=%d)", mode, len(user_message))
 
@@ -259,12 +260,14 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
     active_sectors_tuple: tuple[str, ...],
     state_delivery_config: StateDeliveryConfig,
     synthesizer_text: str,
+    underlying_prices: Mapping[str, float],
 ) -> str:
     """Dispatch to the mode-specific input-bundle assembler.
 
     Both assemblers share the same non-halt arguments; pulling the dispatch
     out of :func:`run_analyst` keeps that function under the linter's
-    PLR0915 threshold.
+    PLR0915 threshold. ``underlying_prices`` (the ALP-742 reference map) is only
+    surfaced in normal mode — watchlist mode emits no brackets to anchor.
     """
     if mode == "normal":
         return assemble_input_bundle_normal(
@@ -279,6 +282,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
             state_delivery_config=state_delivery_config,
             synthesizer_brief_text=synthesizer_text,
             tool_names=ANALYST_TOOL_NAMES,
+            underlying_prices=underlying_prices,
         )
 
     # mode == "watchlist" — the runner-side guard above guarantees halt_state
