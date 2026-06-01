@@ -730,6 +730,106 @@ invocation":
 6. Surface the `invocation_id` to the operator in any report — it's the
    entry point for follow-up archive inspection.
 
+**SSE caveat (why § 5.9 exists).** In practice, consuming the § 5.1 SSE
+stream through the `Monitor` tool has proven an unreliable per-agent
+notifier — `agent_*` frames do not always surface as notifications — and a
+manual `--once` run does not publish to the daemon stream at all (§ 3). For a
+robust, granular per-agent watch, and the *only* live option for manual runs,
+prefer the archive-based pattern in § 5.9.
+
+### 5.9 Granular agent-completion watch via the archive (Monitor tool)
+
+Each analysis / decision agent writes its diagnostic subdir
+(`analysis/<agent>/` or `decision/<agent>/`) **atomically on completion**, so
+the appearance — or mtime change, on a retry — of that agent's
+`metadata.json` is a high-fidelity per-agent finish marker carrying
+`success`, `stop_reason`, `wall_clock_seconds`, `retry_count`, and the
+token / cache counts. Unlike the SSE stream this works identically for
+scheduled and manual `--once` runs and reads straight off the WAL DB +
+filesystem.
+
+Build the `Monitor` command on three legs, so silence is never mistaken for
+success:
+
+1. **Per-agent finish** — emit when a new or mtime-changed `metadata.json`
+   appears under the invocation archive. Require the `success` field to be
+   present before emitting (skip a half-written file, re-read next tick), and
+   key on `(path, mtime)` so a retry — which rewrites the file in place —
+   re-emits.
+2. **Success terminal** — poll `phase2_completed_at` on the `invocations`
+   row; it is the only positive success signal (no `status` / `exit_reason`
+   column — § 5.5). Exit the watch when it goes non-NULL.
+3. **Hard-crash backstop** — tail *freshly appended* `Traceback` /
+   `CRITICAL` / `ERROR` in `pipeline.log` + `pipeline.err.log`. A hard crash
+   writes **no** `metadata.json` (the failing agent's dir never appears), so
+   without this leg a crash is indistinguishable from "still running." Filter
+   out the benign Windows asyncio-teardown noise (`_ProactorBasePipeTransport`,
+   `WinError 121`, `no close frame`, `ResourceWarning`, "I/O operation on
+   closed pipe").
+
+Reference `Monitor` command (Git Bash; discovers the invocation by the manual
+`--reason`, or swap the `WHERE` for `ORDER BY start_at DESC LIMIT 1` to grab
+the newest scheduled fire):
+
+```bash
+DB=/c/Users/jacks/AlphaMind/data/alphamind.db
+LOG=/c/Users/jacks/AlphaMind/logs/pipeline.log
+ERR=/c/Users/jacks/AlphaMind/logs/pipeline.err.log
+BENIGN="ProactorBasePipeTransport|closed pipe|deallocator|ResourceWarning|WinError 121|no close frame"
+STATE=$(mktemp)
+
+INV=""
+while [ -z "$INV" ]; do
+  INV=$(sqlite3 "$DB" "SELECT invocation_id FROM invocations
+        WHERE trigger_reason LIKE '%<your --reason substring>%'
+        ORDER BY start_at DESC LIMIT 1;" 2>/dev/null)
+  [ -z "$INV" ] && sleep 5
+done
+DAY=$(echo "$INV" | sed -E 's/^inv-([0-9]{4})([0-9]{2})([0-9]{2})T.*/\1-\2-\3/')
+ARCH="/c/Users/jacks/AlphaMind/archive/$DAY/$INV"
+echo "watching $INV"
+lbase=$(wc -c <"$LOG" 2>/dev/null || echo 0); ebase=$(wc -c <"$ERR" 2>/dev/null || echo 0)
+
+while true; do
+  [ -d "$ARCH" ] && while IFS= read -r f; do
+    m=$(stat -c %Y "$f"); grep -qxF "$f|$m" "$STATE" && continue
+    ok=$(grep -o '"success":[^,]*' "$f" | head -1 | sed 's/.*: *//;s/[" ]//g')
+    [ -z "$ok" ] && continue                       # half-written; retry next tick
+    echo "$f|$m" >>"$STATE"
+    a=$(basename "$(dirname "$f")"); l=$(basename "$(dirname "$(dirname "$f")")")
+    w=$(grep -o '"wall_clock_seconds":[^,]*' "$f" | head -1 | sed 's/.*: *//')
+    sr=$(grep -o '"stop_reason":[^,]*' "$f" | head -1 | sed 's/.*: *//;s/"//g')
+    printf 'AGENT %s/%s success=%s wall=%.0fs stop=%s\n' "$l" "$a" "$ok" "${w:-0}" "$sr"
+  done < <(find "$ARCH" -name metadata.json 2>/dev/null | sort)
+
+  nl=$(wc -c <"$LOG" 2>/dev/null || echo "$lbase")
+  [ "$nl" -gt "$lbase" ] && { tail -c +$((lbase+1)) "$LOG" \
+      | grep -E "Traceback|CRITICAL|\bERROR\b|RepositoryConsistency" \
+      | grep -vE "$BENIGN" | sed 's/^/FAULT(log) /'; lbase=$nl; }
+  ne=$(wc -c <"$ERR" 2>/dev/null || echo "$ebase")
+  [ "$ne" -gt "$ebase" ] && { tail -c +$((ebase+1)) "$ERR" \
+      | grep -iE "traceback|exception|critical|\berror\b" \
+      | grep -vE "$BENIGN" | sed 's/^/FAULT(err) /'; ebase=$ne; }
+
+  p2=$(sqlite3 "$DB" "SELECT COALESCE(phase2_completed_at,'')
+       FROM invocations WHERE invocation_id='$INV';" 2>/dev/null)
+  [ -n "$p2" ] && { echo "PHASE2-COMPLETE @ $p2"; break; }
+  sleep 8
+done
+```
+
+Gotchas learned in production:
+
+- Some agents (`synthesizer`, `strategist`) record `tool_calls_used` instead
+  of `retry_count`; a missing `retry` field is benign, not a failure.
+- For a fill-reconciliation run, add a leg that reports
+  `fill_records.processing_status` transitions (`unprocessed` → `processed` /
+  `quarantined`) so you can confirm Phase-1 ingestion before analysis even
+  starts (this is how the 2026-06-01 poison-pill wedge was verified fixed).
+- Set the `Monitor` `timeout` generously — cold-cache / adaptive-heavy runs
+  reach 25–40 min — and let the watch exit on `PHASE2-COMPLETE`; a hard crash
+  exits via the fault leg.
+
 ---
 
 ## 6. Accessing the command center
