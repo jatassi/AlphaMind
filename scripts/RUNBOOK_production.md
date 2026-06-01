@@ -371,7 +371,7 @@ Get-Content "$env:USERPROFILE\AlphaMind\logs\command_center.out.log" -Tail 50 |
     Select-String "command_center setup token"
 ```
 
-Open `http://127.0.0.1:8080/` in a browser on the Windows machine (RDP in if
+Open `http://127.0.0.1:8090/` in a browser on the Windows machine (RDP in if
 remote), paste the token, choose a username, and complete WebAuthn
 registration with Windows Hello or a hardware key. See
 `RUNBOOK_command_center.md` § Register the first passkey for details and §
@@ -594,7 +594,7 @@ closing options positions.
 
 ### 5.3 Real-time: the command center Live Run dashboard
 
-`http://127.0.0.1:8080/` → log in → Live Run. The dashboard merges both
+`http://127.0.0.1:8090/` → log in → Live Run. The dashboard merges both
 daemons' SSE streams + decorates them with activity-log rows and per-agent
 status. Best surface when an operator is sitting at the console.
 
@@ -670,10 +670,11 @@ will eventually time out and emit `agent_failed`, but if you're watching
 live and the budget is generous, the stall is visible first as
 unexplained silence in the SSE stream.
 
-**Failed invocation.** An `invocation_ended` with `status: failed` (or
-similar non-success). Tail `pipeline.log` for the traceback; the
-`exit_reason` column on the `invocations` row names the failing layer in
-one line.
+**Failed invocation.** An `invocation_ended` event reporting a non-success
+terminal state. The `invocations` row has **no `status` or `exit_reason`
+column** — a failed run is identified by `phase2_completed_at` being NULL
+(often `phase1_completed_at` too). Tail `pipeline.log` (and the daemon's
+`pipeline.err.log`) for the traceback that names the failing layer.
 
 **Skipped invocations.** When you expected a scheduled fire (per § 4) and
 no `invocation_started` event arrived:
@@ -721,22 +722,123 @@ invocation":
 3. Wait for `invocation_started`. Record the `invocation_id`.
 4. Watch for `phase_transition` → `agent_started` → `agent_succeeded` pairs
    covering every phase through `phase2`.
-5. Wait for `invocation_ended`. If `status: succeeded`, summarize cost +
-   wall-clock from the archive's per-agent `metadata.json` files. If
-   `status: failed`, fetch the traceback from `pipeline.log` and the
-   `exit_reason` from the `invocations` row.
+5. Wait for `invocation_ended`. On success, summarize cost + wall-clock
+   from the archive's per-agent `metadata.json` files. On failure, fetch
+   the traceback from `pipeline.log` / `pipeline.err.log` — the
+   `invocations` row carries no `exit_reason`; a NULL `phase2_completed_at`
+   is the failure signal.
 6. Surface the `invocation_id` to the operator in any report — it's the
    entry point for follow-up archive inspection.
+
+**SSE caveat (why § 5.9 exists).** In practice, consuming the § 5.1 SSE
+stream through the `Monitor` tool has proven an unreliable per-agent
+notifier — `agent_*` frames do not always surface as notifications — and a
+manual `--once` run does not publish to the daemon stream at all (§ 3). For a
+robust, granular per-agent watch, and the *only* live option for manual runs,
+prefer the archive-based pattern in § 5.9.
+
+### 5.9 Granular agent-completion watch via the archive (Monitor tool)
+
+Each analysis / decision agent writes its diagnostic subdir
+(`analysis/<agent>/` or `decision/<agent>/`) **atomically on completion**, so
+the appearance — or mtime change, on a retry — of that agent's
+`metadata.json` is a high-fidelity per-agent finish marker carrying
+`success`, `stop_reason`, `wall_clock_seconds`, `retry_count`, and the
+token / cache counts. Unlike the SSE stream this works identically for
+scheduled and manual `--once` runs and reads straight off the WAL DB +
+filesystem.
+
+Build the `Monitor` command on three legs, so silence is never mistaken for
+success:
+
+1. **Per-agent finish** — emit when a new or mtime-changed `metadata.json`
+   appears under the invocation archive. Require the `success` field to be
+   present before emitting (skip a half-written file, re-read next tick), and
+   key on `(path, mtime)` so a retry — which rewrites the file in place —
+   re-emits.
+2. **Success terminal** — poll `phase2_completed_at` on the `invocations`
+   row; it is the only positive success signal (no `status` / `exit_reason`
+   column — § 5.5). Exit the watch when it goes non-NULL.
+3. **Hard-crash backstop** — tail *freshly appended* `Traceback` /
+   `CRITICAL` / `ERROR` in `pipeline.log` + `pipeline.err.log`. A hard crash
+   writes **no** `metadata.json` (the failing agent's dir never appears), so
+   without this leg a crash is indistinguishable from "still running." Filter
+   out the benign Windows asyncio-teardown noise (`_ProactorBasePipeTransport`,
+   `WinError 121`, `no close frame`, `ResourceWarning`, "I/O operation on
+   closed pipe").
+
+Reference `Monitor` command (Git Bash; discovers the invocation by the manual
+`--reason`, or swap the `WHERE` for `ORDER BY start_at DESC LIMIT 1` to grab
+the newest scheduled fire):
+
+```bash
+DB=/c/Users/jacks/AlphaMind/data/alphamind.db
+LOG=/c/Users/jacks/AlphaMind/logs/pipeline.log
+ERR=/c/Users/jacks/AlphaMind/logs/pipeline.err.log
+BENIGN="ProactorBasePipeTransport|closed pipe|deallocator|ResourceWarning|WinError 121|no close frame"
+STATE=$(mktemp)
+
+INV=""
+while [ -z "$INV" ]; do
+  INV=$(sqlite3 "$DB" "SELECT invocation_id FROM invocations
+        WHERE trigger_reason LIKE '%<your --reason substring>%'
+        ORDER BY start_at DESC LIMIT 1;" 2>/dev/null)
+  [ -z "$INV" ] && sleep 5
+done
+DAY=$(echo "$INV" | sed -E 's/^inv-([0-9]{4})([0-9]{2})([0-9]{2})T.*/\1-\2-\3/')
+ARCH="/c/Users/jacks/AlphaMind/archive/$DAY/$INV"
+echo "watching $INV"
+lbase=$(wc -c <"$LOG" 2>/dev/null || echo 0); ebase=$(wc -c <"$ERR" 2>/dev/null || echo 0)
+
+while true; do
+  [ -d "$ARCH" ] && while IFS= read -r f; do
+    m=$(stat -c %Y "$f"); grep -qxF "$f|$m" "$STATE" && continue
+    ok=$(grep -o '"success":[^,]*' "$f" | head -1 | sed 's/.*: *//;s/[" ]//g')
+    [ -z "$ok" ] && continue                       # half-written; retry next tick
+    echo "$f|$m" >>"$STATE"
+    a=$(basename "$(dirname "$f")"); l=$(basename "$(dirname "$(dirname "$f")")")
+    w=$(grep -o '"wall_clock_seconds":[^,]*' "$f" | head -1 | sed 's/.*: *//')
+    sr=$(grep -o '"stop_reason":[^,]*' "$f" | head -1 | sed 's/.*: *//;s/"//g')
+    printf 'AGENT %s/%s success=%s wall=%.0fs stop=%s\n' "$l" "$a" "$ok" "${w:-0}" "$sr"
+  done < <(find "$ARCH" -name metadata.json 2>/dev/null | sort)
+
+  nl=$(wc -c <"$LOG" 2>/dev/null || echo "$lbase")
+  [ "$nl" -gt "$lbase" ] && { tail -c +$((lbase+1)) "$LOG" \
+      | grep -E "Traceback|CRITICAL|\bERROR\b|RepositoryConsistency" \
+      | grep -vE "$BENIGN" | sed 's/^/FAULT(log) /'; lbase=$nl; }
+  ne=$(wc -c <"$ERR" 2>/dev/null || echo "$ebase")
+  [ "$ne" -gt "$ebase" ] && { tail -c +$((ebase+1)) "$ERR" \
+      | grep -iE "traceback|exception|critical|\berror\b" \
+      | grep -vE "$BENIGN" | sed 's/^/FAULT(err) /'; ebase=$ne; }
+
+  p2=$(sqlite3 "$DB" "SELECT COALESCE(phase2_completed_at,'')
+       FROM invocations WHERE invocation_id='$INV';" 2>/dev/null)
+  [ -n "$p2" ] && { echo "PHASE2-COMPLETE @ $p2"; break; }
+  sleep 8
+done
+```
+
+Gotchas learned in production:
+
+- Some agents (`synthesizer`, `strategist`) record `tool_calls_used` instead
+  of `retry_count`; a missing `retry` field is benign, not a failure.
+- For a fill-reconciliation run, add a leg that reports
+  `fill_records.processing_status` transitions (`unprocessed` → `processed` /
+  `quarantined`) so you can confirm Phase-1 ingestion before analysis even
+  starts (this is how the 2026-06-01 poison-pill wedge was verified fixed).
+- Set the `Monitor` `timeout` generously — cold-cache / adaptive-heavy runs
+  reach 25–40 min — and let the watch exit on `PHASE2-COMPLETE`; a hard crash
+  exits via the fault leg.
 
 ---
 
 ## 6. Accessing the command center
 
-`http://127.0.0.1:8080/` from a browser on the Windows trading machine
+`http://127.0.0.1:8090/` from a browser on the Windows trading machine
 (loopback only in v1). Log in with your registered passkey.
 
 To reach the UI from a remote workstation, RDP into the Windows machine and
-open the browser there. Do **not** SSH-port-forward 8080 — the CSRF
+open the browser there. Do **not** SSH-port-forward 8090 — the CSRF
 double-submit check pins the cookie to the loopback origin and fails through
 a forwarder. Do **not** bind the daemon to `0.0.0.0` — WebAuthn's relying
 party ID is pinned to `127.0.0.1`; binding wider just exposes the API to the
@@ -870,7 +972,7 @@ SSE stream are the source of truth for what the scheduler thinks comes next.
 |------------------------------|------------------------------------------------------------------|
 | Scheduler `/control` + `/events` | `127.0.0.1:8765` (loopback only)                              |
 | Monitor `/control` + `/events`   | `127.0.0.1:8766` (loopback only)                              |
-| Command center API + UI          | `127.0.0.1:8080` (loopback only)                              |
+| Command center API + UI          | `127.0.0.1:8090` (loopback only)                              |
 | Production DB                    | `%USERPROFILE%\AlphaMind\data\alphamind.db`                   |
 | Daemon logs                      | `%USERPROFILE%\AlphaMind\logs\<daemon>.{out,err,log}.log`     |
 | Invocation archives              | `%USERPROFILE%\AlphaMind\archive\<YYYY-MM-DD>\<invocation_id>\` |
