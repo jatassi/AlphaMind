@@ -468,6 +468,9 @@ class _RecordingProgress:
     def agent_request(self, **fields: Any) -> None:
         pass
 
+    def agent_retrying(self, **fields: Any) -> None:
+        pass
+
     def agent_response(self, **fields: Any) -> None:
         pass
 

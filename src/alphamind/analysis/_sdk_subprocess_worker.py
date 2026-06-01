@@ -89,6 +89,9 @@ class _JsonlAppender:
     def agent_request(self, **fields: Any) -> None:
         self._write({"event": "agent_request", **fields})
 
+    def agent_retrying(self, **fields: Any) -> None:
+        self._write({"event": "agent_retrying", **fields})
+
     def agent_response(self, **fields: Any) -> None:
         self._write({"event": "agent_response", **fields})
 

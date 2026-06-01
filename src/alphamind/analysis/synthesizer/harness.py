@@ -7,9 +7,15 @@ record, and propagates fail-closed errors to the caller.
 
 Structurally simpler than the sibling researcher harnesses (qualitative,
 adaptive) because the synthesizer's output is unstructured prose with no
-producer-side schema — no parser, no validator, no corrective retry. Per-
-invocation MCP construction closes over the caller-supplied
-:class:`SynthesizerPortfolioStateReader`; the global
+producer-side schema — no parser, no validator. It does, however, carry a
+bounded retry for the one recoverable transient it can hit: an empty,
+non-overflow ``end_turn`` response (the extended-thinking failure mode where
+the model finishes after a thinking block without emitting the final prose,
+ALP-756). The sibling harnesses retry the same transient implicitly — an
+empty response yields ``structured_output=None``, which their parser rejects
+and their corrective-retry path re-invokes; the synthesizer has no parser, so
+the retry is made explicit here. Per-invocation MCP construction closes over
+the caller-supplied :class:`SynthesizerPortfolioStateReader`; the global
 ``alphamind.analysis.tools`` registry pattern does not fit that shape.
 
 The shared SDK driver loop, exception hierarchy, prompt cache, and
@@ -41,6 +47,7 @@ from alphamind.analysis._harness_core import (
     HarnessFailure,
     SDKFailure,
     TimeoutFailure,
+    _add_tokens,
     _load_prompt,
     invoke_sdk,
 )
@@ -74,6 +81,31 @@ _MAX_TURNS = 15
 
 
 # ---------------------------------------------------------------------------
+# Empty-response retry budget (ALP-756)
+# ---------------------------------------------------------------------------
+
+# Total SDK attempts allowed when the model returns an empty, non-overflow
+# ``end_turn`` response — the extended-thinking transient where the model
+# finishes after a thinking block without emitting prose. One initial attempt
+# plus two retries: enough to ride out an isolated transient (a fresh call
+# almost always produces prose) without masking a genuinely stuck model behind
+# unbounded retries. Overflow (``stop_reason=max_tokens``) is never retried —
+# that is deterministic, not transient.
+_EMPTY_RESPONSE_MAX_ATTEMPTS = 3
+
+# Corrective nudge appended to the original user message on each empty-response
+# retry. Appended (not substituted) so the full brief bundle is re-sent — each
+# SDK attempt opens a fresh conversation, so a nudge-only prompt would strip
+# the synthesis inputs (cf. ALP-311). Names the exact failure so the model
+# does not repeat it.
+_EMPTY_RESPONSE_RETRY_NUDGE = (
+    "Your previous turn ended after the thinking block without producing the "
+    "synthesis prose. Produce the final market-snapshot prose now — do not stop "
+    "after thinking."
+)
+
+
+# ---------------------------------------------------------------------------
 # Synthesizer-specific exception
 # ---------------------------------------------------------------------------
 
@@ -82,8 +114,11 @@ class EmptyResponseFailure(HarnessFailure):
     """Non-error SDK response with no text content paired with end_turn.
 
     The synthesizer has no parse/validate stage, so this replaces the
-    qualitative-research harness's ``MalformedOutputFailure``: any response
-    that ended cleanly but produced no usable prose is a structural failure.
+    qualitative-research harness's ``MalformedOutputFailure``: a response
+    that ended cleanly but produced no usable prose. Raised only after the
+    bounded empty-response retry budget (:data:`_EMPTY_RESPONSE_MAX_ATTEMPTS`)
+    is exhausted — an empty ``end_turn`` is a recoverable extended-thinking
+    transient, not an immediate structural failure (ALP-756).
     """
 
     def __init__(
@@ -170,9 +205,17 @@ async def invoke_synthesizer(  # noqa: PLR0913 — signature dictated by synthes
     ``portfolio_reader`` is bound to the current portfolio snapshot and
     wired as MCP tools via :func:`build_portfolio_state_mcp_server`.
     ``archive_root=None`` skips diagnostic writes; ``sdk_query_fn``
-    defaults to ``claude_agent_sdk.query``. Raises ``EmptyResponseFailure``
-    (clean empty response), ``ContextOverflowFailure`` (empty +
-    ``max_tokens``), ``SDKFailure``, or ``TimeoutFailure``.
+    defaults to ``claude_agent_sdk.query``.
+
+    An empty, non-overflow ``end_turn`` response is a recoverable
+    extended-thinking transient (ALP-756): the call is re-invoked up to
+    :data:`_EMPTY_RESPONSE_MAX_ATTEMPTS` times — appending a corrective
+    nudge to the original user message — before raising
+    ``EmptyResponseFailure``. Each retry emits a ``progress.agent_retrying``
+    signal and a diagnostic-record entry. An empty + ``max_tokens`` response
+    is context overflow (deterministic) and raises ``ContextOverflowFailure``
+    immediately with no retry. Also raises ``SDKFailure`` or
+    ``TimeoutFailure`` from the underlying SDK call.
     """
     if sdk_query_fn is None:
         from claude_agent_sdk import query as _real_query
@@ -180,6 +223,7 @@ async def invoke_synthesizer(  # noqa: PLR0913 — signature dictated by synthes
         sdk_query_fn = _real_query
 
     agent_name = AgentName.synthesizer.value
+    model_name = str(agent_config.model)
 
     mcp_servers, allowed_tools = build_portfolio_state_mcp_server(portfolio_reader)
     prompt_text = await _load_prompt(agent_config.prompt)
@@ -195,7 +239,7 @@ async def invoke_synthesizer(  # noqa: PLR0913 — signature dictated by synthes
         invocation_id=invocation_id,
         prompt_text=prompt_text,
         user_message=user_message,
-        model=str(agent_config.model),
+        model=model_name,
         archive_root=archive_root,
         as_of=as_of,
         response_filename="response.md",
@@ -203,64 +247,101 @@ async def invoke_synthesizer(  # noqa: PLR0913 — signature dictated by synthes
     )
     wall_start = time.monotonic()
 
-    outcome = await invoke_sdk(
-        sdk_query_fn=sdk_query_fn,
-        prompt=user_message,
-        options=options,
-        diag=diag,
-        budget_seconds=float(agent_config.latency_budget_seconds),
-        init_stall_timeout_seconds=60.0,
-        wall_start=wall_start,
-        agent_name=agent_name,
-        invocation_id=invocation_id,
-        on_cli_result_error="sdk_failure",
-        progress=progress,
-        phase=phase,
-    )
+    tokens = TokensUsed(input_tokens=0, output_tokens=0, cache_read_tokens=0, cache_write_tokens=0)
+    tool_calls = 0
 
-    response_text = outcome.response_text
-    stop_reason = outcome.stop_reason
-    tokens = outcome.tokens_used
-    tool_calls = outcome.tool_calls
-
-    diag.response_initial = response_text
-    diag.tokens_used = tokens
-    diag.tool_calls_used = tool_calls
-    wall_elapsed = time.monotonic() - wall_start
-
-    # Layer-4 stop-reason check. The synthesizer's output is unstructured
-    # prose, so a non-empty response (any stop_reason) returns success.
-    # Empty + max_tokens classifies as context overflow; empty + anything
-    # else classifies as a non-truncated empty response. No retry path.
-    if response_text:
-        diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason)
-        return HarnessSuccess(
-            response_text=response_text,
-            tokens_used=tokens,
-            tool_calls_used=tool_calls,
-            wall_clock_seconds=wall_elapsed,
-            stop_reason=stop_reason,
+    for attempt in range(1, _EMPTY_RESPONSE_MAX_ATTEMPTS + 1):
+        prompt = (
+            user_message if attempt == 1 else f"{user_message}\n\n{_EMPTY_RESPONSE_RETRY_NUDGE}"
         )
-
-    is_overflow = stop_reason == "max_tokens"
-    diag.errors.append(
-        {
-            "stage": "stop_reason_check",
-            "classification": "context_overflow" if is_overflow else "empty_response",
-            "stop_reason": stop_reason,
-        }
-    )
-    diag.write(success=False, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason)
-    if is_overflow:
-        raise ContextOverflowFailure(
-            "Empty response with stop_reason=max_tokens — context overflow, no retry",
+        outcome = await invoke_sdk(
+            sdk_query_fn=sdk_query_fn,
+            prompt=prompt,
+            options=options,
+            diag=diag,
+            budget_seconds=float(agent_config.latency_budget_seconds),
+            init_stall_timeout_seconds=60.0,
+            wall_start=wall_start,
             agent_name=agent_name,
             invocation_id=invocation_id,
-            raw_response=response_text,
+            on_cli_result_error="sdk_failure",
+            progress=progress,
+            phase=phase,
         )
-    raise EmptyResponseFailure(
-        f"Empty response with stop_reason={stop_reason!r} — no usable prose",
-        agent_name=agent_name,
-        invocation_id=invocation_id,
-        raw_response=response_text,
+
+        response_text = outcome.response_text
+        stop_reason = outcome.stop_reason
+        # Tokens and tool calls accumulate across retries so the diagnostic
+        # record and HarnessSuccess reflect the full cost of the invocation.
+        tokens = _add_tokens(tokens, outcome.tokens_used)
+        tool_calls += outcome.tool_calls
+
+        diag.response_initial = response_text
+        diag.tokens_used = tokens
+        diag.tool_calls_used = tool_calls
+        diag.retry_count = attempt - 1
+        wall_elapsed = time.monotonic() - wall_start
+
+        # Layer-4 stop-reason check. The synthesizer's output is unstructured
+        # prose, so a non-empty response (any stop_reason) returns success.
+        if response_text:
+            diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason)
+            return HarnessSuccess(
+                response_text=response_text,
+                tokens_used=tokens,
+                tool_calls_used=tool_calls,
+                wall_clock_seconds=wall_elapsed,
+                stop_reason=stop_reason,
+            )
+
+        # Empty + max_tokens is context overflow — deterministic, never retried.
+        if stop_reason == "max_tokens":
+            diag.errors.append(
+                {
+                    "stage": "stop_reason_check",
+                    "classification": "context_overflow",
+                    "stop_reason": stop_reason,
+                    "attempt": attempt,
+                }
+            )
+            diag.write(success=False, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason)
+            raise ContextOverflowFailure(
+                "Empty response with stop_reason=max_tokens — context overflow, no retry",
+                agent_name=agent_name,
+                invocation_id=invocation_id,
+                raw_response=response_text,
+            )
+
+        # Empty + non-overflow is the recoverable extended-thinking transient.
+        is_last_attempt = attempt == _EMPTY_RESPONSE_MAX_ATTEMPTS
+        diag.errors.append(
+            {
+                "stage": "stop_reason_check",
+                "classification": "empty_response",
+                "stop_reason": stop_reason,
+                "attempt": attempt,
+                "retried": not is_last_attempt,
+            }
+        )
+        if is_last_attempt:
+            diag.write(success=False, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason)
+            raise EmptyResponseFailure(
+                f"Empty response with stop_reason={stop_reason!r} after "
+                f"{_EMPTY_RESPONSE_MAX_ATTEMPTS} attempts — no usable prose",
+                agent_name=agent_name,
+                invocation_id=invocation_id,
+                raw_response=response_text,
+            )
+
+        # Retry: signal it (observable, not silent) and loop.
+        progress.agent_retrying(
+            phase=phase,
+            agent=agent_name,
+            model=model_name,
+            attempt=attempt,
+            reason="empty_response",
+        )
+
+    raise AssertionError(  # pragma: no cover
+        "unreachable: empty-response retry loop exhausted without returning or raising"
     )

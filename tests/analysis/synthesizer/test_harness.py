@@ -566,17 +566,19 @@ async def test_system_prompt_cached_per_process(
 
 
 # ---------------------------------------------------------------------------
-# 12. No corrective retry path — failure raises immediately
+# 12. Empty end_turn is retried; exhausting the budget raises EmptyResponseFailure
 # ---------------------------------------------------------------------------
 
 
-async def test_no_corrective_retry_path(
+async def test_empty_end_turn_exhausts_retries_then_raises(
     agent_config: BaseAgentConfig,
     archive_root: Path,
     portfolio_reader: _StubPortfolioReader,
 ) -> None:
-    """An EmptyResponseFailure raises immediately without a second SDK call —
-    the synthesizer harness has no parser/validator/retry path."""
+    """An empty end_turn response on every attempt retries up to the bounded
+    budget, then raises EmptyResponseFailure (ALP-756)."""
+    from alphamind.analysis.synthesizer import harness as harness_mod
+
     call_count = 0
 
     async def _stub(**kwargs: Any) -> AsyncIterator[Any]:
@@ -589,14 +591,92 @@ async def test_no_corrective_retry_path(
         await invoke_synthesizer(
             agent_config=agent_config,
             user_message="Synthesize.",
-            invocation_id="inv-no-retry-001",
+            invocation_id="inv-exhaust-001",
             portfolio_reader=portfolio_reader,
             archive_root=archive_root,
             as_of=_AS_OF,
             sdk_query_fn=_stub,
         )
 
-    assert call_count == 1, "no retry must be attempted"
+    assert call_count == harness_mod._EMPTY_RESPONSE_MAX_ATTEMPTS, (
+        "every attempt up to the bounded budget must be tried before raising"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 12b. Empty end_turn then valid prose: retries, succeeds, signals observably
+# ---------------------------------------------------------------------------
+
+
+class _RecordingProgress:
+    """Minimal ProgressEmitter recorder for assertions."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    def phase_start(self, phase: str) -> None:  # pragma: no cover - unused here
+        self.events.append(("phase_start", {"phase": phase}))
+
+    def phase_done(self, phase: str, **fields: Any) -> None:  # pragma: no cover - unused
+        self.events.append(("phase_done", {"phase": phase, **fields}))
+
+    def agent_request(self, **fields: Any) -> None:
+        self.events.append(("agent_request", fields))
+
+    def agent_retrying(self, **fields: Any) -> None:
+        self.events.append(("agent_retrying", fields))
+
+    def agent_response(self, **fields: Any) -> None:
+        self.events.append(("agent_response", fields))
+
+
+async def test_empty_then_valid_retries_and_succeeds(
+    agent_config: BaseAgentConfig,
+    archive_root: Path,
+    portfolio_reader: _StubPortfolioReader,
+) -> None:
+    """An empty end_turn on attempt 1 followed by valid prose on attempt 2
+    retries, returns HarnessSuccess, emits one agent_retrying signal, records
+    the retry in the diagnostic, and accumulates tokens across both attempts."""
+    progress = _RecordingProgress()
+    stub = _make_stub_query(
+        [
+            _make_sdk_response("", stop_reason="end_turn"),
+            _make_sdk_response(_SYNTHESIS_TEXT, stop_reason="end_turn"),
+        ]
+    )
+
+    result = await invoke_synthesizer(
+        agent_config=agent_config,
+        user_message="Synthesize.",
+        invocation_id="inv-retry-ok-001",
+        portfolio_reader=portfolio_reader,
+        archive_root=archive_root,
+        as_of=_AS_OF,
+        sdk_query_fn=stub,
+        progress=progress,
+    )
+
+    assert result.response_text == _SYNTHESIS_TEXT
+    assert result.stop_reason == "end_turn"
+    # Two attempts, each reporting input=100/output=200, summed.
+    assert result.tokens_used.input_tokens == 200
+    assert result.tokens_used.output_tokens == 400
+
+    # Exactly one observable retry signal, naming the failing attempt + reason.
+    retry_events = [f for name, f in progress.events if name == "agent_retrying"]
+    assert len(retry_events) == 1
+    assert retry_events[0]["attempt"] == 1
+    assert retry_events[0]["reason"] == "empty_response"
+    assert retry_events[0]["agent"] == "synthesizer"
+
+    # The diagnostic record carries the retry (not silent) and final success.
+    diag_dir = archive_root / "2026-05-01" / "inv-retry-ok-001" / "analysis" / "synthesizer"
+    errors = json.loads((diag_dir / "errors.json").read_text(encoding="utf-8"))
+    assert any(e["classification"] == "empty_response" and e["retried"] is True for e in errors)
+    meta = json.loads((diag_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert meta["success"] is True
+    assert (diag_dir / "response.md").read_text(encoding="utf-8") == _SYNTHESIS_TEXT
 
 
 # ---------------------------------------------------------------------------
