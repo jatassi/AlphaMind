@@ -192,15 +192,20 @@ def _search_news(session: Session, inp: NewsSearchInput, clock: Clock) -> NewsSe
         .distinct()
     )
     if inp.query:
-        # Escape LIKE wildcards (``\``, ``%``, ``_``) so an LLM-supplied query
-        # containing those chars matches them literally rather than as SQL
-        # patterns. SQLite's built-in ``lower()`` is ASCII-only by default;
-        # multilingual headlines case-insensitively match only on ASCII chars,
-        # which is acceptable for the English-news corpus.
-        escaped = inp.query.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        article_stmt = article_stmt.where(
-            func.lower(NewsArticles.headline_text).like(f"%{escaped}%", escape="\\")
-        )
+        # Tokenize on whitespace and require each token to appear in the article
+        # (AND semantics). Each token is matched against ``headline_text`` OR
+        # ``topic_tags`` (OR within a token) so that catalyst keywords stored as
+        # tags surface alongside headline matches. This makes multi-word catalyst
+        # phrases (e.g. "IBM earnings guidance") match articles whose headlines
+        # contain the tokens non-contiguously — fixing the whole-phrase miss that
+        # left adaptive-researcher queries returning no_data (ALP-777).
+        # SQLite's ``lower()`` is ASCII-only; acceptable for the English corpus.
+        for tok in inp.query.split():
+            escaped = tok.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            article_stmt = article_stmt.where(
+                func.lower(NewsArticles.headline_text).like(f"%{escaped}%", escape="\\")
+                | func.lower(NewsArticles.topic_tags).like(f"%{escaped}%", escape="\\")
+            )
     if inp.tickers:
         ticker_uppers = tuple(t.upper() for t in inp.tickers)
         article_stmt = article_stmt.join(
