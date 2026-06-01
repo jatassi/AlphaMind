@@ -2644,3 +2644,89 @@ async def test_unexpected_integration_error_isolated_to_single_fill(
     assert len(alerts) == 1
     assert "fill-poison" in alerts[0].detail_json
     await _assert_phase1_completed(factory, handle.invocation_id)
+
+
+async def test_over_fill_quarantined_not_integrated(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-766: a fill whose quantity exceeds the order's remaining quantity is
+    quarantined, not integrated; share_count and order.filled_quantity are unchanged.
+
+    Reproduces the GS 3-partials + recovery-sweep aggregate case: three genuine
+    per-execution fills of 1 share each were persisted and processed; the recovery
+    sweep appended a 4th aggregate fill (qty 3 @ avg price) that the dedupe
+    constraint could not suppress.  Phase-1 must quarantine it at the
+    pre-integration gate, leaving share_count=3 and order.filled_quantity=3.
+    """
+    from alphamind.execution.write_paths.phase1 import process_unprocessed_fills
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    # GS position: already OPEN with 3 shares (the 3 genuine partials integrated).
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_open_position(share_count=3.0, average_cost_basis_per_share=1021.93),
+        _make_pending_entry_order(
+            quantity=3.0,
+            filled_quantity=3.0,
+            status=OrderStatus.FILLED,
+        ),
+        _make_active_thesis(),
+        _make_active_bracket(),
+    )
+    await _seed_cash_ledger(factory)
+    await _seed_drawdown_state(factory)
+    # Phantom aggregate fill: recovery sweep emitted cumulative qty @ avg price.
+    await _append_fill(
+        factory,
+        _make_unprocessed_fill(
+            fill_id="fill-phantom-agg",
+            fill_quantity=3.0,
+            fill_price=1021.93,
+            remaining_quantity_after=0.0,
+            order_status_after=OrderStatus.FILLED,
+        ),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    summary = await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.fills_processed == 0
+    assert summary.fills_quarantined == 1
+    assert summary.reconciliation_alerts == 1
+
+    async with factory() as sess:
+        fill_row = (
+            await sess.execute(
+                select(FillRecordRow).where(FillRecordRow.fill_id == "fill-phantom-agg")
+            )
+        ).scalar_one()
+        assert fill_row.processing_status == FillProcessingStatus.QUARANTINED.value
+
+        # Position share_count unchanged — the phantom did not integrate.
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert isinstance(pos.details, EquityPositionDetails)
+        assert pos.details.share_count == pytest.approx(3.0)
+        assert pos.status == PositionStatus.OPEN
+
+        # Order filled_quantity unchanged — the phantom did not integrate.
+        order_row = (
+            await sess.execute(select(OrderRow).where(OrderRow.order_id == "ord-entry-1"))
+        ).scalar_one()
+        assert order_row.filled_quantity == pytest.approx(3.0)
+        assert order_row.remaining_quantity == pytest.approx(0.0)
+        assert order_row.status == OrderStatus.FILLED.value
+
+    alerts = await _read_reconciliation_alerts(factory, handle.invocation_id)
+    assert len(alerts) == 1
+    assert "fill-phantom-agg" in alerts[0].detail_json
+    assert "ALP-766" in alerts[0].detail_json
+    await _assert_phase1_completed(factory, handle.invocation_id)

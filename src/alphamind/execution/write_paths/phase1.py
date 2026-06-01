@@ -490,6 +490,16 @@ async def _integrate_or_quarantine_fill(
                 delta_description=_orphan_quarantine_message(fill, target),
             )
             return False
+        order = await _read_order(handle, fill.order_id)
+        if fill.fill_quantity > order.remaining_quantity + _QTY_EPSILON:
+            _quarantine_fill(
+                handle,
+                fill,
+                row,
+                position_id=target.position_id,
+                delta_description=_over_fill_quarantine_message(fill, order),
+            )
+            return False
         async with handle.session.begin_nested():
             await _integrate_one_fill(handle, fill, borrow_cost_resolver=borrow_cost_resolver)
     except StateInconsistencyError:
@@ -562,6 +572,21 @@ def _orphan_quarantine_message(fill: FillRecord, target: PositionRecord) -> str:
         f"status {target.status.value}; quarantined so the batch completes. The "
         "underlying broker position may still exist and needs separate "
         "reconciliation (ALP-760)."
+    )
+
+
+def _over_fill_quarantine_message(fill: FillRecord, order: OrderRecord) -> str:
+    """Operator-facing alert text for a fill that exceeds the order's remaining quantity.
+
+    Typically a recovery-sweep aggregate (cumulative qty @ avg price) landing on
+    an already-fully-filled order whose genuine per-execution partials have all
+    been integrated (ALP-766).
+    """
+    return (
+        f"Fill {fill.fill_id!r} (order {fill.order_id!r}, qty {fill.fill_quantity} @ "
+        f"{fill.fill_price}) exceeds order remaining quantity "
+        f"{order.remaining_quantity}; quarantined to prevent double-count. Likely "
+        "a recovery-sweep aggregate on an already-fully-filled order (ALP-766)."
     )
 
 
