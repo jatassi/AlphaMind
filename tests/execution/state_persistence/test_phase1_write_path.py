@@ -395,6 +395,45 @@ def _make_open_position(
     )
 
 
+def _make_cancelled_position(
+    position_id: str = "pos-1",
+    *,
+    thesis_id: str | None = "thesis-1",
+    bracket_id: str | None = "brk-1",
+    direction: Direction = Direction.LONG,
+    ticker: str = "AAPL",
+) -> PositionRecord:
+    """Build a CANCELLED position — terminal, never opened, no fills (ALP-744).
+
+    Mirrors the prod poison-pill state from the 2026-06-01 incident: an entry
+    cancelled + bracket dissolved mid-fill, leaving a partial fill that lands
+    against a CANCELLED target.
+    """
+    details = EquityPositionDetails(
+        ticker=Symbol(ticker),
+        share_count=0.0,
+        average_cost_basis_per_share=0.0,
+        borrow_rate_pct=None,
+        accrued_borrow_cost_usd=None,
+        locate_status=None,
+        margin_held_usd=None,
+    )
+    return PositionRecord(
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id) if thesis_id else None,
+        bracket_id=BracketId(bracket_id) if bracket_id else None,
+        status=PositionStatus.CANCELLED,
+        direction=direction,
+        entry_timestamp=None,
+        details=details,
+        execution_history=(),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+
+
 def _make_pending_bracket(bracket_id: str = "brk-1", position_id: str = "pos-1") -> BracketRecord:
     leg = BracketLeg(
         leg_id=f"{bracket_id}-leg-stop",
@@ -1202,17 +1241,17 @@ async def test_corporate_action_split_emits_events_and_ledger_anchor(
         assert ledger_row.processing_invocation_id == handle.invocation_id
 
 
-async def test_atomicity_exception_rolls_back_fills_and_log(
+async def test_failed_fill_quarantined_leaves_no_lifecycle_log_entries(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """An exception mid-integration leaves fills unprocessed and the activity
-    log carries no entries from this invocation.
+    """A fill whose integration raises is quarantined, not propagated (ALP-761).
 
     The trigger is a closing fill against a PENDING position — the equity
     dispatcher raises ``ValueError`` ("a position cannot close before it
-    opens") because routing a SELL_TO_OPEN fill at a PENDING LONG position
-    crosses the defensive guard. FK enforcement on ``fill_records.order_id``
-    rules out the original "missing position row" seeding scenario.
+    opens"). The per-fill savepoint rolls back the fill's partial mutations and
+    *every* lifecycle activity-log entry it had started to emit, so the only
+    activity-log row left for the invocation is the reconciliation alert that
+    surfaces the orphan. Phase-1 completes normally.
     """
     from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
@@ -1242,27 +1281,26 @@ async def test_atomicity_exception_rolls_back_fills_and_log(
 
     ctx, handle = await _open_handle(factory)
     invocation_id = handle.invocation_id
-    try:
-        with pytest.raises(ValueError, match="cannot close before it opens"):
-            await process_unprocessed_fills(
-                handle,
-                market_inputs=_make_market_inputs(),
-                config=_make_state_persistence_config(),
-            )
-    finally:
-        # Funnel the (caught) exception through the context manager so the
-        # surrounding transaction rolls back.
-        await ctx.__aexit__(ValueError, ValueError("forced"), None)
+    summary = await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
+    # Phase-1 returns normally — the ValueError did not escape.
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.fills_processed == 0
+    assert summary.fills_quarantined == 1
 
     async with factory() as sess:
-        # Fill row remains unprocessed.
         fill_row = (
             await sess.execute(select(FillRecordRow).where(FillRecordRow.fill_id == "fill-1"))
         ).scalar_one()
-        assert fill_row.processing_status == FillProcessingStatus.UNPROCESSED.value
-        assert fill_row.processing_invocation_id is None
+        assert fill_row.processing_status == FillProcessingStatus.QUARANTINED.value
+        assert fill_row.processing_invocation_id == invocation_id
 
-        # No activity log entries persist for this invocation.
+        # The savepoint rolled back every lifecycle entry the fill had begun to
+        # emit; only the reconciliation alert remains.
         log_rows = (
             (
                 await sess.execute(
@@ -1272,7 +1310,8 @@ async def test_atomicity_exception_rolls_back_fills_and_log(
             .scalars()
             .all()
         )
-        assert log_rows == []
+        assert [r.event_type for r in log_rows] == [EventType.RECONCILIATION_ALERT.value]
+    await _assert_phase1_completed(factory, invocation_id)
 
 
 async def test_quarantined_fill_excluded_without_aborting_batch(
@@ -2330,3 +2369,265 @@ async def test_fill_after_ca_reflects_post_action_quantity_at_fill(
         assert isinstance(pos.details, EquityPositionDetails)
         # Split applied first: 10 * 2 = 20. Then fill: 20 + 5 = 25.
         assert pos.details.share_count == pytest.approx(25.0)
+
+
+# ---------------------------------------------------------------------------
+# ALP-761 — orphan fill against a terminal position must not wedge the batch
+# ---------------------------------------------------------------------------
+
+
+async def _read_reconciliation_alerts(
+    factory: async_sessionmaker[AsyncSession], invocation_id: str
+) -> list[ActivityLogRow]:
+    async with factory() as sess:
+        return list(
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.invocation_id == invocation_id,
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_ALERT.value,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+
+async def _assert_phase1_completed(
+    factory: async_sessionmaker[AsyncSession], invocation_id: str
+) -> None:
+    async with factory() as sess:
+        inv_row = await sess.get(InvocationRow, invocation_id)
+        assert inv_row is not None
+        assert inv_row.phase1_completed_at is not None
+
+
+async def test_fill_against_cancelled_position_quarantined_not_raised(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """AC (a): a fill whose target equity position is CANCELLED is quarantined
+    (not raised), fills_quarantined increments, a reconciliation alert is
+    emitted, and Phase-1 completes normally."""
+    from alphamind.execution.write_paths.phase1 import (
+        process_unprocessed_fills,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    # Entry order resolves its position via the bracket (position_id is None on
+    # an entry order); the bracket points at a CANCELLED position — the prod
+    # poison-pill shape.
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_cancelled_position(),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_pending_bracket(),
+    )
+    await _seed_cash_ledger(factory)
+    await _seed_drawdown_state(factory)
+    await _append_fill(factory, _make_unprocessed_fill(fill_id="fill-orphan", fill_quantity=19.0))
+
+    ctx, handle = await _open_handle(factory)
+    summary = await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
+    # Phase-1 returns normally — no ValueError escapes.
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.fills_processed == 0
+    assert summary.fills_quarantined == 1
+
+    async with factory() as sess:
+        fill_row = (
+            await sess.execute(select(FillRecordRow).where(FillRecordRow.fill_id == "fill-orphan"))
+        ).scalar_one()
+        assert fill_row.processing_status == FillProcessingStatus.QUARANTINED.value
+        assert fill_row.processing_invocation_id == handle.invocation_id
+        # Quarantined fills retain regt_attribution_json IS NULL (parent decision H).
+        assert fill_row.regt_attribution_json is None
+        # The CANCELLED position is untouched — no fill integrated into it.
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        assert pos_row.status == PositionStatus.CANCELLED.value
+
+    alerts = await _read_reconciliation_alerts(factory, handle.invocation_id)
+    assert len(alerts) == 1
+    assert alerts[0].position_id == "pos-1"
+    assert "quarantined" in alerts[0].detail_json
+    assert "fill-orphan" in alerts[0].detail_json
+    await _assert_phase1_completed(factory, handle.invocation_id)
+
+
+async def test_mixed_batch_poison_pill_quarantined_healthy_processed(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """AC (b): a batch with one poison-pill fill (target CANCELLED) plus a
+    healthy entry fill — the healthy fill integrates, the poison is quarantined,
+    and the invocation completes."""
+    from alphamind.execution.write_paths.phase1 import (
+        process_unprocessed_fills,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    # Healthy PENDING cluster (AVGO/GS analogue from the incident).
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_pending_position(),
+        _make_pending_entry_order(limit_price=150.0),
+        _make_active_thesis(),
+        _make_pending_bracket(),
+    )
+    # Poison: a standalone CANCELLED position + an entry order that points
+    # directly at it (DVN analogue).
+    await _seed_position(
+        factory,
+        _make_cancelled_position(position_id="pos-dvn", thesis_id=None, bracket_id=None),
+    )
+    await _seed_order(
+        factory,
+        _make_pending_entry_order(order_id="ord-dvn", position_id="pos-dvn"),
+    )
+    await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=100_000.0))
+    await _seed_drawdown_state(factory)
+    # Poison fill sorts first (earlier timestamp); the healthy fill follows.
+    await _append_fill(
+        factory,
+        _make_unprocessed_fill(
+            fill_id="fill-dvn",
+            order_id="ord-dvn",
+            fill_quantity=19.0,
+            fill_price=46.15,
+            fill_timestamp=_NOW - timedelta(minutes=20),
+            order_status_after=OrderStatus.PARTIALLY_FILLED,
+            remaining_quantity_after=1.0,
+        ),
+    )
+    await _append_fill(factory, _make_unprocessed_fill(fill_id="fill-good"))
+
+    ctx, handle = await _open_handle(factory)
+    summary = await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.fills_processed == 1
+    assert summary.fills_quarantined == 1
+
+    async with factory() as sess:
+        dvn = (
+            await sess.execute(select(FillRecordRow).where(FillRecordRow.fill_id == "fill-dvn"))
+        ).scalar_one()
+        good = (
+            await sess.execute(select(FillRecordRow).where(FillRecordRow.fill_id == "fill-good"))
+        ).scalar_one()
+        assert dvn.processing_status == FillProcessingStatus.QUARANTINED.value
+        assert good.processing_status == FillProcessingStatus.PROCESSED.value
+        # The healthy position opened on its entry fill.
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert pos.status == PositionStatus.OPEN
+        assert isinstance(pos.details, EquityPositionDetails)
+        assert pos.details.share_count == 10.0
+
+    alerts = await _read_reconciliation_alerts(factory, handle.invocation_id)
+    assert len(alerts) == 1
+    assert alerts[0].position_id == "pos-dvn"
+    await _assert_phase1_completed(factory, handle.invocation_id)
+
+
+async def test_unexpected_integration_error_isolated_to_single_fill(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """AC (c): a fill that raises mid-integration (here, a closing fill against a
+    PENDING position) is isolated by the per-fill savepoint — its partial order
+    mutation is rolled back, the fill is quarantined + alerted, and a later
+    healthy fill in the same batch still processes."""
+    from alphamind.execution.write_paths.phase1 import (
+        process_unprocessed_fills,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_pending_position(),
+        _make_pending_entry_order(limit_price=150.0),
+        _make_active_thesis(),
+        _make_pending_bracket(),
+    )
+    # A SELL order against the still-PENDING LONG position: a fill on it is a
+    # "closing fill on a PENDING position", which _apply_fill_to_equity_position
+    # raises on — an integration failure that is NOT the terminal-status gate.
+    await _seed_order(
+        factory,
+        _make_pending_entry_order(
+            order_id="ord-sell",
+            direction=OrderDirection.SELL,
+            role=OrderRole.CLOSE,
+            position_id="pos-1",
+        ),
+    )
+    await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=100_000.0))
+    await _seed_drawdown_state(factory)
+    # Poison sorts first (earlier ts) so the position is still PENDING when it
+    # hits — proving the loop continues to the later healthy entry fill.
+    await _append_fill(
+        factory,
+        _make_unprocessed_fill(
+            fill_id="fill-poison",
+            order_id="ord-sell",
+            fill_quantity=5.0,
+            fill_timestamp=_NOW - timedelta(minutes=20),
+            order_status_after=OrderStatus.PARTIALLY_FILLED,
+            remaining_quantity_after=5.0,
+        ),
+    )
+    await _append_fill(factory, _make_unprocessed_fill(fill_id="fill-good"))
+
+    ctx, handle = await _open_handle(factory)
+    summary = await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.fills_processed == 1
+    assert summary.fills_quarantined == 1
+
+    async with factory() as sess:
+        poison = (
+            await sess.execute(select(FillRecordRow).where(FillRecordRow.fill_id == "fill-poison"))
+        ).scalar_one()
+        good = (
+            await sess.execute(select(FillRecordRow).where(FillRecordRow.fill_id == "fill-good"))
+        ).scalar_one()
+        assert poison.processing_status == FillProcessingStatus.QUARANTINED.value
+        assert good.processing_status == FillProcessingStatus.PROCESSED.value
+        # Savepoint rollback: the poison fill's partial order mutation is undone —
+        # ord-sell is back to PENDING with zero filled quantity.
+        sell_row = (
+            await sess.execute(select(OrderRow).where(OrderRow.order_id == "ord-sell"))
+        ).scalar_one()
+        assert sell_row.status == OrderStatus.PENDING.value
+        assert sell_row.filled_quantity == 0.0
+        # The later healthy fill still opened the position.
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        assert pos_row.status == PositionStatus.OPEN.value
+
+    alerts = await _read_reconciliation_alerts(factory, handle.invocation_id)
+    assert len(alerts) == 1
+    assert "fill-poison" in alerts[0].detail_json
+    await _assert_phase1_completed(factory, handle.invocation_id)
