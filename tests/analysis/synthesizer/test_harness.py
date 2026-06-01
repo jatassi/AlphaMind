@@ -676,6 +676,8 @@ async def test_empty_then_valid_retries_and_succeeds(
     assert any(e["classification"] == "empty_response" and e["retried"] is True for e in errors)
     meta = json.loads((diag_dir / "metadata.json").read_text(encoding="utf-8"))
     assert meta["success"] is True
+    # The retry count reaches the persisted metadata, not just errors.json.
+    assert meta["retry_count"] == 1
     assert (diag_dir / "response.md").read_text(encoding="utf-8") == _SYNTHESIS_TEXT
 
 

@@ -91,6 +91,12 @@ _MAX_TURNS = 15
 # almost always produces prose) without masking a genuinely stuck model behind
 # unbounded retries. Overflow (``stop_reason=max_tokens``) is never retried —
 # that is deterministic, not transient.
+#
+# Each attempt gets a fresh ``latency_budget_seconds`` window (the budget is a
+# per-call timeout in ``invoke_sdk``, not a shared deadline), so worst-case
+# wall-clock is this many times the per-call budget. That is the intended trade:
+# the synthesizer runs solo and the layer tolerates a slow recovery far more
+# readily than a discarded multi-agent run (see llm-agent-failure-handling.md).
 _EMPTY_RESPONSE_MAX_ATTEMPTS = 3
 
 # Corrective nudge appended to the original user message on each empty-response

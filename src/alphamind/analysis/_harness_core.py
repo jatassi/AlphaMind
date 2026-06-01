@@ -488,10 +488,12 @@ class DiagState:
             "stop_reason": stop_reason,
             "success": success,
         }
-        # The DR harness omits retry_count from metadata only when it isn't a
-        # parse/validate-retry harness; here both the retry and tool-call
-        # fields are emitted whenever the corresponding feature is in use.
-        if self.response_filename is None:
+        # The dual-response-file harnesses (response_initial/response_retry)
+        # always emit retry_count. A single-response harness (response_filename
+        # set, e.g. the synthesizer) emits it only once it has actually retried
+        # — so the field's presence is itself the retry signal, and a
+        # first-attempt success stays free of it (ALP-756).
+        if self.response_filename is None or self.retry_count:
             metadata["retry_count"] = self.retry_count
         if self.record_tool_calls or self.tool_calls_used:
             metadata["tool_calls_used"] = self.tool_calls_used
