@@ -378,9 +378,13 @@ def _quote_distrust_reason(
       broken). Only checkable when a positive bar exists; the bound is generous so
       a genuine fast intraday gap is never gated. Checked first so the MU-style
       broken-mid case is attributed to divergence even when its spread is also wide.
-    * **broken spread** — the two-sided quote's relative spread ``(ask - bid) /
-      mid`` is pathological (INTU weekend: a $450 ask vs a $302 bid on a ~$331
-      stock), so the mid is meaningless even with no bar to compare against.
+    * **broken spread** — the two-sided quote's relative spread
+      ``|ask - bid| / mid`` is pathological (INTU weekend: a $450 ask vs a $302
+      bid on a ~$331 stock), so the mid is meaningless even with no bar to compare
+      against. The ``abs`` also catches a *crossed* book (``bid > ask``): the
+      upstream ``_touch_from_quote`` rejects only zero / non-positive sides, so an
+      off-hours feed can emit a reversed two-sided quote (e.g. a broken-high bid)
+      whose signed spread would be negative and slip past an unsigned bound.
     """
     mid = float(quote.mid)
     if bar is not None and bar > 0:
@@ -390,7 +394,7 @@ def _quote_distrust_reason(
                 f"mid {mid:.4f} diverges {divergence_pct:.1f}% from recorded bar "
                 f"{bar:.4f} (> {divergence_tolerance_pct:.0f}% bound)"
             )
-    relative_spread_pct = float(quote.ask - quote.bid) / mid * 100.0
+    relative_spread_pct = abs(float(quote.ask) - float(quote.bid)) / mid * 100.0
     if relative_spread_pct > max_relative_spread_pct:
         return (
             f"relative spread {relative_spread_pct:.1f}% exceeds {max_relative_spread_pct:.0f}% "
@@ -429,7 +433,8 @@ def _merge_quote_and_bar_prices(
     universe_prices: dict[str, float] = {}
     quoted_count = 0
     fallback_count = 0
-    gated_count = 0
+    gated_to_bar_count = 0
+    gated_unpriced_count = 0
     for ticker in active_tickers:
         quote = quotes.get(ticker)
         bar_close = bar_prices.get(ticker)
@@ -441,9 +446,9 @@ def _merge_quote_and_bar_prices(
                 max_relative_spread_pct=max_relative_spread_pct,
             )
             if distrust_reason is not None:
-                gated_count += 1
                 if bar_close is not None:
                     universe_prices[ticker] = bar_close
+                    gated_to_bar_count += 1
                     log.warning(
                         "phase1_inputs: distrusting live quote for %s — %s; "
                         "using recorded bar %.4f as the reference instead",
@@ -452,6 +457,7 @@ def _merge_quote_and_bar_prices(
                         bar_close,
                     )
                 else:
+                    gated_unpriced_count += 1
                     log.warning(
                         "phase1_inputs: distrusting live quote for %s — %s; no recorded "
                         "bar to fall back to, marking the ticker unavailable",
@@ -466,22 +472,25 @@ def _merge_quote_and_bar_prices(
             universe_prices[ticker] = bar_close
             fallback_count += 1
     total = len(active_tickers)
-    # Report four disjoint counts (live / bar-fallback / distrusted-gated /
-    # unpriced) rather than a single "N/M fell back" line: a distrusted quote
-    # (ALP-759) and an unpriced ticker (no quote AND no bar) are operationally
-    # distinct from a plain bar fallback, and folding either into one denominator
-    # would hide a data-quality signal. A gated quote with no bar is counted under
-    # gated, not unpriced, even though both are absent from universe_prices.
+    # Report five disjoint counts rather than a single "N/M fell back" line: a
+    # distrusted quote (ALP-759) is operationally distinct from a plain bar
+    # fallback, and a distrusted quote with no bar is unpriced just like a ticker
+    # that never had a quote — so the two gated outcomes are split (gated→bar vs
+    # gated→unavailable) and the unpriced remainder counts *every* ticker absent
+    # from universe_prices (no-quote-no-bar only; the gated-no-bar tickers are
+    # already accounted under gated→unavailable). The five counts sum to ``total``.
     log.info(
         "phase1_inputs: active-universe reference prices for %d active ticker(s) — "
         "%d via live quote, %d via recorded-bar fallback (no live quote), "
         "%d via recorded bar after distrusting the live quote (bar-divergence / "
-        "broken-spread gate), %d unpriced (no quote and no recorded bar)",
+        "broken-spread gate), %d distrusted with no bar to fall back to (marked "
+        "unavailable), %d unpriced (no quote and no recorded bar)",
         total,
         quoted_count,
         fallback_count,
-        gated_count,
-        total - quoted_count - fallback_count - gated_count,
+        gated_to_bar_count,
+        gated_unpriced_count,
+        total - quoted_count - fallback_count - gated_to_bar_count - gated_unpriced_count,
     )
     return universe_prices
 
