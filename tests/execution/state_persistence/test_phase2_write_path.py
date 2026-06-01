@@ -131,6 +131,10 @@ from alphamind.state.invocation_context.records import (
     invocation_record_to_row,
     process_lifetime_record_to_row,
 )
+from alphamind.state.records import (
+    FillProcessingStatus,
+    FillRecord,
+)
 from alphamind.state.tables.activity_log import ActivityLogRow
 from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.brackets import BracketRow
@@ -149,6 +153,9 @@ from alphamind.state.tables.cash_ledger import (
 )
 from alphamind.state.tables.cash_ledger_codec import (
     cash_ledger_record_to_row,
+)
+from alphamind.state.tables.fill_records_codec import (
+    record_to_row as fill_record_to_row,
 )
 from alphamind.state.tables.invocations import InvocationRow
 from alphamind.state.tables.orders import OrderRow
@@ -3073,6 +3080,246 @@ async def test_cancel_command_leaves_partially_filled_strategy_pending(
         bracket = await sess.get(BracketRow, "BRK-NVDA-1")
         assert bracket is not None
         assert bracket.status == BracketStatus.DISSOLVED.value
+
+
+def _partial_entry_fill_record(
+    *,
+    fill_id: str = "fill-partial-1",
+    order_id: str = "ord-entry-1",
+    fill_quantity: float = 19.0,
+    fill_price: str = "100.0",
+    remaining_quantity_after: float = 51.0,
+) -> FillRecord:
+    """An UNPROCESSED partial fill recorded against an entry order (ALP-760).
+
+    Mirrors the production incident: the continuous monitor appended this fill
+    the moment it landed on the broker, but Phase 1 has not yet drained it into
+    the order's ``filled_quantity`` — exactly the window a stale-snapshot PM
+    CANCEL is decided in.
+    """
+    from alphamind.portfolio_state.records.orders import OrderStatus
+
+    return FillRecord(
+        fill_id=fill_id,
+        order_id=OrderId(order_id),
+        fill_timestamp=_NOW - timedelta(minutes=2),
+        fill_price=price(fill_price),
+        fill_quantity=fill_quantity,
+        remaining_quantity_after=remaining_quantity_after,
+        order_status_after=OrderStatus.PARTIALLY_FILLED,
+        slippage_usd=signed_money(0.0),
+        fees_usd=money(0.0),
+        execution_venue="NASDAQ",
+        gateway_reference=f"alp-{fill_id}",
+        persistence_timestamp=_NOW - timedelta(minutes=2),
+        processing_status=FillProcessingStatus.UNPROCESSED,
+        processing_invocation_id=None,
+        processing_timestamp=None,
+        regt_attribution=None,
+        live_execution_estimate=None,
+    )
+
+
+async def _seed_fill_record(factory: async_sessionmaker[AsyncSession], fill: FillRecord) -> None:
+    async with factory() as sess:
+        sess.add(fill_record_to_row(fill))
+        await sess.commit()
+
+
+def _partial_fill_entry_order_rec(
+    *,
+    limit_price: str = "100.0",
+    quantity: float = 70.0,
+    filled_quantity: float = 0.0,
+) -> Any:
+    """A LONG LIMIT entry order sized for ``quantity`` shares (ALP-760).
+
+    ``filled_quantity`` defaults to 0 (the unprocessed-fill window, where the
+    order row still reads zero-filled); pass a non-zero value to model the
+    already-integrated case (order ``PARTIALLY_FILLED`` after Phase 1 drained
+    the fill).
+    """
+    from alphamind.portfolio_state.records.orders import (
+        EquityInstrumentSpec,
+        OrderClass,
+        OrderDirection,
+        OrderDuration,
+        OrderRecord,
+        OrderRole,
+        OrderStatus,
+        OrderType,
+        PriceParameters,
+    )
+
+    remaining = quantity - filled_quantity
+    status = OrderStatus.PARTIALLY_FILLED if filled_quantity > 0 else OrderStatus.PENDING
+    return OrderRecord(
+        order_id=OrderId("ord-entry-1"),
+        position_id=PositionId("POS-NVDA-001"),
+        bracket_id=BracketId("BRK-NVDA-1"),
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("NVDA")),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.LIMIT,
+        order_class=OrderClass.BRACKET,
+        price_parameters=PriceParameters(limit_price=price(limit_price)),
+        quantity=quantity,
+        duration=OrderDuration.DAY,
+        status=status,
+        alpaca_order_id=AlpacaOrderId("alp-ord-entry-1"),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-ord-entry-1"),),
+        submission_timestamp=_NOW - timedelta(hours=1),
+        last_update_timestamp=_NOW - timedelta(hours=1),
+        filled_quantity=filled_quantity,
+        avg_fill_price=float(limit_price) if filled_quantity > 0 else None,
+        remaining_quantity=remaining,
+        modification_count=0,
+        originating_thesis_id=ThesisId("THE-NVDA-1"),
+        originating_pm_command_id=None,
+        age_hours=1.0,
+    )
+
+
+async def test_cancel_command_on_entry_with_unprocessed_partial_fill_retains_bracket(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-760: a PM CANCEL against an entry that has partially filled — where
+    the fill is recorded as an UNPROCESSED ``fill_record`` Phase 1 has not yet
+    drained (the stale-snapshot window) — must NOT orphan the filled shares.
+
+    The bracket survives (NOT dissolved), the thesis stays ACTIVE (NOT resolved
+    ``CANCELLED_NEVER_ENTERED``), the position stays PENDING (Phase 1 will drive
+    PENDING→OPEN on integration), and only the *unfilled remainder*'s reserved
+    capital is released — the filled portion's reservation stays for Phase 1 to
+    release when it integrates the fill.
+    """
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    # LIMIT $100 x 70 shares = $7,000 reserved at OPEN.
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=7_000.0)
+    await _seed_position_cluster(
+        factory,
+        _pending_never_filled_position(),
+        _active_thesis(),
+        _pending_entry_bracket_with_event_leg(),
+        _partial_fill_entry_order_rec(limit_price="100.0", quantity=70.0),
+    )
+    # 19 of 70 shares filled — recorded but not yet integrated by Phase 1.
+    await _seed_fill_record(factory, _partial_entry_fill_record(fill_quantity=19.0))
+
+    envelope = _make_strategist_envelope(
+        commands=(_cancel_command(order_id=OrderId("ord-entry-1")),)
+    )
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        entry_order = await sess.get(OrderRow, "ord-entry-1")
+        assert entry_order is not None
+        assert entry_order.status == "CANCELLED"
+
+        # The bracket protecting the filled shares is NOT dissolved.
+        bracket = await sess.get(BracketRow, "BRK-NVDA-1")
+        assert bracket is not None
+        assert bracket.status != BracketStatus.DISSOLVED.value
+
+        # The thesis is NOT resolved CANCELLED_NEVER_ENTERED — shares exist.
+        thesis = await sess.get(ThesisRow, "THE-NVDA-1")
+        assert thesis is not None
+        assert thesis.status == ThesisRecordStatus.ACTIVE.value
+        assert thesis.resolution_category is None
+
+        # The position is NOT swept to CANCELLED — Phase 1 will open it.
+        position = await sess.get(PositionRow, "POS-NVDA-001")
+        assert position is not None
+        assert position.status == PositionStatus.PENDING.value
+
+        # Only the unfilled remainder (51 x $100 = $5,100) is released; the
+        # filled portion's reservation ($1,900) stays for Phase 1.
+        cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash is not None
+        assert cash.reserved_capital_usd == pytest.approx(1_900.0)
+
+    rows = await _read_activity_log_for(factory, handle.invocation_id)
+    types = {r.event_type for r in rows}
+    assert EventType.ORDER_CANCELLED.value in types
+    assert EventType.CAPITAL_RELEASED.value in types
+    # No orphan: the bracket is not dissolved and the thesis is not resolved.
+    assert EventType.BRACKET_DISSOLVED.value not in types
+    assert EventType.THESIS_RESOLVED.value not in types
+
+
+async def test_cancel_command_on_entry_with_integrated_partial_fill_retains_bracket(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-760: when the partial fill was *already integrated* by Phase 1 (the
+    entry order reads ``PARTIALLY_FILLED`` with ``filled_quantity>0`` and the
+    position is OPEN), a CANCEL must still retain the bracket and leave the
+    thesis ACTIVE — detection keys off the order's own fill state, not only
+    unprocessed ``fill_records``. Only the unfilled remainder is released."""
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    # After Phase 1 integrated 19 of 70 shares it already released 19 x $100 =
+    # $1,900, leaving 51 x $100 = $5,100 reserved.
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=5_100.0)
+    await _seed_position_cluster(
+        factory,
+        _open_position(),
+        _active_thesis(),
+        _active_bracket(),
+        _partial_fill_entry_order_rec(limit_price="100.0", quantity=70.0, filled_quantity=19.0),
+    )
+
+    envelope = _make_strategist_envelope(
+        commands=(_cancel_command(order_id=OrderId("ord-entry-1")),)
+    )
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        entry_order = await sess.get(OrderRow, "ord-entry-1")
+        assert entry_order is not None
+        assert entry_order.status == "CANCELLED"
+
+        bracket = await sess.get(BracketRow, "BRK-NVDA-1")
+        assert bracket is not None
+        assert bracket.status != BracketStatus.DISSOLVED.value
+
+        thesis = await sess.get(ThesisRow, "THE-NVDA-1")
+        assert thesis is not None
+        assert thesis.status == ThesisRecordStatus.ACTIVE.value
+
+        position = await sess.get(PositionRow, "POS-NVDA-001")
+        assert position is not None
+        assert position.status == PositionStatus.OPEN.value
+
+        # The unfilled remainder (51 x $100 = $5,100) is released to zero.
+        cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash is not None
+        assert cash.reserved_capital_usd == pytest.approx(0.0)
+
+    rows = await _read_activity_log_for(factory, handle.invocation_id)
+    types = {r.event_type for r in rows}
+    assert EventType.BRACKET_DISSOLVED.value not in types
+    assert EventType.THESIS_RESOLVED.value not in types
 
 
 def _pending_entry_limit_order_rec(
