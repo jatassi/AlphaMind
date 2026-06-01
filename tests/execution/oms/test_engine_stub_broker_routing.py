@@ -1101,24 +1101,28 @@ async def test_pm_envelope_close_equity_routes_through_dispatcher(
         await async_engine.dispose()
 
 
-async def test_pm_envelope_close_with_defer_writeback_routes_no_persistence(
+async def test_pm_envelope_close_with_broker_routing_writes_in_turn(
     tmp_path: Any,
 ) -> None:
-    """ALP-711 regression — the scheduler orchestrator's PM-submit path passes
+    """ALP-763 — the scheduler orchestrator's PM-submit path passes
     ``invocation_handle`` to the wrapper for broker-routing reads (CLOSE / ADD /
-    ADJUST / CANCEL all consult persisted positions / orders) but ALSO passes
-    ``defer_writeback=True`` so the orchestrator's separate ``dispatch_phase2``
-    stage remains the sole writer of per-envelope persistence.
+    ADJUST / CANCEL all consult persisted positions / orders) AND
+    ``defer_writeback=True``. Pre-ALP-763 the broker-active path deferred the
+    whole writeback to ``dispatch_phase2`` — but a fast fill beat that deferred
+    commit, dropping the fill. The fix makes the broker-active path the
+    synchronous writer: Step 6 now writes + commits IN-TURN even under
+    ``defer_writeback=True``.
 
-    This locks two invariants pre-ALP-711's blocker fix:
+    This locks the post-ALP-763 invariants:
 
     1. A CLOSE command no longer ``ValueError``s at
        ``_dispatcher_context_for`` for missing ``invocation_handle`` — the
-       handle is now plumbed through from the harness.
-    2. With ``defer_writeback=True``, the wrapper's Step 6 in-tool writeback
-       does not fire, so no ``orders`` rows are inserted from inside the
-       SDK loop — leaving ``dispatch_phase2`` to write them once on a fresh
-       per-envelope session post-loop.
+       handle is plumbed through from the harness.
+    2. With ``defer_writeback=True`` AND broker routing active, the wrapper's
+       Step 6 writeback fires + commits in-turn, so the CLOSE ``orders`` row —
+       carrying the broker's real ``alpaca_order_id`` — is durable the instant
+       the broker fill could arrive. ``dispatch_phase2`` then detects the
+       already-persisted envelope and skips it (no double-write).
 
     The broker call still fires and the per-command result's acknowledgment
     carries the real Alpaca order id (via ``_with_real_order_id`` swap in
@@ -1203,14 +1207,15 @@ async def test_pm_envelope_close_with_defer_writeback_routes_no_persistence(
         # `if invocation_handle is None` guard).
         assert client.submit_order.call_count == 1
 
-        # Step 6 in-tool writeback was suppressed — no CLOSE order row
-        # landed in `orders`. The orchestrator's dispatch_phase2 would
-        # write it from `submission_log[0].submission_results[0]` +
-        # `submission_log[0].dispatch_results[0]` on its own session.
+        # ALP-763 — Step 6 wrote + committed IN-TURN under the broker-active
+        # path, so the CLOSE order row IS in `orders`, carrying the broker's
+        # real alpaca_order_id. A fresh session (the continuous monitor) can
+        # resolve it before dispatch_phase2 ever runs.
         async with factory() as sess:
             order_rows = (await sess.execute(select(OrderRow))).scalars().all()
             close_orders = [o for o in order_rows if o.order_role == "CLOSE"]
-            assert close_orders == []
+            assert len(close_orders) == 1
+            assert close_orders[0].alpaca_order_id == str(expected_alpaca_order_id)
 
         # The submission log carries the broker's real alpaca_order_id via
         # the `_with_real_order_id` swap inside `_route_through_broker`.

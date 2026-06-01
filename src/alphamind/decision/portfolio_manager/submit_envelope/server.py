@@ -479,12 +479,22 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
         ),
     )
 
-    # Step 6: SQL writeback (opt-in via invocation_handle; gated off by
-    # ``defer_writeback=True`` for the scheduler orchestrator's PM path,
-    # which threads a handle for broker-routing reads but defers persistence
-    # to the orchestrator's separate ``dispatch_phase2`` stage so the same
-    # envelope is not written twice).
-    if invocation_handle is not None and not defer_writeback:
+    # Step 6: SQL writeback (opt-in via invocation_handle).
+    #
+    # ``defer_writeback=True`` (the scheduler orchestrator's PM path) normally
+    # defers persistence to the orchestrator's separate ``dispatch_phase2``
+    # stage so the same envelope is not written twice. BUT when broker routing
+    # is active a real order was just dispatched to the broker inside this turn
+    # — and a fast fill (≈3s) can beat the deferred order-row commit (observed
+    # ≈74s later), leaving the continuous monitor unable to resolve the fill
+    # (ALP-763). On that path we write through + COMMIT here, in the PM turn,
+    # right after dispatch, closing the race to ~0; ``dispatch_phase2`` then
+    # detects the already-persisted envelope and skips it (no double-write, no
+    # double capital reservation, no duplicate audit emits).
+    broker_routing_active = (
+        client is not None and queries is not None and execution_config is not None
+    )
+    if invocation_handle is not None and (not defer_writeback or broker_routing_active):
         await _persist_envelope_outcome_via_phase2(
             invocation_handle,
             envelope,
@@ -502,6 +512,13 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
                 failure_reason=abandoned.failure_reason,
                 retry_attempt_count=abandoned.retry_attempt_count,
             )
+        if defer_writeback and broker_routing_active:
+            # The production (broker-active) path threads a normal writable
+            # session that is NOT wrapped by an InvocationContext committing on
+            # exit (the in-tool / debug-e2e paths run ``defer_writeback=False``
+            # under their own context). Commit it here so the freshly-persisted
+            # order rows are durable the instant the broker fill could arrive.
+            await invocation_handle.session.commit()
 
     # Step 7: serialize.
     response = {

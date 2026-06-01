@@ -19,6 +19,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.commands.submission_log import SubmissionLogEntry
@@ -26,10 +27,15 @@ from alphamind.execution.write_paths.phase2 import (
     persist_command_abandoned,
     persist_envelope_outcome,
 )
+from alphamind.portfolio_state.events.activity_log import EventType
 from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.invocation_context.activity_log import (
+    activity_log_entry_from_row,
+)
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
+from alphamind.state.tables.activity_log import ActivityLogRow
 
 if TYPE_CHECKING:
     from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
@@ -59,6 +65,34 @@ class PMResultLike(Protocol):
     def submission_log(self) -> tuple[SubmissionLogEntry, ...]: ...
 
 
+async def _envelope_already_persisted(
+    session: AsyncSession, *, invocation_id: str, envelope_id: str
+) -> bool:
+    """Return whether this envelope's Phase-2 outcome was already persisted in-turn.
+
+    Detection key (ALP-763): the single ``PM_DECISION`` activity-log row
+    :func:`persist_envelope_outcome` emits as the last semantic step of an
+    accepted envelope's writeback, scoped to ``(invocation_id, envelope_id)``.
+    The query is cheap — ``activity_log`` is indexed on
+    ``(event_type, invocation_id)`` — and the marker is reliable because the
+    broker-active PM turn commits the full writeback (orders + capital
+    reservation + ``pm_decision``) atomically on its own session before the
+    fill can arrive, so a present ``pm_decision`` row implies the rest of the
+    graph landed too. ``envelope_id`` is read off the rehydrated typed detail
+    rather than matched against the encoded JSON so the key never couples to
+    the serialization format.
+    """
+    stmt = select(ActivityLogRow).where(
+        ActivityLogRow.event_type == EventType.PM_DECISION.value,
+        ActivityLogRow.invocation_id == invocation_id,
+    )
+    for row in (await session.execute(stmt)).scalars():
+        entry = activity_log_entry_from_row(row)
+        if getattr(entry.detail, "envelope_id", None) == envelope_id:
+            return True
+    return False
+
+
 async def dispatch_phase2(
     *,
     session_factory: async_sessionmaker[AsyncSession],
@@ -85,25 +119,38 @@ async def dispatch_phase2(
     submitted = 0
     rejected = 0
     for entry in pm_result.submission_log:
+        # ALP-763 — the broker-active PM turn writes + commits each envelope's
+        # outcome IN-TURN (right after broker dispatch) to close the fast-fill
+        # race against the deferred order-row commit. When that already
+        # happened, re-running ``persist_envelope_outcome`` here would PK-collide
+        # on the order/position rows and double the (non-idempotent) capital
+        # reservation — so skip the writeback for an already-persisted envelope.
+        # The ``command_abandoned`` audit + summary counts below still run: an
+        # abandoned command is never part of the in-turn order/pm_decision graph,
+        # and the counts are derived purely from ``submission_results``.
         async with session_factory() as session:
             handle = InvocationHandle(session=session, invocation_id=invocation_id)
-            # ALP-711 scope (C) — when the submit_envelope wrapper routed
-            # accepted commands through the broker, ``entry.dispatch_results``
-            # carries the per-command :class:`BrokerDispatchResult` payload
-            # so this writeback persists the broker's real ``alpaca_order_id``.
-            # ``None`` (the debug-e2e / log-only path) falls through to the
-            # synthetic-ID fallback inside :func:`persist_envelope_outcome`.
-            await persist_envelope_outcome(
-                handle,
-                entry.envelope,
-                entry.submission_results,
-                config=state_persistence_config,
-                dispatch_results=cast(
-                    "tuple[BrokerDispatchResult | None, ...] | None",
-                    entry.dispatch_results,
-                ),
+            already_persisted = await _envelope_already_persisted(
+                session, invocation_id=invocation_id, envelope_id=str(entry.envelope.envelope_id)
             )
-            await session.commit()
+            if not already_persisted:
+                # ALP-711 scope (C) — when the submit_envelope wrapper routed
+                # accepted commands through the broker, ``entry.dispatch_results``
+                # carries the per-command :class:`BrokerDispatchResult` payload
+                # so this writeback persists the broker's real ``alpaca_order_id``.
+                # ``None`` (the debug-e2e / log-only path) falls through to the
+                # synthetic-ID fallback inside :func:`persist_envelope_outcome`.
+                await persist_envelope_outcome(
+                    handle,
+                    entry.envelope,
+                    entry.submission_results,
+                    config=state_persistence_config,
+                    dispatch_results=cast(
+                        "tuple[BrokerDispatchResult | None, ...] | None",
+                        entry.dispatch_results,
+                    ),
+                )
+                await session.commit()
         # ALP-711 — when broker routing returned ``GatewaySubmissionFailed``
         # for one or more accepted commands, the wrapper appended an
         # ``_AbandonedCommandEntry`` per failure onto the log entry. Emit
