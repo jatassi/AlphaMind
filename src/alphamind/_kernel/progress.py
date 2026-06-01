@@ -53,6 +53,27 @@ class ProgressEmitter(Protocol):
 
     def agent_request(self, *, phase: str, agent: str, model: str) -> None: ...
 
+    def agent_retrying(
+        self, *, phase: str, agent: str, model: str, attempt: int, reason: str
+    ) -> None:
+        """One recoverable-transient retry of an agent call (ALP-756).
+
+        Emitted between SDK attempts when a harness re-invokes after a
+        retryable failure (today: the synthesizer's empty, non-overflow
+        ``end_turn`` response). ``attempt`` is the 1-based index of the
+        attempt that just failed; ``reason`` is a short machine token
+        (``"empty_response"``). Distinct from ``agent_request`` so an
+        operator tailing the stream can tell a retry apart from a fresh
+        call.
+
+        Note for a future SSE wiring: the schema-level ``AgentRetryingEvent``
+        numbers ``attempt`` from 2 (the upcoming attempt) and types
+        ``reason`` as ``_FailureMode``; a bridge that emits it must translate
+        this signal's failed-attempt index (``attempt + 1``) and reason
+        vocabulary accordingly.
+        """
+        ...
+
     def agent_response(  # noqa: PLR0913 - kwargs-only Protocol contract: 3 routing kwargs (phase/agent/model) + the 7-field response set fixed by ALP-493 § (B) and the SDK ``usage`` split (ALP-701)
         self,
         *,
@@ -91,6 +112,9 @@ class NoOpProgressEmitter:
         pass
 
     def agent_request(self, **fields: Any) -> None:
+        pass
+
+    def agent_retrying(self, **fields: Any) -> None:
         pass
 
     def agent_response(self, **fields: Any) -> None:

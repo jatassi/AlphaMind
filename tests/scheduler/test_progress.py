@@ -56,6 +56,9 @@ class RecordingProgressEmitter:
     def agent_request(self, **fields: Any) -> None:
         self.events.append(("agent_request", fields))
 
+    def agent_retrying(self, **fields: Any) -> None:
+        self.events.append(("agent_retrying", fields))
+
     def agent_response(self, **fields: Any) -> None:
         self.events.append(("agent_response", fields))
 

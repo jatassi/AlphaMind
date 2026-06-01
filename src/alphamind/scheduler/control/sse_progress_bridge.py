@@ -170,6 +170,21 @@ class PipelineSSEProgressBridge:
                 log.exception("SSE agent_started emit failed agent=%s", agent)
         self._inner.agent_request(phase=phase, agent=agent, model=model)
 
+    def agent_retrying(
+        self, *, phase: str, agent: str, model: str, attempt: int, reason: str
+    ) -> None:
+        # Forward to the inner emitter only (the debug-e2e JSONL captures it),
+        # mirroring the phase_start / phase_done pass-through. A schema-level
+        # ``AgentRetryingEvent`` exists, but emitting it for this signal is
+        # deferred: the synthesizer's ``reason="empty_response"`` is outside the
+        # event's ``_FailureMode`` vocabulary and its two-retry budget exceeds
+        # the event's documented attempt cap, so wiring the SSE emit needs a
+        # coordinated schema + frontend change tracked separately (ALP-756
+        # follow-up). The diagnostic ``errors.json`` is the prod-side record.
+        self._inner.agent_retrying(
+            phase=phase, agent=agent, model=model, attempt=attempt, reason=reason
+        )
+
     def agent_response(  # noqa: PLR0913 - mirrors ProgressEmitter Protocol's 10-kwarg contract; cannot be reduced
         self,
         *,

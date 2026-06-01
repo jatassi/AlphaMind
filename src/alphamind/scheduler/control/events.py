@@ -198,6 +198,9 @@ class SSEEventEmitter:
     def agent_request(self, **fields: Any) -> None:
         del fields
 
+    def agent_retrying(self, **fields: Any) -> None:
+        del fields
+
     def agent_response(self, **fields: Any) -> None:
         del fields
 

@@ -62,6 +62,7 @@ from alphamind.analysis.domain_researchers.harness import HarnessSuccess as DRHa
 from alphamind.analysis.domain_researchers.models import SectorBrief
 from alphamind.analysis.qualitative_research.harness import HarnessSuccess as QRHarnessSuccess
 from alphamind.analysis.qualitative_research.models import QualitativeBrief
+from alphamind.analysis.synthesizer.harness import EmptyResponseFailure
 from alphamind.risk_guardrails.guardrail_evaluation import MarketInputs
 from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import (
     RealizedVolEntry,
@@ -222,6 +223,13 @@ def _raise_failure(error_payload: dict[str, Any]) -> None:
             err_msg,
             agent_name=agent_name,
             invocation_id=invocation_id,
+        )
+    if err_type == "EmptyResponseFailure":
+        raise EmptyResponseFailure(
+            err_msg,
+            agent_name=agent_name,
+            invocation_id=invocation_id,
+            raw_response=error_payload.get("raw_response"),
         )
     # SDKFailure or anything unrecognized — surface as SDKFailure so the
     # orchestrator's fail-closed path engages.
