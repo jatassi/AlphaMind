@@ -173,9 +173,14 @@ class PipelineSSEProgressBridge:
     def agent_retrying(
         self, *, phase: str, agent: str, model: str, attempt: int, reason: str
     ) -> None:
-        # No matching SSE schema event in the v1 vocabulary; forward to the
-        # inner emitter only (the debug-e2e JSONL captures it), mirroring
-        # the phase_start / phase_done pass-through handling.
+        # Forward to the inner emitter only (the debug-e2e JSONL captures it),
+        # mirroring the phase_start / phase_done pass-through. A schema-level
+        # ``AgentRetryingEvent`` exists, but emitting it for this signal is
+        # deferred: the synthesizer's ``reason="empty_response"`` is outside the
+        # event's ``_FailureMode`` vocabulary and its two-retry budget exceeds
+        # the event's documented attempt cap, so wiring the SSE emit needs a
+        # coordinated schema + frontend change tracked separately (ALP-756
+        # follow-up). The diagnostic ``errors.json`` is the prod-side record.
         self._inner.agent_retrying(
             phase=phase, agent=agent, model=model, attempt=attempt, reason=reason
         )

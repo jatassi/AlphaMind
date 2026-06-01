@@ -373,6 +373,55 @@ def test_synthesizer_wrapper_failure_path() -> None:
         )
 
 
+def test_synthesizer_wrapper_raises_empty_response_failure() -> None:
+    """An exhausted empty-response retry is reconstructed as EmptyResponseFailure
+    on the parent side — not collapsed into a generic SDKFailure (ALP-756)."""
+    from alphamind.analysis.synthesizer.harness import EmptyResponseFailure
+
+    envelope = {
+        **_failure_envelope(error_type="EmptyResponseFailure", error_msg="no usable prose"),
+        "raw_response": "",
+    }
+
+    async def fake_run_worker(_: dict[str, Any]) -> dict[str, Any]:
+        return envelope
+
+    with (
+        patch.object(sp, "_run_worker", fake_run_worker),
+        pytest.raises(EmptyResponseFailure) as exc_info,
+    ):
+        asyncio.run(
+            sp.invoke_synthesizer_in_subprocess(
+                agent_config=_stub_agent_config(),
+                user_message="hello",
+                invocation_id="INV-1",
+                portfolio_reader=_FakeSynthesizerReader(),
+            )
+        )
+
+    assert exc_info.value.raw_response == ""
+
+
+def test_worker_failure_payload_serializes_empty_response_failure() -> None:
+    """The worker serializes EmptyResponseFailure with its own error_type and
+    raw_response, not via the generic unknown-exception SDKFailure fallback."""
+    from alphamind.analysis._sdk_subprocess_worker import _failure_payload
+    from alphamind.analysis.synthesizer.harness import EmptyResponseFailure
+
+    payload = _failure_payload(
+        EmptyResponseFailure(
+            "no usable prose",
+            agent_name="synthesizer",
+            invocation_id="INV-1",
+            raw_response="",
+        )
+    )
+
+    assert payload["error_type"] == "EmptyResponseFailure"
+    assert payload["raw_response"] == ""
+    assert payload["agent_name"] == "synthesizer"
+
+
 # ---------------------------------------------------------------------------
 # Failure-only smoke tests for the heavy-state wrappers
 #

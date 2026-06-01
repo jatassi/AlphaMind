@@ -40,7 +40,7 @@ from alphamind.analysis._shared import Sector
 from alphamind.analysis.adaptive_research.harness import invoke_adaptive_researcher
 from alphamind.analysis.domain_researchers.harness import invoke_domain_researcher
 from alphamind.analysis.qualitative_research.harness import invoke_qualitative_researcher
-from alphamind.analysis.synthesizer.harness import invoke_synthesizer
+from alphamind.analysis.synthesizer.harness import EmptyResponseFailure, invoke_synthesizer
 from alphamind.config.models.agents import BaseAgentConfig
 from alphamind.config.models.execution import ExecutionConfig
 from alphamind.config.models.main import ExecutionMode
@@ -224,6 +224,15 @@ def _failure_payload(exc: Exception) -> dict[str, Any]:
             "agent_name": exc.agent_name,
             "invocation_id": exc.invocation_id,
         }
+    if isinstance(exc, EmptyResponseFailure):
+        return {
+            "kind": "failure",
+            "error_type": "EmptyResponseFailure",
+            "error_msg": str(exc),
+            "agent_name": exc.agent_name,
+            "invocation_id": exc.invocation_id,
+            "raw_response": exc.raw_response,
+        }
     # Unknown exception — surface as SDKFailure so the parent's fail-closed path engages.
     return {
         "kind": "failure",
@@ -338,7 +347,13 @@ async def _run_synthesizer(payload: dict[str, Any]) -> dict[str, Any]:
             progress=progress,
             phase=payload.get("phase", "synthesizer"),
         )
-    except (MalformedOutputFailure, ContextOverflowFailure, TimeoutFailure, SDKFailure) as exc:
+    except (
+        EmptyResponseFailure,
+        MalformedOutputFailure,
+        ContextOverflowFailure,
+        TimeoutFailure,
+        SDKFailure,
+    ) as exc:
         return _failure_payload(exc)
 
     return _success_payload(result)

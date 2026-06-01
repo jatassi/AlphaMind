@@ -65,6 +65,12 @@ class ProgressEmitter(Protocol):
         (``"empty_response"``). Distinct from ``agent_request`` so an
         operator tailing the stream can tell a retry apart from a fresh
         call.
+
+        Note for a future SSE wiring: the schema-level ``AgentRetryingEvent``
+        numbers ``attempt`` from 2 (the upcoming attempt) and types
+        ``reason`` as ``_FailureMode``; a bridge that emits it must translate
+        this signal's failed-attempt index (``attempt + 1``) and reason
+        vocabulary accordingly.
         """
         ...
 
