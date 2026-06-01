@@ -22,6 +22,7 @@ from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
 from alphamind.state.tables.theses import ThesisRow
 from alphamind.state.tables.thesis_components import ThesisComponentRow
+from alphamind.state.tables.unattributed_fills import UnattributedFillRow
 
 __all__ = [
     "ActivityLogRow",
@@ -38,4 +39,5 @@ __all__ = [
     "ProcessLifetimeRow",
     "ThesisComponentRow",
     "ThesisRow",
+    "UnattributedFillRow",
 ]
