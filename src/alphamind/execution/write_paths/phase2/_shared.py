@@ -82,6 +82,7 @@ from alphamind.state.invocation_context.activity_log import (
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
+from alphamind.state.records import FillProcessingStatus
 from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.brackets import BracketRow
 from alphamind.state.tables.brackets_codec import (
@@ -91,6 +92,7 @@ from alphamind.state.tables.cash_ledger import (
     CASH_LEDGER_SINGLETON_ID,
     CashLedgerRow,
 )
+from alphamind.state.tables.fill_records import FillRecordRow
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.orders_codec import (
     row_to_record as order_row_to_record,
@@ -398,6 +400,18 @@ def _order_notional_usd(*, price: Price, remaining_quantity: float) -> Money:
     return money(Decimal(str(price)) * Decimal(str(remaining_quantity)))
 
 
+def _order_reservation_price(order: OrderRecord) -> Price | None:
+    """Reservation-price basis for an entry / add-entry order (ALP-741).
+
+    ``limit_price`` preferred, ``stop_trigger_price`` the fallback; ``None`` for
+    a market entry (it reserves nothing). The single price basis the whole
+    reservation lifecycle keys off — OPEN / ADD reserve, the entry-window reprice
+    adjusts, and the terminal / partial CANCEL releases against it.
+    """
+    pp = order.price_parameters
+    return pp.limit_price if pp.limit_price is not None else pp.stop_trigger_price
+
+
 def _order_reserved_notional(order: OrderRecord) -> Money:
     """Reserved-capital notional for an entry / add-entry order (ALP-741).
 
@@ -405,9 +419,9 @@ def _order_reserved_notional(order: OrderRecord) -> Money:
     it at submission, the entry-window reprice adjusts it by the limit delta, and
     the terminal CANCEL releases it — so ``cash_ledger.reserved_capital_usd``
     stays equal to the sum of live pending-entry notionals at all times and can
-    never drift negative. ``limit_price`` is preferred, ``stop_trigger_price`` is
-    the fallback; a market entry carries no price → ``money(0)`` (a marketable
-    order reserves nothing, matching the ``pending_order_capital_pct`` rule's
+    never drift negative. The price basis is ``_order_reservation_price``; a
+    market entry carries no price → ``money(0)`` (a marketable order reserves
+    nothing, matching the ``pending_order_capital_pct`` rule's
     ``reserves_capital`` convention and the read-side
     ``library_snapshot._build_position_reservations``).
 
@@ -416,11 +430,30 @@ def _order_reserved_notional(order: OrderRecord) -> Money:
     notional — the basis mismatch let a repriced-then-cancelled entry drive the
     ledger negative and crash every subsequent decision-pipeline invocation.
     """
-    pp = order.price_parameters
-    px = pp.limit_price if pp.limit_price is not None else pp.stop_trigger_price
+    px = _order_reservation_price(order)
     if px is None:
         return money(0)
     return _order_notional_usd(price=px, remaining_quantity=order.remaining_quantity)
+
+
+async def _unprocessed_filled_quantity(handle: InvocationHandle, *, order_id: str) -> float:
+    """Summed quantity of UNPROCESSED ``fill_records`` recorded against *order_id*.
+
+    The continuous monitor appends a ``fill_records`` row (status ``unprocessed``)
+    the instant a broker fill lands; Phase 1 later drains it into the order's
+    ``filled_quantity``. Between those two events — exactly the stale-snapshot
+    window a PM CANCEL is decided in (ALP-760) — the order row still reads
+    zero-filled while shares already exist on the broker. Summing the unprocessed
+    fills recovers that not-yet-integrated filled quantity. QUARANTINED fills are
+    excluded (Phase 1 rejected them as malformed — they back no real shares), and
+    PROCESSED fills are already folded into ``filled_quantity`` so counting them
+    here would double-count.
+    """
+    stmt = select(FillRecordRow.fill_quantity).where(
+        FillRecordRow.order_id == order_id,
+        FillRecordRow.processing_status == FillProcessingStatus.UNPROCESSED.value,
+    )
+    return float(sum((await handle.session.execute(stmt)).scalars()))
 
 
 async def _reserve_capital(handle: InvocationHandle, *, amount_usd: Money) -> None:
