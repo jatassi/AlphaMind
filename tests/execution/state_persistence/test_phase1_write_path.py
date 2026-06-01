@@ -395,19 +395,22 @@ def _make_open_position(
     )
 
 
-def _make_cancelled_position(
+def _make_terminal_position(
     position_id: str = "pos-1",
     *,
+    status: PositionStatus = PositionStatus.CANCELLED,
     thesis_id: str | None = "thesis-1",
     bracket_id: str | None = "brk-1",
     direction: Direction = Direction.LONG,
     ticker: str = "AAPL",
 ) -> PositionRecord:
-    """Build a CANCELLED position — terminal, never opened, no fills (ALP-744).
+    """Build a terminal-status (CANCELLED / CLOSED) equity position with no fills.
 
-    Mirrors the prod poison-pill state from the 2026-06-01 incident: an entry
-    cancelled + bracket dissolved mid-fill, leaving a partial fill that lands
-    against a CANCELLED target.
+    CANCELLED mirrors the prod poison-pill state from the 2026-06-01 incident
+    (an entry cancelled + bracket dissolved mid-fill, leaving a partial fill that
+    lands against a CANCELLED target). CLOSED is the other member of
+    ``_NON_INTEGRATABLE_STATUSES`` — a fill landing against either is an orphan
+    the pre-integration gate quarantines.
     """
     details = EquityPositionDetails(
         ticker=Symbol(ticker),
@@ -422,12 +425,14 @@ def _make_cancelled_position(
         position_id=PositionId(position_id),
         thesis_id=ThesisId(thesis_id) if thesis_id else None,
         bracket_id=BracketId(bracket_id) if bracket_id else None,
-        status=PositionStatus.CANCELLED,
+        status=status,
         direction=direction,
         entry_timestamp=None,
         details=details,
         execution_history=(),
-        realized_pnl_to_date_usd=None,
+        # A CLOSED position must carry realized P/L (record invariant); a
+        # CANCELLED one never opened, so it stays None.
+        realized_pnl_to_date_usd=0.0 if status == PositionStatus.CLOSED else None,
         corporate_action_adjustment_needed=False,
         parent_position_id=None,
         origin=None,
@@ -2403,12 +2408,18 @@ async def _assert_phase1_completed(
         assert inv_row.phase1_completed_at is not None
 
 
-async def test_fill_against_cancelled_position_quarantined_not_raised(
+@pytest.mark.parametrize(
+    "terminal_status",
+    [PositionStatus.CANCELLED, PositionStatus.CLOSED],
+)
+async def test_fill_against_terminal_position_quarantined_not_raised(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    terminal_status: PositionStatus,
 ) -> None:
-    """AC (a): a fill whose target equity position is CANCELLED is quarantined
-    (not raised), fills_quarantined increments, a reconciliation alert is
-    emitted, and Phase-1 completes normally."""
+    """AC (a): a fill whose target equity position is in a terminal status
+    (CANCELLED or CLOSED) is quarantined (not raised), fills_quarantined
+    increments, a reconciliation alert is emitted, and Phase-1 completes
+    normally. Parametrized over both members of _NON_INTEGRATABLE_STATUSES."""
     from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
@@ -2416,11 +2427,11 @@ async def test_fill_against_cancelled_position_quarantined_not_raised(
     _, factory = db
     await _seed_invocation_substrate(factory)
     # Entry order resolves its position via the bracket (position_id is None on
-    # an entry order); the bracket points at a CANCELLED position — the prod
-    # poison-pill shape.
+    # an entry order); the bracket points at a terminal-status position — the
+    # prod poison-pill shape.
     await _seed_position_order_thesis_bracket(
         factory,
-        _make_cancelled_position(),
+        _make_terminal_position(status=terminal_status),
         _make_pending_entry_order(),
         _make_active_thesis(),
         _make_pending_bracket(),
@@ -2440,6 +2451,8 @@ async def test_fill_against_cancelled_position_quarantined_not_raised(
 
     assert summary.fills_processed == 0
     assert summary.fills_quarantined == 1
+    # The quarantine alert is counted in the summary (ALP-761).
+    assert summary.reconciliation_alerts == 1
 
     async with factory() as sess:
         fill_row = (
@@ -2449,11 +2462,11 @@ async def test_fill_against_cancelled_position_quarantined_not_raised(
         assert fill_row.processing_invocation_id == handle.invocation_id
         # Quarantined fills retain regt_attribution_json IS NULL (parent decision H).
         assert fill_row.regt_attribution_json is None
-        # The CANCELLED position is untouched — no fill integrated into it.
+        # The terminal position is untouched — no fill integrated into it.
         pos_row = (
             await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
         ).scalar_one()
-        assert pos_row.status == PositionStatus.CANCELLED.value
+        assert pos_row.status == terminal_status.value
 
     alerts = await _read_reconciliation_alerts(factory, handle.invocation_id)
     assert len(alerts) == 1
@@ -2487,7 +2500,7 @@ async def test_mixed_batch_poison_pill_quarantined_healthy_processed(
     # directly at it (DVN analogue).
     await _seed_position(
         factory,
-        _make_cancelled_position(position_id="pos-dvn", thesis_id=None, bracket_id=None),
+        _make_terminal_position(position_id="pos-dvn", thesis_id=None, bracket_id=None),
     )
     await _seed_order(
         factory,

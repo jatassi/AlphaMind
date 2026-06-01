@@ -196,8 +196,11 @@ class _SnapshotLookup:
 class Phase1Summary:
     """Outcome of one ``process_unprocessed_fills`` invocation.
 
-    ``reconciliation_alerts`` counts the ``RECONCILIATION_ALERT`` activity-log
-    entries emitted by the post-merge reconciliation step (ALP-415).
+    ``reconciliation_alerts`` counts every ``RECONCILIATION_ALERT`` activity-log
+    entry this invocation emitted — the post-merge reconciliation step's
+    (ALP-415) plus the per-fill quarantine alerts raised when a fill cannot be
+    integrated (ALP-761). It is the total written to the activity log, so the
+    summary cannot under-report orphan-fill alerts.
 
     ALP-619 — drift on an existing OPEN equity ``share_count`` and the
     singleton ``cash_ledger.current_cash_usd`` is now auto-corrected in the
@@ -296,6 +299,7 @@ async def process_unprocessed_fills(
     alpaca_lookup = _SnapshotLookup(alpaca_positions) if alpaca_positions else None
 
     fills_processed = 0
+    quarantine_alerts = 0
     for event in _iter_merged_events(valid_fills, ca_activities):
         if isinstance(event, FillRecord):
             processed = await _integrate_or_quarantine_fill(
@@ -309,7 +313,9 @@ async def process_unprocessed_fills(
             if processed:
                 fills_processed += 1
             else:
+                # Every in-loop quarantine emits exactly one reconciliation alert.
                 quarantined_count += 1
+                quarantine_alerts += 1
         else:
             await _integrate_one_ca_activity(handle, event, alpaca_lookup)
 
@@ -325,7 +331,11 @@ async def process_unprocessed_fills(
         fills_processed=fills_processed,
         fills_quarantined=quarantined_count,
         ca_activities_processed=len(ca_activities),
-        reconciliation_alerts=reconciliation_alerts,
+        # Count every RECONCILIATION_ALERT this invocation wrote — the post-merge
+        # reconciler's plus the per-fill quarantine alerts (ALP-761) — so the
+        # summary persisted into fill_collection_summary_json does not under-report
+        # the orphan alerts an operator needs to see.
+        reconciliation_alerts=reconciliation_alerts + quarantine_alerts,
     )
 
 
@@ -447,57 +457,58 @@ async def _integrate_or_quarantine_fill(
       than letting it reach :func:`_apply_fill_to_equity_position`. This is the
       equity analogue of the strategy path's existing cancel-mid-fill handling.
 
-    * **Defense-in-depth.** The state mutation in :func:`_integrate_one_fill`
-      runs inside a SAVEPOINT so any *unexpected* per-fill failure rolls back
-      only this fill's partial mutations; the fill is quarantined + alerted and
-      the loop continues.
+    * **Defense-in-depth.** Target resolution and the state mutation in
+      :func:`_integrate_one_fill` both run under one try; the mutation runs
+      inside a SAVEPOINT so any *unexpected* per-fill failure (a raise from an
+      apply-fill helper, a codec error decoding a row, …) rolls back only this
+      fill's partial mutations, and the fill is quarantined + alerted while the
+      loop continues. Resolution runs inside the same try (it predates the
+      savepoint and mutates nothing) so a resolution failure is isolated too,
+      not propagated past the gate.
 
-    The Reg T attribution wedge runs *after* the savepoint commits, so a
-    ``compute_attribution`` failure (a missing-market-data gap that affects every
-    open position, not just this fill) propagates and aborts the invocation for
-    retry — the deliberate "surface the gap as a hard error" contract — rather
-    than silently quarantining every fill in turn. A quarantined fill therefore
-    retains ``regt_attribution_json IS NULL`` (parent decision (H)).
+    Two failure classes deliberately escape this isolation and abort the
+    invocation for retry rather than silently quarantining fill-by-fill:
+
+    * :class:`StateInconsistencyError` — a Tier-1 row references a missing FK
+      target. That is structural corruption, not a per-fill orphan; the
+      operator must see it (re-raised below).
+    * A ``compute_attribution`` failure — a missing-market-data gap that affects
+      every open position. It runs *after* the savepoint commits, so it
+      propagates ("surface the gap as a hard error"). A quarantined fill
+      therefore retains ``regt_attribution_json IS NULL`` (parent decision (H)).
     """
-    target = await _resolve_target_position(handle, fill)
-    if target is not None and target.status in _NON_INTEGRATABLE_STATUSES:
-        _stamp_quarantined(row, handle.invocation_id)
-        _emit_quarantine_alert(
-            handle,
-            fill,
-            position_id=target.position_id,
-            delta_description=(
-                f"Fill {fill.fill_id!r} (order {fill.order_id!r}, "
-                f"{fill.fill_quantity} @ {fill.fill_price}) targets position "
-                f"{target.position_id!r} in terminal status {target.status.value}; "
-                "quarantined so the batch completes. The underlying broker position "
-                "may still exist and needs separate reconciliation (ALP-760)."
-            ),
-        )
-        return False
-
+    target: PositionRecord | None = None
     pre_positions = await _read_all_positions(handle)
     try:
+        target = await _resolve_target_position(handle, fill)
+        if target.status in _NON_INTEGRATABLE_STATUSES:
+            _quarantine_fill(
+                handle,
+                fill,
+                row,
+                position_id=target.position_id,
+                delta_description=_orphan_quarantine_message(fill, target),
+            )
+            return False
         async with handle.session.begin_nested():
             await _integrate_one_fill(handle, fill, borrow_cost_resolver=borrow_cost_resolver)
+    except StateInconsistencyError:
+        # Structural corruption (a Tier-1 row points at a missing FK target) is
+        # not a per-fill orphan — surface it loudly and let the surrounding
+        # InvocationContext roll the batch back, the same hard-stop contract as
+        # a systemic attribution gap.
+        raise
     except Exception as exc:
         # Broad by intent: the whole point of ALP-761 is that no single fill,
         # however its integration fails, can abort the batch. The savepoint above
         # has already rolled back this fill's partial mutations; quarantine +
-        # alert surfaces the orphan for manual reconciliation rather than
-        # swallowing it silently.
-        _stamp_quarantined(row, handle.invocation_id)
-        _emit_quarantine_alert(
+        # alert surfaces it for manual reconciliation rather than swallowing it.
+        _quarantine_fill(
             handle,
             fill,
+            row,
             position_id=target.position_id if target is not None else None,
-            delta_description=(
-                f"Fill {fill.fill_id!r} (order {fill.order_id!r}, "
-                f"{fill.fill_quantity} @ {fill.fill_price}) raised during Phase-1 "
-                f"integration ({type(exc).__name__}: {exc}); quarantined so the "
-                "batch completes. The orphan may have left a live broker position — "
-                "reconcile manually."
-            ),
+            delta_description=_failed_quarantine_message(fill, exc),
         )
         return False
 
@@ -513,23 +524,62 @@ async def _integrate_or_quarantine_fill(
     return True
 
 
-async def _resolve_target_position(
-    handle: InvocationHandle, fill: FillRecord
-) -> PositionRecord | None:
+async def _resolve_target_position(handle: InvocationHandle, fill: FillRecord) -> PositionRecord:
     """Resolve the position a fill targets, read-only, for the pre-integration gate.
 
-    Returns ``None`` when the order / bracket / position cannot be resolved — the
-    integration path re-encounters the same gap and raises, and the savepoint
-    isolation in :func:`_integrate_or_quarantine_fill` quarantines the fill. This
-    keeps the gate purely additive: it only short-circuits the *known*
-    terminal-status orphan case.
+    Reuses the same ``_read_order`` + ``_read_position_for_order`` lookups
+    :func:`_integrate_one_fill` runs; within one transaction the second
+    resolution there is an identity-map cache hit. The gate mutates nothing, so
+    running it before the savepoint is safe. Raises (missing order / bracket /
+    position) propagate to the caller's try, which isolates the fill — the gate
+    never wedges the batch on its own.
     """
-    try:
-        order = await _read_order(handle, fill.order_id)
-        _row, position = await _read_position_for_order(handle, order)
-    except ValueError:
-        return None
+    order = await _read_order(handle, fill.order_id)
+    _row, position = await _read_position_for_order(handle, order)
     return position
+
+
+def _quarantine_fill(
+    handle: InvocationHandle,
+    fill: FillRecord,
+    row: FillRecordRow,
+    *,
+    position_id: str | None,
+    delta_description: str,
+) -> None:
+    """Stamp a fill ``QUARANTINED`` and emit the reconciliation alert surfacing it."""
+    _stamp_quarantined(row, handle.invocation_id)
+    _emit_quarantine_alert(
+        handle, fill, position_id=position_id, delta_description=delta_description
+    )
+
+
+def _orphan_quarantine_message(fill: FillRecord, target: PositionRecord) -> str:
+    """Operator-facing alert text for a fill against a terminal-status position."""
+    return (
+        f"Fill {fill.fill_id!r} (order {fill.order_id!r}, {fill.fill_quantity} @ "
+        f"{fill.fill_price}) targets position {target.position_id!r} in terminal "
+        f"status {target.status.value}; quarantined so the batch completes. The "
+        "underlying broker position may still exist and needs separate "
+        "reconciliation (ALP-760)."
+    )
+
+
+def _failed_quarantine_message(fill: FillRecord, exc: Exception) -> str:
+    """Operator-facing alert text for a fill that failed to integrate unexpectedly.
+
+    Deliberately does *not* assume a live broker-position orphan — the failure
+    may be anywhere in integration (cash, drawdown, codec), and the savepoint has
+    rolled the fill's mutations back, so the affected position's local state is
+    unchanged.
+    """
+    return (
+        f"Fill {fill.fill_id!r} (order {fill.order_id!r}, {fill.fill_quantity} @ "
+        f"{fill.fill_price}) could not be integrated in Phase-1 "
+        f"({type(exc).__name__}: {exc}); quarantined so the batch completes. Local "
+        "state for the affected position is unchanged — review the fill and "
+        "reconcile against the broker manually."
+    )
 
 
 def _emit_quarantine_alert(
