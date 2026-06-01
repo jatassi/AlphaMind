@@ -27,6 +27,11 @@ from alphamind.execution.broker_adapter.queries import (
     TradeAccountSnapshot,
 )
 from alphamind.portfolio_state.events.activity_log import EventType
+from alphamind.portfolio_state.records.positions import (
+    EquityPositionDetails,
+    PositionRecord,
+    PositionStatus,
+)
 from alphamind.state.tables.activity_log import (
     ActivityLogRow,
 )
@@ -61,18 +66,43 @@ def _trade_account(
     )
 
 
-def _equity_position_snapshot(*, symbol: str = "AAPL", qty: float = 10.0) -> PositionSnapshot:
+def _equity_position_snapshot(
+    *, symbol: str = "AAPL", qty: float = 10.0, avg_entry_price: float = 150.0
+) -> PositionSnapshot:
     return PositionSnapshot(
         symbol=symbol,
         asset_class="us_equity",
         qty=qty,
-        avg_entry_price=price(150.0),
-        market_value=money(qty * 150.0),
-        cost_basis=money(qty * 150.0),
+        avg_entry_price=price(avg_entry_price),
+        market_value=money(qty * avg_entry_price),
+        cost_basis=money(qty * avg_entry_price),
         unrealized_pl=money(0.0),
         unrealized_plpc=0.0,
-        current_price=price(150.0),
+        current_price=price(avg_entry_price),
         side="long",
+    )
+
+
+def _make_pending_equity_position(
+    *, position_id: str = "pos-1", ticker: str = "AAPL"
+) -> PositionRecord:
+    """Build a PENDING equity ``PositionRecord`` (share_count=0, no fills).
+
+    Mirrors the ALP-763 wedged state: the OPEN writeback laid down the thesis +
+    bracket + order scaffolding, the position row is PENDING with
+    ``share_count=0`` and empty ``execution_history`` (the status-rule
+    invariant), but the entry fill that should have flipped it to OPEN was
+    dropped — while Alpaca already holds the shares.
+    """
+    from dataclasses import replace as dc_replace
+
+    template = make_open_equity_position(position_id=position_id, ticker=ticker, share_count=0.0)
+    assert isinstance(template.details, EquityPositionDetails)
+    return dc_replace(
+        template,
+        status=PositionStatus.PENDING,
+        entry_timestamp=None,
+        execution_history=(),
     )
 
 
@@ -1500,3 +1530,149 @@ async def test_reconcile_equity_only_alpaca_response_does_not_wipe_local_options
             .all()
         )
         assert all('"field_name":"contract_count"' not in c.detail_json for c in corrections)
+
+
+async def test_reconcile_pending_local_with_nonzero_alpaca_auto_opens(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-763 last-resort backstop — a PENDING local equity position
+    (share_count=0, no fills) whose Alpaca holding is nonzero is auto-OPENED:
+    the row flips PENDING → OPEN, share_count := abs(Alpaca qty), the cost
+    basis adopts Alpaca's avg_entry_price, entry_timestamp is stamped, and the
+    paired RECONCILIATION_ALERT + RECONCILIATION_CORRECTION fire. This is the
+    dropped-entry-fill recovery: the OPEN writeback already laid down the
+    thesis + bracket scaffolding, so flipping to OPEN with the broker qty is
+    honest (unlike materializing an Alpaca-only orphan)."""
+    from alphamind.execution.corporate_actions.reconciliation import reconcile
+    from alphamind.state.tables.positions import PositionRow
+    from alphamind.state.tables.positions_codec import (
+        row_to_record as position_row_to_record,
+    )
+
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_position_cluster(
+        factory,
+        _make_pending_equity_position(),
+        make_pending_entry_order(),
+        make_active_thesis(),
+        make_active_bracket(),
+    )
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    ctx, handle = await open_handle(factory)
+    await reconcile(
+        handle,
+        # Alpaca holds 10 shares at $152.50 — the dropped entry fill.
+        alpaca_positions=(
+            _equity_position_snapshot(symbol="AAPL", qty=10.0, avg_entry_price=152.5),
+        ),
+        alpaca_account=_trade_account(cash=100_000.0),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert isinstance(pos.details, EquityPositionDetails)
+        # PENDING → OPEN with the broker's authoritative quantity + basis.
+        assert pos.status == PositionStatus.OPEN
+        assert pos.details.share_count == pytest.approx(10.0)
+        assert pos.details.average_cost_basis_per_share == pytest.approx(152.5)
+        # entry_timestamp stamped (was null on the wedged PENDING row).
+        assert pos.entry_timestamp is not None
+        # OPEN invariant satisfied — a synthesized fill backs the open.
+        assert pos.execution_history
+
+        alerts = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_ALERT.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(alerts) == 1
+        assert '"field_name":"share_count"' in alerts[0].detail_json
+
+        corrections = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_CORRECTION.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(corrections) == 1
+        assert corrections[0].position_id == "pos-1"
+        assert '"field_name":"share_count"' in corrections[0].detail_json
+        assert '"prior_local_value":0.0' in corrections[0].detail_json
+        assert '"applied_alpaca_value":10.0' in corrections[0].detail_json
+
+
+async def test_reconcile_pending_local_no_equity_evidence_left_untouched(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-763 — the positive-evidence gate guards the PENDING auto-open. When
+    Alpaca returns NO ``us_equity`` snapshot (only options evidence), a PENDING
+    local equity position must stay PENDING — no auto-open, no correction. The
+    backstop only fires when Alpaca affirmatively reports the held shares."""
+    from alphamind.execution.corporate_actions.reconciliation import reconcile
+    from alphamind.state.tables.positions import PositionRow
+    from alphamind.state.tables.positions_codec import (
+        row_to_record as position_row_to_record,
+    )
+
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_position_cluster(
+        factory,
+        _make_pending_equity_position(),
+        make_pending_entry_order(),
+        make_active_thesis(),
+        make_active_bracket(),
+    )
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    ctx, handle = await open_handle(factory)
+    await reconcile(
+        handle,
+        # Options-only evidence — no us_equity snapshot, so the equity
+        # writeback gate is closed and the PENDING row must not auto-open.
+        alpaca_positions=(_options_position_snapshot(qty=5.0),),
+        alpaca_account=_trade_account(cash=100_000.0),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert isinstance(pos.details, EquityPositionDetails)
+        # Untouched: still PENDING, still zero shares, no fills.
+        assert pos.status == PositionStatus.PENDING
+        assert pos.details.share_count == pytest.approx(0.0)
+        assert pos.entry_timestamp is None
+        assert pos.execution_history == ()
+
+        corrections = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_CORRECTION.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert corrections == []
