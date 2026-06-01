@@ -713,3 +713,20 @@ class TestMainRegistersApschedulerTask:
 
         assert captured["supervisor_ran"] is True
         assert "apscheduler" in captured["task_names"]
+
+
+def test_schema_trigger_types_mirrors_wire_run_type_literal() -> None:
+    """``_SCHEMA_TRIGGER_TYPES`` must stay in sync with the wire vocabulary (ALP-755).
+
+    The next-trigger preview filters trigger keys against this set; it exists
+    only to keep keys outside the schema's ``_RunType`` literal off the wire.
+    Once a run type joins ``_RunType`` it must also be previewable here, or a
+    weekend trigger silently stops updating the operator console. Deriving the
+    expectation from ``_RunType`` itself guards against future drift.
+    """
+    from typing import get_args
+
+    from alphamind.scheduler.control.models import _RunType
+    from alphamind.scheduler.driver import _SCHEMA_TRIGGER_TYPES
+
+    assert set(get_args(_RunType)) == _SCHEMA_TRIGGER_TYPES

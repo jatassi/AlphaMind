@@ -298,9 +298,11 @@ Enum values and structural constraints trace back to these authoritative sources
         "off_hours_rolling",
         "pre_open",
         "pre_close",
+        "weekend_saturday",
+        "weekend_sunday",
         "emergency"
       ],
-      "description": "Trigger that fired the invocation. Per infrastructure.md § Trigger schedule plus the emergency trigger from breach-behavior.md."
+      "description": "Trigger that fired the invocation. Per infrastructure.md § Trigger schedule plus the weekend triggers and the emergency trigger from breach-behavior.md. Mirrors the full RunType enum."
     },
 
     "agent_name_enum": {

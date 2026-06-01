@@ -226,6 +226,18 @@ class TestEventPayloads:
         )
         assert event.run_type == "emergency"
 
+    @pytest.mark.parametrize("run_type", ["weekend_saturday", "weekend_sunday"])
+    def test_invocation_started_event_accepts_weekend_run_type(self, run_type: str) -> None:
+        # ALP-755 — weekend runs were dropped from the wire vocabulary, so the
+        # ``invocation_started`` frame failed validation and never reached the
+        # SSE stream. Both weekend triggers must now round-trip.
+        event = models.InvocationStartedEvent(
+            invocation_id="inv-1",
+            run_type=run_type,  # type: ignore[arg-type]
+            started_at=datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC),
+        )
+        assert event.run_type == run_type
+
     def test_invocation_started_event_rejects_unknown_run_type(self) -> None:
         with pytest.raises(ValidationError):
             models.InvocationStartedEvent(

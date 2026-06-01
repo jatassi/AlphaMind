@@ -56,6 +56,8 @@ _RunType = Literal[
     "off_hours_rolling",
     "pre_open",
     "pre_close",
+    "weekend_saturday",
+    "weekend_sunday",
     "emergency",
 ]
 _Phase = Literal["collect", "distill", "analyze", "decide", "execute"]

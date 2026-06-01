@@ -1598,3 +1598,28 @@ class TestRunInvocationLastInvocationTimeResolution:
         )
 
         assert captured["analysis"]["last_invocation_time"] == successful_start_at
+
+
+class TestSchemaRunTypeMapping:
+    """``_SCHEMA_RUN_TYPE_BY_FIRING_RUN_TYPE`` must stay exhaustive (ALP-755).
+
+    The mapping feeds the ``invocation_started`` SSE emit. A missing key
+    raised ``KeyError`` and silently dropped the start frame for weekend
+    runs; this guard fails loudly if a future ``RunType`` member is added
+    without a corresponding schema-string entry.
+    """
+
+    def test_mapping_covers_every_run_type_member(self) -> None:
+        from alphamind.scheduler.orchestrator import (
+            _SCHEMA_RUN_TYPE_BY_FIRING_RUN_TYPE,
+        )
+
+        assert set(_SCHEMA_RUN_TYPE_BY_FIRING_RUN_TYPE) == set(RunType)
+
+    def test_mapping_values_match_member_wire_values(self) -> None:
+        from alphamind.scheduler.orchestrator import (
+            _SCHEMA_RUN_TYPE_BY_FIRING_RUN_TYPE,
+        )
+
+        for run_type, schema_str in _SCHEMA_RUN_TYPE_BY_FIRING_RUN_TYPE.items():
+            assert schema_str == run_type.value
