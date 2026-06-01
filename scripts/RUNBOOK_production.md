@@ -371,7 +371,7 @@ Get-Content "$env:USERPROFILE\AlphaMind\logs\command_center.out.log" -Tail 50 |
     Select-String "command_center setup token"
 ```
 
-Open `http://127.0.0.1:8080/` in a browser on the Windows machine (RDP in if
+Open `http://127.0.0.1:8090/` in a browser on the Windows machine (RDP in if
 remote), paste the token, choose a username, and complete WebAuthn
 registration with Windows Hello or a hardware key. See
 `RUNBOOK_command_center.md` § Register the first passkey for details and §
@@ -594,7 +594,7 @@ closing options positions.
 
 ### 5.3 Real-time: the command center Live Run dashboard
 
-`http://127.0.0.1:8080/` → log in → Live Run. The dashboard merges both
+`http://127.0.0.1:8090/` → log in → Live Run. The dashboard merges both
 daemons' SSE streams + decorates them with activity-log rows and per-agent
 status. Best surface when an operator is sitting at the console.
 
@@ -670,10 +670,11 @@ will eventually time out and emit `agent_failed`, but if you're watching
 live and the budget is generous, the stall is visible first as
 unexplained silence in the SSE stream.
 
-**Failed invocation.** An `invocation_ended` with `status: failed` (or
-similar non-success). Tail `pipeline.log` for the traceback; the
-`exit_reason` column on the `invocations` row names the failing layer in
-one line.
+**Failed invocation.** An `invocation_ended` event reporting a non-success
+terminal state. The `invocations` row has **no `status` or `exit_reason`
+column** — a failed run is identified by `phase2_completed_at` being NULL
+(often `phase1_completed_at` too). Tail `pipeline.log` (and the daemon's
+`pipeline.err.log`) for the traceback that names the failing layer.
 
 **Skipped invocations.** When you expected a scheduled fire (per § 4) and
 no `invocation_started` event arrived:
@@ -721,10 +722,11 @@ invocation":
 3. Wait for `invocation_started`. Record the `invocation_id`.
 4. Watch for `phase_transition` → `agent_started` → `agent_succeeded` pairs
    covering every phase through `phase2`.
-5. Wait for `invocation_ended`. If `status: succeeded`, summarize cost +
-   wall-clock from the archive's per-agent `metadata.json` files. If
-   `status: failed`, fetch the traceback from `pipeline.log` and the
-   `exit_reason` from the `invocations` row.
+5. Wait for `invocation_ended`. On success, summarize cost + wall-clock
+   from the archive's per-agent `metadata.json` files. On failure, fetch
+   the traceback from `pipeline.log` / `pipeline.err.log` — the
+   `invocations` row carries no `exit_reason`; a NULL `phase2_completed_at`
+   is the failure signal.
 6. Surface the `invocation_id` to the operator in any report — it's the
    entry point for follow-up archive inspection.
 
@@ -732,11 +734,11 @@ invocation":
 
 ## 6. Accessing the command center
 
-`http://127.0.0.1:8080/` from a browser on the Windows trading machine
+`http://127.0.0.1:8090/` from a browser on the Windows trading machine
 (loopback only in v1). Log in with your registered passkey.
 
 To reach the UI from a remote workstation, RDP into the Windows machine and
-open the browser there. Do **not** SSH-port-forward 8080 — the CSRF
+open the browser there. Do **not** SSH-port-forward 8090 — the CSRF
 double-submit check pins the cookie to the loopback origin and fails through
 a forwarder. Do **not** bind the daemon to `0.0.0.0` — WebAuthn's relying
 party ID is pinned to `127.0.0.1`; binding wider just exposes the API to the
@@ -870,7 +872,7 @@ SSE stream are the source of truth for what the scheduler thinks comes next.
 |------------------------------|------------------------------------------------------------------|
 | Scheduler `/control` + `/events` | `127.0.0.1:8765` (loopback only)                              |
 | Monitor `/control` + `/events`   | `127.0.0.1:8766` (loopback only)                              |
-| Command center API + UI          | `127.0.0.1:8080` (loopback only)                              |
+| Command center API + UI          | `127.0.0.1:8090` (loopback only)                              |
 | Production DB                    | `%USERPROFILE%\AlphaMind\data\alphamind.db`                   |
 | Daemon logs                      | `%USERPROFILE%\AlphaMind\logs\<daemon>.{out,err,log}.log`     |
 | Invocation archives              | `%USERPROFILE%\AlphaMind\archive\<YYYY-MM-DD>\<invocation_id>\` |
