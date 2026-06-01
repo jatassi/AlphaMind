@@ -22,6 +22,7 @@ from alphamind._kernel.regime import (
     RiskZone,
 )
 from alphamind.decision.strategist.input_bundle import (
+    _render_pending_order_row,
     assemble_input_bundle_defensive_posture,
     assemble_input_bundle_normal,
 )
@@ -1601,3 +1602,103 @@ def test_between_invocation_closures_section_before_intra_log() -> None:
     closures_idx = out.index("=== ACTIVITY LOG (between-invocation closures) ===")
     intra_idx = out.index("=== ACTIVITY LOG (intra-invocation) ===")
     assert portfolio_idx < closures_idx < intra_idx
+
+
+# ---------------------------------------------------------------------------
+# _render_pending_order_row — marketability-aware fill-likelihood label
+# ALP-773: fix inverted distance sign for buy-limits above market
+# ---------------------------------------------------------------------------
+
+
+def _make_order_record(
+    *,
+    direction: OrderDirection,
+    limit_price: float,
+    order_id: str = "ORD-TEST-1",
+    age_hours: float = 2.0,
+) -> OrderRecord:
+    spec = EquityInstrumentSpec(ticker=Symbol("TST"))
+    return OrderRecord(
+        order_id=OrderId(order_id),
+        position_id=PositionId("POS-TST-001"),
+        bracket_id=BracketId("BRK-TST-001"),
+        role=OrderRole.ENTRY,
+        instrument_spec=spec,
+        direction=direction,
+        order_type=OrderType.LIMIT,
+        price_parameters=PriceParameters(
+            limit_price=price(str(limit_price)), stop_trigger_price=None
+        ),
+        quantity=10.0,
+        duration=OrderDuration.GTC,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId("alp-test-1"),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-test-1"),),
+        submission_timestamp=_ENTRY_TIMESTAMP,
+        last_update_timestamp=_ENTRY_TIMESTAMP,
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=None,
+        originating_pm_command_id=None,
+        age_hours=age_hours,
+    )
+
+
+def test_render_pending_order_row_buy_above_market_is_marketable() -> None:
+    order = _make_order_record(direction=OrderDirection.BUY, limit_price=105.0)
+    result = _render_pending_order_row(order, current_price=100.0)
+    assert "marketable" in result
+    assert "high fill-likelihood" in result
+    assert "away from fill" not in result
+    assert "low fill-likelihood" not in result
+
+
+def test_render_pending_order_row_buy_below_market_is_low_fill() -> None:
+    order = _make_order_record(direction=OrderDirection.BUY, limit_price=95.0)
+    result = _render_pending_order_row(order, current_price=100.0)
+    assert "away from fill" in result
+    assert "low fill-likelihood" in result
+    assert "marketable" not in result
+
+
+def test_render_pending_order_row_sell_below_market_is_marketable() -> None:
+    order = _make_order_record(direction=OrderDirection.SELL, limit_price=95.0)
+    result = _render_pending_order_row(order, current_price=100.0)
+    assert "marketable" in result
+    assert "high fill-likelihood" in result
+    assert "away from fill" not in result
+    assert "low fill-likelihood" not in result
+
+
+def test_render_pending_order_row_sell_above_market_is_low_fill() -> None:
+    order = _make_order_record(direction=OrderDirection.SELL, limit_price=105.0)
+    result = _render_pending_order_row(order, current_price=100.0)
+    assert "away from fill" in result
+    assert "low fill-likelihood" in result
+    assert "marketable" not in result
+
+
+def test_render_pending_order_row_buy_at_market_is_marketable() -> None:
+    """Limit == current_price is the marketable boundary — must render as marketable."""
+    order = _make_order_record(direction=OrderDirection.BUY, limit_price=100.0)
+    result = _render_pending_order_row(order, current_price=100.0)
+    assert "marketable" in result
+
+
+def test_render_pending_order_row_dvn_preopen_snapshot() -> None:
+    """DVN 2026-06-01 pre-open: limit 46.46 with current ~44.00.
+
+    The old code rendered this as negative distance ("below underlying — won't fill").
+    The fix must render it as marketable since the buy-limit is above market.
+    """
+    order = _make_order_record(
+        direction=OrderDirection.BUY,
+        limit_price=46.46,
+        order_id="ORD-DVN-1",
+    )
+    result = _render_pending_order_row(order, current_price=44.00)
+    assert "marketable" in result
+    assert "high fill-likelihood" in result
+    assert "away from fill" not in result
