@@ -80,12 +80,39 @@ def _candidates(text: str) -> set[str]:
         if _is_pathish(span):
             found.add(span)
 
-    return found
+    # Absolute paths (leading ``/``) are external machine references — e.g. the
+    # production-host ``/Volumes/Users/jacks/AlphaMind/logs/`` paths documented
+    # for operators — not repo navigation pointers. The resolver only checks
+    # repo-relative bases, so an absolute path can never resolve; flagging it
+    # would false-positive on any clean (non-``.claude``) checkout, e.g. Windows
+    # CI. Repo navigation always uses relative paths, so drop the absolutes.
+    return {ref for ref in found if not ref.startswith("/")}
 
 
 def _resolves(doc: Path, ref: str) -> bool:
     ref = ref.lstrip("/") if not ref.startswith(("./", "../")) else ref
     return any((base / ref).exists() for base in (REPO_ROOT, doc.parent, SRC_ROOT))
+
+
+def test_absolute_machine_paths_are_not_flagged() -> None:
+    """Absolute paths are external machine references, not repo pointers (ALP-755).
+
+    The root ``CLAUDE.md`` documents production-machine locations such as
+    ``/Volumes/Users/jacks/AlphaMind/logs/``. Those are operator references to
+    a different host's filesystem, not repo navigation pointers — the resolver
+    only checks repo-relative bases, so an absolute path can never resolve and
+    would false-positive on a clean (non-``.claude``) checkout like Windows CI.
+    They must be excluded from the candidate set while relative repo pointers
+    stay covered.
+    """
+    body = (
+        "- Logs: `/Volumes/Users/jacks/AlphaMind/logs/` and `src/alphamind/` "
+        "plus `docs/agents/linear.md`."
+    )
+    candidates = _candidates(body)
+    assert "/Volumes/Users/jacks/AlphaMind/logs/" not in candidates
+    assert "src/alphamind/" in candidates
+    assert "docs/agents/linear.md" in candidates
 
 
 def test_claude_md_files_exist() -> None:

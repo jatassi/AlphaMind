@@ -215,22 +215,23 @@ def register_pipeline_jobs(
 
 
 # Trigger keys that match the schema's ``_RunType`` literal in
-# ``scheduler.control.models``. Under the Tier B schedule (ALP-745)
-# APScheduler registers four jobs (per ``config/scheduler.yaml``), of which
-# the weekend trigger (``weekend_sunday``) is a valid AlphaMind run type the
-# wire-format schema does not include in its closed enum, so a
-# ``NextTriggerChangedEvent`` constructed with a weekend key raises
-# ``ValidationError``. Filter at the emit boundary so weekend slots simply
-# don't update the operator console rather than silently dropping all weekend
-# emits to an error log. This set is keyed on the wire-format enum, not the
-# scheduled triggers, so it still lists ``off_hours_rolling`` even though
-# Tier B no longer schedules it (it remains a valid manual / emergency type).
+# ``scheduler.control.models`` — the full wire vocabulary. A
+# ``NextTriggerChangedEvent`` constructed with a key outside this set raises
+# ``ValidationError``, so the next-trigger preview filters against it. Kept in
+# sync with ``_RunType`` (including the weekend triggers, ALP-755) so weekend
+# slots update the operator console like any other run type;
+# ``tests/scheduler/test_driver.py::test_schema_trigger_types_mirrors_wire_run_type_literal``
+# guards the sync. This set is keyed on the wire-format enum, not the scheduled
+# triggers, so it still lists ``off_hours_rolling`` even though Tier B no longer
+# schedules it (it remains a valid manual / emergency type).
 _SCHEMA_TRIGGER_TYPES: frozenset[str] = frozenset(
     {
         "market_hours_rolling",
         "off_hours_rolling",
         "pre_open",
         "pre_close",
+        "weekend_saturday",
+        "weekend_sunday",
         "emergency",
     }
 )
@@ -244,16 +245,11 @@ def emit_next_trigger_changed(
     """Publish the current next-trigger preview as an SSE event (ALP-720).
 
     Reads the soonest ``next_run_time`` across registered jobs whose ID is
-    in the schema's :class:`_RunType` literal, and emits one
+    in the schema's :class:`_RunType` literal (``_SCHEMA_TRIGGER_TYPES``,
+    which now includes the weekend triggers — ALP-755), and emits one
     :class:`NextTriggerChangedEvent`. Idempotent on no jobs — emits
     nothing. Errors are logged and swallowed so a bad emit never crashes
     the daemon.
-
-    Weekend-only triggers (``weekend_saturday`` / ``weekend_sunday``) are
-    skipped because the schema's ``next_trigger_type`` literal does not
-    include them; if every upcoming job is a weekend trigger, no event
-    fires until a schema-valid trigger is the soonest again (e.g., the
-    Monday ``market_hours_rolling`` slot once the weekend is past).
     """
     soonest: tuple[datetime, str] | None = None
     for job in scheduler.get_jobs():

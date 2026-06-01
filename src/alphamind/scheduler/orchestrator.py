@@ -134,6 +134,7 @@ from alphamind.scheduler.control.models import (
     InvocationEndedEvent,
     InvocationStartedEvent,
     PhaseTransitionEvent,
+    _RunType,
 )
 from alphamind.scheduler.control.sse_progress_bridge import (
     PipelineSSEProgressBridge,
@@ -466,11 +467,20 @@ def _price_provider_from_phase1(
 # ---------------------------------------------------------------------------
 
 
-_SCHEMA_RUN_TYPE_BY_FIRING_RUN_TYPE: dict[RunType, str] = {
+# Firing ``RunType`` → schema ``run_type`` wire string for the
+# ``invocation_started`` SSE frame. Typed against ``_RunType`` (the schema's
+# closed literal) so a value outside the wire vocabulary fails mypy, and kept
+# exhaustive over every ``RunType`` member so a future enum addition can't
+# silently drop a start frame (the missing weekend keys did exactly that —
+# ALP-755). ``tests/scheduler/test_orchestrator.py::TestSchemaRunTypeMapping``
+# guards the exhaustiveness invariant.
+_SCHEMA_RUN_TYPE_BY_FIRING_RUN_TYPE: dict[RunType, _RunType] = {
     RunType.market_hours_rolling: "market_hours_rolling",
     RunType.off_hours_rolling: "off_hours_rolling",
     RunType.pre_open: "pre_open",
     RunType.pre_close: "pre_close",
+    RunType.weekend_saturday: "weekend_saturday",
+    RunType.weekend_sunday: "weekend_sunday",
     RunType.emergency: "emergency",
 }
 
@@ -633,7 +643,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
             sse_emitter.emit(
                 InvocationStartedEvent(
                     invocation_id=invocation_id,
-                    run_type=_SCHEMA_RUN_TYPE_BY_FIRING_RUN_TYPE[firing_run_type],  # type: ignore[arg-type]
+                    run_type=_SCHEMA_RUN_TYPE_BY_FIRING_RUN_TYPE[firing_run_type],
                     started_at=now,
                 )
             )
