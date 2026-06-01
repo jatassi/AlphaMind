@@ -232,9 +232,21 @@ def test_l4_broad_except_count_below_audit_baseline(antipattern_findings: Script
     # FK corruption) is re-raised before the broad catch, and compute_attribution runs
     # outside the handler so a systemic market-data gap still aborts for retry. Carries
     # an inline rationale comment.
-    assert l4 <= 64, (
-        f"L4 (broad except) count drift: {l4}. Post-ALP-761 "
-        f"ceiling is 64. If this count climbs above 64, audit each new "
+    # Ceiling raised from 64 to 67 (2026-06-01, ALP-763 fast-fill recovery): +3 warranted
+    # run-forever-monitor resilience handlers, all the blessed "re-raise CancelledError,
+    # log + continue so one failure never stalls the monitor" pattern: (1)
+    # fill_stream_consumer/task.py wraps the unattributed-fill drain at the top of each
+    # reconnect cycle so a drain error never crashes the consume loop; (2)
+    # fill_stream_consumer/persistence.py wraps the quarantine write so a transient DB
+    # failure logs + continues (degrade-don't-crash) instead of propagating into the
+    # reconnect-budget supervisor — restoring the pre-ALP-763 skip-path robustness; and
+    # (3) activities_backfill/task.py wraps each periodic sweep so a sweep error logs +
+    # continues to the next interval rather than killing the run-forever backfill task
+    # (mirrors the fill consumer's own reconnect supervisor). Each carries an inline
+    # rationale comment.
+    assert l4 <= 67, (
+        f"L4 (broad except) count drift: {l4}. Post-ALP-763 "
+        f"ceiling is 67. If this count climbs above 67, audit each new "
         f"handler against ALP-480's warranted-residue list."
     )
 
