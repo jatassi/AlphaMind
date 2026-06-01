@@ -95,6 +95,14 @@ class TestContinuousMonitorConfigModel:
         assert cfg.max_reconnect_attempts == 5
         assert cfg.supervisor_shutdown_timeout_seconds == 5
 
+    def test_fill_backfill_knobs_default_when_absent(self) -> None:
+        """ALP-763 adds the periodic fill-backfill knobs with defaults so
+        existing YAML files continue to parse without explicit edits."""
+        cfg = ContinuousMonitorConfig(**self._valid_payload())  # type: ignore[arg-type]
+        # 15-minute cadence; 72h independent lookback (covers the swing horizon).
+        assert cfg.fill_backfill_interval_seconds == 900
+        assert cfg.fill_backfill_lookback_seconds == 259_200
+
     def test_inspection_cadence_defaults_to_30_when_absent(self) -> None:
         """Story 03a adds ``greeks_refresh_inspection_cadence_seconds`` with a
         default so existing YAML files continue to parse without explicit edits."""

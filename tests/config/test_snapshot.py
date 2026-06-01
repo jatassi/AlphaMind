@@ -206,7 +206,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # and portfolio_manager model in config/agents.yaml moved from claude-opus-4-7
     # to claude-opus-4-8 (AllowedModel.opus_4_8), shifting the resolved-config
     # canonical bytes.
-    expected = "ec4328773cb47de7dbf07b231c270ff135815a6789a8d9ffdef9dcc480d737b8"
+    # Pin updated 2026-06-01 (fill-backfill backstop knobs, ALP-763): ALP-763 added
+    # fill_backfill_interval_seconds: 900 and fill_backfill_lookback_seconds: 259200
+    # to config/continuous_monitor.yaml and ContinuousMonitorConfig (the periodic
+    # fill-backfill backstop), shifting the resolved-config canonical bytes.
+    expected = "782912b92a27ba12e2ad168b94196e560a2c4f9f5310732a530934b2aad71028"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

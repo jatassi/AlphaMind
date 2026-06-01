@@ -39,6 +39,12 @@ pre-resolved decision (E):
   failed breach-loop ticks before the loop emits a degraded health signal
   (ALP-732). Reset on the first successful tick, so a silently-failing breach
   loop becomes visible instead of looking healthy on the process surfaces.
+* ``fill_backfill_interval_seconds`` — cadence at which the periodic
+  fill-backfill backstop (ALP-763) sweeps Alpaca for fills missing from
+  ``fill_records`` (independent of any websocket reconnect).
+* ``fill_backfill_lookback_seconds`` — independent, generous ``since`` lookback
+  bound for each backfill sweep — wide enough to re-capture a fill dropped
+  earlier in the swing-trading horizon.
 
 This file is loaded directly by ``alphamind.config.load`` and surfaced on
 ``ResolvedConfig.continuous_monitor``; the resolver does not cascade it
@@ -86,6 +92,30 @@ class ContinuousMonitorConfig(BaseModel):
         description=(
             "Consecutive failed breach-loop ticks before a degraded operator "
             "health signal fires; cleared on the first successful tick (ALP-732)."
+        ),
+    )
+    fill_backfill_interval_seconds: int = Field(
+        default=900,
+        ge=1,
+        description=(
+            "Cadence (seconds) of the periodic fill-backfill backstop (ALP-763). "
+            "Each sweep recovers any Alpaca fill missing from fill_records, "
+            "independent of a websocket reconnect. 15 min keeps a dropped entry "
+            "fill's position/cash divergence short-lived without hammering the "
+            "broker's GET /v2/orders surface."
+        ),
+    )
+    fill_backfill_lookback_seconds: int = Field(
+        default=259_200,
+        ge=1,
+        description=(
+            "Independent lookback (seconds) for each backfill sweep's `since` "
+            "bound (ALP-763). NOT max(fill_timestamp) — that permanently excludes "
+            "an earlier dropped fill once a later one lands. 72h spans the upper "
+            "end of the 4-72h swing-trading horizon, so a fill dropped any time "
+            "earlier in a position's life is still in-window. append_fill_record's "
+            "dedupe makes re-feeding already-persisted fills a no-op, so a wide "
+            "window costs only redundant reads."
         ),
     )
     borrow_accrual_tick_local_time: str = Field(
