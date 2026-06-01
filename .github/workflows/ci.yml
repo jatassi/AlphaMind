@@ -41,13 +41,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python 3.13
         # Pinned to match local dev. pyproject.toml's `requires-python = ">=3.13"`
         # would otherwise let uv pick Python 3.14 from the hosted toolcache, which
         # introduces a runtime variable CI failures can't be cleanly attributed to.
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
@@ -87,7 +87,7 @@ jobs:
     # against the foundation now exercises both the TypeScript compiler and
     # the smoke + webauthn unit tests.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up bun
         uses: oven-sh/setup-bun@v2
@@ -117,13 +117,13 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python 3.13
         # Pinned to match local dev. pyproject.toml's `requires-python = ">=3.13"`
         # would otherwise let uv pick Python 3.14 from the hosted toolcache, which
         # introduces a runtime variable CI failures can't be cleanly attributed to.
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
