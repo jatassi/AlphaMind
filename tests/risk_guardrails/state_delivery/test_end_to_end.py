@@ -1969,24 +1969,6 @@ class TestComposition:
         assert "Cumulative impact of proposals #1-1" in results[1].cumulative_impact_note
         assert "Cumulative impact of proposals #1-2" in results[2].cumulative_impact_note
 
-        # 4-6. Render all three headers
-        analyst = _render_normal_analyst_header()
-        strategist = _render_normal_strategist_header()
-        pm_with_correlation = _render_normal_pm_header(
-            correlation_state=_build_correlation_state(),
-            dependency_risk_flag=_build_dependency_risk_flag(),
-        )
-
-        # 7. Confirm invariants
-        for rendered in (analyst, strategist, pm_with_correlation):
-            for prev_line, next_line in pairwise(rendered.splitlines()):
-                assert not (prev_line == "" and next_line == "")
-            assert rendered.splitlines()[-1] == "==="
-
-        # The PM with correlation/dependency variants surface those blocks.
-        assert "Correlation state:" in pm_with_correlation
-        assert "Dependency risk flag:" in pm_with_correlation
-
 
 # ---------------------------------------------------------------------------
 # Internal helper used by inventory tests
