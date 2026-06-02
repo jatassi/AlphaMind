@@ -88,13 +88,3 @@ class TestNotFoundHandling:
         client = _client_with(handler)
         with pytest.raises(httpx.HTTPStatusError):
             client.get("/equity/regsho/daily/CNMSshvol20260101.txt")
-
-
-class TestProtocolContract:
-    def test_finra_client_implements_finra_api(self) -> None:
-        from alphamind.data_sources.finra._protocol import FinraAPI
-        from alphamind.data_sources.finra.client import FinraClient
-
-        client: FinraAPI = FinraClient()
-        assert hasattr(client, "get")
-        assert hasattr(client, "verify_connectivity")

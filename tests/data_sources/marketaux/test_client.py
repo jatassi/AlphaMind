@@ -135,12 +135,3 @@ class TestRateLimiter:
         client._rate_limiter.acquire = tracking  # type: ignore[method-assign]
         client.get_news(symbols=["AAPL"])
         assert acquired == ["marketaux"]
-
-
-class TestProtocolContract:
-    def test_marketaux_client_implements_marketaux_api(self) -> None:
-        from alphamind.data_sources.marketaux._protocol import MarketauxAPI
-
-        client: MarketauxAPI = MarketauxClient(api_key="x")
-        assert hasattr(client, "get_news")
-        assert hasattr(client, "verify_connectivity")

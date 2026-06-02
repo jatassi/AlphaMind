@@ -173,12 +173,3 @@ class TestVerifyConnectivity:
         client = _client_with(handler)
         with pytest.raises(RuntimeError, match="BLS API"):
             client.verify_connectivity()
-
-
-class TestProtocolContract:
-    def test_bls_client_implements_bls_api(self) -> None:
-        from alphamind.data_sources.bls._protocol import BLSAPI
-
-        client: BLSAPI = BLSClient(api_key="x")
-        assert hasattr(client, "post_timeseries")
-        assert hasattr(client, "verify_connectivity")

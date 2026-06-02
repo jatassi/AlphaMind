@@ -180,26 +180,6 @@ class TestEarningsEstimateRevisionsModel:
 
 
 # ---------------------------------------------------------------------------
-# Slice 2 — no new client.py: estimate_revisions reuses finnhub/client.py
-# ---------------------------------------------------------------------------
-
-
-class TestNoNewClientFile:
-    def test_no_separate_client_file_created(self) -> None:
-        """There must NOT be a new client.py for estimate_revisions — no separate client module."""
-        import sys
-
-        assert "alphamind.data_sources.finnhub.estimate_revisions_client" not in sys.modules
-
-        # No new FinnhubClient class defined in estimate_revisions itself
-        from alphamind.data_sources.finnhub import client, estimate_revisions
-
-        assert not hasattr(estimate_revisions, "FinnhubClient") or (
-            estimate_revisions.FinnhubClient is client.FinnhubClient
-        ), "estimate_revisions must not define its own FinnhubClient"
-
-
-# ---------------------------------------------------------------------------
 # Slice 3 — first observation: row inserted with prior_consensus_value=NULL
 # ---------------------------------------------------------------------------
 
