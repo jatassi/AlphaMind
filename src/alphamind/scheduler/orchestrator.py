@@ -928,6 +928,7 @@ def _warn_if_pre_close_projected_late(
         rows = session.execute(
             select(InvocationRow.start_at, InvocationRow.phase2_completed_at)
             .where(InvocationRow.phase2_completed_at.is_not(None))
+            .where(InvocationRow.trigger_source == "pre_close")
             .order_by(InvocationRow.start_at.desc())
             .limit(_PRE_CLOSE_TIMING_RECENT_N)
         ).all()
@@ -959,7 +960,7 @@ def _warn_if_pre_close_projected_late(
         if session_close.tzinfo is None:
             session_close = session_close.replace(tzinfo=UTC)
     except Exception:
-        log.debug("pre_close timing guard: could not resolve session close", exc_info=True)
+        log.warning("pre_close timing guard: could not resolve session close", exc_info=True)
         return
 
     if projected_completion > session_close:

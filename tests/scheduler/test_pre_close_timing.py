@@ -174,19 +174,19 @@ class TestPreCloseTimingGuard:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         factory = _make_sync_factory(tmp_path)
-        # Three prior invocations each taking 39 minutes (2340 s).
+        # Three prior pre_close invocations each taking 62 minutes (3720 s).
+        # Fire at 15:00 ET (19:00 UTC); avg 62 min → projected end 20:02 UTC > 20:00 UTC.
         for i in range(3):
             _insert_invocation(
                 factory,
                 invocation_id=f"inv-miss-{i}",
-                start_at=_TRADING_DAY.replace(hour=19, minute=30),
-                duration_seconds=2340.0,
+                start_at=_TRADING_DAY.replace(hour=19),
+                duration_seconds=3720.0,
             )
-        # Fire at 15:30 ET (19:30 UTC); avg duration 39 min → projected end 20:09 UTC > 20:00 UTC.
         with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.orchestrator"):
             _warn_if_pre_close_projected_late(
                 firing_run_type=RunType.pre_close,
-                now=_TRADING_DAY.replace(hour=19, minute=30),
+                now=_TRADING_DAY.replace(hour=19),
                 sync_session_factory=factory,
                 scheduler_config=_make_scheduler_config(),
             )
@@ -202,17 +202,18 @@ class TestPreCloseTimingGuard:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         factory = _make_sync_factory(tmp_path)
+        # Two prior pre_close invocations each taking 62 minutes.
         for i in range(2):
             _insert_invocation(
                 factory,
                 invocation_id=f"inv-detail-{i}",
-                start_at=_TRADING_DAY.replace(hour=19, minute=30),
-                duration_seconds=2340.0,
+                start_at=_TRADING_DAY.replace(hour=19),
+                duration_seconds=3720.0,
             )
         with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.orchestrator"):
             _warn_if_pre_close_projected_late(
                 firing_run_type=RunType.pre_close,
-                now=_TRADING_DAY.replace(hour=19, minute=30),
+                now=_TRADING_DAY.replace(hour=19),
                 sync_session_factory=factory,
                 scheduler_config=_make_scheduler_config(),
             )
@@ -225,3 +226,58 @@ class TestPreCloseTimingGuard:
         msg = warning_records[0].message
         # Should mention the count of invocations used for the estimate.
         assert "2 recent invocations" in msg
+
+    def test_non_pre_close_invocations_excluded_from_sample(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        factory = _make_sync_factory(tmp_path)
+        # Insert fast market_hours_rolling rows (trigger_source != "pre_close") that
+        # would pull the average below the overshoot threshold if included.
+        for i in range(5):
+            row = InvocationRow(
+                invocation_id=f"inv-mhr-{i}",
+                process_lifetime_id="proc-test-timing",
+                start_at=_TRADING_DAY.replace(hour=18).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                phase2_completed_at=(
+                    _TRADING_DAY.replace(hour=18) + timedelta(seconds=600)
+                ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                trigger_type="scheduled",
+                trigger_source="market_hours_rolling",
+                trigger_reason="0 13 * * mon-fri",
+                git_sha_at_invocation="a" * 40,
+                active_profile="base",
+                active_regime="normal",
+                active_mode="normal",
+                active_overlays_json="{}",
+                resolved_config_hash="0" * 64,
+                resolved_config_snapshot_path="/tmp/snap.yaml",
+                feature_flags_snapshot_json="{}",
+                data_calibration_state_snapshot_path="/tmp/cal.json",
+                data_source_freshness_json="{}",
+            )
+            with factory() as sess:
+                sess.add(row)
+                sess.commit()
+        # Also insert one slow pre_close row (62 min) that, in isolation, would trigger warning.
+        _insert_invocation(
+            factory,
+            invocation_id="inv-slow-pre-close",
+            start_at=_TRADING_DAY.replace(hour=19),
+            duration_seconds=3720.0,
+        )
+        # Guard should warn because only the pre_close row is sampled (avg = 62 min).
+        with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.orchestrator"):
+            _warn_if_pre_close_projected_late(
+                firing_run_type=RunType.pre_close,
+                now=_TRADING_DAY.replace(hour=19),
+                sync_session_factory=factory,
+                scheduler_config=_make_scheduler_config(),
+            )
+        warning_records = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING and "pre_close timing" in r.message
+        ]
+        assert warning_records, (
+            "expected WARNING — non-pre_close rows should be excluded from the sample"
+        )
