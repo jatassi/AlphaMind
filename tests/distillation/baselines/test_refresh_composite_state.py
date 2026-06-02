@@ -8,41 +8,22 @@ trailing 60-day distribution, and alert flag, and appends a new row.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 from typing import Any
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind.distillation.baselines import refresh_composite_state
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.persistence.models import (
-    Base,
     DistillationCompositeState,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
 
 COMPOSITE_BASELINE_DAYS = 60
 COMPOSITE_MIN_OBSERVATIONS = 60
 COMPOSITE_PERCENTILE_ALERT_FUNDING = 90
 COMPOSITE_PERCENTILE_ALERT_LIQUIDITY = 10
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    factory = make_session_factory(engine)
-    with factory() as sess:
-        yield sess
 
 
 def _seed_composite_history(

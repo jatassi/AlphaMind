@@ -8,40 +8,21 @@ injection.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from typing import Any
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind.distillation.baselines import refresh_contract_history
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.persistence.models import (
-    Base,
     DistillationContractHistory,
     PredictionMarketContracts,
     PredictionMarketSnapshots,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
 
 CONTRACT_HISTORY_MIN_OBSERVATIONS = 1
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    factory = make_session_factory(engine)
-    with factory() as sess:
-        yield sess
 
 
 def _add_contract(session: Session, contract_id: str) -> None:

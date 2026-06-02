@@ -9,11 +9,8 @@ the seam between shell and core.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from datetime import UTC, datetime
 
-import pytest
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import Symbol
@@ -42,11 +39,9 @@ from alphamind.distillation.q1.assemble import (
 )
 from alphamind.persistence.models import (
     AssetUniverse,
-    Base,
     OhlcvBars,
     SectorClassification,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
 
 
 def _build_test_config() -> DistillationDomainConfig:
@@ -135,21 +130,6 @@ def _build_test_config() -> DistillationDomainConfig:
             tracked_categories={},
         ),
     ).to_domain()
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    factory = make_session_factory(engine)
-    with factory() as sess:
-        yield sess
 
 
 def _add_ticker(session: Session, ticker: str, sector: str, etf: str) -> None:

@@ -8,12 +8,10 @@ rolls back the transaction, and Welford's-algorithm O(1) incremental cost.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from typing import Any
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import Symbol
@@ -21,11 +19,9 @@ from alphamind.distillation.baselines import _stdev_from_m2, refresh_ticker_base
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.persistence.models import (
     AssetUniverse,
-    Base,
     DistillationTickerBaseline,
     OhlcvBars,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
 
 # Mirror the values that ``config/distillation.yaml`` carries for the
 # volume baseline. Per the no-magic-numbers audit, distillation source
@@ -40,21 +36,6 @@ SPREAD_WINDOW_DAYS = 20
 SPREAD_MIN_OBSERVATIONS = 20
 SENTIMENT_WINDOW_DAYS = 60
 SENTIMENT_MIN_OBSERVATIONS = 30
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    factory = make_session_factory(engine)
-    with factory() as sess:
-        yield sess
 
 
 def _add_ticker(session: Session, ticker: str) -> None:

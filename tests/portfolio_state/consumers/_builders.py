@@ -5,6 +5,16 @@ Hoisted from the five consumer test files to centralize record-shape definitions
 
 These are pure data builders (no test logic). Import explicitly in the test modules
 that need them (mirrors the pattern in tests/portfolio_state/_fixtures.py).
+
+ALP-821: the record builders that were byte-identical to ``_view_builders`` are now
+re-exported from there unchanged (``_make_bracket``, ``_make_pending_order``,
+``_make_risk_budget``, and ``_make_active_risk_parameters`` under this suite's
+``_make_active_risk_params`` name). ``_make_cash_ledger`` / ``_make_drawdown_state``
+delegate to the shared builders while pinning the consumer-suite values (e.g.
+``true_deployable_capital_usd=44000`` is asserted by test_analyst).
+``_make_open_position`` / ``_make_pending_position`` stay local because they encode
+AAPL/GOOG fixture values the consumer assertions depend on, which differ from the
+NVDA-based view fixtures — merging would force assertion changes.
 """
 
 from __future__ import annotations
@@ -12,41 +22,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from alphamind._kernel.ids import (
-    AlpacaOrderId,
-    BracketId,
-    OrderId,
     PositionId,
     Symbol,
 )
 from alphamind._kernel.money import money, price, signed_money
-from alphamind._kernel.regime import (
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskZone,
-)
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
-from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
-from alphamind.portfolio_state.aggregates.risk_parameters import (
-    ActiveRiskParameterSet,
-)
 from alphamind.portfolio_state.records.cash import CashLedger
-from alphamind.portfolio_state.records.orders import (
-    BracketLeg,
-    BracketLegEnforcement,
-    BracketLegStatus,
-    BracketLegType,
-    BracketRecord,
-    BracketStatus,
-    EquityInstrumentSpec,
-    OrderDirection,
-    OrderDuration,
-    OrderRecord,
-    OrderRole,
-    OrderStatus,
-    OrderType,
-    PriceParameters,
-    PriceTrigger,
-)
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -56,6 +37,33 @@ from alphamind.portfolio_state.records.positions import (
 )
 from alphamind.portfolio_state.views.positions import PositionView
 
+from .._view_builders import (
+    _make_active_risk_parameters as _make_active_risk_params,
+)
+from .._view_builders import (
+    _make_bracket,
+    _make_pending_order,
+    _make_risk_budget,
+)
+from .._view_builders import (
+    _make_cash_ledger as _shared_make_cash_ledger,
+)
+from .._view_builders import (
+    _make_drawdown_state as _shared_make_drawdown_state,
+)
+
+__all__ = [
+    "_make_active_risk_params",
+    "_make_bracket",
+    "_make_cash_ledger",
+    "_make_drawdown_state",
+    "_make_fill",
+    "_make_open_position",
+    "_make_pending_order",
+    "_make_pending_position",
+    "_make_risk_budget",
+]
+
 # ---------------------------------------------------------------------------
 # Shared timestamps (values match the per-file _T0 across all consumer tests)
 # ---------------------------------------------------------------------------
@@ -64,7 +72,8 @@ _T0 = datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------
-# Low-level record builders (hoisted; identical semantics to prior copies)
+# Consumer-specific builders (kept local — values are asserted by the consumer
+# suites and differ from the view-side fixtures)
 # ---------------------------------------------------------------------------
 
 
@@ -148,67 +157,20 @@ def _make_pending_position(pos_id: str = "POS-PEND") -> PositionView:
     )
 
 
-def _make_bracket(bracket_id: str = "BRK-001", position_id: str = "POS-001") -> BracketRecord:
-    leg = BracketLeg(
-        leg_id="leg-stop",
-        leg_type=BracketLegType.PRICE_STOP,
-        order_id=OrderId("ord-stop-1"),
-        trigger=PriceTrigger(
-            underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
-        ),
-        enforcement=BracketLegEnforcement.MECHANICAL,
-        status=BracketLegStatus.PENDING_ACTIVATION,
-    )
-    return BracketRecord(
-        bracket_id=BracketId(bracket_id),
-        position_id=PositionId(position_id),
-        status=BracketStatus.PENDING_ENTRY,
-        entry_order_id=OrderId("ord-entry-1"),
-        protective_legs=(leg,),
-        modification_history=(),
-        corporate_action_cancellation_reason=None,
-    )
-
-
-def _make_pending_order(
-    order_id: str = "ORD-001",
-    position_id: str = "POS-001",
-) -> OrderRecord:
-    spec = EquityInstrumentSpec(ticker=Symbol("AAPL"))
-    return OrderRecord(
-        order_id=OrderId(order_id),
-        position_id=PositionId(position_id),
-        bracket_id=BracketId("BRK-001"),
-        role=OrderRole.ENTRY,
-        instrument_spec=spec,
-        direction=OrderDirection.BUY,
-        order_type=OrderType.MARKET,
-        price_parameters=PriceParameters(limit_price=None, stop_trigger_price=None),
-        quantity=10.0,
-        duration=OrderDuration.DAY,
-        status=OrderStatus.PENDING,
-        alpaca_order_id=AlpacaOrderId("alp-001"),
-        alpaca_order_id_chain=(AlpacaOrderId("alp-001"),),
-        submission_timestamp=_T0,
-        last_update_timestamp=_T0,
-        filled_quantity=0.0,
-        avg_fill_price=None,
-        remaining_quantity=10.0,
-        modification_count=0,
-        originating_thesis_id=None,
-        originating_pm_command_id=None,
-        age_hours=1.0,
-    )
+# ---------------------------------------------------------------------------
+# Thin wrappers over the shared builders (ALP-821): preserve the consumer-suite
+# values while keeping the CashLedger/DrawdownState literals defined once in
+# _view_builders.
+# ---------------------------------------------------------------------------
 
 
 def _make_cash_ledger() -> CashLedger:
-    return CashLedger(
+    return _shared_make_cash_ledger(
         current_cash_usd=50000.0,
         settled_cash_usd=48000.0,
         reserved_capital_usd=2000.0,
         available_buying_power_usd=46000.0,
         margin_held_usd=0.0,
-        unsettled_proceeds=(),
         cash_pct_of_portfolio=50.0,
         true_deployable_capital_usd=44000.0,
         regt_excess_trailing_30d_usd=1000.0,
@@ -218,29 +180,10 @@ def _make_cash_ledger() -> CashLedger:
 
 
 def _make_drawdown_state() -> DrawdownState:
-    return DrawdownState(
+    return _shared_make_drawdown_state(
         current_drawdown_pct=2.0,
         equity_high_water_mark_usd=110000.0,
         drawdown_duration_hours=8.0,
         lifetime_max_drawdown_pct=5.0,
         intraday_drawdown_pct=0.5,
-        daily_zone=RiskZone.NORMAL,
-        cumulative_zone=RiskZone.NORMAL,
-        cumulative_tier=None,
-        drawdown_by_source_pct={},
-    )
-
-
-def _make_risk_budget() -> RiskBudgetConsumption:
-    return RiskBudgetConsumption(entries=())
-
-
-def _make_active_risk_params() -> ActiveRiskParameterSet:
-    return ActiveRiskParameterSet(
-        regime_label=RegimeLabel.NORMAL,
-        transition_state=RegimeTransitionState.STABLE,
-        transition_invocations_remaining=0,
-        parameter_change_flag=False,
-        entries=(),
-        active_overlays=(),
     )

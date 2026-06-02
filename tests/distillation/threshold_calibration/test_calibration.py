@@ -9,10 +9,8 @@ from __future__ import annotations
 
 import dataclasses
 import math
-from collections.abc import Iterator
 
 import pytest
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import Symbol
@@ -38,27 +36,10 @@ from alphamind.distillation.calibration import (
 )
 from alphamind.persistence.models import (
     AssetUniverse,
-    Base,
     DistillationEventHistory,
     DistillationTickerBaseline,
     SectorClassification,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    session_factory = make_session_factory(engine)
-    with session_factory() as sess:
-        yield sess
 
 
 def _add_universe_ticker(

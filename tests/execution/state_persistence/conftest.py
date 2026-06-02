@@ -131,6 +131,12 @@ def _make_invocation_record(
 # Builders — cash / drawdown (general form hoisted; the write_path variant
 # with reserved_capital support is a superset, other files' no-arg calls
 # produce identical records when reserved=0).
+#
+# ALP-821 deliberately keeps this execution-side copy rather than importing the
+# portfolio_state shared builder: it spans a package boundary (tests/execution ↔
+# tests/portfolio_state) and its available_buying_power == current - reserved
+# semantics differ from the portfolio_state form (available defaults to current),
+# so sharing would couple the two suites for no real payoff.
 # ---------------------------------------------------------------------------
 def _make_cash_ledger(
     current_cash_usd: float = 100_000.0, *, reserved_capital_usd: float = 0.0
