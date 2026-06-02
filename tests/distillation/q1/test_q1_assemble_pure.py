@@ -307,6 +307,7 @@ class TestSummarizeEmaPairsNullOnShortSeries:
         closes = [100.0 + i * 0.1 for i in range(_SHORT_SERIES_LEN)]
         result = _summarize_ema_pairs(closes, atr=2.0)
         assert result.bootstrap_reason is not None
+        assert "ema_pairs_min_closes" in result.bootstrap_reason
         assert str(_SHORT_SERIES_LEN) in result.bootstrap_reason
 
     def test_calibrated_series_ema_fields_are_real_floats(self) -> None:
