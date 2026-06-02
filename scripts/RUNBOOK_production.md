@@ -752,87 +752,62 @@ token / cache counts. Unlike the SSE stream this works identically for
 scheduled and manual `--once` runs and reads straight off the WAL DB +
 filesystem.
 
-Build the `Monitor` command on three legs, so silence is never mistaken for
-success:
-
-1. **Per-agent finish** — emit when a new or mtime-changed `metadata.json`
-   appears under the invocation archive. Require the `success` field to be
-   present before emitting (skip a half-written file, re-read next tick), and
-   key on `(path, mtime)` so a retry — which rewrites the file in place —
-   re-emits.
-2. **Success terminal** — poll `phase2_completed_at` on the `invocations`
-   row; it is the only positive success signal (no `status` / `exit_reason`
-   column — § 5.5). Exit the watch when it goes non-NULL.
-3. **Hard-crash backstop** — tail *freshly appended* `Traceback` /
-   `CRITICAL` / `ERROR` in `pipeline.log` + `pipeline.err.log`. A hard crash
-   writes **no** `metadata.json` (the failing agent's dir never appears), so
-   without this leg a crash is indistinguishable from "still running." Filter
-   out the benign Windows asyncio-teardown noise (`_ProactorBasePipeTransport`,
-   `WinError 121`, `no close frame`, `ResourceWarning`, "I/O operation on
-   closed pipe").
-
-Reference `Monitor` command (Git Bash; discovers the invocation by the manual
-`--reason`, or swap the `WHERE` for `ORDER BY start_at DESC LIMIT 1` to grab
-the newest scheduled fire):
+The canonical watcher is **`scripts/watch_invocation.sh`** — pass it to the
+`Monitor` tool and it streams one notification per milestone, self-terminating on
+a terminal state (including one that already happened *before* it attached).
+Select the invocation one of three ways:
 
 ```bash
-DB=/c/Users/jacks/AlphaMind/data/alphamind.db
-LOG=/c/Users/jacks/AlphaMind/logs/pipeline.log
-ERR=/c/Users/jacks/AlphaMind/logs/pipeline.err.log
-BENIGN="ProactorBasePipeTransport|closed pipe|deallocator|ResourceWarning|WinError 121|no close frame"
-STATE=$(mktemp)
-
-INV=""
-while [ -z "$INV" ]; do
-  INV=$(sqlite3 "$DB" "SELECT invocation_id FROM invocations
-        WHERE trigger_reason LIKE '%<your --reason substring>%'
-        ORDER BY start_at DESC LIMIT 1;" 2>/dev/null)
-  [ -z "$INV" ] && sleep 5
-done
-DAY=$(echo "$INV" | sed -E 's/^inv-([0-9]{4})([0-9]{2})([0-9]{2})T.*/\1-\2-\3/')
-ARCH="/c/Users/jacks/AlphaMind/archive/$DAY/$INV"
-echo "watching $INV"
-lbase=$(wc -c <"$LOG" 2>/dev/null || echo 0); ebase=$(wc -c <"$ERR" 2>/dev/null || echo 0)
-
-while true; do
-  [ -d "$ARCH" ] && while IFS= read -r f; do
-    m=$(stat -c %Y "$f"); grep -qxF "$f|$m" "$STATE" && continue
-    ok=$(grep -o '"success":[^,]*' "$f" | head -1 | sed 's/.*: *//;s/[" ]//g')
-    [ -z "$ok" ] && continue                       # half-written; retry next tick
-    echo "$f|$m" >>"$STATE"
-    a=$(basename "$(dirname "$f")"); l=$(basename "$(dirname "$(dirname "$f")")")
-    w=$(grep -o '"wall_clock_seconds":[^,]*' "$f" | head -1 | sed 's/.*: *//')
-    sr=$(grep -o '"stop_reason":[^,]*' "$f" | head -1 | sed 's/.*: *//;s/"//g')
-    printf 'AGENT %s/%s success=%s wall=%.0fs stop=%s\n' "$l" "$a" "$ok" "${w:-0}" "$sr"
-  done < <(find "$ARCH" -name metadata.json 2>/dev/null | sort)
-
-  nl=$(wc -c <"$LOG" 2>/dev/null || echo "$lbase")
-  [ "$nl" -gt "$lbase" ] && { tail -c +$((lbase+1)) "$LOG" \
-      | grep -E "Traceback|CRITICAL|\bERROR\b|RepositoryConsistency" \
-      | grep -vE "$BENIGN" | sed 's/^/FAULT(log) /'; lbase=$nl; }
-  ne=$(wc -c <"$ERR" 2>/dev/null || echo "$ebase")
-  [ "$ne" -gt "$ebase" ] && { tail -c +$((ebase+1)) "$ERR" \
-      | grep -iE "traceback|exception|critical|\berror\b" \
-      | grep -vE "$BENIGN" | sed 's/^/FAULT(err) /'; ebase=$ne; }
-
-  p2=$(sqlite3 "$DB" "SELECT COALESCE(phase2_completed_at,'')
-       FROM invocations WHERE invocation_id='$INV';" 2>/dev/null)
-  [ -n "$p2" ] && { echo "PHASE2-COMPLETE @ $p2"; break; }
-  sleep 8
-done
+# newest scheduled fire of a run-type (default lookback = now-5min):
+bash scripts/watch_invocation.sh --scheduled market_hours_rolling
+# a manual --once run, by a substring of its --reason:
+bash scripts/watch_invocation.sh --reason "my run reason"
+# attach to a specific invocation id:
+bash scripts/watch_invocation.sh --inv inv-20260602T170000Z-193173de
 ```
 
-Gotchas learned in production:
+Optional `--since <ISO8601Z>` widens/narrows the discovery window; `--tz-offset
+<h>` (default `6` = MDT) sets the prod-log local offset used to scope abort lines
+(pass `7` for MST in winter). Paths are overridable via the `DB` / `LOG` / `ERR` /
+`ARCHROOT` env vars (prod defaults are baked in).
 
-- Some agents (`synthesizer`, `strategist`) record `tool_calls_used` instead
-  of `retry_count`; a missing `retry` field is benign, not a failure.
-- For a fill-reconciliation run, add a leg that reports
-  `fill_records.processing_status` transitions (`unprocessed` → `processed` /
-  `quarantined`) so you can confirm Phase-1 ingestion before analysis even
-  starts (this is how the 2026-06-01 poison-pill wedge was verified fixed).
-- Set the `Monitor` `timeout` generously — cold-cache / adaptive-heavy runs
-  reach 25–40 min — and let the watch exit on `PHASE2-COMPLETE`; a hard crash
-  exits via the fault leg.
+It emits, as they happen: `PHASE1-COMPLETE` (ingestion + fill-collection summary);
+`ACT …` for every `activity_log` row of the run (ingestion `RECONCILIATION_*` **and**
+all Phase-2 actions — `ORDER_SUBMITTED` / `PM_DECISION` / `CAPITAL_RESERVED` / …);
+`DISTILLATION` when `composite_state` is written; `AGENT <layer>/<name> success=…
+wall=… stop=…` per agent (the strategist's line is prefixed `>>> STRATEGIST`);
+`FILLS` on each `unprocessed`→`processed`/`quarantined` transition; `FAULT(log|err)`
+on a fresh non-benign traceback; and the terminal `PHASE2-COMPLETE` (+ a final
+positions / cash / fills dump) or `ABORT`. It is **silent while waiting** — no
+routine "still waiting" ticks — except a one-shot `WARN scheduler port 8765 DOWN`.
+
+**Why it covers "silence ≠ success."** A healthy run is proven only by
+`PHASE2-COMPLETE` (the sole positive success signal — there is no `status` column,
+§ 5.5). A hard crash writes **no** `metadata.json`, so the fault/abort legs catch
+what the per-agent leg can't: fresh `Traceback`/`CRITICAL`/`ERROR` in
+`pipeline.log` + `pipeline.err.log` (with the benign Windows asyncio-teardown noise
+— `_ProactorBasePipeTransport`, `WinError 121`, `no close frame`, `ResourceWarning`
+— filtered out), plus the driver's `scheduled trigger=<rt> failed` /
+`scheduler exited with error`. And the **at-attach terminal check** handles a run
+that already finished or aborted before the watch started: it checks
+`phase2_completed_at` and greps the log (scoped to this run's own start + trigger)
+once up front, emitting `ALREADY-COMPLETE` / `ALREADY-ABORTED` and exiting instead
+of polling a dead invocation. (Before this check, a watcher armed after a fast-fail
+abort polled a dead 17:00Z run for 20 min — 2026-06-02.)
+
+Gotchas baked into the script (worth knowing when reading its output):
+
+- Some agents (`synthesizer`, `strategist`) record `tool_calls_used` instead of
+  `retry_count`; a missing `retry` field is benign, not a failure.
+- The `FILLS unprocessed N→M` leg confirms Phase-1 ingestion before analysis even
+  starts — how both the 2026-06-01 poison-pill wedge and the 2026-06-02 ALP-824
+  cross-writer fix were verified.
+- A manual `--once` run does not publish to SSE (§ 5.1), and its
+  `scheduler exited with error` may land only in the launching shell's stderr (not
+  `pipeline.log`) — so for a manual run the **launching process's exit code** stays
+  the authoritative terminal signal; the watcher is the live milestone view.
+- Set the `Monitor` `timeout` generously (or `persistent: true`) — cold-cache /
+  adaptive-heavy runs reach 25–40 min; the watch exits itself on the terminal state.
 
 ---
 
