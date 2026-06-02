@@ -184,32 +184,6 @@ def test_money_and_price_newtypes_are_distinct_identities() -> None:
     assert price_alias.__supertype__ is Decimal
 
 
-def test_kernel_money_has_zero_first_party_imports() -> None:
-    """``_kernel.money`` must have no ``alphamind.*`` imports — it is a leaf.
-
-    The ``kernel-leaf`` import-linter contract from story 03 enforces this at
-    the package level; this test pins the file-level invariant so a careless
-    refactor surfaces immediately under pytest.
-    """
-    import ast
-    from pathlib import Path
-
-    import alphamind._kernel.money as module
-
-    source = Path(module.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            assert node.module is None or not (
-                node.module == "alphamind" or node.module.startswith("alphamind.")
-            ), f"_kernel.money must not import from alphamind.*; found: {node.module}"
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                assert not (alias.name == "alphamind" or alias.name.startswith("alphamind.")), (
-                    f"_kernel.money must not import alphamind.*; found: {alias.name}"
-                )
-
-
 def test_kernel_money_all_lists_every_public_name() -> None:
     from alphamind._kernel import money
 

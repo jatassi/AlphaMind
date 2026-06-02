@@ -1,0 +1,9 @@
+# cosmic-ray session databases (generated at runtime, not committed)
+*.sqlite
+
+# Per-run generated TOML configs (derived from cr-template.toml)
+*__*.toml
+
+# Python cache
+__pycache__/
+*.pyc

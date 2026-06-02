@@ -34,7 +34,6 @@ from sqlalchemy.orm import Session, sessionmaker
 import alphamind.decision.portfolio_manager.models  # noqa: F401 — break OMS↔PM cycle
 from alphamind._kernel.money import money
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
-from alphamind.config.models.guardrails import BreachResponse
 from alphamind.execution.broker_adapter.queries import TradeAccountSnapshot
 from alphamind.execution.continuous_monitor.__main__ import _register_breach_loop
 from alphamind.execution.continuous_monitor.cascade_dispatch import TriggerIdGenerator
@@ -140,53 +139,192 @@ def _make_calendar_cache() -> TradingCalendarCache:
     return TradingCalendarCache(_SolventAccountQueries())  # type: ignore[arg-type]
 
 
-async def test_register_breach_loop_uses_shared_trigger_ids(
+# ---------------------------------------------------------------------------
+# Shared boot fixture — runs _register_breach_loop once and captures all
+# kwargs from CascadeDispatcher.__init__, register_breach_loop_task, and
+# make_emergency_callback in a single call.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+async def _boot_capture(
     db_session_factory: async_sessionmaker[AsyncSession],
     sync_session_factory: sessionmaker[Session],
-) -> None:
-    """The cascade dispatcher consumes the trigger_ids passed by the daemon."""
+) -> dict[str, Any]:
+    """Call ``_register_breach_loop`` once with all three interception patches
+    active simultaneously and return the captured kwargs dict.
+
+    Keys:
+    * ``"dispatcher_kwargs"`` — kwargs received by ``CascadeDispatcher.__init__``
+    * ``"task_kwargs"``       — kwargs received by ``register_breach_loop_task``
+    * ``"emergency_kwargs"``  — kwargs received by ``make_emergency_callback``
+    * ``"shared_trigger_ids"`` — the ``TriggerIdGenerator`` instance passed in
+    * ``"queries"``           — the ``_SolventAccountQueries`` instance passed in
+    """
     session = _session()
-    supervisor = MonitorSupervisor(session=session, config=_config())
     shared_trigger_ids = TriggerIdGenerator(session_id=session.session_id)
-    breach_response_lookup: MappingProxyType[str, BreachResponse] = MappingProxyType({})
+    queries = _SolventAccountQueries()
+    captured: dict[str, Any] = {
+        "shared_trigger_ids": shared_trigger_ids,
+        "queries": queries,
+    }
 
-    captured: dict[str, Any] = {}
-
-    real_cls = (
+    _dispatcher_cls = (
         "alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher.CascadeDispatcher"
     )
+    _task_fn = "alphamind.execution.continuous_monitor.__main__.register_breach_loop_task"
+    _emergency_fn = "alphamind.execution.continuous_monitor.__main__.make_emergency_callback"
 
-    def _capture_init(self: object, **kwargs: Any) -> None:
+    def _capture_dispatcher_init(self: object, **kwargs: Any) -> None:
         captured["dispatcher_kwargs"] = kwargs
 
-    with mock.patch(f"{real_cls}.__init__", _capture_init):
+    def _capture_task(supervisor_arg: object, **kwargs: Any) -> None:
+        captured["task_kwargs"] = kwargs
+
+    def _capture_emergency(**kwargs: Any) -> Any:
+        captured["emergency_kwargs"] = kwargs
+
+        async def _noop(_result: Any) -> None:
+            return None
+
+        return _noop
+
+    with (
+        mock.patch(f"{_dispatcher_cls}.__init__", _capture_dispatcher_init),
+        mock.patch(_task_fn, _capture_task),
+        mock.patch(_emergency_fn, _capture_emergency),
+    ):
         _register_breach_loop(
-            supervisor,
-            underlying_cache=object(),  # opaque — wiring stores the reference
+            MonitorSupervisor(session=session, config=_config()),
+            underlying_cache=object(),
             session=session,
             breach_behavior_config=_breach_behavior_config(),
-            breach_response_lookup=breach_response_lookup,
+            breach_response_lookup=MappingProxyType({}),
             db_session_factory=db_session_factory,
             sync_session_factory=sync_session_factory,
             trigger_ids=shared_trigger_ids,
             progressive_tiers=(),
-            account_state_queries=_SolventAccountQueries(),
+            account_state_queries=queries,
             calendar_cache=_make_calendar_cache(),
             state_persistence_config=_state_persistence_config(),
             config_dir=_CONFIG_DIR,
             realized_vol_map={},
         )
 
-    # The cascade dispatcher received the *same* generator instance the daemon
-    # constructed — not a fresh one with a session_id-only constructor call.
-    assert captured["dispatcher_kwargs"]["trigger_ids"] is shared_trigger_ids
+    return captured
+
+
+# ---------------------------------------------------------------------------
+# Parametrized kwarg-capture assertions (six required by ALP-798 PRESERVE list)
+# ---------------------------------------------------------------------------
+
+
+def _assert_trigger_ids_to_cascade_dispatcher(captured: dict[str, Any]) -> None:
+    """trigger_ids → CascadeDispatcher: shared generator passed to __init__."""
+    assert captured["dispatcher_kwargs"]["trigger_ids"] is captured["shared_trigger_ids"]
+
+
+def _assert_trigger_ids_to_emergency_callback(captured: dict[str, Any]) -> None:
+    """trigger_ids → make_emergency_callback: same shared generator."""
+    assert captured["emergency_kwargs"]["trigger_ids"] is captured["shared_trigger_ids"]
+
+
+def _assert_real_activity_log_sink(captured: dict[str, Any]) -> None:
+    """real activity_log sink (not _no_op_sink): callable, not None."""
+    # Pre-fix this was bound to ``_no_op_sink`` (returns None unconditionally).
+    # Post-fix it is the closure ``_activity_log_sink`` that loops the iterable
+    # and awaits ``make_activity_log_emitter`` per row.
+    sink = captured["task_kwargs"]["activity_log_sink"]
+    assert sink is not None
+    assert callable(sink)
+
+
+def _assert_progressive_tiers_threading(captured: dict[str, Any]) -> None:
+    """progressive_tiers threading: empty tuple threaded through unchanged."""
+    # Pre-fix this was ``()``. Post-fix the helper threads through the
+    # cumulative-drawdown tier sequence passed by the daemon.
+    assert captured["task_kwargs"]["progressive_tiers"] == ()
+
+
+def _assert_calendar_cache_market_hours(captured: dict[str, Any]) -> None:
+    """calendar_cache market_hours: TradingCalendarCache (not _ClosedMarket stub)."""
+    market_hours = captured["task_kwargs"]["market_hours"]
+    # Pre-fix it was an instance of ``_ClosedMarket`` returning ``False`` indefinitely.
+    assert isinstance(market_hours, TradingCalendarCache)
+
+
+def _assert_alpaca_margin_call_observer(captured: dict[str, Any]) -> None:
+    """AlpacaMarginCallObserver wiring: backed by the supplied queries instance."""
+    from alphamind.execution.continuous_monitor.emergency_trigger import (
+        AlpacaMarginCallObserver,
+    )
+
+    observer = captured["emergency_kwargs"]["margin_call_observer"]
+    assert isinstance(observer, AlpacaMarginCallObserver)
+    assert observer._queries is captured["queries"]
+
+
+@pytest.mark.parametrize(
+    ("label", "assert_fn"),
+    [
+        (
+            "trigger_ids_to_cascade_dispatcher",
+            _assert_trigger_ids_to_cascade_dispatcher,
+        ),
+        (
+            "trigger_ids_to_make_emergency_callback",
+            _assert_trigger_ids_to_emergency_callback,
+        ),
+        (
+            "real_activity_log_sink_not_no_op",
+            _assert_real_activity_log_sink,
+        ),
+        (
+            "progressive_tiers_threading",
+            _assert_progressive_tiers_threading,
+        ),
+        (
+            "calendar_cache_market_hours_not_closed_market",
+            _assert_calendar_cache_market_hours,
+        ),
+        (
+            "alpaca_margin_call_observer_wiring",
+            _assert_alpaca_margin_call_observer,
+        ),
+    ],
+)
+async def test_register_breach_loop_kwarg_capture(
+    _boot_capture: dict[str, Any],
+    label: str,
+    assert_fn: Any,
+) -> None:
+    """Parametrized table — each row asserts one captured-kwarg invariant.
+
+    Six rows required by the ALP-798 PRESERVE list:
+    * trigger_ids → CascadeDispatcher
+    * trigger_ids → make_emergency_callback
+    * real activity_log sink (not _no_op_sink)
+    * progressive_tiers threading
+    * calendar_cache market_hours (_ClosedMarket type regression)
+    * AlpacaMarginCallObserver wiring
+    """
+    del label  # parametrize id only
+    assert_fn(_boot_capture)
+
+
+# ---------------------------------------------------------------------------
+# Focused tests that must remain standalone (ALP-798 PRESERVE list)
+# ---------------------------------------------------------------------------
 
 
 async def test_register_breach_loop_registers_breach_loop_task(
     db_session_factory: async_sessionmaker[AsyncSession],
     sync_session_factory: sessionmaker[Session],
 ) -> None:
-    """The supervisor ends up with a ``breach_loop`` task registered."""
+    """The supervisor ends up with a ``breach_loop`` task registered.
+
+    Kept as a focused (un-patched) test — the only real registration check.
+    """
     session = _session()
     supervisor = MonitorSupervisor(session=session, config=_config())
     _register_breach_loop(
@@ -208,104 +346,18 @@ async def test_register_breach_loop_registers_breach_loop_task(
     assert "breach_loop" in supervisor.task_names()
 
 
-async def test_register_breach_loop_wires_real_activity_log_sink(
-    db_session_factory: async_sessionmaker[AsyncSession],
-    sync_session_factory: sessionmaker[Session],
+async def test_register_breach_loop_activity_log_sink_drains_empty_iterable(
+    _boot_capture: dict[str, Any],
 ) -> None:
-    """Regression — the supervisor's breach-loop task receives a real
-    activity_log_sink that persists entries via db_session_factory.
+    """The real activity_log_sink drains an empty iterable without raising.
 
-    Before the fix the sink was ``_no_op_sink`` and ``HALT_ACTIVATED`` /
-    ``HALT_LIFTED`` entries were silently dropped — masked only by the
-    ``_ClosedMarket`` stub (which gates the breach loop's entry emission).
-    Once ``_ClosedMarket`` lifts, this regression would have made halt
-    transitions invisible to the activity log.
+    Retained as a focused async test because the sink must be awaited — the
+    parametrized table only runs sync assertions over the captured dict.
     """
-    session = _session()
-    supervisor = MonitorSupervisor(session=session, config=_config())
-    captured: dict[str, Any] = {}
-
-    real_fn = "alphamind.execution.continuous_monitor.__main__.register_breach_loop_task"
-
-    def _capture(supervisor_arg: object, **kwargs: Any) -> None:
-        captured["kwargs"] = kwargs
-
-    with mock.patch(real_fn, _capture):
-        _register_breach_loop(
-            supervisor,
-            underlying_cache=object(),
-            session=session,
-            breach_behavior_config=_breach_behavior_config(),
-            breach_response_lookup=MappingProxyType({}),
-            db_session_factory=db_session_factory,
-            sync_session_factory=sync_session_factory,
-            trigger_ids=TriggerIdGenerator(session_id=session.session_id),
-            progressive_tiers=(),
-            account_state_queries=_SolventAccountQueries(),
-            calendar_cache=_make_calendar_cache(),
-            state_persistence_config=_state_persistence_config(),
-            config_dir=_CONFIG_DIR,
-            realized_vol_map={},
-        )
-
-    sink = captured["kwargs"]["activity_log_sink"]
-    # Pre-fix this was bound to ``_no_op_sink`` (returns None unconditionally).
-    # Post-fix it is the closure ``_activity_log_sink`` that loops the iterable
-    # and awaits ``make_activity_log_emitter`` per row. We can't compare names,
-    # so we assert the post-fix behavior: a real writer must be a non-no-op
-    # callable that materializes the iterable.
-    assert sink is not None
-    assert callable(sink)
+    sink = _boot_capture["task_kwargs"]["activity_log_sink"]
     # Drain an empty iterable — should be a clean no-op against the real DB
     # path (i.e., no exception thrown by the emitter wiring).
     await sink([])
-
-
-async def test_register_breach_loop_threads_trigger_ids_to_emergency_callback(
-    db_session_factory: async_sessionmaker[AsyncSession],
-    sync_session_factory: sessionmaker[Session],
-) -> None:
-    """Regression (ALP-453) — the emergency callback consumes the same
-    ``TriggerIdGenerator`` as the cascade dispatcher, not a freshly-minted one.
-
-    Pre-fix, ``make_emergency_callback`` was called without ``trigger_ids=``
-    so the evaluator built its own generator and the two paths' trigger ids
-    could collide within the same session.
-    """
-    session = _session()
-    supervisor = MonitorSupervisor(session=session, config=_config())
-    shared = TriggerIdGenerator(session_id=session.session_id)
-    captured: dict[str, Any] = {}
-
-    real_fn = "alphamind.execution.continuous_monitor.__main__.make_emergency_callback"
-
-    def _capture(**kwargs: Any) -> Any:
-        captured["kwargs"] = kwargs
-
-        async def _noop(_result: Any) -> None:
-            return None
-
-        return _noop
-
-    with mock.patch(real_fn, _capture):
-        _register_breach_loop(
-            supervisor,
-            underlying_cache=object(),
-            session=session,
-            breach_behavior_config=_breach_behavior_config(),
-            breach_response_lookup=MappingProxyType({}),
-            db_session_factory=db_session_factory,
-            sync_session_factory=sync_session_factory,
-            trigger_ids=shared,
-            progressive_tiers=(),
-            account_state_queries=_SolventAccountQueries(),
-            calendar_cache=_make_calendar_cache(),
-            state_persistence_config=_state_persistence_config(),
-            config_dir=_CONFIG_DIR,
-            realized_vol_map={},
-        )
-
-    assert captured["kwargs"]["trigger_ids"] is shared
 
 
 def test_emergency_trigger_reexports_canonical_trigger_id_generator() -> None:
@@ -323,7 +375,7 @@ def test_emergency_trigger_reexports_canonical_trigger_id_generator() -> None:
     assert EmergencyTriggerIdGenerator is CanonicalTriggerIdGenerator
 
 
-async def test_register_breach_loop_passes_progressive_tiers(
+async def test_register_breach_loop_passes_non_empty_progressive_tiers(
     db_session_factory: async_sessionmaker[AsyncSession],
     sync_session_factory: sessionmaker[Session],
 ) -> None:
@@ -367,98 +419,3 @@ async def test_register_breach_loop_passes_progressive_tiers(
     # Pre-fix this was ``()``. Post-fix the helper threads through the
     # cumulative-drawdown tier sequence passed by the daemon.
     assert captured["kwargs"]["progressive_tiers"] == sample_tiers
-
-
-async def test_register_breach_loop_wires_calendar_cache_market_hours(
-    db_session_factory: async_sessionmaker[AsyncSession],
-    sync_session_factory: sessionmaker[Session],
-) -> None:
-    """ALP-453 — ``market_hours`` is the supplied :class:`TradingCalendarCache`
-    rather than the always-closed ``_ClosedMarket`` stub.
-    """
-    from alphamind.execution.venue_configuration.calendar_cache import (
-        TradingCalendarCache,
-    )
-
-    session = _session()
-    supervisor = MonitorSupervisor(session=session, config=_config())
-    captured: dict[str, Any] = {}
-
-    real_fn = "alphamind.execution.continuous_monitor.__main__.register_breach_loop_task"
-
-    def _capture(supervisor_arg: object, **kwargs: Any) -> None:
-        captured["kwargs"] = kwargs
-
-    with mock.patch(real_fn, _capture):
-        _register_breach_loop(
-            supervisor,
-            underlying_cache=object(),
-            session=session,
-            breach_behavior_config=_breach_behavior_config(),
-            breach_response_lookup=MappingProxyType({}),
-            db_session_factory=db_session_factory,
-            sync_session_factory=sync_session_factory,
-            trigger_ids=TriggerIdGenerator(session_id=session.session_id),
-            progressive_tiers=(),
-            account_state_queries=_SolventAccountQueries(),
-            calendar_cache=_make_calendar_cache(),
-            state_persistence_config=_state_persistence_config(),
-            config_dir=_CONFIG_DIR,
-            realized_vol_map={},
-        )
-
-    market_hours = captured["kwargs"]["market_hours"]
-    # The breach loop's ``market_hours`` is a ``TradingCalendarCache`` instance
-    # (or equivalent that satisfies the protocol via cache state). Pre-fix it
-    # was an instance of ``_ClosedMarket`` returning ``False`` indefinitely.
-    assert isinstance(market_hours, TradingCalendarCache)
-
-
-async def test_register_breach_loop_wires_alpaca_margin_call_observer(
-    db_session_factory: async_sessionmaker[AsyncSession],
-    sync_session_factory: sessionmaker[Session],
-) -> None:
-    """ALP-453 — the emergency callback consumes :class:`AlpacaMarginCallObserver`
-    backed by the supplied broker queries, not the no-op default.
-    """
-    from alphamind.execution.continuous_monitor.emergency_trigger import (
-        AlpacaMarginCallObserver,
-    )
-
-    session = _session()
-    supervisor = MonitorSupervisor(session=session, config=_config())
-    captured: dict[str, Any] = {}
-
-    real_fn = "alphamind.execution.continuous_monitor.__main__.make_emergency_callback"
-
-    def _capture(**kwargs: Any) -> Any:
-        captured["kwargs"] = kwargs
-
-        async def _noop(_result: Any) -> None:
-            return None
-
-        return _noop
-
-    queries = _SolventAccountQueries()
-    with mock.patch(real_fn, _capture):
-        _register_breach_loop(
-            supervisor,
-            underlying_cache=object(),
-            session=session,
-            breach_behavior_config=_breach_behavior_config(),
-            breach_response_lookup=MappingProxyType({}),
-            db_session_factory=db_session_factory,
-            sync_session_factory=sync_session_factory,
-            trigger_ids=TriggerIdGenerator(session_id=session.session_id),
-            progressive_tiers=(),
-            account_state_queries=queries,
-            calendar_cache=_make_calendar_cache(),
-            state_persistence_config=_state_persistence_config(),
-            config_dir=_CONFIG_DIR,
-            realized_vol_map={},
-        )
-
-    observer = captured["kwargs"]["margin_call_observer"]
-    assert isinstance(observer, AlpacaMarginCallObserver)
-    # The observer holds the exact queries instance — no extra wrapping.
-    assert observer._queries is queries

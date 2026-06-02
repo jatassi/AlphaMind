@@ -11,8 +11,8 @@ Drives :func:`alphamind.scheduler.orchestrator.run_invocation` against a
   and ``run_decision_pipeline`` — both stubs receive the same emitter the
   orchestrator constructed from ``context.debug_e2e.emitter_factory`` and
   use it to emit their own per-phase + per-agent events.
-* Exactly nine ``agent_request`` / ``agent_response`` pairs land, in
-  dependency order, mirroring the production sequence
+* The ``agent_request`` events arrive in canonical dependency-DAG order,
+  mirroring the production sequence
   ``distillation → (3 sectors + qualitative) → adaptive → synthesizer →
   (analyst + strategist) → pre_processor → pm``.
 
@@ -24,35 +24,23 @@ per-harness emit point is exercised by the unit tests under
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import Engine
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import InvocationId
 from alphamind._kernel.progress import ProgressEmitter
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.run_types import RunType
-from alphamind.config.models.venue import (
-    Alpaca,
-    AlpacaCredentials,
-    SessionHours,
-    SessionWindow,
-    VenueConfig,
-)
 
 # Side-effect import to break the submit_envelope_mcp ↔ portfolio_manager
 # circular import: PMEnvelope first, then submit_envelope_mcp.
 from alphamind.decision.portfolio_manager.models import PMEnvelope  # noqa: F401
 from alphamind.execution.write_paths.phase1 import Phase1Summary
-from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
-    make_async_engine,
-    make_async_session_factory,
     make_engine,
     make_session_factory,
 )
@@ -63,116 +51,15 @@ from alphamind.scheduler.debug_e2e.broker import (
 )
 from alphamind.scheduler.debug_e2e.portfolio import SYNTHETIC_PORTFOLIO
 from alphamind.scheduler.debug_e2e.settings import DebugE2ESettings
-from alphamind.state.invocation_context.records import (
-    ProcessLifetimeRecord,
-    process_lifetime_record_to_row,
-)
 from tests.scheduler._regime_helpers import make_regime_output
+from tests.scheduler.conftest import (
+    _MAKE_CONTEXT_ENGINES,
+    SHIPPED_CONFIG_DIR,
+    _make_venue_config,
+)
 from tests.scheduler.test_progress import RecordingProgressEmitter
 
 _NOW = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
-REPO_ROOT = Path(__file__).parent.parent.parent
-SHIPPED_CONFIG_DIR = REPO_ROOT / "config"
-_VENUE_ENV_KEYS: tuple[str, ...] = (
-    "ALPACA_PAPER_KEY",
-    "ALPACA_PAPER_SECRET",
-    "ALPACA_LIVE_KEY",
-    "ALPACA_LIVE_SECRET",
-)
-
-
-_MAKE_CONTEXT_ENGINES: list[Engine] = []
-
-
-@pytest.fixture(autouse=True)
-def _dispose_make_context_engines() -> Any:
-    yield
-    while _MAKE_CONTEXT_ENGINES:
-        _MAKE_CONTEXT_ENGINES.pop().dispose()
-
-
-def _write_placeholder_env(env_path: Path) -> None:
-    env_path.write_text("\n".join(f"{key}=placeholder" for key in _VENUE_ENV_KEYS) + "\n")
-
-
-def _make_process_lifetime_record() -> ProcessLifetimeRecord:
-    return ProcessLifetimeRecord(
-        process_lifetime_id="proc-orch-progress-1",
-        process_role="pipeline",
-        process_start_at="2026-05-07T14:30:00Z",
-        process_pid=12345,
-        hostname="alpha-prod-01",
-        git_sha="a" * 40,
-        git_branch="main",
-        git_dirty=False,
-        python_version="3.13.1",
-        pip_freeze_hash="0" * 64,
-        pip_freeze_snapshot_path="/tmp/provenance/process_lifetimes/proc-orch-progress-1/pip_freeze.txt",
-        anthropic_sdk_version="0.40.0",
-        claude_agent_sdk_version="0.1.69",
-        os_release="Linux-6.5.0-generic-x86_64",
-    )
-
-
-def _make_venue_config() -> VenueConfig:
-    creds = AlpacaCredentials(
-        rest_url="https://paper-api.alpaca.markets",
-        ws_url="wss://paper-api.alpaca.markets",
-        api_key_env="ALPACA_PAPER_KEY",
-        api_secret_env="ALPACA_PAPER_SECRET",
-    )
-    return VenueConfig(
-        alpaca=Alpaca(paper=creds, live=creds, rate_limit_per_minute=200),
-        session_hours=SessionHours(
-            regular=SessionWindow(open="09:30", close="16:00"),
-            pre_market=SessionWindow(open="04:00", close="09:30"),
-            after_hours=SessionWindow(open="16:00", close="20:00"),
-        ),
-    )
-
-
-@pytest.fixture
-def env_path(tmp_path: Path) -> Path:
-    path = tmp_path / ".env"
-    _write_placeholder_env(path)
-    return path
-
-
-@pytest.fixture
-def archive_root(tmp_path: Path) -> Path:
-    return tmp_path / "archive"
-
-
-@pytest.fixture
-def db_path(tmp_path: Path) -> Path:
-    return tmp_path / "alphamind.db"
-
-
-@pytest.fixture
-async def async_factory(
-    tmp_path: Path,
-) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    """Async session factory bound to an initialized SQLite DB with the
-    minimal process-lifetime row the orchestrator's FK requires."""
-    db_path = tmp_path / "alphamind.db"
-
-    import alphamind.state.tables  # noqa: F401
-
-    sync_engine = make_engine(str(db_path))
-    try:
-        Base.metadata.create_all(sync_engine)
-        with make_session_factory(sync_engine)() as sess:
-            sess.add(process_lifetime_record_to_row(_make_process_lifetime_record()))
-            sess.commit()
-    finally:
-        sync_engine.dispose()
-
-    async_engine: AsyncEngine = make_async_engine(str(db_path))
-    factory = make_async_session_factory(async_engine)
-    try:
-        yield factory
-    finally:
-        await async_engine.dispose()
 
 
 def _make_context(
@@ -201,7 +88,7 @@ def _make_context(
     return RunInvocationContext(
         session_factory=session_factory,
         sync_session_factory=sync_session_factory,
-        process_lifetime_id="proc-orch-progress-1",
+        process_lifetime_id="proc-driver-1",
         archive_root=archive_root,
         config_dir=SHIPPED_CONFIG_DIR,
         env_path=env_path,
@@ -544,18 +431,21 @@ async def test_run_invocation_records_every_phase_boundary(
     assert dones == expected_phases, f"missing phase_done events: {expected_phases - dones}"
 
 
-async def test_run_invocation_records_nine_agent_request_response_pairs(
+async def test_run_invocation_records_agents_in_dependency_order(
     async_factory: async_sessionmaker[AsyncSession],
     env_path: Path,
     archive_root: Path,
     db_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Exactly 9 ``agent_request`` / ``agent_response`` pairs land in dependency order.
+    """Agent ``agent_request`` events arrive in the canonical dependency-DAG order.
 
-    The 9 SDK calls correspond to the parent issue's pre-resolved SDK-call count:
-    3 domain researchers + qualitative + adaptive + synthesizer + analyst +
-    strategist + portfolio_manager.
+    The ordering — distillation → 3 sector researchers → qualitative →
+    adaptive → synthesizer → analyst → strategist → portfolio_manager —
+    is the unique invariant this test protects.  The per-harness emit
+    path is covered by ``tests/analysis/test_harness_core.py``
+    (L932/L981); the field shape of ``agent_response`` is enforced by
+    the ``RecordingProgressEmitter`` stub's own signature.
     """
     from alphamind.scheduler.orchestrator import run_invocation
 
@@ -577,12 +467,6 @@ async def test_run_invocation_records_nine_agent_request_response_pairs(
         now=_NOW,
     )
 
-    requests = [fields for kind, fields in emitter.events if kind == "agent_request"]
-    responses = [fields for kind, fields in emitter.events if kind == "agent_response"]
-
-    assert len(requests) == 9, f"expected 9 agent_request events, got {len(requests)}"
-    assert len(responses) == 9, f"expected 9 agent_response events, got {len(responses)}"
-
     expected_agents_in_order = [
         "tech_semis_researcher",
         "financials_researcher",
@@ -594,21 +478,10 @@ async def test_run_invocation_records_nine_agent_request_response_pairs(
         "strategist",
         "portfolio_manager",
     ]
-    actual_agents = [r["agent"] for r in requests]
+    actual_agents = [fields["agent"] for kind, fields in emitter.events if kind == "agent_request"]
     assert actual_agents == expected_agents_in_order, (
         f"agent_request order mismatch: {actual_agents} != {expected_agents_in_order}"
     )
-
-    # Each agent_response carries the seven fixed fields per parent
-    # issue § (B); cache split added per ALP-701.
-    for response in responses:
-        assert "duration_s" in response
-        assert "input_tokens" in response
-        assert "cache_read_tokens" in response
-        assert "cache_write_tokens" in response
-        assert "output_tokens" in response
-        assert "tool_calls" in response
-        assert "stop_reason" in response
 
 
 async def test_phase1_done_carries_fills_processed(
@@ -709,7 +582,7 @@ async def test_run_invocation_without_debug_e2e_uses_noop_emitter(
     context = RunInvocationContext(
         session_factory=async_factory,
         sync_session_factory=sync_session_factory,
-        process_lifetime_id="proc-orch-progress-1",
+        process_lifetime_id="proc-driver-1",
         archive_root=archive_root,
         config_dir=SHIPPED_CONFIG_DIR,
         env_path=env_path,

@@ -20,11 +20,9 @@ Cold-start tolerance: when required series are missing from
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 
-import pytest
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind.config.models.distillation import (
@@ -48,36 +46,21 @@ from alphamind.distillation.q6_macro import (
     compute_q6_blocks,
 )
 from alphamind.persistence.models import (
-    Base,
     DistillationCompositeState,
     EventCalendar,
     MacroObservations,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
 
 # ---------------------------------------------------------------------------
-# Engine / session fixtures
+# Distillation config builder — Q6 macro calibration
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    factory = make_session_factory(engine)
-    with factory() as sess:
-        yield sess
-
-
-# ---------------------------------------------------------------------------
-# Config builder
-# ---------------------------------------------------------------------------
+#
+# The q6 macro classifiers are calibrated against thresholds that differ from
+# the shared conftest builder across many fields (VIX regime boundaries
+# 14/22/35, funding-stress / gap-fill / sentiment windows, lead-lag horizons,
+# narrative-lag sigmas, prediction-market deltas). This local builder
+# reproduces q6's exact pre-hoist literal verbatim rather than reconciling it
+# onto the shared defaults.
 
 
 def _build_distillation_config() -> DistillationDomainConfig:

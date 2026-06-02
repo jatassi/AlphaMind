@@ -28,27 +28,6 @@ def test_pipeline_mode_module_is_kernel_mode() -> None:
     assert PipelineMode.__module__ == "alphamind._kernel.mode"
 
 
-def test_kernel_mode_has_zero_first_party_imports() -> None:
-    """``_kernel.mode`` must have no ``alphamind.*`` imports — it is a leaf."""
-    import ast
-    from pathlib import Path
-
-    import alphamind._kernel.mode as module
-
-    source = Path(module.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            assert node.module is None or not (
-                node.module == "alphamind" or node.module.startswith("alphamind.")
-            ), f"_kernel.mode must not import from alphamind.*; found: {node.module}"
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                assert not (alias.name == "alphamind" or alias.name.startswith("alphamind.")), (
-                    f"_kernel.mode must not import alphamind.*; found: {alias.name}"
-                )
-
-
 def test_to_analyst_pipeline_mode_halt_matches_old_dict() -> None:
     """``PipelineMode.HALT.to_analyst_pipeline_mode()`` matches the old dict.
 

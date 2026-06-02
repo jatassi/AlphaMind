@@ -98,6 +98,12 @@ Invoke `Skill("tdd")`: red → green → refactor.
 - Sociable tests per `python-architecture` P8 — real internal collaborators, faked / in-process I/O substitutes. No mockist tests.
 - For audit/cleanup issues where the deliverable is verified by re-running the full lint chain (e.g., removing a suppression directive, restoring strict mypy on a directory), TDD is the wrong frame — drive by the failure list (`mypy` / `ruff` output) and converge to zero. No new tests written; existing test suite is the regression guard.
 
+**Test-quality constraints** (canonical rules in `CLAUDE.md` "## Testing" → "### Test-quality rules" and `docs/agents/testing.md`):
+- Mock only at the four sanctioned boundaries (LLM / Claude Agent SDK, broker API, system clock, database) — not internal collaborators.
+- Coverage is a floor: ask "does this test fail for a reason no other test fails for?" before adding a test.
+- Refactor step includes the tests — consolidate and delete scaffolding the coarser tests subsume.
+- Architecture/purity invariants go in `.importlinter` / ruff rules, not in ceiling or source-grep tests.
+
 On blocker mid-implementation — schema gap, ambiguous spec, sibling-issue primitive missing or shaped differently than expected, test that won't pass without scope creep — **stop and surface**.
 
 ### Lint + scoped-test chain

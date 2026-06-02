@@ -54,6 +54,24 @@ uv run pytest tests/path/to/test_x.py::test_case
 Passes locally but fails under xdist on CI = test-order dependence — fix the test, don't
 fall back to serial.
 
+### Test-quality rules
+
+**Mock only at the four sanctioned boundaries:** LLM / Claude Agent SDK, broker API
+(Alpaca), the system clock, and the database. Patching an internal collaborator (a
+runner, assembler, composition-root factory) tests wiring, not behavior — disallowed.
+
+**Coverage is a floor, not a target.** Before adding a test ask: "does this test fail
+for a reason no other test fails for?" If no, it is redundant — don't add it.
+
+**Red-green-refactor's third step includes the tests.** After driving out an
+implementation test-first, consolidate the new tests against each other and against the
+integration tests covering the same path; delete scaffolding the coarser test subsumes.
+
+**Architecture / purity invariants belong in `.importlinter` contracts or ruff rules**
+— never in drifting-count "audit-baseline ceiling" tests or source-text AST greps.
+
+See `docs/agents/testing.md` for rationale and before/after examples.
+
 ## Branch policy
 
 `main` is PR-only — never push directly; open a PR. Squash-merge every PR. Don't merge

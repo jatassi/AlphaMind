@@ -10,34 +10,19 @@ initialized).
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-import alphamind.state.tables  # noqa: F401 - register ORM mappers before create_all
 from alphamind._kernel.money import money, price
 from alphamind.config.models.main import ExecutionMode
-from alphamind.config.models.venue import (
-    Alpaca,
-    AlpacaCredentials,
-    SessionHours,
-    SessionWindow,
-    VenueConfig,
-)
+from alphamind.config.models.venue import VenueConfig
 from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
-)
-from alphamind.persistence.models import Base
-from alphamind.persistence.session import (
-    make_async_engine,
-    make_async_session_factory,
-    make_engine,
 )
 from alphamind.scheduler.fresh_start import (
     FreshStartPreconditionError,
@@ -52,43 +37,9 @@ from alphamind.state.tables.drawdown_state import (
     DRAWDOWN_STATE_SINGLETON_ID,
     DrawdownStateRow,
 )
+from tests.scheduler.conftest import _make_venue_config
 
 _NOW = datetime(2026, 5, 25, 14, 30, 0, tzinfo=UTC)
-
-
-@pytest.fixture
-async def async_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    """Yield an async session factory bound to an initialized SQLite DB."""
-    db_path = tmp_path / "alphamind.db"
-    sync_engine = make_engine(str(db_path))
-    try:
-        Base.metadata.create_all(sync_engine)
-    finally:
-        sync_engine.dispose()
-
-    async_engine: AsyncEngine = make_async_engine(str(db_path))
-    factory = make_async_session_factory(async_engine)
-    try:
-        yield factory
-    finally:
-        await async_engine.dispose()
-
-
-def _make_venue_config() -> VenueConfig:
-    creds = AlpacaCredentials(
-        rest_url="https://paper-api.alpaca.markets",
-        ws_url="wss://paper-api.alpaca.markets",
-        api_key_env="ALPACA_PAPER_KEY",
-        api_secret_env="ALPACA_PAPER_SECRET",
-    )
-    return VenueConfig(
-        alpaca=Alpaca(paper=creds, live=creds, rate_limit_per_minute=200),
-        session_hours=SessionHours(
-            regular=SessionWindow(open="09:30", close="16:00"),
-            pre_market=SessionWindow(open="04:00", close="09:30"),
-            after_hours=SessionWindow(open="16:00", close="20:00"),
-        ),
-    )
 
 
 def _make_account_snapshot(cash_usd: float = 100_000.0) -> TradeAccountSnapshot:

@@ -52,11 +52,6 @@ class TestAlertRow:
             "context_json",
         }
 
-    def test_alert_id_is_primary_key(self) -> None:
-        insp = inspect(AlertRow)
-        pks = [col.name for col in insp.primary_key]
-        assert pks == ["alert_id"]
-
 
 class TestWebauthnCredentialRow:
     def test_has_documented_columns(self) -> None:
@@ -69,11 +64,6 @@ class TestWebauthnCredentialRow:
             "created_at",
         }
 
-    def test_credential_id_is_primary_key(self) -> None:
-        insp = inspect(WebauthnCredentialRow)
-        pks = [col.name for col in insp.primary_key]
-        assert pks == ["credential_id"]
-
 
 class TestOperatorSessionRow:
     def test_has_documented_columns(self) -> None:
@@ -85,11 +75,6 @@ class TestOperatorSessionRow:
             "csrf_token_hash",
             "created_at",
         }
-
-    def test_session_id_is_primary_key(self) -> None:
-        insp = inspect(OperatorSessionRow)
-        pks = [col.name for col in insp.primary_key]
-        assert pks == ["session_id"]
 
     def test_credential_id_has_fk_to_webauthn_credentials(self) -> None:
         insp = inspect(OperatorSessionRow)

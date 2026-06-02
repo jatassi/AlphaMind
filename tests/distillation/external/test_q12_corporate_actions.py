@@ -23,13 +23,10 @@ visibly exercised.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import pytest
 from sqlalchemy import select
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import Symbol
@@ -47,30 +44,12 @@ from alphamind.distillation.q12_corporate_actions import (
 )
 from alphamind.persistence.models import (
     AssetUniverse,
-    Base,
     CorporateActions,
     EtfMembership,
     EventCalendar,
     OhlcvBars,
     SectorClassification,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    factory = make_session_factory(engine)
-    with factory() as sess:
-        yield sess
-
 
 # ---------------------------------------------------------------------------
 # Fixture helpers — kept minimal; each test composes only what it needs.

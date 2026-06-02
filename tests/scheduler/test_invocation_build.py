@@ -11,12 +11,11 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.config import load_full_config
 from alphamind.config.load import PipelineConfig
@@ -25,12 +24,7 @@ from alphamind.config.models.overlays import Overlay
 from alphamind.config.models.regimes import Regime
 from alphamind.config.models.run_types import RunType
 from alphamind.config.resolver import RuntimeDimensions
-from alphamind.persistence.models import Base, CollectionRuns
-from alphamind.persistence.session import (
-    make_async_engine,
-    make_async_session_factory,
-    make_engine,
-)
+from alphamind.persistence.models import CollectionRuns
 from alphamind.scheduler.invocation import (
     _compute_data_source_freshness_json,
     _persist_data_calibration_snapshot,
@@ -40,35 +34,12 @@ from alphamind.state.invocation_context.records import (
     InvocationRecord,
 )
 from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
-
-REPO_ROOT = Path(__file__).parent.parent.parent
-SHIPPED_CONFIG_DIR = REPO_ROOT / "config"
-
-_VENUE_ENV_KEYS: tuple[str, ...] = (
-    "ALPACA_PAPER_KEY",
-    "ALPACA_PAPER_SECRET",
-    "ALPACA_LIVE_KEY",
-    "ALPACA_LIVE_SECRET",
+from tests.scheduler.conftest import (
+    SHIPPED_CONFIG_DIR,
 )
 
 # Sentinel process_lifetime_id used by all _build calls.
 _BUILD_PROCESS_LIFETIME_ID = "proc-build-1"
-
-
-def _write_placeholder_env(env_path: Path) -> None:
-    env_path.write_text("\n".join(f"{key}=placeholder" for key in _VENUE_ENV_KEYS) + "\n")
-
-
-@pytest.fixture
-def env_path(tmp_path: Path) -> Path:
-    path = tmp_path / ".env"
-    _write_placeholder_env(path)
-    return path
-
-
-@pytest.fixture
-def archive_root(tmp_path: Path) -> Path:
-    return tmp_path / "archive"
 
 
 def _baseline_runtime() -> RuntimeDimensions:
@@ -95,30 +66,6 @@ def pipeline_config(env_path: Path, archive_root: Path) -> PipelineConfig:
         today=_AS_OF.date(),
         as_of=_AS_OF,
     )
-
-
-@pytest.fixture
-async def async_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    """Yield an async session factory bound to a freshly initialized SQLite DB."""
-    db_path = tmp_path / "alphamind.db"
-
-    # Side-effect import: register the state-persistence tables on Base.metadata
-    # (needed when build_invocation_record's freshness query touches collection_runs
-    # and we want all tables created up front).
-    import alphamind.state.tables  # noqa: F401
-
-    sync_engine = make_engine(str(db_path))
-    try:
-        Base.metadata.create_all(sync_engine)
-    finally:
-        sync_engine.dispose()
-
-    async_engine: AsyncEngine = make_async_engine(str(db_path))
-    factory = make_async_session_factory(async_engine)
-    try:
-        yield factory
-    finally:
-        await async_engine.dispose()
 
 
 async def _seed_process_lifetime(

@@ -13,13 +13,12 @@ phase — incompatible with the design's snapshot-isolation contract.
 from __future__ import annotations
 
 import re
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.config.models.modes import Mode
 from alphamind.config.models.regimes import Regime
@@ -30,91 +29,14 @@ from alphamind.persistence.session import (
     make_async_engine,
     make_async_session_factory,
     make_engine,
-    make_session_factory,
 )
 from alphamind.scheduler.invocation import insert_invocation_record
-from alphamind.state.invocation_context.records import (
-    ProcessLifetimeRecord,
-    process_lifetime_record_to_row,
-)
 from alphamind.state.tables.invocations import InvocationRow
-
-REPO_ROOT = Path(__file__).parent.parent.parent
-SHIPPED_CONFIG_DIR = REPO_ROOT / "config"
-
-_VENUE_ENV_KEYS: tuple[str, ...] = (
-    "ALPACA_PAPER_KEY",
-    "ALPACA_PAPER_SECRET",
-    "ALPACA_LIVE_KEY",
-    "ALPACA_LIVE_SECRET",
+from tests.scheduler.conftest import (
+    SHIPPED_CONFIG_DIR,
 )
 
 _INVOCATION_ID_RE = re.compile(r"^inv-\d{8}T\d{6}Z-[0-9a-f]{8}$")
-
-
-def _write_placeholder_env(env_path: Path) -> None:
-    env_path.write_text("\n".join(f"{key}=placeholder" for key in _VENUE_ENV_KEYS) + "\n")
-
-
-@pytest.fixture
-def env_path(tmp_path: Path) -> Path:
-    path = tmp_path / ".env"
-    _write_placeholder_env(path)
-    return path
-
-
-@pytest.fixture
-def archive_root(tmp_path: Path) -> Path:
-    return tmp_path / "archive"
-
-
-def _make_process_lifetime_record() -> ProcessLifetimeRecord:
-    return ProcessLifetimeRecord(
-        process_lifetime_id="proc-open-1",
-        process_role="pipeline",
-        process_start_at="2026-05-07T14:30:00Z",
-        process_pid=12345,
-        hostname="alpha-prod-01",
-        git_sha="a" * 40,
-        git_branch="main",
-        git_dirty=False,
-        python_version="3.13.1",
-        pip_freeze_hash="0" * 64,
-        pip_freeze_snapshot_path="/tmp/provenance/process_lifetimes/proc-open-1/pip_freeze.txt",
-        anthropic_sdk_version="0.40.0",
-        claude_agent_sdk_version="0.1.69",
-        os_release="Linux-6.5.0-generic-x86_64",
-    )
-
-
-@pytest.fixture
-async def async_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    """Yield an async session factory bound to an initialized SQLite DB.
-
-    Seeds the FK parent ``process_lifetimes`` row so
-    :func:`insert_invocation_record` can satisfy the foreign-key constraint
-    without further setup.
-    """
-    db_path = tmp_path / "alphamind.db"
-
-    # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.state.tables  # noqa: F401
-
-    sync_engine = make_engine(str(db_path))
-    try:
-        Base.metadata.create_all(sync_engine)
-        with make_session_factory(sync_engine)() as sess:
-            sess.add(process_lifetime_record_to_row(_make_process_lifetime_record()))
-            sess.commit()
-    finally:
-        sync_engine.dispose()
-
-    async_engine: AsyncEngine = make_async_engine(str(db_path))
-    factory = make_async_session_factory(async_engine)
-    try:
-        yield factory
-    finally:
-        await async_engine.dispose()
 
 
 def _baseline_runtime() -> RuntimeDimensions:
@@ -136,7 +58,7 @@ class TestInsertInvocationRecord:
         now = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
         invocation_id, _ = await insert_invocation_record(
             session_factory=async_factory,
-            process_lifetime_id="proc-open-1",
+            process_lifetime_id="proc-driver-1",
             trigger_type="scheduled",
             trigger_source="morning-cron",
             trigger_reason="0 9 * * 1-5",
@@ -165,7 +87,7 @@ class TestInsertInvocationRecord:
         now = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
         invocation_id, _ = await insert_invocation_record(
             session_factory=async_factory,
-            process_lifetime_id="proc-open-1",
+            process_lifetime_id="proc-driver-1",
             trigger_type="scheduled",
             trigger_source="morning-cron",
             trigger_reason="0 9 * * 1-5",
@@ -202,7 +124,7 @@ class TestInsertInvocationRecord:
         now = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
         invocation_id, pipeline_config = await insert_invocation_record(
             session_factory=async_factory,
-            process_lifetime_id="proc-open-1",
+            process_lifetime_id="proc-driver-1",
             trigger_type="scheduled",
             trigger_source="morning-cron",
             trigger_reason="0 9 * * 1-5",

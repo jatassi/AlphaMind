@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from collections.abc import Callable
+from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Literal, get_args
 
@@ -10,11 +11,13 @@ import pytest
 
 from alphamind._kernel.ids import BracketId, OrderId, PositionId, Symbol, ThesisId
 from alphamind._kernel.money import money, price, signed_money
+from alphamind.config.models.main import Profile
 from alphamind.portfolio_state.events.activity_log import (
     EVENT_TYPE_TO_DETAIL_CLASS,
     EVENT_TYPE_TO_GROUP,
     ActivityLogEntry,
     AnyDetailType,
+    BorrowCostAccruedDetail,
     BracketActivatedDetail,
     BracketCancelledCorporateActionDetail,
     BracketCompletedDetail,
@@ -32,12 +35,14 @@ from alphamind.portfolio_state.events.activity_log import (
     CorporateActionAppliedDetail,
     CorporateActionType,
     DistillationConfigChange,
+    DistillationConfigChangeDetail,
     EmergencyInvocationRequestedDetail,
     EnvelopeParseFailedDetail,
     EnvelopeRejectionDetail,
     EventGroup,
     EventSource,
     EventType,
+    GreeksRefreshFailedDetail,
     GuardrailRejectionDetail,
     HaltActivatedDetail,
     HaltLiftedDetail,
@@ -60,6 +65,9 @@ from alphamind.portfolio_state.events.activity_log import (
     PositionOpenedDetail,
     PositionOpenMechanism,
     PositionReducedDetail,
+    ProfileSwitchedDetail,
+    ReconciliationAlertDetail,
+    ReconciliationCorrectionDetail,
     RiskLimitApproachedDetail,
     RiskParameterChangedDetail,
     ThesisComponentAddedDetail,
@@ -332,15 +340,18 @@ class TestAnyDetailTypeAlias:
 
 
 # ---------------------------------------------------------------------------
-# Per-event-type detail class happy-path fixtures (35 total)
+# Per-event-type detail class happy-path fixtures — parametrized (ALP-800)
 # ---------------------------------------------------------------------------
 
-
-class TestDetailClassHappyPaths:
-    """One happy-path round-trip test per event type."""
-
-    def test_position_opened_detail(self) -> None:
-        d = PositionOpenedDetail(
+# Each entry is a zero-argument factory that returns one fully-constructed
+# detail instance. All 38 entries remain as parametrize rows; none is collapsed
+# to a representative.  Two tests kept separate per ALP-800 scope:
+#   • test_command_abandoned_detail_requires_command_type
+#   • test_command_abandoned_detail_command_type_roundtrip
+_DETAIL_FACTORIES: list[tuple[str, Callable[[], object]]] = [
+    (
+        "position_opened_detail",
+        lambda: PositionOpenedDetail(
             ticker=Symbol("AAPL"),
             direction="LONG",
             fill_price=price("150.0"),
@@ -349,11 +360,11 @@ class TestDetailClassHappyPaths:
             bracket_id=BracketId("br-001"),
             mechanism=PositionOpenMechanism.ORDER_FILL,
             parent_position_id=None,
-        )
-        assert d.ticker == "AAPL"
-
-    def test_position_opened_detail_spin_off(self) -> None:
-        d = PositionOpenedDetail(
+        ),
+    ),
+    (
+        "position_opened_detail_spin_off",
+        lambda: PositionOpenedDetail(
             ticker=Symbol("SPIN"),
             direction="LONG",
             fill_price=price("50.0"),
@@ -362,259 +373,396 @@ class TestDetailClassHappyPaths:
             bracket_id=None,
             mechanism=PositionOpenMechanism.SPIN_OFF_FROM_PARENT,
             parent_position_id=PositionId("pos-parent-001"),
-        )
-        assert d.parent_position_id == "pos-parent-001"
-
-    def test_position_closed_detail(self) -> None:
-        d = PositionClosedDetail(
+        ),
+    ),
+    (
+        "position_closed_detail",
+        lambda: PositionClosedDetail(
             exit_method=PositionExitMethod.TARGET_REACHED,
             exit_price=money("175.0"),
             realized_pnl_usd=signed_money("250.0"),
             thesis_resolution_category="WIN",
-        )
-        assert d.exit_method == PositionExitMethod.TARGET_REACHED
-
-    def test_position_added_detail(self) -> None:
-        d = PositionAddedDetail(
+        ),
+    ),
+    (
+        "position_added_detail",
+        lambda: PositionAddedDetail(
             additional_quantity=5.0,
             new_average_cost_basis=price("155.0"),
             addition_thesis_component_id="tc-001",
-        )
-        assert d.additional_quantity == 5.0
-
-    def test_position_reduced_detail(self) -> None:
-        d = PositionReducedDetail(
+        ),
+    ),
+    (
+        "position_reduced_detail",
+        lambda: PositionReducedDetail(
             reduced_quantity=3.0,
             partial_realized_pnl_usd=signed_money("75.0"),
             close_rationale_classification="PARTIAL_TARGET",
-        )
-        assert d.reduced_quantity == 3.0
-
-    def test_order_submitted_detail(self) -> None:
-        d = OrderSubmittedDetail(
+        ),
+    ),
+    (
+        "order_submitted_detail",
+        lambda: OrderSubmittedDetail(
             order_parameters_json={"side": "buy", "qty": 10},
             pm_command_id="cmd-001",
-        )
-        assert d.pm_command_id == "cmd-001"
-
-    def test_order_filled_detail(self) -> None:
-        d = OrderFilledDetail(
+        ),
+    ),
+    (
+        "order_filled_detail",
+        lambda: OrderFilledDetail(
             fill_price=price("150.25"),
             fill_quantity=10.0,
             slippage=signed_money("0.25"),
             fees=money("1.50"),
-        )
-        assert d.fill_price == 150.25
-
-    def test_order_partially_filled_detail(self) -> None:
-        d = OrderPartiallyFilledDetail(
+        ),
+    ),
+    (
+        "order_partially_filled_detail",
+        lambda: OrderPartiallyFilledDetail(
             fill_price=price("150.0"),
             fill_quantity=5.0,
             remaining_quantity=5.0,
-        )
-        assert d.remaining_quantity == 5.0
-
-    def test_order_cancelled_detail(self) -> None:
-        d = OrderCancelledDetail(
+        ),
+    ),
+    (
+        "order_cancelled_detail",
+        lambda: OrderCancelledDetail(
             cancel_reason="USER_REQUESTED",
             filled_quantity_at_cancellation=0,
-        )
-        assert d.filled_quantity_at_cancellation == 0
-
-    def test_order_expired_detail(self) -> None:
-        d = OrderExpiredDetail(filled_quantity_at_expiration=0)
-        assert d.filled_quantity_at_expiration == 0
-
-    def test_order_rejected_detail(self) -> None:
-        d = OrderRejectedDetail(
+        ),
+    ),
+    (
+        "order_expired_detail",
+        lambda: OrderExpiredDetail(filled_quantity_at_expiration=0),
+    ),
+    (
+        "order_rejected_detail",
+        lambda: OrderRejectedDetail(
             rejection_reason="INSUFFICIENT_FUNDS",
             rejection_source=OrderRejectionSource.BROKER,
-        )
-        assert d.rejection_source == OrderRejectionSource.BROKER
-
-    def test_order_modified_detail(self) -> None:
-        d = OrderModifiedDetail(
+        ),
+    ),
+    (
+        "order_modified_detail",
+        lambda: OrderModifiedDetail(
             field_changed="limit_price",
             old_value="150.00",
             new_value="152.00",
             pm_rationale="Adjusted for market movement",
-        )
-        assert d.field_changed == "limit_price"
-
-    def test_bracket_activated_detail(self) -> None:
-        d = BracketActivatedDetail(
+        ),
+    ),
+    (
+        "bracket_activated_detail",
+        lambda: BracketActivatedDetail(
             bracket_id=BracketId("br-001"),
             protective_leg_order_ids=("ord-sl-001", "ord-tp-001"),
-        )
-        assert len(d.protective_leg_order_ids) == 2
-
-    def test_bracket_completed_detail(self) -> None:
-        d = BracketCompletedDetail(
+        ),
+    ),
+    (
+        "bracket_completed_detail",
+        lambda: BracketCompletedDetail(
             triggered_leg_id="ord-tp-001",
             fill_details_json={"price": 175.0, "qty": 10},
-        )
-        assert d.triggered_leg_id == "ord-tp-001"
-
-    def test_bracket_dissolved_detail(self) -> None:
-        d = BracketDissolvedDetail(cancelled_leg_order_ids=("ord-sl-001",))
-        assert len(d.cancelled_leg_order_ids) == 1
-
-    def test_bracket_modified_detail_pm(self) -> None:
-        d = BracketModifiedDetail(
+        ),
+    ),
+    (
+        "bracket_dissolved_detail",
+        lambda: BracketDissolvedDetail(cancelled_leg_order_ids=("ord-sl-001",)),
+    ),
+    (
+        "bracket_modified_detail_pm",
+        lambda: BracketModifiedDetail(
             source=BracketModificationSource.PM,
             field_changed="stop_price",
             old_value="145.00",
             new_value="147.00",
             rationale="Trailing stop adjustment",
-        )
-        assert d.rationale == "Trailing stop adjustment"
-
-    def test_bracket_modified_detail_fill_anchor(self) -> None:
-        d = BracketModifiedDetail(
+        ),
+    ),
+    (
+        "bracket_modified_detail_fill_anchor",
+        lambda: BracketModifiedDetail(
             source=BracketModificationSource.FILL_ANCHOR_RECALCULATION,
             field_changed="stop_price",
             old_value="145.00",
             new_value="147.50",
             rationale=None,
-        )
-        assert d.rationale is None
-
-    def test_bracket_incomplete_warning_detail(self) -> None:
-        d = BracketIncompleteWarningDetail(
+        ),
+    ),
+    (
+        "bracket_incomplete_warning_detail",
+        lambda: BracketIncompleteWarningDetail(
             missing_leg_types=("STOP_LOSS",),
             expected_resolution="ORDER_SUBMISSION_PENDING",
-        )
-        assert "STOP_LOSS" in d.missing_leg_types
-
-    def test_bracket_cancelled_corporate_action_detail(self) -> None:
-        d = BracketCancelledCorporateActionDetail(
+        ),
+    ),
+    (
+        "bracket_cancelled_corporate_action_detail",
+        lambda: BracketCancelledCorporateActionDetail(
             bracket_id=BracketId("br-001"),
             cancellation_reason="CASH_MERGER",
             cancelled_leg_order_ids=("ord-sl-001", "ord-tp-001"),
-        )
-        assert d.bracket_id == "br-001"
-
-    def test_thesis_created_detail(self) -> None:
-        d = ThesisCreatedDetail(thesis_id=ThesisId("th-001"), summary="Bullish on earnings beat")
-        assert d.thesis_id == "th-001"
-
-    def test_thesis_component_added_detail(self) -> None:
-        d = ThesisComponentAddedDetail(component_id="tc-001", component_type="CATALYST")
-        assert d.component_type == "CATALYST"
-
-    def test_thesis_component_updated_detail(self) -> None:
-        d = ThesisComponentUpdatedDetail(
+        ),
+    ),
+    (
+        "thesis_created_detail",
+        lambda: ThesisCreatedDetail(
+            thesis_id=ThesisId("th-001"), summary="Bullish on earnings beat"
+        ),
+    ),
+    (
+        "thesis_component_added_detail",
+        lambda: ThesisComponentAddedDetail(component_id="tc-001", component_type="CATALYST"),
+    ),
+    (
+        "thesis_component_updated_detail",
+        lambda: ThesisComponentUpdatedDetail(
             component_id="tc-001",
             field_changed="status",
             old_value="PENDING",
             new_value="CONFIRMED",
-        )
-        assert d.new_value == "CONFIRMED"
-
-    def test_thesis_resolved_detail(self) -> None:
-        d = ThesisResolvedDetail(
+        ),
+    ),
+    (
+        "thesis_resolved_detail",
+        lambda: ThesisResolvedDetail(
             resolution_category="WIN",
             component_outcomes_json={"tc-001": "CONFIRMED"},
-        )
-        assert d.resolution_category == "WIN"
-
-    def test_thesis_status_changed_detail(self) -> None:
-        d = ThesisStatusChangedDetail(old_status="ACTIVE", new_status="RESOLVED")
-        assert d.new_status == "RESOLVED"
-
-    def test_cash_debited_detail(self) -> None:
-        d = CashDebitedDetail(
+        ),
+    ),
+    (
+        "thesis_status_changed_detail",
+        lambda: ThesisStatusChangedDetail(old_status="ACTIVE", new_status="RESOLVED"),
+    ),
+    (
+        "cash_debited_detail",
+        lambda: CashDebitedDetail(
             amount_usd=money("1500.0"),
             reason=CashDebitReason.ENTRY_FILL,
             new_balance_usd=signed_money("98500.0"),
-        )
-        assert d.reason == CashDebitReason.ENTRY_FILL
-
-    def test_cash_credited_detail(self) -> None:
-        d = CashCreditedDetail(
+        ),
+    ),
+    (
+        "cash_credited_detail",
+        lambda: CashCreditedDetail(
             amount_usd=money("1750.0"),
             reason=CashCreditReason.EXIT_FILL,
             new_balance_usd=signed_money("101750.0"),
-        )
-        assert d.reason == CashCreditReason.EXIT_FILL
-
-    def test_capital_reserved_detail(self) -> None:
-        d = CapitalReservedDetail(order_id=OrderId("ord-001"), amount_usd=money("1500.0"))
-        assert d.amount_usd == 1500.0
-
-    def test_capital_released_detail(self) -> None:
-        d = CapitalReleasedDetail(order_id=OrderId("ord-001"), amount_usd=money("1500.0"))
-        assert d.amount_usd == 1500.0
-
-    def test_margin_call_detail(self) -> None:
-        d = MarginCallDetail(
+        ),
+    ),
+    (
+        "capital_reserved_detail",
+        lambda: CapitalReservedDetail(order_id=OrderId("ord-001"), amount_usd=money("1500.0")),
+    ),
+    (
+        "capital_released_detail",
+        lambda: CapitalReleasedDetail(order_id=OrderId("ord-001"), amount_usd=money("1500.0")),
+    ),
+    (
+        "margin_call_detail",
+        lambda: MarginCallDetail(
             position_id=PositionId("pos-001"),
             margin_required_usd=money("5000.0"),
             margin_available_usd=money("3000.0"),
             deficit_usd=money("2000.0"),
-        )
-        assert d.deficit_usd == 2000.0
-
-    def test_margin_call_resolved_detail(self) -> None:
-        d = MarginCallResolvedDetail(resolution_method="DEPOSIT")
-        assert d.resolution_method == "DEPOSIT"
-
-    def test_margin_liquidation_detail(self) -> None:
-        d = MarginLiquidationDetail(
+        ),
+    ),
+    (
+        "margin_call_resolved_detail",
+        lambda: MarginCallResolvedDetail(resolution_method="DEPOSIT"),
+    ),
+    (
+        "margin_liquidation_detail",
+        lambda: MarginLiquidationDetail(
             position_id=PositionId("pos-001"),
             liquidation_price=price("140.0"),
             loss_usd=signed_money("1000.0"),
-        )
-        assert d.loss_usd == 1000.0
-
-    def test_guardrail_rejection_detail(self) -> None:
-        d = GuardrailRejectionDetail(
+        ),
+    ),
+    (
+        "borrow_cost_accrued_detail",
+        lambda: BorrowCostAccruedDetail(
+            accrued_amount_usd=money("1.25"),
+            cumulative_accrued_usd=money("5.00"),
+            annual_fee_pct_used=15.0,
+            notional_usd_used=money("3000.0"),
+            accrual_date=date(2024, 1, 15),
+        ),
+    ),
+    (
+        "guardrail_rejection_detail",
+        lambda: GuardrailRejectionDetail(
             command_summary="BUY 100 AAPL",
             blocking_rule_ids=("rule-concentration-001",),
             current_limit_values_json={"concentration": 0.18},
             headroom_json={"concentration": -0.03},
             suggested_modification=None,
-        )
-        assert len(d.blocking_rule_ids) == 1
-
-    def test_risk_limit_approached_detail(self) -> None:
-        d = RiskLimitApproachedDetail(
+        ),
+    ),
+    (
+        "risk_limit_approached_detail",
+        lambda: RiskLimitApproachedDetail(
             metric_id="sector_concentration",
             current_value=0.14,
             threshold_value=0.15,
             limit_value=0.20,
-        )
-        assert d.metric_id == "sector_concentration"
-
-    def test_risk_parameter_changed_detail(self) -> None:
-        d = RiskParameterChangedDetail(
+        ),
+    ),
+    (
+        "risk_parameter_changed_detail",
+        lambda: RiskParameterChangedDetail(
             old_parameter_set_json={"max_concentration": 0.15},
             new_parameter_set_json={"max_concentration": 0.12},
             regime_label="HIGH_VIX",
-        )
-        assert d.regime_label == "HIGH_VIX"
-
-    def test_pm_decision_detail(self) -> None:
-        d = PMDecisionDetail(
+        ),
+    ),
+    (
+        "greeks_refresh_failed_detail",
+        lambda: GreeksRefreshFailedDetail(
+            underlying_ticker="AAPL",
+            occ_symbol="AAPL240119C00150000",
+            failure_reason="iv_fetch_timeout",
+            prior_as_of=_UTC_TS,
+        ),
+    ),
+    (
+        "pm_decision_detail",
+        lambda: PMDecisionDetail(
             envelope_id="env-001",
             source_provenance_json={"source_type": "pm_analyst", "rec_id": "rec-001"},
             evaluation_json={"verdict": "APPROVE", "rationale": "Strong setup"},
             modifications_json=[],
             resulting_command_ids=("cmd-001",),
             verdict=PMVerdict.APPROVE,
-        )
-        assert d.verdict == PMVerdict.APPROVE
-
-    def test_command_abandoned_detail(self) -> None:
-        d = CommandAbandonedDetail(
+        ),
+    ),
+    (
+        "command_abandoned_detail",
+        lambda: CommandAbandonedDetail(
             envelope_id="env-001",
             command_id="cmd-001",
             originating_agent="pm_analyst",
             failure_reason="BROKER_TIMEOUT",
             retry_attempt_count=3,
             command_type="ADD",
-        )
-        assert d.retry_attempt_count == 3
+        ),
+    ),
+    (
+        "corporate_action_applied_detail",
+        lambda: CorporateActionAppliedDetail(
+            action_type=CorporateActionType.SPLIT,
+            alpaca_activity_id="act-001",
+            ticker=Symbol("AAPL"),
+            new_ticker=None,
+            ratio_or_amount=2.0,
+            pre_action_quantity=10.0,
+            post_action_quantity=20.0,
+            pre_action_cost_basis=money("1500.0"),
+            post_action_cost_basis=money("1500.0"),
+            signed_cash_impact_usd=signed_money("0.0"),
+            parent_position_id=None,
+            resulting_position_status="OPEN",
+        ),
+    ),
+    (
+        "emergency_invocation_requested_detail",
+        lambda: EmergencyInvocationRequestedDetail(
+            trigger_type="regime_jump",
+            trigger_reason="Regime jump: normal -> crisis",
+            cooldown_remaining_seconds=0,
+        ),
+    ),
+    (
+        "envelope_parse_failed_detail",
+        lambda: EnvelopeParseFailedDetail(
+            attempted_envelope_id="ENV-REC-99",
+            attempted_command_id="inv-2026-05-08.ENV-REC-99.0.0",
+            validation_error_repr="source_provenance: Field required",
+            raw_args_json='{"envelope_id": "ENV-REC-99"}',
+        ),
+    ),
+    (
+        "envelope_rejection_detail",
+        lambda: EnvelopeRejectionDetail(
+            envelope_id="ENV-REC-2",
+            referenced_position_id=None,
+            attempted_command_count=1,
+            blocking_criteria=("halt_mode_no_constructive_commands",),
+            validation_errors_json="[]",
+        ),
+    ),
+    (
+        "reconciliation_alert_detail",
+        lambda: ReconciliationAlertDetail(
+            domain="position",
+            field_name="share_count",
+            local_value=100.0,
+            alpaca_value=99.5,
+            delta_description="local 100.0 vs Alpaca 99.5",
+        ),
+    ),
+    (
+        "reconciliation_correction_detail",
+        lambda: ReconciliationCorrectionDetail(
+            domain="cash",
+            field_name="current_cash_usd",
+            prior_local_value=10000.0,
+            applied_alpaca_value=10050.0,
+        ),
+    ),
+    (
+        "distillation_config_change_detail",
+        lambda: DistillationConfigChangeDetail(
+            prior_hash=None,
+            new_hash="f" * 64,
+            changes=(),
+            git_sha="abc1234",
+        ),
+    ),
+    (
+        "profile_switched_detail",
+        lambda: ProfileSwitchedDetail(
+            previous_profile=Profile.micro,
+            new_profile=Profile.small,
+            is_no_op=False,
+        ),
+    ),
+    (
+        "halt_activated_detail",
+        lambda: HaltActivatedDetail(
+            halt_type="daily_drawdown",
+            current_drawdown_pct=5.0,
+            limit_pct=5.0,
+            detected_at=_UTC_TS,
+        ),
+    ),
+    (
+        "halt_lifted_detail",
+        lambda: HaltLiftedDetail(
+            halt_type="daily_drawdown",
+            current_drawdown_pct=2.0,
+            lifted_at=_UTC_TS,
+        ),
+    ),
+]
+
+
+class TestDetailClassHappyPaths:
+    """One happy-path construction test per detail class (parametrized, ALP-800).
+
+    All 46 rows remain; each constructs its real detail dataclass through the
+    production constructor, exercising the ``__post_init__`` pass-branch for
+    that type. Two tests kept as distinct methods per ALP-800 scope:
+    ``test_command_abandoned_detail_requires_command_type`` and
+    ``test_command_abandoned_detail_command_type_roundtrip``.
+    """
+
+    @pytest.mark.parametrize(
+        "name,factory", _DETAIL_FACTORIES, ids=[r[0] for r in _DETAIL_FACTORIES]
+    )
+    def test_detail_class_constructs(self, name: str, factory: Callable[[], object]) -> None:
+        d = factory()
+        assert d is not None
 
     def test_command_abandoned_detail_requires_command_type(self) -> None:
         """Omitting command_type must raise ValidationError — it is a required field."""
@@ -644,32 +792,6 @@ class TestDetailClassHappyPaths:
         roundtripped = decode_detail(encode_detail(d), CommandAbandonedDetail)
         assert isinstance(roundtripped, CommandAbandonedDetail)
         assert roundtripped.command_type == command_type
-
-    def test_corporate_action_applied_detail(self) -> None:
-        d = CorporateActionAppliedDetail(
-            action_type=CorporateActionType.SPLIT,
-            alpaca_activity_id="act-001",
-            ticker=Symbol("AAPL"),
-            new_ticker=None,
-            ratio_or_amount=2.0,
-            pre_action_quantity=10.0,
-            post_action_quantity=20.0,
-            pre_action_cost_basis=money("1500.0"),
-            post_action_cost_basis=money("1500.0"),
-            signed_cash_impact_usd=signed_money("0.0"),
-            parent_position_id=None,
-            resulting_position_status="OPEN",
-        )
-        assert d.action_type == CorporateActionType.SPLIT
-
-    def test_emergency_invocation_requested_detail(self) -> None:
-        d = EmergencyInvocationRequestedDetail(
-            trigger_type="regime_jump",
-            trigger_reason="Regime jump: normal -> crisis",
-            cooldown_remaining_seconds=0,
-        )
-        assert d.trigger_type == "regime_jump"
-        assert d.cooldown_remaining_seconds == 0
 
 
 # ---------------------------------------------------------------------------
@@ -892,24 +1014,17 @@ class TestBracketModifiedDetailValidator:
 
 
 # ---------------------------------------------------------------------------
-# ActivityLogEntry happy-path (one per event type — 35 total)
+# ActivityLogEntry happy-path — parametrized (ALP-800)
 # ---------------------------------------------------------------------------
 
-
-class TestActivityLogEntryHappyPath:
-    """One happy-path entry construction per event type."""
-
-    def _make_entry(
-        self,
-        event_type: EventType,
-        event_group: EventGroup,
-        detail: object,
-        source: EventSource = EventSource.FILL_PROCESSOR,
-    ) -> ActivityLogEntry:
-        return _entry(event_type, event_group, detail, source=source)
-
-    def test_position_opened(self) -> None:
-        detail = PositionOpenedDetail(
+# Each entry: (id, event_type, event_group, detail_factory, source).
+# All 35 original cases are preserved as parametrize rows; none is collapsed.
+_ENTRY_CASES: list[tuple[str, EventType, EventGroup, Callable[[], object], EventSource]] = [
+    (
+        "position_opened",
+        EventType.POSITION_OPENED,
+        EventGroup.POSITION_LIFECYCLE,
+        lambda: PositionOpenedDetail(
             ticker=Symbol("AAPL"),
             direction="LONG",
             fill_price=price("150.0"),
@@ -918,373 +1033,351 @@ class TestActivityLogEntryHappyPath:
             bracket_id=None,
             mechanism=PositionOpenMechanism.ORDER_FILL,
             parent_position_id=None,
-        )
-        e = self._make_entry(EventType.POSITION_OPENED, EventGroup.POSITION_LIFECYCLE, detail)
-        assert e.event_type == EventType.POSITION_OPENED
-
-    def test_position_closed(self) -> None:
-        detail = PositionClosedDetail(
+        ),
+        EventSource.FILL_PROCESSOR,
+    ),
+    (
+        "position_closed",
+        EventType.POSITION_CLOSED,
+        EventGroup.POSITION_LIFECYCLE,
+        lambda: PositionClosedDetail(
             exit_method=PositionExitMethod.TARGET_REACHED,
             exit_price=money("175.0"),
             realized_pnl_usd=signed_money("250.0"),
             thesis_resolution_category="WIN",
-        )
-        e = self._make_entry(EventType.POSITION_CLOSED, EventGroup.POSITION_LIFECYCLE, detail)
-        assert e.event_type == EventType.POSITION_CLOSED
-
-    def test_position_added(self) -> None:
-        detail = PositionAddedDetail(
+        ),
+        EventSource.FILL_PROCESSOR,
+    ),
+    (
+        "position_added",
+        EventType.POSITION_ADDED,
+        EventGroup.POSITION_LIFECYCLE,
+        lambda: PositionAddedDetail(
             additional_quantity=5.0,
             new_average_cost_basis=price("155.0"),
             addition_thesis_component_id="tc-001",
-        )
-        e = self._make_entry(EventType.POSITION_ADDED, EventGroup.POSITION_LIFECYCLE, detail)
-        assert e.event_type == EventType.POSITION_ADDED
-
-    def test_position_reduced(self) -> None:
-        detail = PositionReducedDetail(
+        ),
+        EventSource.FILL_PROCESSOR,
+    ),
+    (
+        "position_reduced",
+        EventType.POSITION_REDUCED,
+        EventGroup.POSITION_LIFECYCLE,
+        lambda: PositionReducedDetail(
             reduced_quantity=3.0,
             partial_realized_pnl_usd=signed_money("75.0"),
             close_rationale_classification="PARTIAL_TARGET",
-        )
-        e = self._make_entry(EventType.POSITION_REDUCED, EventGroup.POSITION_LIFECYCLE, detail)
-        assert e.event_type == EventType.POSITION_REDUCED
-
-    def test_order_submitted(self) -> None:
-        detail = OrderSubmittedDetail(
+        ),
+        EventSource.FILL_PROCESSOR,
+    ),
+    (
+        "order_submitted",
+        EventType.ORDER_SUBMITTED,
+        EventGroup.ORDER_LIFECYCLE,
+        lambda: OrderSubmittedDetail(
             order_parameters_json={"side": "buy"},
             pm_command_id="cmd-001",
-        )
-        e = self._make_entry(EventType.ORDER_SUBMITTED, EventGroup.ORDER_LIFECYCLE, detail)
-        assert e.event_type == EventType.ORDER_SUBMITTED
-
-    def test_order_filled(self) -> None:
-        detail = OrderFilledDetail(
+        ),
+        EventSource.FILL_PROCESSOR,
+    ),
+    (
+        "order_filled",
+        EventType.ORDER_FILLED,
+        EventGroup.ORDER_LIFECYCLE,
+        lambda: OrderFilledDetail(
             fill_price=price("150.25"),
             fill_quantity=10.0,
             slippage=signed_money("0.25"),
             fees=money("1.50"),
-        )
-        e = self._make_entry(EventType.ORDER_FILLED, EventGroup.ORDER_LIFECYCLE, detail)
-        assert e.event_type == EventType.ORDER_FILLED
-
-    def test_order_partially_filled(self) -> None:
-        detail = OrderPartiallyFilledDetail(
+        ),
+        EventSource.FILL_PROCESSOR,
+    ),
+    (
+        "order_partially_filled",
+        EventType.ORDER_PARTIALLY_FILLED,
+        EventGroup.ORDER_LIFECYCLE,
+        lambda: OrderPartiallyFilledDetail(
             fill_price=price("150.0"), fill_quantity=5.0, remaining_quantity=5.0
-        )
-        e = self._make_entry(EventType.ORDER_PARTIALLY_FILLED, EventGroup.ORDER_LIFECYCLE, detail)
-        assert e.event_type == EventType.ORDER_PARTIALLY_FILLED
-
-    def test_order_cancelled(self) -> None:
-        detail = OrderCancelledDetail(
+        ),
+        EventSource.FILL_PROCESSOR,
+    ),
+    (
+        "order_cancelled",
+        EventType.ORDER_CANCELLED,
+        EventGroup.ORDER_LIFECYCLE,
+        lambda: OrderCancelledDetail(
             cancel_reason="USER_REQUESTED", filled_quantity_at_cancellation=0
-        )
-        e = self._make_entry(EventType.ORDER_CANCELLED, EventGroup.ORDER_LIFECYCLE, detail)
-        assert e.event_type == EventType.ORDER_CANCELLED
-
-    def test_order_expired(self) -> None:
-        detail = OrderExpiredDetail(filled_quantity_at_expiration=0)
-        e = self._make_entry(EventType.ORDER_EXPIRED, EventGroup.ORDER_LIFECYCLE, detail)
-        assert e.event_type == EventType.ORDER_EXPIRED
-
-    def test_order_rejected(self) -> None:
-        detail = OrderRejectedDetail(
+        ),
+        EventSource.FILL_PROCESSOR,
+    ),
+    (
+        "order_expired",
+        EventType.ORDER_EXPIRED,
+        EventGroup.ORDER_LIFECYCLE,
+        lambda: OrderExpiredDetail(filled_quantity_at_expiration=0),
+        EventSource.FILL_PROCESSOR,
+    ),
+    (
+        "order_rejected",
+        EventType.ORDER_REJECTED,
+        EventGroup.ORDER_LIFECYCLE,
+        lambda: OrderRejectedDetail(
             rejection_reason="INSUFFICIENT_FUNDS",
             rejection_source=OrderRejectionSource.BROKER,
-        )
-        e = self._make_entry(EventType.ORDER_REJECTED, EventGroup.ORDER_LIFECYCLE, detail)
-        assert e.event_type == EventType.ORDER_REJECTED
-
-    def test_order_modified(self) -> None:
-        detail = OrderModifiedDetail(
+        ),
+        EventSource.FILL_PROCESSOR,
+    ),
+    (
+        "order_modified",
+        EventType.ORDER_MODIFIED,
+        EventGroup.ORDER_LIFECYCLE,
+        lambda: OrderModifiedDetail(
             field_changed="limit_price",
             old_value="150.00",
             new_value="152.00",
             pm_rationale="Market moved",
-        )
-        e = self._make_entry(EventType.ORDER_MODIFIED, EventGroup.ORDER_LIFECYCLE, detail)
-        assert e.event_type == EventType.ORDER_MODIFIED
-
-    def test_bracket_activated(self) -> None:
-        detail = BracketActivatedDetail(
+        ),
+        EventSource.FILL_PROCESSOR,
+    ),
+    (
+        "bracket_activated",
+        EventType.BRACKET_ACTIVATED,
+        EventGroup.BRACKET,
+        lambda: BracketActivatedDetail(
             bracket_id=BracketId("br-001"),
             protective_leg_order_ids=("ord-sl-001",),
-        )
-        e = self._make_entry(
-            EventType.BRACKET_ACTIVATED,
-            EventGroup.BRACKET,
-            detail,
-            source=EventSource.BRACKET_MANAGER,
-        )
-        assert e.event_type == EventType.BRACKET_ACTIVATED
-
-    def test_bracket_completed(self) -> None:
-        detail = BracketCompletedDetail(
+        ),
+        EventSource.BRACKET_MANAGER,
+    ),
+    (
+        "bracket_completed",
+        EventType.BRACKET_COMPLETED,
+        EventGroup.BRACKET,
+        lambda: BracketCompletedDetail(
             triggered_leg_id="ord-tp-001",
             fill_details_json={"price": 175.0},
-        )
-        e = self._make_entry(
-            EventType.BRACKET_COMPLETED,
-            EventGroup.BRACKET,
-            detail,
-            source=EventSource.BRACKET_MANAGER,
-        )
-        assert e.event_type == EventType.BRACKET_COMPLETED
-
-    def test_bracket_dissolved(self) -> None:
-        detail = BracketDissolvedDetail(cancelled_leg_order_ids=("ord-sl-001",))
-        e = self._make_entry(
-            EventType.BRACKET_DISSOLVED,
-            EventGroup.BRACKET,
-            detail,
-            source=EventSource.BRACKET_MANAGER,
-        )
-        assert e.event_type == EventType.BRACKET_DISSOLVED
-
-    def test_bracket_modified(self) -> None:
-        detail = BracketModifiedDetail(
+        ),
+        EventSource.BRACKET_MANAGER,
+    ),
+    (
+        "bracket_dissolved",
+        EventType.BRACKET_DISSOLVED,
+        EventGroup.BRACKET,
+        lambda: BracketDissolvedDetail(cancelled_leg_order_ids=("ord-sl-001",)),
+        EventSource.BRACKET_MANAGER,
+    ),
+    (
+        "bracket_modified",
+        EventType.BRACKET_MODIFIED,
+        EventGroup.BRACKET,
+        lambda: BracketModifiedDetail(
             source=BracketModificationSource.PM,
             field_changed="stop_price",
             old_value="145.00",
             new_value="147.00",
             rationale="Trailing adjustment",
-        )
-        e = self._make_entry(
-            EventType.BRACKET_MODIFIED,
-            EventGroup.BRACKET,
-            detail,
-            source=EventSource.BRACKET_MANAGER,
-        )
-        assert e.event_type == EventType.BRACKET_MODIFIED
-
-    def test_bracket_incomplete_warning(self) -> None:
-        detail = BracketIncompleteWarningDetail(
+        ),
+        EventSource.BRACKET_MANAGER,
+    ),
+    (
+        "bracket_incomplete_warning",
+        EventType.BRACKET_INCOMPLETE_WARNING,
+        EventGroup.BRACKET,
+        lambda: BracketIncompleteWarningDetail(
             missing_leg_types=("STOP_LOSS",),
             expected_resolution="PENDING",
-        )
-        e = self._make_entry(
-            EventType.BRACKET_INCOMPLETE_WARNING,
-            EventGroup.BRACKET,
-            detail,
-            source=EventSource.BRACKET_MANAGER,
-        )
-        assert e.event_type == EventType.BRACKET_INCOMPLETE_WARNING
-
-    def test_bracket_cancelled_corporate_action(self) -> None:
-        detail = BracketCancelledCorporateActionDetail(
+        ),
+        EventSource.BRACKET_MANAGER,
+    ),
+    (
+        "bracket_cancelled_corporate_action",
+        EventType.BRACKET_CANCELLED_CORPORATE_ACTION,
+        EventGroup.BRACKET,
+        lambda: BracketCancelledCorporateActionDetail(
             bracket_id=BracketId("br-001"),
             cancellation_reason="CASH_MERGER",
             cancelled_leg_order_ids=("ord-sl-001",),
-        )
-        e = self._make_entry(
-            EventType.BRACKET_CANCELLED_CORPORATE_ACTION,
-            EventGroup.BRACKET,
-            detail,
-            source=EventSource.CORPORATE_ACTION_PROCESSOR,
-        )
-        assert e.event_type == EventType.BRACKET_CANCELLED_CORPORATE_ACTION
-
-    def test_thesis_created(self) -> None:
-        detail = ThesisCreatedDetail(thesis_id=ThesisId("th-001"), summary="Bullish on earnings")
-        e = self._make_entry(EventType.THESIS_CREATED, EventGroup.THESIS, detail)
-        assert e.event_type == EventType.THESIS_CREATED
-
-    def test_thesis_component_added(self) -> None:
-        detail = ThesisComponentAddedDetail(component_id="tc-001", component_type="CATALYST")
-        e = self._make_entry(EventType.THESIS_COMPONENT_ADDED, EventGroup.THESIS, detail)
-        assert e.event_type == EventType.THESIS_COMPONENT_ADDED
-
-    def test_thesis_component_updated(self) -> None:
-        detail = ThesisComponentUpdatedDetail(
+        ),
+        EventSource.CORPORATE_ACTION_PROCESSOR,
+    ),
+    (
+        "thesis_created",
+        EventType.THESIS_CREATED,
+        EventGroup.THESIS,
+        lambda: ThesisCreatedDetail(thesis_id=ThesisId("th-001"), summary="Bullish on earnings"),
+        EventSource.FILL_PROCESSOR,
+    ),
+    (
+        "thesis_component_added",
+        EventType.THESIS_COMPONENT_ADDED,
+        EventGroup.THESIS,
+        lambda: ThesisComponentAddedDetail(component_id="tc-001", component_type="CATALYST"),
+        EventSource.FILL_PROCESSOR,
+    ),
+    (
+        "thesis_component_updated",
+        EventType.THESIS_COMPONENT_UPDATED,
+        EventGroup.THESIS,
+        lambda: ThesisComponentUpdatedDetail(
             component_id="tc-001",
             field_changed="status",
             old_value="PENDING",
             new_value="CONFIRMED",
-        )
-        e = self._make_entry(EventType.THESIS_COMPONENT_UPDATED, EventGroup.THESIS, detail)
-        assert e.event_type == EventType.THESIS_COMPONENT_UPDATED
-
-    def test_thesis_resolved(self) -> None:
-        detail = ThesisResolvedDetail(
+        ),
+        EventSource.FILL_PROCESSOR,
+    ),
+    (
+        "thesis_resolved",
+        EventType.THESIS_RESOLVED,
+        EventGroup.THESIS,
+        lambda: ThesisResolvedDetail(
             resolution_category="WIN",
             component_outcomes_json={"tc-001": "CONFIRMED"},
-        )
-        e = self._make_entry(EventType.THESIS_RESOLVED, EventGroup.THESIS, detail)
-        assert e.event_type == EventType.THESIS_RESOLVED
-
-    def test_thesis_status_changed(self) -> None:
-        detail = ThesisStatusChangedDetail(old_status="ACTIVE", new_status="RESOLVED")
-        e = self._make_entry(EventType.THESIS_STATUS_CHANGED, EventGroup.THESIS, detail)
-        assert e.event_type == EventType.THESIS_STATUS_CHANGED
-
-    def test_cash_debited(self) -> None:
-        detail = CashDebitedDetail(
+        ),
+        EventSource.FILL_PROCESSOR,
+    ),
+    (
+        "thesis_status_changed",
+        EventType.THESIS_STATUS_CHANGED,
+        EventGroup.THESIS,
+        lambda: ThesisStatusChangedDetail(old_status="ACTIVE", new_status="RESOLVED"),
+        EventSource.FILL_PROCESSOR,
+    ),
+    (
+        "cash_debited",
+        EventType.CASH_DEBITED,
+        EventGroup.CASH_AND_MARGIN,
+        lambda: CashDebitedDetail(
             amount_usd=money("1500.0"),
             reason=CashDebitReason.ENTRY_FILL,
             new_balance_usd=signed_money("98500.0"),
-        )
-        e = self._make_entry(
-            EventType.CASH_DEBITED,
-            EventGroup.CASH_AND_MARGIN,
-            detail,
-            source=EventSource.FILL_PROCESSOR,
-        )
-        assert e.event_type == EventType.CASH_DEBITED
-
-    def test_cash_credited(self) -> None:
-        detail = CashCreditedDetail(
+        ),
+        EventSource.FILL_PROCESSOR,
+    ),
+    (
+        "cash_credited",
+        EventType.CASH_CREDITED,
+        EventGroup.CASH_AND_MARGIN,
+        lambda: CashCreditedDetail(
             amount_usd=money("1750.0"),
             reason=CashCreditReason.EXIT_FILL,
             new_balance_usd=signed_money("101750.0"),
-        )
-        e = self._make_entry(
-            EventType.CASH_CREDITED,
-            EventGroup.CASH_AND_MARGIN,
-            detail,
-            source=EventSource.FILL_PROCESSOR,
-        )
-        assert e.event_type == EventType.CASH_CREDITED
-
-    def test_capital_reserved(self) -> None:
-        detail = CapitalReservedDetail(order_id=OrderId("ord-001"), amount_usd=money("1500.0"))
-        e = self._make_entry(
-            EventType.CAPITAL_RESERVED,
-            EventGroup.CASH_AND_MARGIN,
-            detail,
-            source=EventSource.COMMAND_EXECUTOR,
-        )
-        assert e.event_type == EventType.CAPITAL_RESERVED
-
-    def test_capital_released(self) -> None:
-        detail = CapitalReleasedDetail(order_id=OrderId("ord-001"), amount_usd=money("1500.0"))
-        e = self._make_entry(
-            EventType.CAPITAL_RELEASED,
-            EventGroup.CASH_AND_MARGIN,
-            detail,
-            source=EventSource.COMMAND_EXECUTOR,
-        )
-        assert e.event_type == EventType.CAPITAL_RELEASED
-
-    def test_margin_call(self) -> None:
-        detail = MarginCallDetail(
+        ),
+        EventSource.FILL_PROCESSOR,
+    ),
+    (
+        "capital_reserved",
+        EventType.CAPITAL_RESERVED,
+        EventGroup.CASH_AND_MARGIN,
+        lambda: CapitalReservedDetail(order_id=OrderId("ord-001"), amount_usd=money("1500.0")),
+        EventSource.COMMAND_EXECUTOR,
+    ),
+    (
+        "capital_released",
+        EventType.CAPITAL_RELEASED,
+        EventGroup.CASH_AND_MARGIN,
+        lambda: CapitalReleasedDetail(order_id=OrderId("ord-001"), amount_usd=money("1500.0")),
+        EventSource.COMMAND_EXECUTOR,
+    ),
+    (
+        "margin_call",
+        EventType.MARGIN_CALL,
+        EventGroup.CASH_AND_MARGIN,
+        lambda: MarginCallDetail(
             position_id=PositionId("pos-001"),
             margin_required_usd=money("5000.0"),
             margin_available_usd=money("3000.0"),
             deficit_usd=money("2000.0"),
-        )
-        e = self._make_entry(
-            EventType.MARGIN_CALL,
-            EventGroup.CASH_AND_MARGIN,
-            detail,
-            source=EventSource.MARGIN_MONITOR,
-        )
-        assert e.event_type == EventType.MARGIN_CALL
-
-    def test_margin_call_resolved(self) -> None:
-        detail = MarginCallResolvedDetail(resolution_method="DEPOSIT")
-        e = self._make_entry(
-            EventType.MARGIN_CALL_RESOLVED,
-            EventGroup.CASH_AND_MARGIN,
-            detail,
-            source=EventSource.MARGIN_MONITOR,
-        )
-        assert e.event_type == EventType.MARGIN_CALL_RESOLVED
-
-    def test_margin_liquidation(self) -> None:
-        detail = MarginLiquidationDetail(
+        ),
+        EventSource.MARGIN_MONITOR,
+    ),
+    (
+        "margin_call_resolved",
+        EventType.MARGIN_CALL_RESOLVED,
+        EventGroup.CASH_AND_MARGIN,
+        lambda: MarginCallResolvedDetail(resolution_method="DEPOSIT"),
+        EventSource.MARGIN_MONITOR,
+    ),
+    (
+        "margin_liquidation",
+        EventType.MARGIN_LIQUIDATION,
+        EventGroup.CASH_AND_MARGIN,
+        lambda: MarginLiquidationDetail(
             position_id=PositionId("pos-001"),
             liquidation_price=price("140.0"),
             loss_usd=signed_money("1000.0"),
-        )
-        e = self._make_entry(
-            EventType.MARGIN_LIQUIDATION,
-            EventGroup.CASH_AND_MARGIN,
-            detail,
-            source=EventSource.MARGIN_MONITOR,
-        )
-        assert e.event_type == EventType.MARGIN_LIQUIDATION
-
-    def test_guardrail_rejection(self) -> None:
-        detail = GuardrailRejectionDetail(
+        ),
+        EventSource.MARGIN_MONITOR,
+    ),
+    (
+        "guardrail_rejection",
+        EventType.GUARDRAIL_REJECTION,
+        EventGroup.RISK_AND_GUARDRAIL,
+        lambda: GuardrailRejectionDetail(
             command_summary="BUY 100 AAPL",
             blocking_rule_ids=("rule-001",),
             current_limit_values_json={"concentration": 0.18},
             headroom_json={"concentration": -0.03},
             suggested_modification=None,
-        )
-        e = self._make_entry(
-            EventType.GUARDRAIL_REJECTION,
-            EventGroup.RISK_AND_GUARDRAIL,
-            detail,
-            source=EventSource.GUARDRAIL_LAYER,
-        )
-        assert e.event_type == EventType.GUARDRAIL_REJECTION
-
-    def test_risk_limit_approached(self) -> None:
-        detail = RiskLimitApproachedDetail(
+        ),
+        EventSource.GUARDRAIL_LAYER,
+    ),
+    (
+        "risk_limit_approached",
+        EventType.RISK_LIMIT_APPROACHED,
+        EventGroup.RISK_AND_GUARDRAIL,
+        lambda: RiskLimitApproachedDetail(
             metric_id="sector_concentration",
             current_value=0.14,
             threshold_value=0.15,
             limit_value=0.20,
-        )
-        e = self._make_entry(
-            EventType.RISK_LIMIT_APPROACHED,
-            EventGroup.RISK_AND_GUARDRAIL,
-            detail,
-            source=EventSource.GUARDRAIL_LAYER,
-        )
-        assert e.event_type == EventType.RISK_LIMIT_APPROACHED
-
-    def test_risk_parameter_changed(self) -> None:
-        detail = RiskParameterChangedDetail(
+        ),
+        EventSource.GUARDRAIL_LAYER,
+    ),
+    (
+        "risk_parameter_changed",
+        EventType.RISK_PARAMETER_CHANGED,
+        EventGroup.RISK_AND_GUARDRAIL,
+        lambda: RiskParameterChangedDetail(
             old_parameter_set_json={"max_concentration": 0.15},
             new_parameter_set_json={"max_concentration": 0.12},
             regime_label="HIGH_VIX",
-        )
-        e = self._make_entry(
-            EventType.RISK_PARAMETER_CHANGED,
-            EventGroup.RISK_AND_GUARDRAIL,
-            detail,
-            source=EventSource.GUARDRAIL_LAYER,
-        )
-        assert e.event_type == EventType.RISK_PARAMETER_CHANGED
-
-    def test_pm_decision(self) -> None:
-        detail = PMDecisionDetail(
+        ),
+        EventSource.GUARDRAIL_LAYER,
+    ),
+    (
+        "pm_decision",
+        EventType.PM_DECISION,
+        EventGroup.PM_DECISION,
+        lambda: PMDecisionDetail(
             envelope_id="env-001",
             source_provenance_json={"source_type": "pm_analyst"},
             evaluation_json={"verdict": "APPROVE"},
             modifications_json=[],
             resulting_command_ids=("cmd-001",),
             verdict=PMVerdict.APPROVE,
-        )
-        e = self._make_entry(
-            EventType.PM_DECISION,
-            EventGroup.PM_DECISION,
-            detail,
-            source=EventSource.COMMAND_EXECUTOR,
-        )
-        assert e.event_type == EventType.PM_DECISION
-
-    def test_command_abandoned(self) -> None:
-        detail = CommandAbandonedDetail(
+        ),
+        EventSource.COMMAND_EXECUTOR,
+    ),
+    (
+        "command_abandoned",
+        EventType.COMMAND_ABANDONED,
+        EventGroup.PM_DECISION,
+        lambda: CommandAbandonedDetail(
             envelope_id="env-001",
             command_id="cmd-001",
             originating_agent="pm_analyst",
             command_type="OPEN",
             failure_reason="BROKER_TIMEOUT",
             retry_attempt_count=3,
-        )
-        e = self._make_entry(
-            EventType.COMMAND_ABANDONED,
-            EventGroup.PM_DECISION,
-            detail,
-            source=EventSource.COMMAND_EXECUTOR,
-        )
-        assert e.event_type == EventType.COMMAND_ABANDONED
-
-    def test_corporate_action_applied(self) -> None:
-        detail = CorporateActionAppliedDetail(
+        ),
+        EventSource.COMMAND_EXECUTOR,
+    ),
+    (
+        "corporate_action_applied",
+        EventType.CORPORATE_ACTION_APPLIED,
+        EventGroup.CORPORATE_ACTION,
+        lambda: CorporateActionAppliedDetail(
             action_type=CorporateActionType.SPLIT,
             alpaca_activity_id="act-001",
             ticker=Symbol("AAPL"),
@@ -1297,14 +1390,34 @@ class TestActivityLogEntryHappyPath:
             signed_cash_impact_usd=signed_money("0.0"),
             parent_position_id=None,
             resulting_position_status="OPEN",
-        )
-        e = self._make_entry(
-            EventType.CORPORATE_ACTION_APPLIED,
-            EventGroup.CORPORATE_ACTION,
-            detail,
-            source=EventSource.CORPORATE_ACTION_PROCESSOR,
-        )
-        assert e.event_type == EventType.CORPORATE_ACTION_APPLIED
+        ),
+        EventSource.CORPORATE_ACTION_PROCESSOR,
+    ),
+]
+
+
+class TestActivityLogEntryHappyPath:
+    """One happy-path ActivityLogEntry construction per event type (parametrized, ALP-800).
+
+    All 35 original cases remain as rows; each constructs its real detail
+    instance through ``ActivityLogEntry(...)`` so the ``__post_init__``
+    consistency-validator pass-branch is exercised for every triple.
+    """
+
+    @pytest.mark.parametrize(
+        "event_type,event_group,detail_factory,source",
+        [(r[1], r[2], r[3], r[4]) for r in _ENTRY_CASES],
+        ids=[r[0] for r in _ENTRY_CASES],
+    )
+    def test_entry_constructs(
+        self,
+        event_type: EventType,
+        event_group: EventGroup,
+        detail_factory: Callable[[], object],
+        source: EventSource,
+    ) -> None:
+        e = _entry(event_type, event_group, detail_factory(), source=source)
+        assert e.event_type == event_type
 
 
 # ---------------------------------------------------------------------------

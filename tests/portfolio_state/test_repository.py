@@ -15,11 +15,7 @@ from alphamind._kernel.ids import (
 )
 from alphamind._kernel.regime import (
     RegimeLabel,
-    RegimeTransitionState,
-    RiskZone,
 )
-from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
-from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
@@ -29,7 +25,6 @@ from alphamind.portfolio_state.events.activity_log import (
     PMDecisionDetail,
     PMVerdict,
 )
-from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegEnforcement,
@@ -56,6 +51,12 @@ from alphamind.portfolio_state.repository import (
     RepositoryFixture,
     RepositoryReadError,
     StubPortfolioStateRepository,
+)
+
+from ._view_builders import (
+    _make_active_risk_parameters,
+    _make_cash_ledger,
+    _make_drawdown_state,
 )
 
 _NOW_UTC = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
@@ -199,17 +200,6 @@ def test_current_invocation_metadata_naive_started_at_raises() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_active_risk_params() -> ActiveRiskParameterSet:
-    return ActiveRiskParameterSet(
-        regime_label=RegimeLabel.NORMAL,
-        transition_state=RegimeTransitionState.STABLE,
-        transition_invocations_remaining=0,
-        parameter_change_flag=False,
-        entries=(),
-        active_overlays=(),
-    )
-
-
 def test_prior_invocation_context_both_none() -> None:
     obj = PriorInvocationContext(
         prior_invocation_id=None, prior_active_risk_parameters=None, prior_phase1_committed_at=None
@@ -218,7 +208,7 @@ def test_prior_invocation_context_both_none() -> None:
 
 
 def test_prior_invocation_context_both_non_none() -> None:
-    params = _make_active_risk_params()
+    params = _make_active_risk_parameters()
     obj = PriorInvocationContext(
         prior_invocation_id="inv-000",
         prior_active_risk_parameters=params,
@@ -228,7 +218,7 @@ def test_prior_invocation_context_both_non_none() -> None:
 
 
 def test_prior_invocation_context_id_none_params_set_raises() -> None:
-    params = _make_active_risk_params()
+    params = _make_active_risk_parameters()
     with pytest.raises((ValueError, TypeError)):
         PriorInvocationContext(
             prior_invocation_id=None,
@@ -247,7 +237,7 @@ def test_prior_invocation_context_id_set_params_none_raises() -> None:
 
 
 def test_prior_invocation_context_naive_committed_at_raises() -> None:
-    params = _make_active_risk_params()
+    params = _make_active_risk_parameters()
     with pytest.raises((ValueError, TypeError)):
         PriorInvocationContext(
             prior_invocation_id="inv-000",
@@ -263,40 +253,6 @@ def test_prior_invocation_context_naive_committed_at_raises() -> None:
 
 def _make_pnl_inputs() -> PortfolioPnLInputs:
     return PortfolioPnLInputs(**_VALID_PNL)
-
-
-def _make_cash_ledger() -> CashLedger:
-    return CashLedger(
-        current_cash_usd=10000.0,
-        settled_cash_usd=9000.0,
-        reserved_capital_usd=500.0,
-        available_buying_power_usd=8500.0,
-        margin_held_usd=0.0,
-        unsettled_proceeds=(),
-        cash_pct_of_portfolio=80.0,
-        true_deployable_capital_usd=8000.0,
-        regt_excess_trailing_30d_usd=100.0,
-        regt_excess_trailing_90d_usd=300.0,
-        regt_excess_lifetime_usd=500.0,
-    )
-
-
-def _make_drawdown_state() -> DrawdownState:
-    return DrawdownState(
-        current_drawdown_pct=0.0,
-        equity_high_water_mark_usd=100000.0,
-        drawdown_duration_hours=0.0,
-        lifetime_max_drawdown_pct=5.0,
-        intraday_drawdown_pct=0.0,
-        daily_zone=RiskZone.NORMAL,
-        cumulative_zone=RiskZone.NORMAL,
-        cumulative_tier=None,
-        drawdown_by_source_pct={},
-    )
-
-
-def _make_active_risk_parameters() -> ActiveRiskParameterSet:
-    return _make_active_risk_params()
 
 
 def _make_thesis_quality_aggregate() -> ThesisQualityAggregate:

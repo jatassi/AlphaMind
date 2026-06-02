@@ -36,27 +36,6 @@ def test_calibration_state_values_tuple_matches_enum() -> None:
     assert CALIBRATION_STATE_VALUES == ("calibrated", "accumulating", "unavailable")
 
 
-def test_kernel_calibration_has_zero_first_party_imports() -> None:
-    """``_kernel.calibration`` must have no ``alphamind.*`` imports."""
-    import ast
-    from pathlib import Path
-
-    import alphamind._kernel.calibration as module
-
-    source = Path(module.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            assert node.module is None or not (
-                node.module == "alphamind" or node.module.startswith("alphamind.")
-            ), f"_kernel.calibration must not import from alphamind.*; found: {node.module}"
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                assert not (alias.name == "alphamind" or alias.name.startswith("alphamind.")), (
-                    f"_kernel.calibration must not import alphamind.*; found: {alias.name}"
-                )
-
-
 def test_kernel_calibration_all_lists_expected_names() -> None:
     from alphamind._kernel import calibration
 

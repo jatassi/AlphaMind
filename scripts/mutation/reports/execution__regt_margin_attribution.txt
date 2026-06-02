@@ -1,0 +1,2281 @@
+Mutation report: execution/regt_margin_attribution
+Generated: 2026-06-02T04:07:57Z
+Source   : src/alphamind/execution/regt_margin_attribution
+Tests    : tests/execution/regt_margin_attribution
+Timeout  : 30s
+============================================================
+
+[job-id] c31bbf624e7b439390164d3fd49765b4
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_Add 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 778ef43416634dd3b563bd914d87a545
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_Add 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] aed79b3fcf144c9c9d9180bdee0a0ede
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_Add 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5e0a379294d648a1b783423881cf9f93
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_Mul 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] be1096f0974a4d0eb4697b700be47f98
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_Mul 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b40db87fe55544cf81791e8c50a060a5
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_Mul 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 579c359092b24e5fb916f26780b035e6
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_Div 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6f0d4b59528d403fa43567348cc965f9
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_Div 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3af5a647657e4376a3064fa4bc2a6865
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_Div 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 71f8f66566fb48009b3ac586c8cf1b57
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_FloorDiv 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ab4996e31d1e42769ab04f0ecb03a6c2
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_FloorDiv 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] bde3eafd27b0468f938c62c45aa60357
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_FloorDiv 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2c3e09709a3c4b12a76f880e729a8a5f
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_Mod 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 1da6c2c7fb074c12847936d8dc61d73b
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_Mod 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2536e68ab2844bd1981b303c47d06837
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_Mod 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5c594ef5ba12459a87a837701541d161
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_Pow 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 66b25018a2d240eb98c125baa9b300d5
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_Pow 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6265fc47cf5941828c3a7d868752960a
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_Pow 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f332709d59de40e3b72cf1e77165ead1
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_RShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 72c0dcd7742d460ba737f9020e48a81d
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_RShift 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a5f50465d26d492fb22cb58b7f5b1403
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_RShift 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 838134c751944553822b51fe7c3fb387
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_LShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3aada860503e42bd93e840ed2fa9e0fa
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_LShift 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] afc1757ee4b04b08ae343574cffa67a7
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_LShift 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d68157accf0f4655844e19e1988ae60d
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_BitOr 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 93057cd8212d4f89a768eb9ec07d0b8f
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_BitOr 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3c48a397dcca4dbba6a944a941fe2619
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_BitOr 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 59e33bdb0d174279838da66feeb82e24
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_BitAnd 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e1e51aa5eea14da194b54c59f811903c
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_BitAnd 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 42063748f5f548e29d649bfa45c40f56
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_BitAnd 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5c56bac3c7314d3fb61cdef89b11b65b
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_BitXor 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] de1a6aed83cb463e8333223b9fe96888
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_BitXor 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ba44a79eaf1449e3a76440f6e8ad93d4
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Sub_BitXor 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 24c660410f594ed184471113106f4355
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Mul_Add 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 07cbf13dab9b4ca4b1825e619b13d315
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Mul_Sub 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 0f4a9d60b08545df8116708b71cc3de0
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Mul_Div 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c4c531916ced426c8f7352b6cd50f290
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Mul_FloorDiv 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c8c456cfe47c421da74bead86015e9e9
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Mul_Mod 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7ec4c8b88c504324a7163b77c66252dd
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Mul_Pow 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8c11df65bbd54b479503cc559fe33ee6
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Mul_RShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a6b3aba813da4119a7826b104a257885
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Mul_LShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 212ba98605c14d7ca34519708722af83
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Mul_BitOr 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 12e07c3117c34e32b9fce9674133b3b3
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Mul_BitAnd 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 95e411d41f52485e8c05c56cdb1aa173
+src/alphamind/execution/regt_margin_attribution/orchestrator.py core/ReplaceBinaryOperator_Mul_BitXor 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] bb0aebe37b094b7b93a8553eac7c545f
+src/alphamind/execution/regt_margin_attribution/pm_equivalent.py core/ReplaceComparisonOperator_Eq_NotEq 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4fedd0ecacc2453eae52df28a31f4bce
+src/alphamind/execution/regt_margin_attribution/pm_equivalent.py core/ReplaceComparisonOperator_Eq_Lt 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e034357ae5444c4fb97c3daeaa4f89c1
+src/alphamind/execution/regt_margin_attribution/pm_equivalent.py core/ReplaceComparisonOperator_Eq_LtE 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 4cc049eefa7242daaf02c5cb95ecd250
+src/alphamind/execution/regt_margin_attribution/pm_equivalent.py core/ReplaceComparisonOperator_Eq_Gt 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 79f5dc5fcbf1437699e0a40ae25b79ff
+src/alphamind/execution/regt_margin_attribution/pm_equivalent.py core/ReplaceComparisonOperator_Eq_GtE 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 0f86dae758234b119c2c0db77fc15bc5
+src/alphamind/execution/regt_margin_attribution/pm_equivalent.py core/ReplaceComparisonOperator_Eq_Is 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] f918272063fc46a88b37dd13915e692c
+src/alphamind/execution/regt_margin_attribution/pm_equivalent.py core/ReplaceComparisonOperator_Eq_IsNot 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6b571a0435dc45df8300e6237bac8a6c
+src/alphamind/execution/regt_margin_attribution/pm_equivalent.py core/ReplaceUnaryOperator_Delete_Not 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4da5b1022a354a4a98cc48e581c82821
+src/alphamind/execution/regt_margin_attribution/pm_equivalent.py core/AddNot 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 93923cda76b347d7bb1e2206763f45ba
+src/alphamind/execution/regt_margin_attribution/pm_equivalent.py core/NumberReplacer 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] fb8defd2804b4e318df0c88ffdf5608c
+src/alphamind/execution/regt_margin_attribution/pm_equivalent.py core/NumberReplacer 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c9eb56f2d38c4aa3a499430f4cb16296
+src/alphamind/execution/regt_margin_attribution/aggregates.py core/ReplaceTrueWithFalse 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9156ebd51ec2422c900110048e317fb2
+src/alphamind/execution/regt_margin_attribution/aggregates.py core/ReplaceTrueWithFalse 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d9b8fb61ebb640e48255cf66f6fc157b
+src/alphamind/execution/regt_margin_attribution/aggregates.py core/RemoveDecorator 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2b2009363a32467ab7d1ebdcca2b8266
+src/alphamind/execution/regt_margin_attribution/class_groups.py core/ReplaceComparisonOperator_NotEq_Eq 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 97876079cd484d3fac268040a41fcbf9
+src/alphamind/execution/regt_margin_attribution/class_groups.py core/ReplaceComparisonOperator_NotEq_Lt 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 865e0eab12f14d3a8233b806b6471221
+src/alphamind/execution/regt_margin_attribution/class_groups.py core/ReplaceComparisonOperator_NotEq_LtE 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] cb81426774084ade90f21983f4dab2f2
+src/alphamind/execution/regt_margin_attribution/class_groups.py core/ReplaceComparisonOperator_NotEq_Gt 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c157501f118c44cf9bb1dffcb9cd43fc
+src/alphamind/execution/regt_margin_attribution/class_groups.py core/ReplaceComparisonOperator_NotEq_GtE 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d399041e26414b4d828dea4814a835d2
+src/alphamind/execution/regt_margin_attribution/class_groups.py core/ReplaceComparisonOperator_NotEq_Is 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3fc4d319d7264263911b9162d6c5f0b2
+src/alphamind/execution/regt_margin_attribution/class_groups.py core/ReplaceComparisonOperator_NotEq_IsNot 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 4646d9239e83485da742e209acd4a664
+src/alphamind/execution/regt_margin_attribution/class_groups.py core/ReplaceComparisonOperator_Is_IsNot 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b6b4efe369dd4a4cae28ef4d985c0932
+src/alphamind/execution/regt_margin_attribution/class_groups.py core/ReplaceUnaryOperator_Delete_Not 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5e1dc2af9624474eb621a032e512dd20
+src/alphamind/execution/regt_margin_attribution/class_groups.py core/AddNot 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a6a24d28e1604ffdb7b41af91f166b10
+src/alphamind/execution/regt_margin_attribution/class_groups.py core/AddNot 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e55f5a1cea6847c79d1752147408138d
+src/alphamind/execution/regt_margin_attribution/class_groups.py core/AddNot 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2c89b88bdd13470fbb67ebaac4ef4643
+src/alphamind/execution/regt_margin_attribution/class_groups.py core/ReplaceTrueWithFalse 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] e19434aadfdd4c07ac505d362fb56a1e
+src/alphamind/execution/regt_margin_attribution/class_groups.py core/ReplaceTrueWithFalse 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 955b512f9508468cb31699001553aa2a
+src/alphamind/execution/regt_margin_attribution/class_groups.py core/RemoveDecorator 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 61698c1b4ab941d19a59059a4c373801
+src/alphamind/execution/regt_margin_attribution/class_groups.py core/ZeroIterationForLoop 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 07db8948ae104516a5bf55873629a240
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_Add 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] fde5140c9cfa4e3caf964978822003ec
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_Add 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f889e138fe1341979d43ac39d578cfb2
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_Add 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 31299714324f4f9b804d446d9618e92c
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_Mul 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e2aa3ca8b3e34ff1a8e3210522b47489
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_Mul 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 35579e789c4f4667924f7c3b0d7e5d1b
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_Mul 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a81cc58a8880467c8373e28185f89380
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_Div 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2af2909ccbd44214b4ef4b779311d224
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_Div 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 74730fda7fbb4e498505c5c8dcb0706b
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_Div 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 14ab9f353f2c44e9a799a2a0035119ce
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_FloorDiv 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 1b021da534f14630821ec8c1b82273cf
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_FloorDiv 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3a60f29f3921476484995e1f33ab7df3
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_FloorDiv 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] de705f0a22674529a8a68fa0e09bdfda
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_Mod 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 96b523143f114f45be691840cfa72e30
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_Mod 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 617dd1e379134526926784cb6d1c7d98
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_Mod 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 33456c68c331468fa8d79ea15ebb3048
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_Pow 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a83e23223f444d068025d26fa43c3454
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_Pow 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 623536ac1ee14aacb5df108e74c3d8a8
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_Pow 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a533bc7835c24a6ea88d40ff5aad30ab
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_RShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e554e711b819434ebd74c84e660686eb
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_RShift 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 893a47f4765544b4b3f0295de154946c
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_RShift 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 42491344f5cd4166b965819517d1311f
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_LShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 439f7731c2b6486889824d3b5ee6ffbb
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_LShift 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d10258cbbf28446f958e37ed59aa10df
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_LShift 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 13c0fbc6547d493ea50a113ebb42d1f1
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_BitOr 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c2767995cd2f4c1b82cfd0a29dfdcd32
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_BitOr 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9d147856ac6547ef92a63ea9749ad204
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_BitOr 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f7892bca25014eed9fcd5c4dd11f24fb
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_BitAnd 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ca8e8379314240daa75712c3721a401b
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_BitAnd 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2b1e97c1d7784e14b6617f7cef8f1753
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_BitAnd 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8f941fa5e23c4a20a9c398edc797b74c
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_BitXor 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f0874d287a1542b2ae6acc31dea2c3e5
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_BitXor 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ab655e44b22641a8ab28905482f9a00f
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Sub_BitXor 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d34a60783d68432298580d1fc36ededb
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Add 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6867f6441e2343c2b51e7f7dd29df5d1
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Add 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7843c7868e774f03a03e45534e2d83ef
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Add 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6df5c4434e3f451b899a6a8db9095544
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Add 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8d88d64b350244df833f3a450f8bbad5
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Add 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 538bd5bd7c9049129d03dfc82a7441b9
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Add 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f7f0840e42984acba29ec249986087c8
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Add 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3b352144680241d9868b0132855db42a
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Add 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 998af6d52c814e6baee1cfedbbc5b334
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Add 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 843b58ceb0694a5092dc29c91acbd3a4
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Add 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9dbab303921a4821ad3dfefac0108344
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Add 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2104cd0761344178ad4981618ec33a3f
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Sub 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c992cabb36f4471e8d5059f894da47cb
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Sub 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 55ba7fba08004e918c3c7daa1eeacfd3
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Sub 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e93c615667aa43e683be5906499cc942
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Sub 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e2cb63030d2243b98684406816ec5144
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Sub 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2e598f8b6eee4e208f07b4d429c177c0
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Sub 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 495e050ab25b4867bf80c1360829c914
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Sub 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b9a8a951cc5248c5a7561c2b9163ceeb
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Sub 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d4ddb41b5f3a4da4b531bb69f0c7aea2
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Sub 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9701e2cc3ed949e69bcd69bab3a822ca
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Sub 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 787eb22dd4714e4b9125edc4627b3a1b
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Sub 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 370199c1664a480b9371ad2b1cff0d3c
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Div 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 82965d01293148c7b4b66bdc38dcb1aa
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Div 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] cee15c532a97473d8e2de6fce03afef5
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Div 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7aa3a55e55df4488936837d3878036a3
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Div 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3689378b461d4be39b4de024b133f7c4
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Div 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 686cac76681843129a06591b2dc0d128
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Div 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c7a22e4ab26148a3a77873e9d4933421
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Div 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 71fed747e0d248eebac992baf0df6d2f
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Div 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 91795dbc931c4b5397fe9cc73edb6efe
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Div 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 09af8196cf7e482a88ccbb4843729f60
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Div 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 7f994439cac54250a5ff822142797fdf
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Div 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9836ce9c1901490cb14045d68f520bcf
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_FloorDiv 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 75585d19e794424fb8f37e6f8f9cad6e
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_FloorDiv 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b12f1fa7759f438095a8286c3d4cff60
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_FloorDiv 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e98d06291f774c9ab56d65cac81fd740
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_FloorDiv 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2815f42f2c384a84b9f58d03d3f43eb9
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_FloorDiv 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 01a7f69a7c4346d5808cfe82be8184a8
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_FloorDiv 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 58704159d9004ad89f9970e8965ca342
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_FloorDiv 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 285672dc4bc44a0193553aa5c7651d6e
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_FloorDiv 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 33183c6eda644f6d9e6a87098c3fd9ab
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_FloorDiv 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 69b1399ec56541b1b334a3110ae06558
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_FloorDiv 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] fe8def8a244246d894d5266ce2d2a1a5
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_FloorDiv 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 897fc4eff25d444a946839885c3c8ad7
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Mod 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3523c81866044bc8a8663eff7b9ca558
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Mod 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e347b6298ce34a9d8b356bc0ce6a34bc
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Mod 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 54a58b8a23e949cca31d43d649f24a74
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Mod 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] cae929f409e347b6bf35ddb5a7d98a6c
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Mod 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3df1dcfa830f422fad958989cbf6d581
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Mod 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5b3f15ab03dc462b82cf6e099ea3440f
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Mod 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 348bc9b068d44724845fd3068394a5a1
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Mod 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ab0d6cf8e011468ea5e9602a31e91554
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Mod 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 30d22835f5ae415c8449f8f92139c632
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Mod 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 35d19bfd54f14e18b6a7e78a1af1db8c
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Mod 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 0aed43890b274613a35b24c40839105b
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Pow 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d7a479cc351c437c92586b6b66a6f5e9
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Pow 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] cf666f289b344a7096cb474b8c412138
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Pow 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 25d927cc88304df5ba8dc264ff2d29e3
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Pow 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b8dcc9578cb94cdba2590c6192b88f7b
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Pow 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 1d7c9d836b8c4357b697a622b876754b
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Pow 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5808d0bf6e20484d8dc6faef5d9216bc
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Pow 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e571e7aa257d46ada05c0095a563beb8
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Pow 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8fd6e67cceac42d6a448d1d5844cb046
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Pow 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ba1752778b0a49c5b16e56ddf8f70cb7
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Pow 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] e4bd7bd1c315422d97224785ecdecfee
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_Pow 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d804b06eaec648e7bee4a82b5940aed9
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_RShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8ebf6ba8e1da491b8fee8484d8ee8dfc
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_RShift 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 836fd838f7ca4eadb424c244687b91a5
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_RShift 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 168874fbfe2a40baa9adbca57ea2a5e0
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_RShift 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 654d9053f9c24299873cbaadcaee3bcb
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_RShift 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 81ba6d03acc24578bc837a4177c46c88
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_RShift 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c5c8f362a68245739dfb861a5ba53c14
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_RShift 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7178408c237f4568a5f56b73f78e5849
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_RShift 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f24049168c4548d09d6e5fa8e6e0a01f
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_RShift 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] cf3d75805af0481684f98fac5c9d4a28
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_RShift 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2122b7a72e5445ee8d55f0015b8ba40f
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_RShift 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 88636f91913041eab495f2db0006999d
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_LShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7ab05a40479f4bef811e9ddca99534c4
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_LShift 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 94a7af8e75854b7c970db7dd6557938f
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_LShift 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e1967c29a74a44b8899a6e8b3d421215
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_LShift 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6e60a882da9c4a6abe712c1f5a1f1d36
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_LShift 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 759b0f90992b4d4c9b1297e6918ccfcd
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_LShift 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 703ae98a18c9443b8f65787abc428963
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_LShift 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 182a8210da244790b9432f8b01d6ceef
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_LShift 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 58d9d2dd503c487ab6d0f3c6acd4e46c
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_LShift 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f2fa6ecd8e314c8aa37b28bf96a2f68c
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_LShift 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5904c8d82aa84008a5165b14581ac1d2
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_LShift 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a07c4e70702443fc931de4cf2188b024
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitOr 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c38db32a1f8a42208e11f44df6dc0e26
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitOr 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 26ab238fe2f24ab9860f8bd339989105
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitOr 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3296db4adcab4a72ab511c3c06453d3d
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitOr 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a403183e75c94e05bfaf70ec4288e601
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitOr 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f8838182bc4042e6b90f06ee3e2cb9d4
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitOr 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] dba775760a4847fe9a671de7ea09057a
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitOr 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4d75c0134a5c4c1a946b2653ad9ae620
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitOr 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f48d4b8ad44e45c394e360b1cc633570
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitOr 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2f9aa34a0a8e4a9d8c2ceacf77178512
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitOr 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] aa25a268900f49a2a6aff46089b3c580
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitOr 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8525bee3e82143ceb83670d8872457db
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitAnd 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] af254c268f154bbbab49a961bc11df0b
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitAnd 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2603b1fb424c4cc6ac3e65ef795b893d
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitAnd 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d6ed17458abe44a5a9a39168d643f535
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitAnd 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a93a70a4de65435ca6977b07226f795b
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitAnd 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] bf7a371fc5dd420fa3055cfffc7b8144
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitAnd 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 119a277dce854c0b85a1175e47da5c41
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitAnd 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 298fd0fa60194a7dba5b49cbdfbdc26b
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitAnd 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a9aabcc424d54f0281e2b753c39ca015
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitAnd 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f766b59512c341d29b680ba8a1a6da36
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitAnd 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] eccd25ff3d3f41349e5b38a206baaac9
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitAnd 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5246007e636a4730bdbc66fea5fb4dda
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitXor 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 560616bd24ba4d6685224fa38613aa6a
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitXor 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 1a48e12bd71b432999e94ce1245e10e3
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitXor 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5300502e641c4c099de42bacb6dc69fe
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitXor 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9ef3cf87c6aa46f88e298bf0915490f8
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitXor 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 933f226764da43e9a9d3440c19913a0f
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitXor 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 63723c37a1114e57a1a88c77a5f09628
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitXor 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6a48118598104de9b61d9e6b58e2c6d6
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitXor 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] fefcd6e226e74008a83895e629d2b0b9
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitXor 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f9273053544144f593aad7e8b15f45c5
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitXor 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] adc6af29326b4955ba7b49adfb926ef4
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceBinaryOperator_Mul_BitXor 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9872e079eefe496da453efe455e44b45
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_NotEq 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 50c0a727d4a9438694d1cd83407a1f9b
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_NotEq 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 743fd6a76aae4427b0f735fa40e81329
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_NotEq 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 154482c10f924454886758279e242ec6
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_NotEq 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8f16bc2620c64688b97d016aca9c4516
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_Lt 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 79b456538d52445aaf51b8df464544d3
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_Lt 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 0acebeb5fd5c47579d05967a8dd0a373
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_Lt 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f07ede07d7804e2a9cb431516bb4dfd8
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_Lt 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 40ae9f00db3745b8acdbc89f5cb0b075
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_LtE 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 66ca1bcc79af48a1b84a1d07e30b78f7
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_LtE 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 5fae01e7803a4c0ca39e4147fd56e720
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_LtE 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] a12d8213b4254adcb69d3861305721e1
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_LtE 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4c4cff65dd514b0fb8aa9b20eba6a6b0
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_Gt 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5bbdfeca6b334bb79faf8dec2a4b067f
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_Gt 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e4c46265f28943b4ba5399dccb04fe4d
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_Gt 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ec8826c879974261a9c6bc8833d71f2e
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_Gt 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e6613a9485ae4e4286b06f815e3693c1
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_GtE 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ef31aba55556477bb5357871a910b251
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_GtE 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3ab459fc8f58487ca607dc94591f912a
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_GtE 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] fac743884f5f430ea939b7f1f6dee40e
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_GtE 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] ac798870016c475c8282393f68fea088
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_Is 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 8011d80b748e476b8194ba00a1f1fb91
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_Is 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 3bc98f78e35d40a1ac8d4c627a38173a
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_Is 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 73c86936773f4a5880067e385b795b0c
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_IsNot 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7e77301235ec42b4a80226eb337223bb
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_IsNot 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 07b75993518b4d5889dbd1ce26384ec7
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_Eq_IsNot 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 11aad26ac12a4aa4bf5eb38eec1e1d33
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_NotEq_Eq 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a207156406c44c39b21e758ad90f9e7d
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_NotEq_Lt 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d79ec31648024d2f959616b3df6a10c0
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_NotEq_LtE 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e448baf182ba42a2a35cc34c5eaa0340
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_NotEq_Gt 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 363609ff249c43f79f604baad36e9598
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_NotEq_GtE 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] bf86db15e9354d019f6d474d3c403c15
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_NotEq_Is 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 1e7bf7347f724863a997aa2bc6d98f13
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_NotEq_IsNot 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 9576184663da47d684d1bb1ce0451e45
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_IsNot_Is 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 44ad66cf0e86478b8c34c84c35ef41bd
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_IsNot_Is 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4e10c40fff37466e834f16d56e6b76d2
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceComparisonOperator_IsNot_Is 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 57377735af8f46c48ae6e69547f15938
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceUnaryOperator_Delete_Not 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] cb0284aeb1a24825abca5a63820b3403
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/AddNot 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9f6c4cc1a7994924aa51c1f6492a8e43
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/AddNot 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ff88cbf5a1d348c1bb2ac08fd96f3f5d
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/AddNot 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2bf52addeee74a85a9d8d45178ca5a08
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/AddNot 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] cbb9d28cdb4944faa133f85f4338ec75
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/AddNot 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a62b3e93ea154e48b36615ecfa2a13b2
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/AddNot 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ff963d4af20a41128e33ca3e6a425495
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/AddNot 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8fb1b84db03245f58f51439a81666137
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/AddNot 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f413740b55f445f3bc398a5a5723ee0a
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/AddNot 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 22051c8641ce4cd5a766ba16a6f4d557
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceOrWithAnd 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] fcd58fa85c0146c59da4c69e6dc07b72
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ReplaceContinueWithBreak 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 2b1b1df4fdb147f88e1fb7bacf4786cc
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8834c7cc0e854580a079f628c326a2c1
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8b40f1f4621748ed8ace6026b36affdf
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 29f0dfa675bc4ed9964932b2ab2f25b3
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f6245ecce1614a18891eac23f7de5b93
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 44463431d0a24c228a6bf6cdd121e774
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3621d8bc98bd4c92bbd4687b7e07c356
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f932087084134725884868e2a6ebc7c2
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 781eb29f22074edfa16f1ec0817cd15b
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e9ba7d0f245c436f809568992184ad6c
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c0ddd88e3a8f449185b7bb04d2c7d4d7
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 89740a4eb49d4f7eb849ee7ec60e3cb8
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 11
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c9bdbeb89ccc4f509a3f71aba662021b
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 12
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 07588257ecc5486b96167d734eb99937
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 13
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 2025301fc1394b479a0d6c222be578cd
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 14
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] ec3ef58e60ee41d781314fedb2561d80
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 15
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] e03f63b17f054d7fbc0b124048af558a
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 16
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7b50a23fabda4f2f8464cd2b52f58c44
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 17
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9baa2b3853e6461f83c5dc13886457fe
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 18
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8af168e9b9f34cc7b81d4015e8aa5ebe
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 19
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c9c10db06a7644c5851d52996b0995a7
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 20
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7e1a53a0e62049d08eaa3fe0d1a875f1
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/NumberReplacer 21
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6025e9715aed4683b0ff0c6c84c2b824
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ZeroIterationForLoop 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c1e3e7b3aee54096aa20d9c37620a383
+src/alphamind/execution/regt_margin_attribution/regt_margin.py core/ZeroIterationForLoop 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e97130e34ad5410899d7e459b46a56d6
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Sub 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 075d19ac749640d1b8c14ce04344e22f
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Sub 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5d998e265dd24f8baa87feed356f7ed2
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Sub 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c73c4a73f7274cbdbc67b3939765c8f2
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Sub 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6dd563fb4a704146a2c27bbdcaa484cf
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Sub 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 38377a7f566047388e5c9e2a5c233dd5
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Mul 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 98e7f06537f64c7e9a07ee390edb31fa
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Mul 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 80f15f7ea0964c999151181f65742923
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Mul 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f4681515417f431895c3cbd793c7e0fc
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Mul 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e201335783d24b669ccb4985bbc31bc3
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Mul 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] dda918ce148c41a4b31acbde966a8f23
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Div 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 516e0a367bf542128024ba9521367057
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Div 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 637e76d14d79410a992243e4699076d1
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Div 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9d5423eb64474df5a51b8648a5423097
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Div 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7400ef0f42b24801bd60a8934bfd8f48
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Div 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 775a14b86cbc499a800c69aaac109d13
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_FloorDiv 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] bb6b6a345eaf4a689618df04b611c9a2
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_FloorDiv 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b60dd134d7e04bfea118be44fc3c4bdb
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_FloorDiv 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b277606e06e94760bdbd30b63c876b03
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_FloorDiv 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 51c3b5612f5c418a98d8e97383855348
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_FloorDiv 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8b334d95b1d74e1fb92c3cbe8615b52a
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Mod 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7b9648362bf54a89a8717a0996cf2dcb
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Mod 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 48e10803e9264c198e271606d722a715
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Mod 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6d8d76f342f64ec48cf9302a5b0ccac3
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Mod 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ce7481e64d674885a49f1ff978a1e72d
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Mod 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 321c2c6929f3447d8a96f372843b5c0a
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Pow 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a32908e8e2df487cb2d6b37bd6c62bc2
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Pow 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 80e19c9342584180841728cfbd8c32e3
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Pow 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] bb41039e0c224d15933848dd3089bd87
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Pow 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3aa6531b876343a9aa79605cfe3bc7b1
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_Pow 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] eecce84f89bc41368c761abd9e78dcea
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_RShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ac31ae6346a8499bbc237d4ab2750445
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_RShift 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4928b73e1aed44c8aae1b5aa438da430
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_RShift 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e1772e8710a2441bb748e948c799f11e
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_RShift 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ab7cd5b1b05c4b03a759c9832cdba69d
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_RShift 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4da34844dce34a68ba52886b7a9b9321
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_LShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c00d9754d36f4f42ba111c6f86664b44
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_LShift 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] aaa3c478d35c4454bd9eb1f3d13255c4
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_LShift 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5253f05dc9f64d59a4207f94b705e06b
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_LShift 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 811957d1ddd54b33aad1db0e2a104c82
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_LShift 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3037c3c4752e47b0bc2a9912a21784db
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_BitOr 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 810ec028c31c46ddbadd055716d4b700
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_BitOr 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] fe99196312454a68b84f8f1ee100e7f3
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_BitOr 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 89ec98ec9ad54f708c0fb890506d196c
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_BitOr 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9c71179f5ab24259a9effb92b98f6571
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_BitOr 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8da6272f6d4c4c7abe74a31524d4e429
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_BitAnd 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] eb9509b6da874b098fb91644bca9b00c
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_BitAnd 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5f76d190e6f54c94b036beae2b7c0449
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_BitAnd 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 19936dfccdb047ee9befe95edf41919f
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_BitAnd 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f9f865a36afb402da0c700d80c2cd89e
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_BitAnd 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 984de880ed6048e5b7321a3614659082
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_BitXor 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 12ce2e64e2454335bd1003afa1c9169d
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_BitXor 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9183552ccc1447d6980e957f20622f3d
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_BitXor 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f01d932cfbdb49ae8c48424f5ab2cef8
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_BitXor 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3c5a5a1df57f448088dd72e17e95d6de
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Add_BitXor 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8af329def2e248b8bfe03f63b5cd2f7a
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Add 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4d58780ee6c640a8aa421debb5af31d9
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Add 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 47eb83fc22ed44b4b5c73fae113a8bb4
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Add 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f5299937de044c31962ca80dc95fb98a
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Add 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 57d8615a105741d8ad7f5266e2b45729
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Add 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 10a96aaad28d42cba1ab9aeabc96678c
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Mul 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f7f3f1c891de4084bcfb04e9834d979a
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Mul 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8ee771dd83be4d5e8b597076377c905a
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Mul 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b587432ef1344fb99b7fb82b41f91560
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Mul 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 531098cfadf447359403f036be2f43ca
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Mul 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 64577b7c73a44b9eb1439395e1443a86
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Div 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4785a6d6f9004c75bf4ea683719f24d1
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Div 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2ef6d9b747044e178230ee55b2e862d5
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Div 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] fd2b45dc2e3f4371997ea2584a2a2529
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Div 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] fe987f9206a34a1f8531aebd1235a46e
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Div 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] cd823577ae1748789eaa01fb050fae66
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_FloorDiv 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 088c9433eb944b67bc37d0bd80903490
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_FloorDiv 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 943f9ef7ba0744bc9bf7eaceff846c13
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_FloorDiv 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b11ed2002fa14a018bcb4f86de965e24
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_FloorDiv 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] dd23fb3babff4be1902c9573d899b841
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_FloorDiv 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4981430184ea411c95a330eadca50dcf
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Mod 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ca47acfaa17943feabbec626f17c9d9a
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Mod 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 085f9567aea94ca49c880a49cd523aa2
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Mod 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7232a6e28ac84fabb60ff0b8c40c9e33
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Mod 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a008a883b5fc495eba3fb128c1078cf3
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Mod 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2477ed1973ca4ed98b7e5c72ea56f875
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Pow 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f74da5af59a2442493a5c34960504a52
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Pow 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 87c86794630b4ef4bb373b1d0d8d2c17
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Pow 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7a0bc4da937c422f9cca76b40f6314b8
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Pow 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 938e9609f7ad4c47ac232c25120f35fe
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_Pow 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9a758049ec4546a0b3317950d4f60b56
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_RShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] abc256dd042f4d87aa6a9bee2db74802
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_RShift 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 27bddc59757a4d8a871ff79a4d551958
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_RShift 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a15c910ee393401f87acee85c3843309
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_RShift 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 72d98c17de0f4524bbde511ef8c31944
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_RShift 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 62f014a7742f4967b171abb0cb1c2751
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_LShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2896152585124f90b9db01f61630117d
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_LShift 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f7c837df4a6f4f9b8b9fa3bdf85f78f0
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_LShift 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f6424b4d1464411390def032b298d21d
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_LShift 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 54d7b5e49c71494c9100e9d088edb6c3
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_LShift 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] dfe116f5b2ac483ca401dbab866b5d7f
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_BitOr 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ac64ec83be064a7889a690bd3550eee4
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_BitOr 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 0b6970d81fac4738969621291c06ec16
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_BitOr 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] df0b0d99f3a94ed0b78c00bc1e4305f0
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_BitOr 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a2682c2ea4cb4b68ad3be0d13ce39885
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_BitOr 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 91fcd20f64a04ae888c37c745f998d25
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_BitAnd 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 33a66785fbb449c0bd895a1b37dc2a27
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_BitAnd 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 926f082a81d0450aa96f1d26f6f5aef5
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_BitAnd 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 183be6220b424c6794c0d7cbd6ca0828
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_BitAnd 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 43293ab9e8864fbf93c9b7456948f27b
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_BitAnd 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 1d03a9fa4f87428c9ee5e76517a2913f
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_BitXor 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 61b6c73f1cc045238a3fbef120a30731
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_BitXor 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5955d4556ff74d938e912cc628e861a1
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_BitXor 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 06ac52436acd4bacb2719fcbdf2e7eac
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_BitXor 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8375f6a898bf4c2b8e91e6c399711bc7
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Sub_BitXor 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 909ff0291c55468885df1c4e2cf25406
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Add 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 86f7235c27c7449bbdf437577a424dc4
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Add 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 16b4edb90bb74701b284567776917530
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Add 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ebab443dca97457da61f120968fc429c
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Add 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8253f64ac28c4fb39c50bbcb1c85a43e
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Add 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 15dd7215f2f240cb87add21be447fa72
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Add 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 584b32478b02467f9bed606ec5638613
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Add 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3b9c3b60ca34488f9bbefdaf574a5600
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Add 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ba37bbcfd24146d6926cbbd65fc12069
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Add 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c0ff85644496403f9fa78774303e0295
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Add 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 807ec819c0df4c74929a84b53a899b70
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Add 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6d7b8f7a8ae94304bc637985c73b3111
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Add 11
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 97200ddc78b041e5bfbaa3b678167da2
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Add 12
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 04b6cd34a3694ceba9352b44a205eade
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Sub 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d3659836574b4f0ab509ab1b243ff5c6
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Sub 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e7401949d10446b4bc00a714d221051c
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Sub 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 35848af2a73a4aa88b18ceeea4638170
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Sub 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f34a518e53e540b2b8b4db79d5c3d13b
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Sub 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2f650c645a93433bb133fa8a8e83b747
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Sub 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c115827b9b4d445e80d0cf7c5928d670
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Sub 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] dc1b2a65506047f98aae8efc5a93c4b7
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Sub 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 50415300edbd4882bbe577976611e641
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Sub 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c52b992d58e549a290564995539f1ee2
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Sub 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 897d8de2006b405a84ed2638c0f025af
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Sub 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5af0bcd497364de18e7fa4fa3e9d96c9
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Sub 11
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 608dc6bea5c149d2b456fa6d9a8e8168
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Sub 12
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5b8a7fdf95ea4239843ca2c0a479a443
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Div 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d5bea36c132d4ca289d076517d9b1828
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Div 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] edc4672755944464bd4e729b281bc215
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Div 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9f1af377cff24c70b19b13ed1ebf7465
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Div 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3b3e8844a3e54806bdee36aa02d72c9c
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Div 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b84da8399c5e41c59ee2986d1f62e23f
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Div 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f14d6dc02f194d9ca35ea0b02174baf3
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Div 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 0ed2a1bbb53f49958f98296bd51ab0ac
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Div 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a58e2007160b43e79b56246a2e15b880
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Div 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 9e28d7fb93a945c78f62be27eac3990b
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Div 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 16ce329e764e49408303abd35f1c5387
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Div 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 88ae5d62becf4b998380faf7f6855db4
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Div 11
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2f32289603b346f68c04843c4b68e5da
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Div 12
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 464f191e0b2d49ee8d3a73362429e5fe
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_FloorDiv 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d07f2618fe1c48db98050f3c094a372f
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_FloorDiv 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 70450c0cf2fa427890d1e1f784f1f440
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_FloorDiv 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 17fd160cdc5146eea3a3748e9cff8ae5
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_FloorDiv 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 78f6803a28144016a2ad551bd54a3bf6
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_FloorDiv 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 924b0de1afd04fceb3bb6409af03d174
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_FloorDiv 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d2fb11acaf0b4396bdf24c194c7c3e8a
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_FloorDiv 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 875c7aa7cf1c4a2aafadc5be24a8de08
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_FloorDiv 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] eec209988a0449a085840ac52e27f24d
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_FloorDiv 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 9e4c3916a9f0404d9bb46a4adabe8f2b
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_FloorDiv 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] a4dc504dd1454bffb1a82460ba1d49bf
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_FloorDiv 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 32df8c55889742679c80becc976a60ac
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_FloorDiv 11
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a778b81da0604f4f945f22292022b16d
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_FloorDiv 12
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 130d5bf6cf7c47ff85172428ac8cd353
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Mod 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d928fa46a308413e83459684ac705741
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Mod 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9653211f0cc546fcb61529fc1e2233b7
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Mod 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] fa96c4cabe144153aab79c6ac0966851
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Mod 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c7f4c2623e2847829aeb1f218e9f1b66
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Mod 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ef12d59964ce4b878bf2c8bbd2b78181
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Mod 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 0d1ed7ed88834dc89fbfac074c68b0b7
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Mod 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8b4a534bbb2642e2a7db3d4d626ca25e
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Mod 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c3a2f899bb514fa8992feb2d46d3f786
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Mod 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 01a78f99580f46c78bda61bb6dd1ce25
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Mod 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 74f7b2faad454493886b5368856bab8f
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Mod 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 162f3d8e346d42cbbaf30f20c4ae7363
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Mod 11
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4658fe8e2dd14c09b4827a06b928f5b3
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Mod 12
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4fe0f59cc9204958bd93d6d13c56a139
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Pow 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] fa3f50a3e0c44a5a8672676f94556c0c
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Pow 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] dcb5f11409e540bcbd8d16007a406375
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Pow 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a21184126c0d4b07ad203d537d24963e
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Pow 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3c1cfba1cee8409281159e906b18ee76
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Pow 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5e1d5f7fd2e94897ae70f17a7c1d6f5f
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Pow 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 51946576887d4dd2a393d0e48dbb8ae2
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Pow 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] af049fea39a5481fa1e943a9c7dc5ddd
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Pow 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 52099496f05c484297dfe33b6fef787e
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Pow 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 8c3d69d2348a4babbe2e146721f09bda
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Pow 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 040c76fd0b4240288f399c3b54d40399
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Pow 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 67d7a3a0e9c047d99025ebbeb2df59e1
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Pow 11
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 1fb6898257314a39b5134457efa729a9
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_Pow 12
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 0c123d614c61483bab13362ecf35bc08
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_RShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 0d261caac7bf4d9bbf23f4d3f67cb045
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_RShift 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3fa8f26b04dc453f85fb4772ae53b831
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_RShift 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e0f846544dc84e8bb288edd23191e405
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_RShift 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5fdde6b581754cecbb8b0deb6621c43c
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_RShift 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a3de43dc66a54ae698dd33932eaa0495
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_RShift 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 0004625d94bd43faa681a05517496233
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_RShift 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] da38b0fdd05c42058100118b17218553
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_RShift 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 187851cb5bcc48598e6d62dbdeb2a693
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_RShift 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 1515551186004f5a80eecad9aed23816
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_RShift 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 574dcdb97a1d458693fda79a81b5ee52
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_RShift 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4d5c310e128d4229b796a141414311b9
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_RShift 11
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 440826f86f63453b8c41387eda429f8e
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_RShift 12
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6e5248d248ee4395888aa1fbdf9b0f66
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_LShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c80d94d663254e03aeb64f7c3ac692d4
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_LShift 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 58a31790942643adaa8f551aa4e6fc8e
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_LShift 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e38cc8625d9249c7bcfa4189a0d08701
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_LShift 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 87a6abb838c942f19d0691aa248e35f3
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_LShift 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 53b38de05b3d45bc9f282b0d1ab2af51
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_LShift 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b4c646d9968a4425a9da8ad7722c9ff5
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_LShift 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b0dff4b3b3a24a5bb8dbd597f7d7af52
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_LShift 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7f8222c78fdb4c919ae9490abbee62dc
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_LShift 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d3cb9e08366947779a9e1474476936ac
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_LShift 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 25966abb8d474fd7aa4d7942be27bbc6
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_LShift 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 079910fc4814416aaaf97f3268cdefa8
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_LShift 11
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 09c58260840d42468fa29de17b721aa6
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_LShift 12
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4bfdd5f477014cef8f7cfcc5953ff56c
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitOr 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 94c8686408de43a38afd92baf5845ad8
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitOr 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6cef8b67b3164ebfb35c09f0d53d0de9
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitOr 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 46da1de7049b4ae6b4c461b3ddce2bbc
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitOr 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a9c8a33547be4c35971d723471381a03
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitOr 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4c82bd7361c6454693f520926a6ab19d
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitOr 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c456f3ebefaf42debf750e4552ac1e51
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitOr 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 78639384894b4ff0a34cb453932ae7f2
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitOr 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] be81df3a0ded43d2af76bab48a42192a
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitOr 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d5965c426dec40c9b1c6effab50cd2c6
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitOr 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8656a1578cae40e7b876abf8f477c126
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitOr 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 280beaf5df4a46b98046966ea2270bbc
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitOr 11
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8d7b78ed37ca4ab1a0e7f4ef357afd82
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitOr 12
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 83b137f37d0048dd8317edec4d0e330f
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitAnd 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a1693d987dcb4b95bb729b2193c803e6
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitAnd 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b061edb371014cc68252e423172c2673
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitAnd 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6d48e17098c344c4a7b8583163cff79a
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitAnd 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 44d1c048abde40278e74793163e5bac6
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitAnd 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6b1166c15ac84e57a62dcc19beb9e83c
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitAnd 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ad05b178acc345b9a26516d34f3c36f2
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitAnd 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e473fc1e1d8e4bc79f17c6c01791e92b
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitAnd 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3e2ee54337b74097b2b14e8636779132
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitAnd 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 0419bb0a2573494bbc99c00e21fb3132
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitAnd 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3b64800173a749d0b9fcf67071a089fb
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitAnd 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a5542bb3dd724939ae9640269a0f975a
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitAnd 11
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 198c7acb5d634e6d8c3dc40b04227f2d
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitAnd 12
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7de81a9221844f49b9fbc6ca863c4cff
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitXor 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 914c1ccd385940f1a9969dd6a3369188
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitXor 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8193a26c3ee343208f031ca39f270b61
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitXor 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4b944c214c3c4792b2fac8fb293bcea7
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitXor 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3a6ceb267ac14659b42b4ebb7d72e295
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitXor 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 0103480cc2b94a22827a86deb49e4790
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitXor 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 022268eb7d454e6998858ed721cdb6c5
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitXor 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3af51101c0d14410a8c118eddfe67ef1
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitXor 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 07bfeae0cef14bb58f7cdf6d4f276841
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitXor 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 425d1cf1a5d3420a9f9b6255bbea32df
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitXor 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b9b04df6586749e7ada1fde80a49a7d8
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitXor 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a85d134d2f9746c289ec6a473910e5ff
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitXor 11
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b59b63e68b17477dacb0a7c791ed92af
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Mul_BitXor 12
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7486b4a438184a20a23732fec5581073
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_Add 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 80742ad7ff9e4288bbbac03cbd7ae47f
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_Add 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 050161a51e1643e88781bf48f4eb89bb
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_Add 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4318bff8de504bf1a02b46a89ce2c83b
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_Sub 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a68b6de0c4af4765848f9ef7aef98698
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_Sub 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 80d9eca2345c4c39a2f2fe7b1fc4145d
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_Sub 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] cec213087a7344e291562ee0a80807c3
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_Mul 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f6fd1bf8b2d94e99bdaf0f43da84ee7c
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_Mul 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 81407ec951764c74971f2a0252ff708a
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_Mul 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a6fa7f521e014de19395115bb9396c32
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_FloorDiv 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b47d5c0b232b44b2ac5df9e096098702
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_FloorDiv 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 309be6b04b75484dacd5ecdf8f38843f
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_FloorDiv 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2920fcd9dc314fe880317dc26cde9221
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_Mod 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 81a010562e294573bb4d70cd007df642
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_Mod 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3dee84585e644419a819625dde862a4a
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_Mod 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8fced14ef3f7488bb6eb9da28c9ad6e0
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_Pow 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7d5ef7eac80246978d76fb0fcf7cda2c
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_Pow 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 868eeedc8a5a46578befe3896682a539
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_Pow 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8fb5590e7cea45a6934331095b2e4775
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_RShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 389b0fe73e824b93aae9ed12b6cae295
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_RShift 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] afd19348cb43425ea85934158a49900a
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_RShift 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] bf237d0d3f1e4c5ea179d9ca4c2bb0d4
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_LShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b27b2ff779034b55a09fec08f3c55baa
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_LShift 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 0283073e44fd407e91364272d76e519a
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_LShift 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 43477b3b2ce542678a0c9197b0c0c5dc
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_BitOr 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f4dbcfb99ce5438d83152393fcd81de2
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_BitOr 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f8a815c589fb4d5883be6cb0ae7c0c8c
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_BitOr 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 34ecdfbaf233438b91c64c7f876769e8
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_BitAnd 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 1805bce853d1406eb67b5173359c101d
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_BitAnd 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ed1ce0dc4c1e49a4b95e677f399a5c0e
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_BitAnd 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 71cef0df378449d49a1b0308d96924b4
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_BitXor 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 170dba66d5db4979be97875bc4497885
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_BitXor 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c22a7977cf8647058c3e0fd3c10d9edf
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceBinaryOperator_Div_BitXor 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 200088885a8b479ea0cf38b23683eef1
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceComparisonOperator_Eq_NotEq 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a106209c983f42b1941cc8bdce6343b9
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceComparisonOperator_Eq_NotEq 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6a6e495d714143169d8a636c6b5a842f
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceComparisonOperator_Eq_Lt 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ee00f33f89cb494fb9d0f980deb0670f
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceComparisonOperator_Eq_Lt 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ab993ecfb21b42a69c6d53fac2f1e7ae
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceComparisonOperator_Eq_LtE 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 6458649f1dcf4d4eb56132dbbf0c840a
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceComparisonOperator_Eq_LtE 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f45d3f5fe1af418cbdd645bf3befa181
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceComparisonOperator_Eq_Gt 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6da4b894b1214706b45c75bc34b6dae2
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceComparisonOperator_Eq_Gt 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 029850ca94f94468b41c20a04b9c7398
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceComparisonOperator_Eq_GtE 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5200875a2ef54bd094df670ecaacbff9
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceComparisonOperator_Eq_GtE 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 0f438ad5451f4b1eb58abc05bc93c9bb
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceComparisonOperator_Eq_Is 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 56b486e418c3483e90cc3154571714af
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceComparisonOperator_Eq_Is 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 88e0156570e94202a71c6d8e73d0bce5
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceComparisonOperator_Eq_IsNot 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c18ab8c7ef8b41e8acac4a0d664ed884
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceComparisonOperator_Eq_IsNot 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c7ef45d9884945abbce38e2229cf661c
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceComparisonOperator_IsNot_Is 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9d11d37cfe82454989124b07aae4b10b
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceComparisonOperator_IsNot_Is 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 832618605db44c2bb06b62e2cdd07d7c
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceUnaryOperator_USub_UAdd 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 54a780942f8f45fcbcbd866204a82f34
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceUnaryOperator_USub_UAdd 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 57c0cb3df50843dbb233f132eb51e25c
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceUnaryOperator_USub_UAdd 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c64b60f6864349b5862fb82d72dc78f3
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceUnaryOperator_USub_Invert 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9117d82da23245a782c46a3756ad7ddd
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceUnaryOperator_USub_Invert 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 480c5cf73c824fffae870df385278e9b
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceUnaryOperator_USub_Invert 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d9677cecf6484dbf9df90790e062aaff
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceUnaryOperator_USub_Not 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 70d0047e6843427899f44691b56c1f61
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceUnaryOperator_USub_Not 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 375c40fe922744c4b66fd54d49a74ca3
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceUnaryOperator_USub_Not 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 34045ebc71ba4fad9e2256c707003bd8
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceUnaryOperator_Delete_USub 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9b219cefa1354e87b56ea33d2a02a188
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceUnaryOperator_Delete_USub 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 31bac66504884081adeb324532fe5708
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceUnaryOperator_Delete_USub 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4d2fd2f9a2d949d8a12d46a2e1583dea
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/AddNot 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 351db5bd8bb64a28833c752132bae50e
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/AddNot 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8c3422179ef045f490f03be77c38467d
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/AddNot 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c351c181749a42cfbcec30a9d9e9c00d
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/AddNot 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d3348e7c525a44f1ade8a93be6a4504e
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/AddNot 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 580341e59b2d4ae3a54a0d8f5001532d
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/AddNot 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6b772264f5194c36919be8fba7d5718d
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceTrueWithFalse 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 2004683a75d64882ad30f30506a0be67
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ReplaceTrueWithFalse 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] adac2fb79f074c92a17742f99738d088
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 233b8f6610a245c1a8cdec4d1b272d39
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 01ac876ab0d1498e87c39488ca15c471
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 30f91dea4be44666b4baa1c7e766e854
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e5bcdf1c506144af99e0415528ad6fd3
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 40cf90b0fcda46868c9672f322bef9e9
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ee472f39d2f64f68a9c11b4d2cd183ea
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c85270e616b54ddea5616130e7230ff6
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 85e2263b55a74b3190a3a430951c57cb
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a498705e1442440199f604aa54a9f6b4
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2eac064bccfd4c9e9586b34e53bf2cc9
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c1353258eff94126aa8b91edd1d581d7
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 11
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c439bcf3d0d34fee94392580438d9d00
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 12
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c3c2ee9880344b759ed4ef6d9c5904d0
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 13
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6eddf0917f164ebca00e78ce2cca7fc1
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 14
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 38c0d20614354e9ea782306791c56c5c
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 15
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a3a66fa4d4464f82a1e3857853bdbf66
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 16
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] aacbf17eb1e04cb6941f4ec9c0bccea0
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 17
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6e3478ce50d44b80a3518ff37e1b34c5
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 18
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] af5bac483042451abbbdd7211616e488
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 19
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] cd9776f9ad1e4d92b0c92755717c29ae
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 20
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a95ea4a4b00345fe8006822a7b973d87
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 21
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4f9615d562f9499eb64cb70846e17fff
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 22
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 1a2021a30a804458bd99986b9a01dbd9
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 23
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] fe5e229c16f247848b94a1f20aaf9857
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 24
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 38229edb387040149b2ad667b18c6e6e
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 25
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8e4a111c444640a8b370e5afb34465d3
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 26
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 045817dd64f243c9a8871d2dc411cc14
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 27
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] febe03ae5ee048f391f82af8c76a686d
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 28
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 0a5d2638eb3d47a2bded69a4eca05361
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/NumberReplacer 29
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e12a4b2d1c864947bf3b04764f87a0ce
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/RemoveDecorator 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 218aa2d51b0c4e958f3e5a7076a7d25b
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ZeroIterationForLoop 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8da47bd5f3d64c5595fa8b67778ee4ed
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ZeroIterationForLoop 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] cdee7e08722c4ab6a5ebcfa6fbe3f35d
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ZeroIterationForLoop 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d0ee1b4d84b0466ab26c8aa4c51520e8
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ZeroIterationForLoop 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 10a94d0dfb30495b94fc819666e2c284
+src/alphamind/execution/regt_margin_attribution/pm_stress.py core/ZeroIterationForLoop 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 990616c561754f3faeda028f4e5b1ce1
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_Add 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7f43c9b3aa59463e8b49eb5e81d046ac
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_Add 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6f7e037f0ac3427dbd2a8b8c0c694bf5
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_Sub 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] acd7a4234e154e82816a316be210c7e4
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_Sub 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 6d1861da8e184e7b9f15688a57727a8c
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_Mul 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e273a67cf742484e873962c19532bb02
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_Mul 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 94c0fc916cc1468da53bb0eacc870038
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_FloorDiv 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] aaeed3a5524a48ee919b6e29f8ee577d
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_FloorDiv 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 34dfb8b5d6bc4b7dbdd581c56bb531a9
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_Mod 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 37d55f50efc845d09a670a2c67b814aa
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_Mod 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 33bd221cf9324736a5e5157874aeaf55
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_Pow 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 94539b6569594754ae5955f4b297e37f
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_Pow 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 581a8ab985c0430f8e0a4b5da45caf1d
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_RShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7a24c70243794440a3346bdcf44e4a9e
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_RShift 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 0790cf15df724cc489c9aa12bfe09491
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_LShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b4e18235d8ae4e358fc2cc1bdaa57429
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_LShift 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 39e10c786cbb4863bd8cb7b4bc379772
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_BitOr 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 634974bc922847f49e2b2985fd228ba3
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_BitOr 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7873499e3424419aa524642bd0ac577d
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_BitAnd 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 961b9ef1320945ef883482baef055d37
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_BitAnd 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b25cee89b8f0436d83535aa88b6cfd42
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_BitXor 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 3dbb12d3641b4c39b7352a9a2ed7ae17
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_Div_BitXor 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 936ce9e38fcd41dfb007498eae0e31e4
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_Add 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] c3f9a9a9c61647f38cb7ed93d3870835
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_Add 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 891a0d104cc846a5b8afe23d0831b0e8
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_Sub 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 3584e707c5a64a529c23d5094169644f
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_Sub 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] b3d6498aa5294d2798ecf6081297e1fa
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_Mul 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 07d837eab8ed42eaa999a6c72329b773
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_Mul 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 1764e043c3e847e6a204653b343d53bd
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_Div 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 9fb2b45c8a8745e393afe9a700d74ae6
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_Div 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 31e6c46875504e2180116d8ed2908a37
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_FloorDiv 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] efda36e5eace48bbadb793b8452fbc30
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_FloorDiv 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 52723b5c68394bc5bd2a4c0ce6500a14
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_Mod 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] b3a30effcaf744debae55915772ab10d
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_Mod 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 0bed2d1f3c8c495a9f646f8be6cac4ef
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_Pow 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 083850577eea4f568d0ca42fbd55c5fa
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_Pow 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 15c786fec4614b1a8af0b0dab9439745
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_RShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 247d2caf4dd0484cbb86c8cc99377a6e
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_RShift 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 04f4c69b1f3843aaab4855408e58032f
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_LShift 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 965d850066364bbeb5c513e0b3b41ba2
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_LShift 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] e90de0e4d9b64beab6eef6807b24b360
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_BitAnd 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 12f97fd549404fd9bc4feee227ce5d02
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_BitAnd 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 36107e5297874d39a1f87337e14e8f0e
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_BitXor 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 3b8c65f63602432dbd29386598700852
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceBinaryOperator_BitOr_BitXor 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 9d8dbf84e3bd4581970f40c779e60914
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceComparisonOperator_LtE_Eq 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b056dd755d124804ae053d2d4b83c8e3
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceComparisonOperator_LtE_Eq 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 16b96f2afdcd452d8859c71f5073ffc7
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceComparisonOperator_LtE_NotEq 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 9ff4857d5e184836839bd97c35fc8045
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceComparisonOperator_LtE_NotEq 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] a29fa3de4694413bb23aaf54f741318d
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceComparisonOperator_LtE_Lt 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] c3db4017c9d64b93b45f2cf7f036856b
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceComparisonOperator_LtE_Lt 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] fbd90163adda4a82a45c0b0c5ba9150c
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceComparisonOperator_LtE_Gt 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e987cbcc48664254b23c1436e9d7d534
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceComparisonOperator_LtE_Gt 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 7f180f8bbcd140d0a6f4d37fc766a2ea
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceComparisonOperator_LtE_GtE 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4af7296be05a49cdbdf3f7477301cad1
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceComparisonOperator_LtE_GtE 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ccc3cdd5f3d647cd8f226339c743181e
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceComparisonOperator_LtE_Is 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] baaf3643e66a4d51853f4ff2fc8417a2
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceComparisonOperator_LtE_IsNot 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] e3fa2d9401174cc3bf2db5d2fb7ccb04
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceComparisonOperator_IsNot_Is 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] b445fbcab1d140e38e91d8b86ebd90e5
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceUnaryOperator_USub_UAdd 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a9e5b9b860df4516bcbd3febb0867407
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceUnaryOperator_USub_Invert 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 5560fabd7fcd411eb15e63e66afb373e
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceUnaryOperator_USub_Not 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 739b56361c5b4f65a2dcdfe94779a38e
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceUnaryOperator_Delete_USub 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] e02805d13ea345bc9b7733935d23d5ce
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceUnaryOperator_Delete_Not 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] ef22ee31df184c32ae62d65b97ef6c2e
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceUnaryOperator_Delete_Not 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 11e89e680b23462b962b94077c4c7840
+src/alphamind/execution/regt_margin_attribution/config.py core/AddNot 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 2417fc0f9f294bc39276f0c2b057f13c
+src/alphamind/execution/regt_margin_attribution/config.py core/AddNot 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] d53dc9a2e5754bc2a931c51f4076b0a4
+src/alphamind/execution/regt_margin_attribution/config.py core/AddNot 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] a4620855686f4eebb724c3a491950ab2
+src/alphamind/execution/regt_margin_attribution/config.py core/AddNot 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f14444c754e04350a67a637e2e198ebb
+src/alphamind/execution/regt_margin_attribution/config.py core/AddNot 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 36737e39aa064532999d1e67c445b802
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceTrueWithFalse 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 28240501df5a4ae9a341e84ff9627b69
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceTrueWithFalse 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] a6aef9b1b22a45f6a02ff367ee087148
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceTrueWithFalse 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 613582d0662d45b89c69e57fffece87d
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceFalseWithTrue 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] d04f108a03014a5a93a4a7dbd4dd7f4d
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceFalseWithTrue 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 1398cef312b44206a38dc597ef52b8ec
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceFalseWithTrue 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] f11576bbabf04bdb9687818b5db564f4
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceFalseWithTrue 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] b5cf1a1fed794be7ba5090ea0bb2d6d8
+src/alphamind/execution/regt_margin_attribution/config.py core/ReplaceAndWithOr 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] d88eeaca5722431a802525b5c7d446dd
+src/alphamind/execution/regt_margin_attribution/config.py core/NumberReplacer 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 1dba8e1124c549dc9387c8b75439cb96
+src/alphamind/execution/regt_margin_attribution/config.py core/NumberReplacer 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 1918fd3d40d14e08b97f3a8d5a10b7f5
+src/alphamind/execution/regt_margin_attribution/config.py core/NumberReplacer 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 4237c1743c7e425eab604377765d4d1f
+src/alphamind/execution/regt_margin_attribution/config.py core/NumberReplacer 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] c065cfdf12f048bdb71a9415a1f09130
+src/alphamind/execution/regt_margin_attribution/config.py core/NumberReplacer 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 16ea61ee3e134a93969cca87ec1686b9
+src/alphamind/execution/regt_margin_attribution/config.py core/NumberReplacer 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 18c3584bf6124f0bab2e9b990dd08069
+src/alphamind/execution/regt_margin_attribution/config.py core/NumberReplacer 6
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8cceecf310ea446bab0be8dd9958b215
+src/alphamind/execution/regt_margin_attribution/config.py core/NumberReplacer 7
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 9943577e2f2c47d79afbb31ece4f30c0
+src/alphamind/execution/regt_margin_attribution/config.py core/NumberReplacer 8
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 216f246f2a104b8d898d1c2b32659594
+src/alphamind/execution/regt_margin_attribution/config.py core/NumberReplacer 9
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] c8152ad14ffd4677bff3c0a720bdf108
+src/alphamind/execution/regt_margin_attribution/config.py core/NumberReplacer 10
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 8d007fb8f3f64d1ab57d56f86404d816
+src/alphamind/execution/regt_margin_attribution/config.py core/NumberReplacer 11
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] bbdd91d894b84411bc10562ade9bfc5a
+src/alphamind/execution/regt_margin_attribution/config.py core/NumberReplacer 12
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 581178747f13424085fbfcad0e8bedde
+src/alphamind/execution/regt_margin_attribution/config.py core/NumberReplacer 13
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 896abe3667f04fb5b565b8d3fb03aa87
+src/alphamind/execution/regt_margin_attribution/config.py core/NumberReplacer 14
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 1a017b185ca347e2a7f0540ee67f4e5a
+src/alphamind/execution/regt_margin_attribution/config.py core/NumberReplacer 15
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] f456b21fe6fc45e8a8d82f6128a9c101
+src/alphamind/execution/regt_margin_attribution/config.py core/RemoveDecorator 0
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.KILLED
+[job-id] 062251176a8f453dbd38ba38b238a0aa
+src/alphamind/execution/regt_margin_attribution/config.py core/RemoveDecorator 1
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] e1ea6f63e63f462face82c8be7111f75
+src/alphamind/execution/regt_margin_attribution/config.py core/RemoveDecorator 2
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] f987369878ea4fe09d63f0492df62e0c
+src/alphamind/execution/regt_margin_attribution/config.py core/RemoveDecorator 3
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 75f602dfcb7e4b7dbc5787dd147180b5
+src/alphamind/execution/regt_margin_attribution/config.py core/RemoveDecorator 4
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+[job-id] 79b37367e7da43f48c5e79614ef6a386
+src/alphamind/execution/regt_margin_attribution/config.py core/RemoveDecorator 5
+worker outcome: WorkerOutcome.NORMAL, test outcome: TestOutcome.SURVIVED
+total jobs: 756
+complete: 756 (100.00%)
+surviving mutants: 83 (10.98%)
+
+--- Survival rate ---
+10.98

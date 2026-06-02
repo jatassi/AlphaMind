@@ -234,10 +234,13 @@ class TestEIAClientVerifyConnectivity:
 
 
 class TestCollectSeriesWrites:
-    def test_writes_rows_for_each_data_point(self, db_factory: sessionmaker[Session]) -> None:
+    def test_collect_series_writes_full_row(self, db_factory: sessionmaker[Session]) -> None:
+        """collect_series() writes rows with all columns correctly populated."""
         from alphamind.data_sources.eia.energy import collect_series
         from alphamind.data_sources.eia.series import SERIES
 
+        crude_series = [s for s in SERIES if s["series_id"] == "eia.crude_inventory_total"]
+        repo = FakeRunRepo()
         client = FakeEIAAPI(
             data=[
                 {"period": "2026-04-18", "value": 442.1, "units": "MBBL"},
@@ -246,99 +249,27 @@ class TestCollectSeriesWrites:
         )
 
         collect_series(
-            SERIES[:1],  # just crude_inventory
-            since=date(2026, 1, 1),
-            _repo=FakeRunRepo(),
-            _client=client,
-            _session_factory=db_factory,
-        )
-
-        with db_factory() as sess:
-            rows = sess.query(MacroObservations).all()
-
-        assert len(rows) == 2
-
-    def test_rows_have_correct_source(self, db_factory: sessionmaker[Session]) -> None:
-        from alphamind.data_sources.eia.energy import collect_series
-        from alphamind.data_sources.eia.series import SERIES
-
-        client = FakeEIAAPI(data=[{"period": "2026-04-18", "value": 442.1, "units": "MBBL"}])
-
-        collect_series(
-            SERIES[:1],
-            since=date(2026, 1, 1),
-            _repo=FakeRunRepo(),
-            _client=client,
-            _session_factory=db_factory,
-        )
-
-        with db_factory() as sess:
-            row = sess.query(MacroObservations).first()
-
-        assert row is not None
-        assert row.source == "eia"
-
-    def test_rows_have_synthesized_series_id(self, db_factory: sessionmaker[Session]) -> None:
-        from alphamind.data_sources.eia.energy import collect_series
-        from alphamind.data_sources.eia.series import SERIES
-
-        crude_series = [s for s in SERIES if s["series_id"] == "eia.crude_inventory_total"]
-        client = FakeEIAAPI(data=[{"period": "2026-04-18", "value": 442.1, "units": "MBBL"}])
-
-        collect_series(
             crude_series,
             since=date(2026, 1, 1),
-            _repo=FakeRunRepo(),
+            _repo=repo,
             _client=client,
             _session_factory=db_factory,
         )
 
         with db_factory() as sess:
-            row = sess.query(MacroObservations).first()
+            rows = sess.query(MacroObservations).order_by(MacroObservations.observation_date).all()
 
-        assert row is not None
+        assert len(rows) == 2
+        row = rows[1]  # 2026-04-18
+        assert row.source == "eia"
         assert row.series_id == "eia.crude_inventory_total"
-
-    def test_frequency_populated(self, db_factory: sessionmaker[Session]) -> None:
-        from alphamind.data_sources.eia.energy import collect_series
-        from alphamind.data_sources.eia.series import SERIES
-
-        client = FakeEIAAPI(data=[{"period": "2026-04-18", "value": 442.1, "units": "MBBL"}])
-
-        collect_series(
-            SERIES[:1],
-            since=date(2026, 1, 1),
-            _repo=FakeRunRepo(),
-            _client=client,
-            _session_factory=db_factory,
-        )
-
-        with db_factory() as sess:
-            row = sess.query(MacroObservations).first()
-
-        assert row is not None
         assert row.frequency == "weekly"
-
-    def test_units_mapped_to_short_form(self, db_factory: sessionmaker[Session]) -> None:
-        from alphamind.data_sources.eia.energy import collect_series
-        from alphamind.data_sources.eia.series import SERIES
-
-        # MBBL -> bbl
-        client = FakeEIAAPI(data=[{"period": "2026-04-18", "value": 442.1, "units": "MBBL"}])
-
-        collect_series(
-            SERIES[:1],
-            since=date(2026, 1, 1),
-            _repo=FakeRunRepo(),
-            _client=client,
-            _session_factory=db_factory,
-        )
-
-        with db_factory() as sess:
-            row = sess.query(MacroObservations).first()
-
-        assert row is not None
         assert row.units == "bbl"
+        assert row.revision_number == 0
+        assert row.value == 442.1
+        run = repo.latest()
+        assert run["status"] == "success"
+        assert run["rows_written"] == 2
 
     def test_dollars_per_barrel_units_mapped(self, db_factory: sessionmaker[Session]) -> None:
         from alphamind.data_sources.eia.energy import collect_series
@@ -362,45 +293,6 @@ class TestCollectSeriesWrites:
 
         assert row is not None
         assert row.units == "usd"
-
-    def test_collection_run_records_success(self, db_factory: sessionmaker[Session]) -> None:
-        from alphamind.data_sources.eia.energy import collect_series
-        from alphamind.data_sources.eia.series import SERIES
-
-        client = FakeEIAAPI(data=[{"period": "2026-04-18", "value": 442.1, "units": "MBBL"}])
-        repo = FakeRunRepo()
-
-        collect_series(
-            SERIES[:1],
-            since=date(2026, 1, 1),
-            _repo=repo,
-            _client=client,
-            _session_factory=db_factory,
-        )
-
-        row = repo.latest()
-        assert row["status"] == "success"
-        assert row["rows_written"] == 1
-
-    def test_revision_number_is_zero(self, db_factory: sessionmaker[Session]) -> None:
-        from alphamind.data_sources.eia.energy import collect_series
-        from alphamind.data_sources.eia.series import SERIES
-
-        client = FakeEIAAPI(data=[{"period": "2026-04-18", "value": 442.1, "units": "MBBL"}])
-
-        collect_series(
-            SERIES[:1],
-            since=date(2026, 1, 1),
-            _repo=FakeRunRepo(),
-            _client=client,
-            _session_factory=db_factory,
-        )
-
-        with db_factory() as sess:
-            row = sess.query(MacroObservations).first()
-
-        assert row is not None
-        assert row.revision_number == 0
 
 
 # ---------------------------------------------------------------------------

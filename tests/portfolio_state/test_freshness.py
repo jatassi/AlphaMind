@@ -7,20 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from alphamind._kernel.ids import (
-    PositionId,
-    Symbol,
-)
-from alphamind._kernel.money import money, price, signed_money
-from alphamind._kernel.regime import (
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskZone,
-)
 from alphamind.portfolio_state import PortfolioStateConfig
-from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
-from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
-from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.freshness import (
     AssembledSnapshot,
     PriceFetchOutcomes,
@@ -28,20 +15,12 @@ from alphamind.portfolio_state.freshness import (
     compute_snapshot_freshness,
 )
 from alphamind.portfolio_state.pricing import PriceQuote, PriceSource
-from alphamind.portfolio_state.records.cash import CashLedger
-from alphamind.portfolio_state.records.positions import (
-    Direction,
-    EquityPositionDetails,
-    PositionFill,
-    PositionRecord,
-    PositionStatus,
+
+from ._view_builders import (
+    _make_open_position,
+    _make_pending_position,
+    _make_snapshot,
 )
-from alphamind.portfolio_state.snapshot import (
-    DirectionalExposure,
-    PortfolioPnL,
-    PortfolioStateSnapshot,
-)
-from alphamind.portfolio_state.views.positions import PositionView
 
 # ---------------------------------------------------------------------------
 # Shared timestamps
@@ -68,207 +47,6 @@ def _make_config(
         snapshot_freshness_max_phase1_to_snapshot_seconds=max_phase1_to_snapshot_seconds,
         snapshot_freshness_max_price_age_seconds=max_price_age_seconds,
         snapshot_freshness_max_option_price_age_seconds=max_price_age_seconds,
-    )
-
-
-def _make_open_position(position_id: str = "POS-001", ticker: str = "NVDA") -> PositionView:
-    equity = EquityPositionDetails(
-        ticker=Symbol(ticker),
-        share_count=100.0,
-        average_cost_basis_per_share=500.0,
-        borrow_rate_pct=None,
-        locate_status=None,
-        margin_held_usd=None,
-    )
-    fill = PositionFill(
-        fill_timestamp=_ENTRY_AT,
-        fill_price=price(500.0),
-        fill_quantity=100.0,
-        slippage=signed_money(0.0),
-        fees=money(1.0),
-    )
-    record = PositionRecord(
-        position_id=PositionId(position_id),
-        thesis_id=None,
-        bracket_id=None,
-        status=PositionStatus.OPEN,
-        direction=Direction.LONG,
-        entry_timestamp=_ENTRY_AT,
-        details=equity,
-        execution_history=(fill,),
-        realized_pnl_to_date_usd=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
-    )
-    return PositionView(
-        record=record,
-        current_market_value_usd=signed_money(52000.0),
-        unrealized_pnl_usd=signed_money(2000.0),
-        unrealized_pnl_pct=4.0,
-        position_weight_pct=100.0,
-        position_age_hours=1.5,
-        notional_exposure_usd=money(52000.0),
-        delta_adjusted_exposure_usd=signed_money(52000.0),
-        distance_to_target_usd=None,
-        distance_to_stop_usd=None,
-        risk_reward_at_current=None,
-    )
-
-
-def _make_pending_position(position_id: str = "PEND-001", ticker: str = "AAPL") -> PositionView:
-    equity = EquityPositionDetails(
-        ticker=Symbol(ticker),
-        share_count=10.0,
-        average_cost_basis_per_share=150.0,
-        borrow_rate_pct=None,
-        locate_status=None,
-        margin_held_usd=None,
-    )
-    record = PositionRecord(
-        position_id=PositionId(position_id),
-        thesis_id=None,
-        bracket_id=None,
-        status=PositionStatus.PENDING,
-        direction=Direction.LONG,
-        entry_timestamp=None,
-        details=equity,
-        execution_history=(),
-        realized_pnl_to_date_usd=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
-    )
-    return PositionView(
-        record=record,
-        current_market_value_usd=signed_money(1600.0),
-        unrealized_pnl_usd=signed_money(100.0),
-        unrealized_pnl_pct=6.7,
-        position_weight_pct=3.0,
-        position_age_hours=0.0,
-        notional_exposure_usd=money(1600.0),
-        delta_adjusted_exposure_usd=signed_money(1600.0),
-        distance_to_target_usd=None,
-        distance_to_stop_usd=None,
-        risk_reward_at_current=None,
-    )
-
-
-def _make_cash_ledger() -> CashLedger:
-    return CashLedger(
-        current_cash_usd=10000.0,
-        settled_cash_usd=10000.0,
-        reserved_capital_usd=0.0,
-        available_buying_power_usd=10000.0,
-        margin_held_usd=0.0,
-        unsettled_proceeds=(),
-        cash_pct_of_portfolio=0.0,
-        true_deployable_capital_usd=0.0,
-        regt_excess_trailing_30d_usd=0.0,
-        regt_excess_trailing_90d_usd=0.0,
-        regt_excess_lifetime_usd=0.0,
-    )
-
-
-def _make_drawdown_state() -> DrawdownState:
-    return DrawdownState(
-        current_drawdown_pct=0.0,
-        equity_high_water_mark_usd=100000.0,
-        drawdown_duration_hours=0.0,
-        lifetime_max_drawdown_pct=0.0,
-        intraday_drawdown_pct=0.0,
-        daily_zone=RiskZone.NORMAL,
-        cumulative_zone=RiskZone.NORMAL,
-        cumulative_tier=None,
-        drawdown_by_source_pct={},
-    )
-
-
-def _make_risk_budget() -> RiskBudgetConsumption:
-    return RiskBudgetConsumption(entries=())
-
-
-def _make_active_risk_parameters() -> ActiveRiskParameterSet:
-    return ActiveRiskParameterSet(
-        regime_label=RegimeLabel.NORMAL,
-        transition_state=RegimeTransitionState.STABLE,
-        transition_invocations_remaining=0,
-        parameter_change_flag=False,
-        entries=(),
-        active_overlays=(),
-    )
-
-
-def _make_portfolio_pnl() -> PortfolioPnL:
-    return PortfolioPnL(
-        total_unrealized_pnl_usd=money(0.0),
-        total_unrealized_pnl_pct_of_portfolio=0.0,
-        daily_realized_pnl_usd=money(0.0),
-        daily_total_pnl_usd=money(0.0),
-        cumulative_realized_pnl_usd=money(0.0),
-        rolling_realized_pnl={
-            "1d": money(0.0),
-            "3d": money(0.0),
-            "5d": money(0.0),
-            "20d": money(0.0),
-        },
-        win_rate_pct=None,
-        average_win_size_usd=None,
-        average_loss_size_usd=None,
-        profit_factor=None,
-    )
-
-
-def _make_directional_exposure() -> DirectionalExposure:
-    return DirectionalExposure(
-        total_long_delta_adjusted_usd=money(0.0),
-        total_short_delta_adjusted_usd=money(0.0),
-        net_directional_pct_of_portfolio=0.0,
-        gross_pct_of_portfolio=0.0,
-    )
-
-
-def _make_snapshot(
-    open_positions: tuple[PositionView, ...] = (),
-    pending_positions: tuple[PositionView, ...] = (),
-    phase1_committed_at: datetime = _PHASE1_AT,
-    snapshot_assembled_at: datetime = _NOW,
-) -> PortfolioStateSnapshot:
-    from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
-
-    return PortfolioStateSnapshot(
-        invocation_id="inv-test",
-        phase1_committed_at=phase1_committed_at,
-        snapshot_assembled_at=snapshot_assembled_at,
-        pipeline_invocation_started_at=None,
-        open_positions=open_positions,
-        pending_positions=pending_positions,
-        sector_exposure=(),
-        directional_exposure=_make_directional_exposure(),
-        portfolio_pnl=_make_portfolio_pnl(),
-        drawdown=_make_drawdown_state(),
-        active_theses=(),
-        recent_thesis_resolutions=(),
-        cash_ledger=_make_cash_ledger(),
-        pending_orders=(),
-        risk_budget=_make_risk_budget(),
-        active_risk_parameters=_make_active_risk_parameters(),
-        intra_invocation_changelog=(),
-        recent_pm_decision_log=(),
-        position_modification_trail={},
-        thesis_quality_aggregates=ThesisQualityAggregate(
-            as_of_timestamp=_NOW,
-            resolution_counts_by_window=(),
-            duration_stats_by_window=(),
-            invalidation_timing_stats_by_window=(),
-            signal_hit_rates=(),
-            signal_to_thesis_conversions=(),
-            conviction_calibration=(),
-            conviction_sizing_deviation_by_window=(),
-            performance_attribution=(),
-            alpha_beta_decomposition_by_window=(),
-        ),
-        brackets=(),
     )
 
 
@@ -653,6 +431,8 @@ def test_compute_snapshot_freshness_happy_path() -> None:
     snapshot = _make_snapshot(
         open_positions=(pos1, pos2),
         pending_positions=(pend,),
+        phase1_committed_at=_PHASE1_AT,
+        snapshot_assembled_at=_NOW,
     )
     outcomes = PriceFetchOutcomes(
         position_ids_priced_fresh=frozenset({"POS-001", "POS-002", "PEND-001"}),
@@ -684,7 +464,8 @@ def test_compute_snapshot_freshness_happy_path() -> None:
 
 def test_compute_snapshot_freshness_extra_position_id_in_outcomes_raises() -> None:
     """fetch_outcomes references a position_id not in snapshot → ValueError."""
-    snapshot = _make_snapshot()  # empty
+    # empty (force; shared _make_snapshot defaults to rich data)
+    snapshot = _make_snapshot(open_positions=(), pending_positions=())
     outcomes = PriceFetchOutcomes(
         position_ids_priced_fresh=frozenset({"POS-DOES-NOT-EXIST"}),
         position_ids_priced_stale=frozenset(),
@@ -711,7 +492,8 @@ def test_compute_snapshot_freshness_missing_position_in_outcomes_raises() -> Non
 
 def test_compute_snapshot_freshness_no_positions_oldest_price_age_none() -> None:
     """Zero positions → oldest_price_age_seconds is None."""
-    snapshot = _make_snapshot()  # empty
+    # empty (force; shared _make_snapshot defaults to rich data)
+    snapshot = _make_snapshot(open_positions=(), pending_positions=())
     outcomes = PriceFetchOutcomes(
         position_ids_priced_fresh=frozenset(),
         position_ids_priced_stale=frozenset(),
@@ -726,7 +508,11 @@ def test_compute_snapshot_freshness_no_positions_oldest_price_age_none() -> None
 def test_compute_snapshot_freshness_deterministic() -> None:
     """Identical inputs produce identical results across repeated calls."""
     pos = _make_open_position("POS-001")
-    snapshot = _make_snapshot(open_positions=(pos,))
+    snapshot = _make_snapshot(
+        open_positions=(pos,),
+        phase1_committed_at=_PHASE1_AT,
+        snapshot_assembled_at=_NOW,
+    )
     outcomes = PriceFetchOutcomes(
         position_ids_priced_fresh=frozenset({"POS-001"}),
         position_ids_priced_stale=frozenset(),
@@ -780,7 +566,7 @@ def test_compute_snapshot_freshness_threshold_boundary() -> None:
 
 def test_assembled_snapshot_constructs() -> None:
     """AssembledSnapshot bundles snapshot, freshness, and price_map correctly."""
-    snapshot = _make_snapshot()
+    snapshot = _make_snapshot(open_positions=(), pending_positions=())
     outcomes = PriceFetchOutcomes(
         position_ids_priced_fresh=frozenset(),
         position_ids_priced_stale=frozenset(),
@@ -796,7 +582,7 @@ def test_assembled_snapshot_constructs() -> None:
 
 def test_assembled_snapshot_is_frozen() -> None:
     """Mutating snapshot, freshness, or price_map raises an error."""
-    snapshot = _make_snapshot()
+    snapshot = _make_snapshot(open_positions=(), pending_positions=())
     outcomes = PriceFetchOutcomes(
         position_ids_priced_fresh=frozenset(),
         position_ids_priced_stale=frozenset(),

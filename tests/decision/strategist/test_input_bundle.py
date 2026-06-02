@@ -808,61 +808,129 @@ def _defensive_kwargs(
 
 
 # ---------------------------------------------------------------------------
-# Tracer bullet — section ordering for normal-mode bundle
+# Golden full-render — normal mode with representative fixture
 # ---------------------------------------------------------------------------
 
+_NORMAL_GOLDEN = (
+    "=== GUARDRAIL STATE (invocation inv-strat-001, 2026-05-04T14:32:05Z) ===\n"
+    "Regime: normal [unchanged]\n"
+    "\n"
+    "Capital:\n"
+    "  Available for new positions: $200,000 (20.0% of portfolio)\n"
+    "  Per-position max size: $50,000 (5.0% of portfolio, normal regime)\n"
+    "\n"
+    "Sector headroom (delta-adjusted):\n"
+    "  Tech:       18.5% / 25.0% — room: 6.5% [NORMAL]\n"
+    "  Semis:      12.0% / 25.0% — room: 13.0% [NORMAL]\n"
+    "  Financials: 8.5% / 25.0% — room: 16.5% [NORMAL]\n"
+    "  Energy:     4.0% / 25.0% — room: 21.0% [NORMAL]\n"
+    "\n"
+    "Directional headroom:\n"
+    "  Net long:  42.0% / 60.0% — room: 18.0%\n"
+    "  Gross:     78.0% / 120.0% — room: 42.0%\n"
+    "\n"
+    "Position-level constraint proximity:\n"
+    "  POS-NVDA-001:  4.5% of portfolio (max 5.0%) — P/L: +5.0% of cost [\U0001f534 CRITICAL: size]\n"  # noqa: E501
+    "\n"
+    "Sector exposure breakdown (per position):\n"
+    "  Tech (18.5% / 25.0%):\n"
+    "    POS-NVDA-001: 4.5% (delta-adj)\n"
+    "  Semis (12.0% / 25.0%):\n"
+    "    (no positions)\n"
+    "  Financials (8.5% / 25.0%):\n"
+    "    (no positions)\n"
+    "  Energy (4.0% / 25.0%):\n"
+    "    (no positions)\n"
+    "\n"
+    "Drawdown state:\n"
+    "  Daily:      0.5% / 2.5% [NORMAL]\n"
+    "  Cumulative: 2.0% / 10.0% [NORMAL]\n"
+    "\n"
+    "Abandoned openings from prior invocation (portfolio awareness; analyst owns re-evaluation):\n"
+    "  None\n"
+    "\n"
+    "Abandoned position actions from prior invocation (decide on current grounds whether to re-propose):\n"  # noqa: E501
+    "  None\n"
+    "\n"
+    "Hard blocks (do NOT recommend):\n"
+    "  Options: DISABLED for this portfolio\n"
+    "  Short selling: DISABLED for this portfolio\n"
+    "===\n"
+    "\n"
+    "=== AVAILABLE TOOLS ===\n"
+    "- mcp__alphamind_decision_validation__validate_guardrail\n"
+    "- mcp__alphamind_synthesizer_retrieval__retrieve_brief\n"
+    "\n"
+    "=== PORTFOLIO STATE ===\n"
+    "\n"
+    "Aggregate:\n"
+    "  Portfolio P/L: intraday $1,200, cumulative realized $10,000\n"
+    "  Trade stats: win rate: 55.0%; profit factor: 1.40; avg win: $200; avg loss: $150\n"
+    "  Drawdown: daily 0.5% [NORMAL], cumulative 2.0% [NORMAL]\n"
+    "  Net long: $420,000 (42.0% of portfolio)\n"
+    "  Gross:    $420,000 (78.0% of portfolio)\n"
+    "\n"
+    "Per-position records:\n"
+    "\n"
+    "POS-NVDA-001\n"
+    "  Underlying:    NVDA (instrument: equity, direction: long)\n"
+    "  Size:          200 shares  $45,000  (4.5% of portfolio)\n"
+    "  P/L:           +$8,200 since open (+5.0%)\n"
+    "  Age:           36.4 hours (placed 2026-05-03T14:00:00Z)\n"
+    "  Distance:      target -78.1%  /  stop -80.6%  /  R/R at-current -1.0:1\n"
+    "  Bracket:\n"
+    "    target: NVDA GTE $189.0\n"
+    "    stop: NVDA LTE $167.0\n"
+    "    time deadline: 2026-04-25T16:00:00+00:00\n"
+    '    event invalidation: "MSFT guides AI capex lower than consensus"\n'
+    "  Thesis (TH-NVDA-001):\n"
+    '    Summary:    "Hyperscaler capex acceleration drives Q1 revenue beat..."\n'
+    "    Entry rationale: Entry: capex acceleration thesis\n"
+    "    Target rationale: Target: Q1 print fully prices in\n"
+    "    Invalidation: Invalidation: MSFT guides AI capex lower than consensus\n"
+    "    Key assumptions:\n"
+    '      - "Microsoft Q1 capex guide >= $24B (vs. consensus $22.8B)"\n'
+    '      - "AI demand persistence"\n'
+    "  Pending orders for this position:\n"
+    "    ORD-LIMIT-4: ENTRY @ $380.00, age 36.0h, 55.9% from market — away from fill / low fill-likelihood\n"  # noqa: E501
+    "  Modification trail (recent):\n"
+    "  [2026-05-03T14:00:00Z] BRACKET_MODIFIED: stop_price: 165.00 → 167.00 (PM tightened stop on at-risk thesis)  (position=POS-NVDA-001)\n"  # noqa: E501
+    "\n"
+    "=== ACTIVITY LOG (between-invocation closures) ===\n"
+    "  None\n"
+    "\n"
+    "=== ACTIVITY LOG (intra-invocation) ===\n"
+    "  None\n"
+    "\n"
+    "=== ACTIVITY LOG (recent PM decisions) ===\n"
+    "  None\n"
+    "\n"
+    "=== SYNTHESIZER BRIEF PREVIEW (full brief via retrieve_brief) ===\n"
+    "## Cross-domain market snapshot\n"
+    "\n"
+    "Tech tape mixed [SA-TECH-3]; financials grinding higher [SA-FIN-1]; "
+    "energy quiet ahead of inventory print [SA-ENERGY-2]."
+)
 
-def test_normal_mode_section_ordering() -> None:
-    """Normal-mode bundle order: header → tools → portfolio state → brief."""
+
+def test_normal_mode_full_golden_render() -> None:
+    """One exact pin of the full normal-mode render against the representative fixture.
+
+    Subsumes per-section substring assertions: section ordering, envelope header,
+    brief tail, tool reminder, per-position P/L / age / distance / R/R, thesis block,
+    pending-order row, modification trail, aggregate block, activity-log empty sections.
+    When this test breaks a reviewer knows *exactly* what changed.
+    """
     out = assemble_input_bundle_normal(
         **_normal_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
-    envelope_idx = out.index("=== GUARDRAIL STATE")
-    tools_idx = out.index("=== AVAILABLE TOOLS ===")
-    portfolio_idx = out.index("=== PORTFOLIO STATE ===")
-    brief_idx = out.index("=== SYNTHESIZER BRIEF PREVIEW (full brief via retrieve_brief) ===")
-    assert envelope_idx < tools_idx < portfolio_idx < brief_idx
+    assert out == _NORMAL_GOLDEN
 
 
 # ---------------------------------------------------------------------------
-# Section anchors
+# Tool reminder — defensive-posture branches
 # ---------------------------------------------------------------------------
-
-
-def test_normal_mode_starts_with_envelope() -> None:
-    out = assemble_input_bundle_normal(
-        **_normal_kwargs(),
-        sector_label_display=_SECTOR_LABELS,
-    )
-    assert out.startswith(
-        "=== GUARDRAIL STATE (invocation inv-strat-001, 2026-05-04T14:32:05Z) ==="
-    )
-
-
-def test_normal_mode_ends_with_brief() -> None:
-    out = assemble_input_bundle_normal(
-        **_normal_kwargs(),
-        sector_label_display=_SECTOR_LABELS,
-    )
-    assert out.rstrip().endswith(_SYNTHESIZER_BRIEF.rstrip())
-
-
-# ---------------------------------------------------------------------------
-# Tool reminder — both tools surfaced in normal mode
-# ---------------------------------------------------------------------------
-
-
-def test_normal_mode_tool_reminder_surfaces_both_tools() -> None:
-    out = assemble_input_bundle_normal(
-        **_normal_kwargs(),
-        sector_label_display=_SECTOR_LABELS,
-    )
-    tools_idx = out.index("=== AVAILABLE TOOLS ===")
-    portfolio_idx = out.index("=== PORTFOLIO STATE ===")
-    tool_section = out[tools_idx:portfolio_idx]
-    assert f"- {_VALIDATE_GUARDRAIL_TOOL}" in tool_section
-    assert f"- {_RETRIEVE_BRIEF_TOOL}" in tool_section
 
 
 def test_defensive_posture_tool_reminder_surfaces_both_tools() -> None:
@@ -871,11 +939,8 @@ def test_defensive_posture_tool_reminder_surfaces_both_tools() -> None:
         **_defensive_kwargs(),
         sector_label_display=_SECTOR_LABELS,
     )
-    tools_idx = out.index("=== AVAILABLE TOOLS ===")
-    portfolio_idx = out.index("=== PORTFOLIO STATE ===")
-    tool_section = out[tools_idx:portfolio_idx]
-    assert f"- {_VALIDATE_GUARDRAIL_TOOL}" in tool_section
-    assert f"- {_RETRIEVE_BRIEF_TOOL}" in tool_section
+    assert f"- {_VALIDATE_GUARDRAIL_TOOL}" in out
+    assert f"- {_RETRIEVE_BRIEF_TOOL}" in out
 
 
 def test_defensive_posture_tool_reminder_includes_posture_note() -> None:
@@ -928,50 +993,9 @@ def test_defensive_posture_section_ordering() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Per-position derived fields (parent decision (J))
+# Per-position derived fields — conditional branches only
+# (P/L absolute/pct, age, distance, R/R for normal equity case are pinned by the golden render)
 # ---------------------------------------------------------------------------
-
-
-def test_position_record_renders_pnl_absolute_and_percentage() -> None:
-    out = assemble_input_bundle_normal(
-        **_normal_kwargs(),
-        sector_label_display=_SECTOR_LABELS,
-    )
-    # Unrealized P/L absolute and percentage are present (5.0% and $8,200 from fixtures)
-    assert "+$8,200" in out or "+8,200" in out
-    assert "+5.0%" in out
-
-
-def test_position_record_renders_position_age_hours() -> None:
-    out = assemble_input_bundle_normal(
-        **_normal_kwargs(),
-        sector_label_display=_SECTOR_LABELS,
-    )
-    # Position age 36.4h
-    assert "36.4" in out
-
-
-def test_position_record_renders_distance_to_target_and_stop_pct() -> None:
-    """Distance-to-target and distance-to-stop are computed from current price + bracket legs."""
-    out = assemble_input_bundle_normal(
-        **_normal_kwargs(),
-        sector_label_display=_SECTOR_LABELS,
-    )
-    # Current price 862, target 189.00, stop 167.00 — but those are in the
-    # bracket triggers; the renderer must surface the bracket levels and a
-    # distance computation. Look for both target and stop trigger numbers.
-    assert "189" in out
-    assert "167" in out
-
-
-def test_position_record_renders_risk_reward_at_current() -> None:
-    """R/R at current must be present for positions with both target and stop legs."""
-    out = assemble_input_bundle_normal(
-        **_normal_kwargs(),
-        sector_label_display=_SECTOR_LABELS,
-    )
-    # Token "R/R" identifies the risk/reward line
-    assert "R/R" in out
 
 
 def test_held_strategy_position_renders_strategy_type_label() -> None:
@@ -1014,21 +1038,9 @@ def test_held_strategy_position_omits_risk_reward() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Thesis block rendering (full thesis when present)
+# Thesis block rendering — conditional branches
+# (full-thesis render for the populated case is pinned by the golden render)
 # ---------------------------------------------------------------------------
-
-
-def test_thesis_block_renders_summary_and_components() -> None:
-    out = assemble_input_bundle_normal(
-        **_normal_kwargs(),
-        sector_label_display=_SECTOR_LABELS,
-    )
-    assert "TH-NVDA-001" in out
-    assert "Hyperscaler capex acceleration" in out
-    assert "Microsoft Q1 capex guide" in out  # key assumption
-    assert "Entry: capex acceleration thesis" in out
-    assert "Target: Q1 print fully prices in" in out
-    assert "Invalidation: MSFT guides AI capex lower" in out
 
 
 def test_thesis_block_renders_prior_status_from_snapshot() -> None:
@@ -1076,28 +1088,6 @@ def test_position_without_bracket_renders_none_marker() -> None:
         sector_label_display=_SECTOR_LABELS,
     )
     assert "Bracket: none" in out
-
-
-# ---------------------------------------------------------------------------
-# Pending orders + modification trail per position
-# ---------------------------------------------------------------------------
-
-
-def test_per_position_pending_orders_render() -> None:
-    out = assemble_input_bundle_normal(
-        **_normal_kwargs(),
-        sector_label_display=_SECTOR_LABELS,
-    )
-    assert "ORD-LIMIT-4" in out
-
-
-def test_per_position_modification_trail_renders() -> None:
-    out = assemble_input_bundle_normal(
-        **_normal_kwargs(),
-        sector_label_display=_SECTOR_LABELS,
-    )
-    assert "BRACKET_MODIFIED" in out
-    assert "PM tightened stop on at-risk thesis" in out
 
 
 # ---------------------------------------------------------------------------
@@ -1369,28 +1359,6 @@ def test_pm_decision_log_section_present() -> None:
     assert "approve" in out.lower()
 
 
-def test_empty_intra_invocation_changelog_renders_none() -> None:
-    out = assemble_input_bundle_normal(
-        **_normal_kwargs(),
-        sector_label_display=_SECTOR_LABELS,
-    )
-    intra_idx = out.index("=== ACTIVITY LOG (intra-invocation) ===")
-    pm_idx = out.index("=== ACTIVITY LOG (recent PM decisions) ===")
-    block = out[intra_idx:pm_idx]
-    assert "None" in block
-
-
-def test_empty_pm_decision_log_renders_none() -> None:
-    out = assemble_input_bundle_normal(
-        **_normal_kwargs(),
-        sector_label_display=_SECTOR_LABELS,
-    )
-    pm_idx = out.index("=== ACTIVITY LOG (recent PM decisions) ===")
-    brief_idx = out.index("=== SYNTHESIZER BRIEF PREVIEW (full brief via retrieve_brief) ===")
-    block = out[pm_idx:brief_idx]
-    assert "None" in block
-
-
 # ---------------------------------------------------------------------------
 # Missing current-price lookup raises ValueError
 # ---------------------------------------------------------------------------
@@ -1413,92 +1381,9 @@ def test_missing_current_price_raises_value_error_with_ticker_and_position_id() 
 
 
 # ---------------------------------------------------------------------------
-# Determinism — identical inputs produce identical output
+# Aggregate-PnL deferred-field rendering (ALP-654) — None branch
+# (populated-metrics render is pinned by the golden render)
 # ---------------------------------------------------------------------------
-
-
-def test_normal_mode_deterministic() -> None:
-    kwargs = _normal_kwargs()
-    out_a = assemble_input_bundle_normal(
-        **kwargs,
-        sector_label_display=_SECTOR_LABELS,
-    )
-    out_b = assemble_input_bundle_normal(
-        **kwargs,
-        sector_label_display=_SECTOR_LABELS,
-    )
-    assert out_a == out_b
-
-
-def test_defensive_posture_deterministic() -> None:
-    kwargs = _defensive_kwargs()
-    out_a = assemble_input_bundle_defensive_posture(
-        **kwargs,
-        sector_label_display=_SECTOR_LABELS,
-    )
-    out_b = assemble_input_bundle_defensive_posture(
-        **kwargs,
-        sector_label_display=_SECTOR_LABELS,
-    )
-    assert out_a == out_b
-
-
-# ---------------------------------------------------------------------------
-# Brief verbatim
-# ---------------------------------------------------------------------------
-
-
-def test_synthesizer_brief_appears_verbatim() -> None:
-    out = assemble_input_bundle_normal(
-        **_normal_kwargs(),
-        sector_label_display=_SECTOR_LABELS,
-    )
-    assert _SYNTHESIZER_BRIEF in out
-
-
-# ---------------------------------------------------------------------------
-# Aggregate block — drawdown, P/L, net long, gross
-# ---------------------------------------------------------------------------
-
-
-def test_portfolio_state_section_renders_aggregate_block() -> None:
-    out = assemble_input_bundle_normal(
-        **_normal_kwargs(),
-        sector_label_display=_SECTOR_LABELS,
-    )
-    portfolio_idx = out.index("=== PORTFOLIO STATE ===")
-    aggregate_section = out[portfolio_idx:]
-    # Drawdown daily / cumulative numbers
-    assert "0.5" in aggregate_section  # intraday_drawdown_pct
-    assert "2.0" in aggregate_section  # current_drawdown_pct
-    # Directional rollup numbers
-    assert "42" in aggregate_section
-    assert "78" in aggregate_section
-
-
-# ---------------------------------------------------------------------------
-# Aggregate-PnL deferred-field rendering (ALP-654)
-# ---------------------------------------------------------------------------
-
-
-def test_aggregate_pnl_block_names_populated_metrics() -> None:
-    """When the four feedback-loop metrics are populated, the Aggregate
-    block surfaces their numeric values to the strategist with the
-    formatting precision the renderer commits to."""
-    # _make_pnl() carries win_rate_pct=55.0, profit_factor=1.4,
-    # average_win_size_usd=$200, average_loss_size_usd=$150.
-    out = assemble_input_bundle_normal(
-        **_normal_kwargs(),
-        sector_label_display=_SECTOR_LABELS,
-    )
-    aggregate_section = out[out.index("=== PORTFOLIO STATE ===") :]
-    # Trade stats lives on its own line under Portfolio P/L — lock the
-    # two-line layout so a regression to a single-line concat is caught.
-    assert "\n  Trade stats:" in aggregate_section
-    assert "win rate: 55.0%" in aggregate_section
-    assert "profit factor: 1.40" in aggregate_section
-    assert "avg win: $200" in aggregate_section
-    assert "avg loss: $150" in aggregate_section
 
 
 def test_aggregate_pnl_block_frames_deferred_metrics_explicitly() -> None:
@@ -1587,29 +1472,6 @@ def test_between_invocation_closures_section_present() -> None:
     assert "NVDA" in out
     assert "STOP_TRIGGERED" in out
     assert "price-based stop fired" in out
-
-
-def test_between_invocation_closures_section_empty_renders_none() -> None:
-    out = assemble_input_bundle_normal(
-        **_normal_kwargs(),
-        sector_label_display=_SECTOR_LABELS,
-    )
-    header_idx = out.index("=== ACTIVITY LOG (between-invocation closures) ===")
-    intra_idx = out.index("=== ACTIVITY LOG (intra-invocation) ===")
-    block = out[header_idx:intra_idx]
-    assert "None" in block
-
-
-def test_between_invocation_closures_section_before_intra_log() -> None:
-    """The between-invocation block sits between portfolio-state and intra-log."""
-    out = assemble_input_bundle_normal(
-        **_normal_kwargs(),
-        sector_label_display=_SECTOR_LABELS,
-    )
-    portfolio_idx = out.index("=== PORTFOLIO STATE ===")
-    closures_idx = out.index("=== ACTIVITY LOG (between-invocation closures) ===")
-    intra_idx = out.index("=== ACTIVITY LOG (intra-invocation) ===")
-    assert portfolio_idx < closures_idx < intra_idx
 
 
 # ---------------------------------------------------------------------------

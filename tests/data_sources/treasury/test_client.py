@@ -42,16 +42,3 @@ class TestVerifyConnectivity:
         with patch("alphamind.data_sources.treasury.client.httpx.get", return_value=response):
             client = TreasuryClient()
             assert client.verify_connectivity() is False
-
-
-class TestProtocolContract:
-    """TreasuryClient implements the TreasuryAPI Protocol."""
-
-    def test_runtime_assertion_succeeds(self) -> None:
-        """Importing the client module runs the `_: TreasuryAPI = TreasuryClient()` check."""
-        from alphamind.data_sources.treasury._protocol import TreasuryAPI
-        from alphamind.data_sources.treasury.client import TreasuryClient
-
-        client: TreasuryAPI = TreasuryClient()
-        assert hasattr(client, "get")
-        assert hasattr(client, "verify_connectivity")

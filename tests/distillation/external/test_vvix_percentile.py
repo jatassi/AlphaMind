@@ -9,11 +9,9 @@ reading.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind.distillation.calibration import CalibrationState
@@ -24,25 +22,9 @@ from alphamind.distillation.orchestrator import (
     _build_regime_snapshot,
     _compute_vvix_percentile,
 )
-from alphamind.persistence.models import Base, MacroObservations
-from alphamind.persistence.session import make_engine, make_session_factory
+from alphamind.persistence.models import MacroObservations
 
 AS_OF = datetime(2026, 5, 16, 17, 0, tzinfo=UTC)
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    sf = make_session_factory(engine)
-    with sf() as sess:
-        yield sess
 
 
 def _seed_vvix_history(session: Session, values: list[float], *, end_date: datetime) -> None:

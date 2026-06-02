@@ -23,7 +23,6 @@ from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.aggregates.risk_budget import (
     RiskBudgetConsumption,
-    RiskBudgetEntry,
 )
 from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
@@ -49,72 +48,23 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
 )
 from alphamind.portfolio_state.snapshot import (
-    DirectionalExposure,
     PortfolioPnL,
     SectorExposureEntry,
 )
 from alphamind.portfolio_state.views.positions import PositionView
-from alphamind.risk_guardrails.guardrail_evaluation.types import EscalationZones
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery import render_strategist_header
-from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
+from tests.risk_guardrails.state_delivery.fixtures import (
+    _DEFAULT_POSITION_ZONES,
+    _make_budget_entry,
+    _make_directional,
+    _make_param_entry,
+    _make_state_delivery_config,
+)
 
 # ---------------------------------------------------------------------------
-# Fixture builders
+# Fixture builders (shared ones hoisted; see fixtures/builders.py)
 # ---------------------------------------------------------------------------
-
-
-_DEFAULT_POSITION_ZONES = EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
-
-
-def _make_state_delivery_config() -> StateDeliveryConfig:
-    return StateDeliveryConfig(
-        recent_engine_actions_lookback_invocations=3,
-        correlation_state_min_position_count=4,
-        dependency_risk_flag_min_position_count=2,
-        abandoned_window_lookback_invocations=1,
-    )
-
-
-def _make_budget_entry(
-    *,
-    rule_id: str,
-    rule_label: str,
-    current_value: float,
-    limit_value: float,
-    zone: RiskZone = RiskZone.NORMAL,
-    unit: str = "% of portfolio",
-) -> RiskBudgetEntry:
-    headroom = limit_value - current_value
-    headroom_pct = max(0.0, min(100.0, (headroom / limit_value) * 100.0)) if limit_value else 0.0
-    return RiskBudgetEntry(
-        rule_id=rule_id,
-        rule_label=rule_label,
-        current_value=current_value,
-        limit_value=limit_value,
-        headroom=headroom,
-        headroom_pct_of_limit=headroom_pct,
-        zone=zone,
-        unit=unit,
-        cumulative_invocation_impact_value=0.0,
-    )
-
-
-def _make_param_entry(
-    *,
-    rule_id: str,
-    rule_label: str,
-    value: float,
-    unit: str = "% of portfolio",
-) -> ActiveRiskParameterEntry:
-    return ActiveRiskParameterEntry(
-        rule_id=rule_id,
-        rule_label=rule_label,
-        value=value,
-        unit=unit,
-        regime_multiplier_applied=1.0,
-        base_value=value,
-    )
 
 
 def _make_active_parameters(
@@ -208,15 +158,6 @@ def _make_pnl() -> PortfolioPnL:
         average_win_size_usd=None,
         average_loss_size_usd=None,
         profit_factor=None,
-    )
-
-
-def _make_directional() -> DirectionalExposure:
-    return DirectionalExposure(
-        total_long_delta_adjusted_usd=money(210_000.0),
-        total_short_delta_adjusted_usd=money(50_000.0),
-        net_directional_pct_of_portfolio=32.0,
-        gross_pct_of_portfolio=78.0,
     )
 
 

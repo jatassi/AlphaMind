@@ -88,19 +88,8 @@ def _row_kwargs(
 
 
 class TestDrawdownStateTableShape:
-    def test_table_has_seven_columns(self, engine: Engine) -> None:
+    def test_table_primary_key(self, engine: Engine) -> None:
         insp = inspect(engine)
-        cols = {c["name"] for c in insp.get_columns("drawdown_state")}
-        expected = {
-            "id",
-            "equity_high_water_mark_usd",
-            "current_drawdown_pct",
-            "drawdown_duration_hours",
-            "lifetime_max_drawdown_pct",
-            "drawdown_by_source_json",
-            "last_updated_at",
-        }
-        assert cols == expected
         pk = insp.get_pk_constraint("drawdown_state")
         assert pk["constrained_columns"] == ["id"]
 

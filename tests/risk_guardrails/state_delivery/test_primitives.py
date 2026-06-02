@@ -14,7 +14,6 @@ from alphamind._kernel.regime import (
     RegimeTransitionState,
     RiskZone,
 )
-from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetEntry
 from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
@@ -45,35 +44,10 @@ from alphamind.risk_guardrails.state_delivery.primitives import (
     render_sector_headroom_block,
     render_zone_tag,
 )
-
-# Default position zones match the canonical {70, 85, 95} band shipped in
-# config/guardrails.yaml. Tests reference this directly so the assertions stay
-# anchored to the YAML the rest of the library reads.
-_DEFAULT_POSITION_ZONES = EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
-
-
-def _make_budget_entry(
-    *,
-    rule_id: str,
-    rule_label: str,
-    current_value: float,
-    limit_value: float,
-    zone: RiskZone = RiskZone.NORMAL,
-    unit: str = "% of portfolio",
-) -> RiskBudgetEntry:
-    headroom = limit_value - current_value
-    headroom_pct = max(0.0, min(100.0, (headroom / limit_value) * 100.0)) if limit_value else 0.0
-    return RiskBudgetEntry(
-        rule_id=rule_id,
-        rule_label=rule_label,
-        current_value=current_value,
-        limit_value=limit_value,
-        headroom=headroom,
-        headroom_pct_of_limit=headroom_pct,
-        zone=zone,
-        unit=unit,
-        cumulative_invocation_impact_value=0.0,
-    )
+from tests.risk_guardrails.state_delivery.fixtures import (
+    _DEFAULT_POSITION_ZONES,
+    _make_budget_entry,
+)
 
 
 def _make_active_parameter_set(

@@ -761,6 +761,36 @@ class TestLeadLagCompute:
         flag_names = {flag.name for block in result for flag in block.anomaly_flags}
         assert "overdue_lag_flag:credit_to_equity" not in flag_names
 
+    def test_inversion_flag_fires_when_lag_moves_first(self) -> None:
+        # The lag asset makes a large move one bar before the lead asset
+        # follows. This is the regime-shift / inversion case: reverse
+        # direction (lag→lead) correlation should dominate forward
+        # (lead→lag). Both legs must clear the z-score gate.
+        baseline = [0.001 * ((i % 2) - 0.5) for i in range(28)]
+        # lag big move at -2; lead big move at -1 (lag preceded lead)
+        lead_returns = (*baseline, 0.002, 0.07)
+        lag_returns = (*baseline, 0.07, 0.002)
+        pair = LeadLagPair(
+            pair_key="semis_to_tech",
+            lead_ticker="SMH",
+            lag_ticker="QQQ",
+            max_days=2,
+        )
+        inputs = LeadLagInputs(
+            pair=pair,
+            lead_returns=tuple(lead_returns),
+            lag_returns=tuple(lag_returns),
+            persisted=None,
+        )
+        result = compute_lead_lag_pure(
+            pair_inputs=(inputs,),
+            overdue_lead_sigma=1.5,
+        )
+        flag_names = {flag.name for block in result for flag in block.anomaly_flags}
+        assert any("lead_lag_inversion_flag" in name for name in flag_names), (
+            f"expected lead_lag_inversion_flag:* in {flag_names}"
+        )
+
     def test_persisted_estimate_threads_through_payload(self) -> None:
         pair = LeadLagPair(
             pair_key="semis_to_tech",
@@ -822,6 +852,13 @@ class TestCorrelationRegimeChangeCompute:
         )
         block_ids = {b.block_id for b in blocks}
         assert "q7.correlation_breakdown.dispersion_shift" in block_ids
+        dispersion_block = next(
+            b for b in blocks if b.block_id == "q7.correlation_breakdown.dispersion_shift"
+        )
+        flag_names = [flag.name for flag in dispersion_block.anomaly_flags]
+        assert any("dispersion_shift_flag" in name for name in flag_names), (
+            f"expected dispersion_shift_flag in {flag_names}"
+        )
 
     def test_narrative_lag_fires_when_media_silent_and_breakdown_happens(self) -> None:
         # noise_floor=0 here because the inversion fixture below averages to a

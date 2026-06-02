@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import copy
-from datetime import UTC, datetime, timedelta
-from typing import Any
+from datetime import UTC, datetime
 
 import pytest
 
@@ -14,50 +13,12 @@ from alphamind._kernel.ids import (
     OrderId,
     PositionId,
     Symbol,
-    ThesisId,
 )
-from alphamind._kernel.money import money, price, signed_money
-from alphamind._kernel.regime import (
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskZone,
-)
-from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
-from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
-from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
-from alphamind.portfolio_state.aggregates.thesis_quality import (
-    AlphaBetaDecomposition,
-    AttributionDimension,
-    ConvictionCalibrationEntry,
-    ConvictionSizingDeviation,
-    InvalidationTimingClass,
-    InvalidationTimingStat,
-    PerformanceAttributionEntry,
-    ResolutionWindowCounts,
-    SignalHitRate,
-    SignalToThesisConversion,
-    ThesisDurationStat,
-    ThesisQualityAggregate,
-    TrailingWindow,
-)
+from alphamind._kernel.money import money
 from alphamind.portfolio_state.events.activity_log import (
-    ActivityLogEntry,
-    EventGroup,
-    EventSource,
     EventType,
-    PMDecisionDetail,
-    PMVerdict,
-    PositionOpenedDetail,
-    PositionOpenMechanism,
 )
-from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
-    BracketLeg,
-    BracketLegEnforcement,
-    BracketLegStatus,
-    BracketLegType,
-    BracketRecord,
-    BracketStatus,
     EquityInstrumentSpec,
     OrderDirection,
     OrderDuration,
@@ -66,29 +27,30 @@ from alphamind.portfolio_state.records.orders import (
     OrderStatus,
     OrderType,
     PriceParameters,
-    PriceTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
-    Direction,
-    EquityPositionDetails,
-    PositionFill,
-    PositionRecord,
     PositionStatus,
 )
-from alphamind.portfolio_state.records.theses import (
-    KeyAssumption,
-    ThesisComponent,
-    ThesisComponentType,
-    ThesisRecord,
-    ThesisRecordStatus,
-)
 from alphamind.portfolio_state.snapshot import (
-    DirectionalExposure,
-    PortfolioPnL,
     PortfolioStateSnapshot,
-    SectorExposureEntry,
 )
-from alphamind.portfolio_state.views.positions import PositionView
+
+from ._view_builders import (
+    _make_active_risk_parameters,
+    _make_activity_entry,
+    _make_bracket,
+    _make_cash_ledger,
+    _make_directional_exposure,
+    _make_drawdown_state,
+    _make_open_position,
+    _make_pending_position,
+    _make_pm_decision_entry,
+    _make_portfolio_pnl,
+    _make_risk_budget,
+    _make_sector_entry,
+    _make_snapshot,
+    _make_thesis_quality,
+)
 
 # ---------------------------------------------------------------------------
 # Shared timestamps
@@ -105,458 +67,6 @@ _INV_ID = "inv-test-001"
 # ---------------------------------------------------------------------------
 
 
-def _make_fill(at_price: float = 150.0) -> PositionFill:
-    return PositionFill(
-        fill_timestamp=_T0,
-        fill_price=price(at_price),
-        fill_quantity=100.0,
-        slippage=signed_money(0.01),
-        fees=money(1.0),
-    )
-
-
-def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> PositionView:
-    equity = EquityPositionDetails(
-        ticker=Symbol(ticker),
-        share_count=100.0,
-        average_cost_basis_per_share=150.0,
-    )
-    record = PositionRecord(
-        position_id=PositionId(pos_id),
-        thesis_id=None,
-        bracket_id=None,
-        status=PositionStatus.OPEN,
-        direction=Direction.LONG,
-        entry_timestamp=_T0,
-        details=equity,
-        execution_history=(_make_fill(),),
-        realized_pnl_to_date_usd=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
-    )
-    return PositionView(
-        record=record,
-        current_market_value_usd=signed_money(15500.0),
-        unrealized_pnl_usd=signed_money(500.0),
-        unrealized_pnl_pct=3.33,
-        position_weight_pct=10.0,
-        position_age_hours=4.0,
-        notional_exposure_usd=money(15000.0),
-        delta_adjusted_exposure_usd=signed_money(15000.0),
-        distance_to_target_usd=None,
-        distance_to_stop_usd=None,
-        risk_reward_at_current=None,
-    )
-
-
-def _make_pending_position(pos_id: str = "POS-003") -> PositionView:
-    equity = EquityPositionDetails(
-        ticker=Symbol("GOOG"),
-        share_count=10.0,
-        average_cost_basis_per_share=2800.0,
-    )
-    record = PositionRecord(
-        position_id=PositionId(pos_id),
-        thesis_id=None,
-        bracket_id=None,
-        status=PositionStatus.PENDING,
-        direction=Direction.LONG,
-        entry_timestamp=None,
-        details=equity,
-        execution_history=(),
-        realized_pnl_to_date_usd=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
-    )
-    return PositionView(
-        record=record,
-        current_market_value_usd=signed_money(0.0),
-        unrealized_pnl_usd=signed_money(0.0),
-        unrealized_pnl_pct=0.0,
-        position_weight_pct=0.0,
-        position_age_hours=0.0,
-        notional_exposure_usd=money(0.0),
-        delta_adjusted_exposure_usd=signed_money(0.0),
-        distance_to_target_usd=None,
-        distance_to_stop_usd=None,
-        risk_reward_at_current=None,
-    )
-
-
-def _make_bracket(bracket_id: str = "BRK-001", position_id: str = "POS-001") -> BracketRecord:
-    mechanical_leg = BracketLeg(
-        leg_id="leg-stop",
-        leg_type=BracketLegType.PRICE_STOP,
-        order_id=OrderId("ord-stop-1"),
-        trigger=PriceTrigger(
-            underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
-        ),
-        enforcement=BracketLegEnforcement.MECHANICAL,
-        status=BracketLegStatus.PENDING_ACTIVATION,
-    )
-    return BracketRecord(
-        bracket_id=BracketId(bracket_id),
-        position_id=PositionId(position_id),
-        status=BracketStatus.PENDING_ENTRY,
-        entry_order_id=OrderId("ord-entry-1"),
-        protective_legs=(mechanical_leg,),
-        modification_history=(),
-        corporate_action_cancellation_reason=None,
-    )
-
-
-def _make_pending_order(
-    order_id: str = "ORD-001",
-    position_id: str = "POS-001",
-    status: OrderStatus = OrderStatus.PENDING,
-) -> OrderRecord:
-    spec = EquityInstrumentSpec(ticker=Symbol("AAPL"))
-    return OrderRecord(
-        order_id=OrderId(order_id),
-        position_id=PositionId(position_id),
-        bracket_id=BracketId("BRK-001"),
-        role=OrderRole.ENTRY,
-        instrument_spec=spec,
-        direction=OrderDirection.BUY,
-        order_type=OrderType.MARKET,
-        price_parameters=PriceParameters(limit_price=None, stop_trigger_price=None),
-        quantity=10.0,
-        duration=OrderDuration.DAY,
-        status=status,
-        alpaca_order_id=AlpacaOrderId("alp-001"),
-        alpaca_order_id_chain=(AlpacaOrderId("alp-001"),),
-        submission_timestamp=_T0,
-        last_update_timestamp=_T0,
-        filled_quantity=0.0,
-        avg_fill_price=None,
-        remaining_quantity=10.0,
-        modification_count=0,
-        originating_thesis_id=None,
-        originating_pm_command_id=None,
-        age_hours=1.0,
-    )
-
-
-def _make_thesis(
-    thesis_id: str = "THESIS-001",
-    position_id: str = "POS-001",
-) -> ThesisRecord:
-    def _comp(ctype: ThesisComponentType, cid: str) -> ThesisComponent:
-        return ThesisComponent(
-            component_id=cid,
-            thesis_id=ThesisId(thesis_id),
-            component_type=ctype,
-            linked_bracket_leg_type=None,
-            instrument_reference="AAPL",
-            narrative="Narrative text.",
-            key_assumptions=(KeyAssumption(text="Assumption", outcome=None),),
-            generation_timestamp=_T0,
-            resolution_outcome=None,
-            resolution_notes=None,
-        )
-
-    return ThesisRecord(
-        thesis_id=ThesisId(thesis_id),
-        position_id=PositionId(position_id),
-        summary="Long AAPL on momentum breakout.",
-        components=(
-            _comp(ThesisComponentType.ENTRY_RATIONALE, "comp-1"),
-            _comp(ThesisComponentType.TARGET_RATIONALE, "comp-2"),
-            _comp(ThesisComponentType.INVALIDATION_RATIONALE, "comp-3"),
-        ),
-        status=ThesisRecordStatus.ACTIVE,
-        generation_timestamp=_T0,
-        time_expectation_hours=24.0,
-        age_hours=4.0,
-        expected_resolution_at=_T0 + timedelta(hours=24),
-        resolution_timestamp=None,
-        resolution_category=None,
-        resolution_pnl_usd=None,
-        entry_fill_gap_usd=None,
-        key_catalyst="earnings beat",
-    )
-
-
-def _make_activity_entry(
-    entry_id: str = "ENTRY-001",
-    invocation_id: str = _INV_ID,
-    position_id: str | None = "POS-001",
-    event_type: EventType = EventType.POSITION_OPENED,
-    event_group: EventGroup = EventGroup.POSITION_LIFECYCLE,
-    detail: object | None = None,
-) -> ActivityLogEntry:
-    if detail is None:
-        detail = PositionOpenedDetail(
-            ticker=Symbol("AAPL"),
-            direction="LONG",
-            fill_price=price("150.0"),
-            quantity=100.0,
-            thesis_id=None,
-            bracket_id=None,
-            mechanism=PositionOpenMechanism.ORDER_FILL,
-            parent_position_id=None,
-        )
-    return ActivityLogEntry(
-        entry_id=entry_id,
-        invocation_id=invocation_id,
-        timestamp=_T0,
-        event_type=event_type,
-        event_group=event_group,
-        position_id=position_id,
-        order_id=None,
-        thesis_id=None,
-        source=EventSource.FILL_PROCESSOR,
-        detail=detail,
-    )
-
-
-def _make_pm_decision_entry(
-    entry_id: str = "ENTRY-PM-001",
-    invocation_id: str = _INV_ID,
-) -> ActivityLogEntry:
-    detail = PMDecisionDetail(
-        envelope_id="env-001",
-        source_provenance_json={},
-        evaluation_json={},
-        modifications_json=[],
-        resulting_command_ids=(),
-        verdict=PMVerdict.APPROVE,
-    )
-    return ActivityLogEntry(
-        entry_id=entry_id,
-        invocation_id=invocation_id,
-        timestamp=_T0,
-        event_type=EventType.PM_DECISION,
-        event_group=EventGroup.PM_DECISION,
-        position_id=None,
-        order_id=None,
-        thesis_id=None,
-        source=EventSource.COMMAND_EXECUTOR,
-        detail=detail,
-    )
-
-
-def _make_cash_ledger() -> CashLedger:
-    return CashLedger(
-        current_cash_usd=50000.0,
-        settled_cash_usd=48000.0,
-        reserved_capital_usd=2000.0,
-        available_buying_power_usd=46000.0,
-        margin_held_usd=0.0,
-        unsettled_proceeds=(),
-        cash_pct_of_portfolio=50.0,
-        true_deployable_capital_usd=44000.0,
-        regt_excess_trailing_30d_usd=1000.0,
-        regt_excess_trailing_90d_usd=3000.0,
-        regt_excess_lifetime_usd=10000.0,
-    )
-
-
-def _make_drawdown_state() -> DrawdownState:
-    return DrawdownState(
-        current_drawdown_pct=2.0,
-        equity_high_water_mark_usd=110000.0,
-        drawdown_duration_hours=8.0,
-        lifetime_max_drawdown_pct=5.0,
-        intraday_drawdown_pct=0.5,
-        daily_zone=RiskZone.NORMAL,
-        cumulative_zone=RiskZone.NORMAL,
-        cumulative_tier=None,
-        drawdown_by_source_pct={},
-    )
-
-
-def _make_risk_budget() -> RiskBudgetConsumption:
-    return RiskBudgetConsumption(entries=())
-
-
-def _make_active_risk_params() -> ActiveRiskParameterSet:
-    return ActiveRiskParameterSet(
-        regime_label=RegimeLabel.NORMAL,
-        transition_state=RegimeTransitionState.STABLE,
-        transition_invocations_remaining=0,
-        parameter_change_flag=False,
-        entries=(),
-        active_overlays=(),
-    )
-
-
-def _make_thesis_quality() -> ThesisQualityAggregate:
-    rwc = ResolutionWindowCounts(
-        window=TrailingWindow.FIVE_DAYS,
-        total_resolutions=10,
-        validated=6,
-        profitable_but_wrong=1,
-        invalidated_stopped_correctly=2,
-        invalidated_wrong_on_exit=1,
-        cancelled_never_entered=0,
-    )
-    dur = ThesisDurationStat(
-        window=TrailingWindow.FIVE_DAYS,
-        mean_actual_to_expected_ratio=1.1,
-        median_actual_to_expected_ratio=1.0,
-        count=10,
-    )
-    inv_timing = InvalidationTimingStat(
-        window=TrailingWindow.FIVE_DAYS,
-        class_distribution={
-            InvalidationTimingClass.EARLY: 1,
-            InvalidationTimingClass.ON_TIME: 2,
-            InvalidationTimingClass.LATE: 0,
-        },
-        mean_position_age_at_invalidation_hours=5.0,
-    )
-    shr = SignalHitRate(
-        signal_type="options_volume",
-        window=TrailingWindow.FIVE_DAYS,
-        cited_count=5,
-        validated_count=3,
-    )
-    stc = SignalToThesisConversion(
-        signal_type="options_volume",
-        window=TrailingWindow.FIVE_DAYS,
-        signal_observed_count=8,
-        pm_approved_count=5,
-    )
-    cc = ConvictionCalibrationEntry(
-        conviction_level=3,
-        window=TrailingWindow.FIVE_DAYS,
-        count=5,
-        validation_rate=0.6,
-        mean_realized_pnl_pct=2.5,
-    )
-    csd = ConvictionSizingDeviation(
-        window=TrailingWindow.FIVE_DAYS,
-        total_proposals=5,
-        pm_sized_above_advisory_count=2,
-        pm_sized_below_advisory_count=1,
-        pm_sized_within_advisory_count=2,
-        outcome_correlation_above=None,
-        outcome_correlation_below=None,
-    )
-    pa = PerformanceAttributionEntry(
-        dimension=AttributionDimension.SECTOR,
-        key="Technology",
-        window=TrailingWindow.FIVE_DAYS,
-        cumulative_realized_pnl_usd=1200.0,
-        realized_pnl_pct_of_window_capital=1.2,
-        count=3,
-    )
-    ab = AlphaBetaDecomposition(
-        window=TrailingWindow.FIVE_DAYS,
-        total_realized_pnl_usd=1200.0,
-        market_component_usd=400.0,
-        sector_component_usd=200.0,
-        alpha_component_usd=600.0,
-    )
-    return ThesisQualityAggregate(
-        as_of_timestamp=_T0,
-        resolution_counts_by_window=(rwc,),
-        duration_stats_by_window=(dur,),
-        invalidation_timing_stats_by_window=(inv_timing,),
-        signal_hit_rates=(shr,),
-        signal_to_thesis_conversions=(stc,),
-        conviction_calibration=(cc,),
-        conviction_sizing_deviation_by_window=(csd,),
-        performance_attribution=(pa,),
-        alpha_beta_decomposition_by_window=(ab,),
-    )
-
-
-def _make_pnl(**overrides: object) -> PortfolioPnL:
-    kwargs: dict[str, Any] = {
-        "total_unrealized_pnl_usd": signed_money(500.0),
-        "total_unrealized_pnl_pct_of_portfolio": 1.5,
-        "daily_realized_pnl_usd": signed_money(200.0),
-        "daily_total_pnl_usd": signed_money(700.0),
-        "cumulative_realized_pnl_usd": signed_money(10000.0),
-        "rolling_realized_pnl": {
-            "1d": signed_money(200.0),
-            "3d": signed_money(600.0),
-            "5d": signed_money(1000.0),
-            "20d": signed_money(3000.0),
-        },
-        "win_rate_pct": 62.5,
-        "average_win_size_usd": signed_money(800.0),
-        "average_loss_size_usd": signed_money(400.0),
-        "profit_factor": 2.0,
-    }
-    kwargs.update(overrides)
-    return PortfolioPnL(**kwargs)
-
-
-def _make_directional(**overrides: object) -> DirectionalExposure:
-    kwargs: dict[str, Any] = {
-        "total_long_delta_adjusted_usd": signed_money(50000.0),
-        "total_short_delta_adjusted_usd": signed_money(20000.0),
-        "net_directional_pct_of_portfolio": 30.0,
-        "gross_pct_of_portfolio": 70.0,
-    }
-    kwargs.update(overrides)
-    return DirectionalExposure(**kwargs)
-
-
-def _make_sector_entry(**overrides: object) -> SectorExposureEntry:
-    kwargs: dict[str, Any] = {
-        "sector": "TECHNOLOGY",
-        "long_delta_adjusted_usd": signed_money(10000.0),
-        "short_delta_adjusted_usd": signed_money(5000.0),
-        "long_pct_of_portfolio": 20.0,
-        "short_pct_of_portfolio": 10.0,
-        "long_short_ratio": 2.0,
-    }
-    kwargs.update(overrides)
-    return SectorExposureEntry(**kwargs)
-
-
-# ---------------------------------------------------------------------------
-# Happy-path snapshot builder
-# ---------------------------------------------------------------------------
-
-
-def _make_snapshot(**overrides: object) -> PortfolioStateSnapshot:
-    """Build a valid PortfolioStateSnapshot with at least 2 open, 1 pending, 1 thesis, 1 order."""
-    pos1 = _make_open_position("POS-001", "AAPL")
-    pos2 = _make_open_position("POS-002", "MSFT")
-    pos3 = _make_pending_position("POS-003")
-    brk1 = _make_bracket("BRK-001", "POS-001")
-    brk2 = _make_bracket("BRK-002", "POS-002")
-    brk3 = _make_bracket("BRK-003", "POS-003")
-    order1 = _make_pending_order("ORD-001", "POS-001", OrderStatus.PENDING)
-    thesis1 = _make_thesis("THESIS-001", "POS-001")
-    changelog_entry = _make_activity_entry("ENTRY-001", _INV_ID, "POS-001")
-    pm_entry = _make_pm_decision_entry("ENTRY-PM-001", _INV_ID)
-    mod_trail_entry = _make_activity_entry("ENTRY-MOD-001", _INV_ID, "POS-001")
-
-    base: dict[str, Any] = {
-        "invocation_id": _INV_ID,
-        "phase1_committed_at": _T0,
-        "snapshot_assembled_at": _T1,
-        "pipeline_invocation_started_at": _T2,
-        "open_positions": (pos1, pos2),
-        "pending_positions": (pos3,),
-        "sector_exposure": (_make_sector_entry(),),
-        "directional_exposure": _make_directional(),
-        "portfolio_pnl": _make_pnl(),
-        "drawdown": _make_drawdown_state(),
-        "active_theses": (thesis1,),
-        "recent_thesis_resolutions": (),
-        "cash_ledger": _make_cash_ledger(),
-        "pending_orders": (order1,),
-        "risk_budget": _make_risk_budget(),
-        "active_risk_parameters": _make_active_risk_params(),
-        "intra_invocation_changelog": (changelog_entry,),
-        "recent_pm_decision_log": (pm_entry,),
-        "position_modification_trail": {"POS-001": (mod_trail_entry,)},
-        "thesis_quality_aggregates": _make_thesis_quality(),
-        "brackets": (brk1, brk2, brk3),
-    }
-    base.update(overrides)
-    return PortfolioStateSnapshot(**base)
-
-
 # ---------------------------------------------------------------------------
 # PortfolioPnL
 # ---------------------------------------------------------------------------
@@ -564,7 +74,7 @@ def _make_snapshot(**overrides: object) -> PortfolioStateSnapshot:
 
 class TestPortfolioPnL:
     def test_valid_construction(self) -> None:
-        pnl = _make_pnl()
+        pnl = _make_portfolio_pnl()
         assert pnl.total_unrealized_pnl_usd == 500.0
         assert pnl.rolling_realized_pnl == {
             "1d": 200.0,
@@ -576,7 +86,7 @@ class TestPortfolioPnL:
         assert pnl.profit_factor == 2.0
 
     def test_nullable_fields_accept_none(self) -> None:
-        pnl = _make_pnl(
+        pnl = _make_portfolio_pnl(
             win_rate_pct=None,
             average_win_size_usd=None,
             average_loss_size_usd=None,
@@ -587,7 +97,7 @@ class TestPortfolioPnL:
         assert pnl.profit_factor is None
 
     def test_frozen(self) -> None:
-        pnl = _make_pnl()
+        pnl = _make_portfolio_pnl()
         with pytest.raises((ValueError, TypeError, AttributeError)):
             pnl.total_unrealized_pnl_usd = money(999.0)  # type: ignore[misc]
 
@@ -630,12 +140,12 @@ class TestSectorExposureEntry:
 
 class TestDirectionalExposure:
     def test_valid_construction(self) -> None:
-        de = _make_directional()
+        de = _make_directional_exposure()
         assert de.total_long_delta_adjusted_usd == 50000.0
         assert de.gross_pct_of_portfolio == 70.0
 
     def test_zero_portfolio_all_zeros(self) -> None:
-        de = _make_directional(
+        de = _make_directional_exposure(
             total_long_delta_adjusted_usd=0.0,
             total_short_delta_adjusted_usd=0.0,
             net_directional_pct_of_portfolio=0.0,
@@ -645,10 +155,10 @@ class TestDirectionalExposure:
 
     def test_negative_gross_raises(self) -> None:
         with pytest.raises((ValueError, TypeError)):
-            _make_directional(gross_pct_of_portfolio=-1.0)
+            _make_directional_exposure(gross_pct_of_portfolio=-1.0)
 
     def test_frozen(self) -> None:
-        de = _make_directional()
+        de = _make_directional_exposure()
         with pytest.raises((ValueError, TypeError, AttributeError)):
             de.gross_pct_of_portfolio = 99.0  # type: ignore[misc]
 
@@ -1065,20 +575,20 @@ class TestEmptyPortfolio:
             open_positions=(),
             pending_positions=(),
             sector_exposure=(),
-            directional_exposure=_make_directional(
+            directional_exposure=_make_directional_exposure(
                 total_long_delta_adjusted_usd=0.0,
                 total_short_delta_adjusted_usd=0.0,
                 net_directional_pct_of_portfolio=0.0,
                 gross_pct_of_portfolio=0.0,
             ),
-            portfolio_pnl=_make_pnl(),
+            portfolio_pnl=_make_portfolio_pnl(),
             drawdown=_make_drawdown_state(),
             active_theses=(),
             recent_thesis_resolutions=(),
             cash_ledger=_make_cash_ledger(),
             pending_orders=(),
             risk_budget=_make_risk_budget(),
-            active_risk_parameters=_make_active_risk_params(),
+            active_risk_parameters=_make_active_risk_parameters(),
             intra_invocation_changelog=(),
             recent_pm_decision_log=(),
             position_modification_trail={},

@@ -324,8 +324,11 @@ class TestLinkedPositionAssessmentId:
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
         assert not result.is_valid
-        rules = [f.rule for f in result.errors]
-        assert "linked_position_assessment_id_resolves" in rules
+        link_failures = [
+            f for f in result.errors if f.rule == "linked_position_assessment_id_resolves"
+        ]
+        assert link_failures
+        assert any("linked_position_assessment_id" in f.field_path for f in link_failures)
 
     def test_linked_position_assessment_id_resolves_passes(self) -> None:
         position = _make_position_assessment(assessment_id="SA-1")
@@ -408,8 +411,9 @@ class TestRemedyFlagBreachPairing:
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
         assert not result.is_valid
-        rules = [f.rule for f in result.errors]
-        assert "remedy_flag_pairing" in rules
+        remedy_failures = [f for f in result.errors if f.rule == "remedy_flag_pairing"]
+        assert remedy_failures
+        assert any("remedy_flag" in f.field_path for f in remedy_failures)
 
     def test_addressed_breach_without_remedy_flag_is_failure(self) -> None:
         """An addressed_breach.breach_id with no matching remedy_flag → FAIL."""
@@ -575,8 +579,9 @@ class TestSectorInActiveSectors:
             active_sectors=frozenset({"semis", "financials", "energy"}),
         )
         assert not result.is_valid
-        rules = [f.rule for f in result.errors]
-        assert "sector_not_active" in rules
+        sector_failures = [f for f in result.errors if f.rule == "sector_not_active"]
+        assert sector_failures
+        assert any("sector" in f.field_path for f in sector_failures)
 
     def test_sector_inside_active_set_passes(self) -> None:
         assessment = _make_position_assessment(sector="semis")
@@ -650,35 +655,30 @@ class TestDefensivePostureSummaryPresence:
 
 
 class TestLayer3PositionAssessmentReferences:
-    def test_unknown_reference_in_status_rationale_is_failure(self) -> None:
+    @pytest.mark.parametrize(
+        ("field_name", "bad_ref", "store"),
+        [
+            ("status_rationale", "SA-TECH-99", _retrieval_store()),
+            ("action_rationale", "QR-99", _retrieval_store()),
+            ("cross_position_observations", "SA-ENERGY-99", _store_with_baseline_refs()),
+        ],
+    )
+    def test_unknown_reference_in_simple_narrative_field_is_failure(
+        self, field_name: str, bad_ref: str, store: RetrievalStore
+    ) -> None:
         assessment = _make_position_assessment(
-            status_rationale="Cited [SA-TECH-99] which is missing.",
+            **{field_name: f"Cited [{bad_ref}] which is missing."}
         )
         output = _make_output(position_assessments=(assessment,))
         result = validate_strategist_output(
             output,
-            retrieval_store=_retrieval_store(),
+            retrieval_store=store,
             active_sectors=_DEFAULT_ACTIVE_SECTORS,
         )
         assert not result.is_valid
         unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
-        assert any("SA-TECH-99" in f.message for f in unknown_failures)
-        assert any("status_rationale" in f.field_path for f in unknown_failures)
-
-    def test_unknown_reference_in_action_rationale_is_failure(self) -> None:
-        assessment = _make_position_assessment(
-            action_rationale="Per [QR-99] no action.",
-        )
-        output = _make_output(position_assessments=(assessment,))
-        result = validate_strategist_output(
-            output,
-            retrieval_store=_retrieval_store(),
-            active_sectors=_DEFAULT_ACTIVE_SECTORS,
-        )
-        assert not result.is_valid
-        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
-        assert any("QR-99" in f.message for f in unknown_failures)
-        assert any("action_rationale" in f.field_path for f in unknown_failures)
+        assert any(bad_ref in f.message for f in unknown_failures)
+        assert any(field_name in f.field_path for f in unknown_failures)
 
     def test_unknown_reference_in_reduce_rationale_is_failure(self) -> None:
         assessment = _make_position_assessment(
@@ -835,21 +835,6 @@ class TestLayer3PositionAssessmentReferences:
         bare_failures = [f for f in result.errors if f.rule == "bare_prefix_citation"]
         assert bare_failures == []
 
-    def test_unknown_reference_in_cross_position_observations_is_failure(self) -> None:
-        assessment = _make_position_assessment(
-            cross_position_observations="Cited [SA-ENERGY-99] across positions.",
-        )
-        output = _make_output(position_assessments=(assessment,))
-        result = validate_strategist_output(
-            output,
-            retrieval_store=_store_with_baseline_refs(),
-            active_sectors=_DEFAULT_ACTIVE_SECTORS,
-        )
-        assert not result.is_valid
-        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
-        assert any("SA-ENERGY-99" in f.message for f in unknown_failures)
-        assert any("cross_position_observations" in f.field_path for f in unknown_failures)
-
     def test_known_reference_passes(self) -> None:
         assessment = _make_position_assessment(
             status_rationale="Per [SA-TECH-2] thesis is intact.",
@@ -915,10 +900,19 @@ class TestLayer3PendingOrderReferences:
 
 
 class TestLayer3PortfolioLevelReferences:
-    def test_unknown_reference_in_aggregate_thesis_health_is_failure(self) -> None:
-        plo = _make_portfolio_observations(
-            aggregate_thesis_health="Citing [SA-TECH-99] as a missing ref.",
-        )
+    @pytest.mark.parametrize(
+        ("field_name", "bad_ref"),
+        [
+            ("aggregate_thesis_health", "SA-TECH-99"),
+            ("sector_balance_shifts", "SA-FIN-99"),
+            ("thesis_dependency_warnings", "CR-99"),
+            ("capital_allocation_observations", "AR-99"),
+        ],
+    )
+    def test_unknown_reference_in_portfolio_narrative_field_is_failure(
+        self, field_name: str, bad_ref: str
+    ) -> None:
+        plo = _make_portfolio_observations(**{field_name: f"Citing [{bad_ref}] as a missing ref."})
         output = _make_output(portfolio_level_observations=plo)
         result = validate_strategist_output(
             output,
@@ -927,53 +921,8 @@ class TestLayer3PortfolioLevelReferences:
         )
         assert not result.is_valid
         unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
-        assert any("SA-TECH-99" in f.message for f in unknown_failures)
-        assert any("aggregate_thesis_health" in f.field_path for f in unknown_failures)
-
-    def test_unknown_reference_in_sector_balance_shifts_is_failure(self) -> None:
-        plo = _make_portfolio_observations(
-            sector_balance_shifts="Per [SA-FIN-99] sector tilt shifted.",
-        )
-        output = _make_output(portfolio_level_observations=plo)
-        result = validate_strategist_output(
-            output,
-            retrieval_store=_store_with_baseline_refs(),
-            active_sectors=_DEFAULT_ACTIVE_SECTORS,
-        )
-        assert not result.is_valid
-        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
-        assert any("SA-FIN-99" in f.message for f in unknown_failures)
-        assert any("sector_balance_shifts" in f.field_path for f in unknown_failures)
-
-    def test_unknown_reference_in_thesis_dependency_warnings_is_failure(self) -> None:
-        plo = _make_portfolio_observations(
-            thesis_dependency_warnings="Per [CR-99] correlation tightening.",
-        )
-        output = _make_output(portfolio_level_observations=plo)
-        result = validate_strategist_output(
-            output,
-            retrieval_store=_store_with_baseline_refs(),
-            active_sectors=_DEFAULT_ACTIVE_SECTORS,
-        )
-        assert not result.is_valid
-        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
-        assert any("CR-99" in f.message for f in unknown_failures)
-        assert any("thesis_dependency_warnings" in f.field_path for f in unknown_failures)
-
-    def test_unknown_reference_in_capital_allocation_observations_is_failure(self) -> None:
-        plo = _make_portfolio_observations(
-            capital_allocation_observations="Per [AR-99] capital is tight.",
-        )
-        output = _make_output(portfolio_level_observations=plo)
-        result = validate_strategist_output(
-            output,
-            retrieval_store=_store_with_baseline_refs(),
-            active_sectors=_DEFAULT_ACTIVE_SECTORS,
-        )
-        assert not result.is_valid
-        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
-        assert any("AR-99" in f.message for f in unknown_failures)
-        assert any("capital_allocation_observations" in f.field_path for f in unknown_failures)
+        assert any(bad_ref in f.message for f in unknown_failures)
+        assert any(field_name in f.field_path for f in unknown_failures)
 
     def test_unknown_reference_in_capital_preservation_notes_is_failure(self) -> None:
         plo = _make_portfolio_observations(
@@ -1004,7 +953,7 @@ class TestLayer3PortfolioLevelReferences:
 
 # ---------------------------------------------------------------------------
 # Acceptance-criteria scenarios — schema-valid output with all refs resolved
-# passes; each named synthetic FAIL produces a clear field path.
+# passes.
 # ---------------------------------------------------------------------------
 
 
@@ -1063,85 +1012,6 @@ class TestSchemaValidHappyPath:
         assert result.is_valid
         assert result.errors == ()
         assert result.warnings == ()
-
-
-class TestSyntheticFailScenarios:
-    """The four synthetic FAIL fixtures the story acceptance criteria name.
-
-    Each produces FAIL with a clear field path identifying the failing field.
-    """
-
-    def test_missing_linked_position_assessment_id_target(self) -> None:
-        position = _make_position_assessment(assessment_id="SA-1")
-        order = _make_pending_order_assessment(linked_position_assessment_id="SA-99")
-        output = _make_output(
-            position_assessments=(position,),
-            pending_order_assessments=(order,),
-        )
-        result = validate_strategist_output(
-            output,
-            retrieval_store=_store_with_baseline_refs(),
-            active_sectors=_DEFAULT_ACTIVE_SECTORS,
-        )
-        assert not result.is_valid
-        link_failures = [
-            f for f in result.errors if f.rule == "linked_position_assessment_id_resolves"
-        ]
-        assert any("linked_position_assessment_id" in f.field_path for f in link_failures)
-
-    def test_remedy_flag_not_in_addressed_breaches(self) -> None:
-        assessment = _make_position_assessment(
-            recommended_action="reduce",
-            action_parameters=ReduceParameters(action="reduce", quantity=1.0, order_type="market"),
-            exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=signed_money(-1.0),
-                net_directional_impact=signed_money(-1.0),
-            ),
-            reduce_rationale="Trim.",
-            remedy_flag="BREACH-99",
-            remedy_rationale="Cures BREACH-99.",
-        )
-        plo = _plo_with_breaches()  # no addressed breaches
-        output = _make_output(
-            position_assessments=(assessment,),
-            portfolio_level_observations=plo,
-        )
-        result = validate_strategist_output(
-            output,
-            retrieval_store=_store_with_baseline_refs(),
-            active_sectors=_DEFAULT_ACTIVE_SECTORS,
-        )
-        assert not result.is_valid
-        remedy_failures = [f for f in result.errors if f.rule == "remedy_flag_pairing"]
-        assert any("remedy_flag" in f.field_path for f in remedy_failures)
-
-    def test_unresolvable_qr_99_reference(self) -> None:
-        assessment = _make_position_assessment(
-            status_rationale="Cited [QR-99] which is missing.",
-        )
-        output = _make_output(position_assessments=(assessment,))
-        result = validate_strategist_output(
-            output,
-            retrieval_store=_retrieval_store(),
-            active_sectors=_DEFAULT_ACTIVE_SECTORS,
-        )
-        assert not result.is_valid
-        unknown_failures = [f for f in result.errors if f.rule == "unknown_reference"]
-        assert any(
-            "QR-99" in f.message and "status_rationale" in f.field_path for f in unknown_failures
-        )
-
-    def test_sector_outside_active_sectors(self) -> None:
-        assessment = _make_position_assessment(sector="energy")
-        output = _make_output(position_assessments=(assessment,))
-        result = validate_strategist_output(
-            output,
-            retrieval_store=_store_with_baseline_refs(),
-            active_sectors=frozenset({"semis", "financials"}),
-        )
-        assert not result.is_valid
-        sector_failures = [f for f in result.errors if f.rule == "sector_not_active"]
-        assert any("sector" in f.field_path for f in sector_failures)
 
 
 class TestAggregation:

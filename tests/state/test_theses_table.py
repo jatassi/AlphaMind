@@ -197,22 +197,8 @@ def _cancelled_thesis() -> ThesisRecord:
 
 
 class TestThesesTable:
-    def test_table_has_expected_columns(self, engine: Engine) -> None:
+    def test_table_primary_key(self, engine: Engine) -> None:
         insp = inspect(engine)
-        cols = {c["name"]: c for c in insp.get_columns("theses")}
-        expected = {
-            "thesis_id",
-            "position_id",
-            "status",
-            "resolution_timestamp",
-            "resolution_category",
-            "summary",
-            "time_expectation_hours",
-            "position_size_rationale",
-            "generation_timestamp",
-            "narrative_json",
-        }
-        assert set(cols) == expected
         pk = insp.get_pk_constraint("theses")
         assert pk["constrained_columns"] == ["thesis_id"]
 
@@ -294,22 +280,8 @@ class TestThesesTable:
 
 
 class TestThesisComponentsTable:
-    def test_table_has_expected_columns(self, engine: Engine) -> None:
+    def test_table_primary_key(self, engine: Engine) -> None:
         insp = inspect(engine)
-        cols = {c["name"]: c for c in insp.get_columns("thesis_components")}
-        expected = {
-            "component_id",
-            "thesis_id",
-            "component_type",
-            "linked_bracket_leg",
-            "instrument_reference",
-            "narrative",
-            "key_assumptions_json",
-            "supporting_signals_json",
-            "resolution_outcome",
-            "resolution_notes",
-        }
-        assert set(cols) == expected
         pk = insp.get_pk_constraint("thesis_components")
         assert pk["constrained_columns"] == ["component_id"]
 

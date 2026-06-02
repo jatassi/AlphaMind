@@ -9,11 +9,8 @@ carry ``audience = UNIVERSAL_BROADCAST`` per the story scope.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 from datetime import UTC, datetime
 
-import pytest
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind.distillation.calibration import CalibrationState
@@ -40,31 +37,8 @@ from alphamind.distillation.q6_macro import (
     refresh_market_liquidity_composite,
 )
 from alphamind.persistence.models import (
-    Base,
     DistillationCompositeState,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
-
-# ---------------------------------------------------------------------------
-# Shared in-memory engine / session fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    """Per-test in-memory SQLite engine with the full distillation schema."""
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    factory = make_session_factory(engine)
-    with factory() as sess:
-        yield sess
-
 
 AS_OF = "2026-04-25T14:30:00Z"
 FRESHNESS_TS = datetime(2026, 4, 25, 14, 30, tzinfo=UTC)

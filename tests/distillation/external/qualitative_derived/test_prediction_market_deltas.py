@@ -8,10 +8,7 @@ exact-boundary delta-threshold gating, low-liquidity tagging, trailing
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-
 import pytest
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind.distillation.calibration import CalibrationState
@@ -20,31 +17,14 @@ from alphamind.distillation.qualitative_derived import (
     compute_prediction_market_deltas,
 )
 from alphamind.persistence.models import (
-    Base,
     DistillationContractHistory,
     PredictionMarketContracts,
     PredictionMarketSnapshots,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
 
 DELTA_PP_THRESHOLD = 5.0
 LOW_LIQUIDITY_VOLUME_MIN_USD = 10_000.0
 HISTORY_DAYS = 30
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    factory = make_session_factory(engine)
-    with factory() as sess:
-        yield sess
 
 
 def _add_contract(

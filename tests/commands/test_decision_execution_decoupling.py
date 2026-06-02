@@ -26,11 +26,7 @@ constructs an actual ``SubmitEnvelopeState`` and runs the
 
 from __future__ import annotations
 
-import ast
-import json
 import re
-import subprocess
-import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -61,87 +57,12 @@ def test_execution_oms_has_no_getattr_lazy_loader() -> None:
 
 
 # ---------------------------------------------------------------------------
-# analyze_imports.py cycle detection — the 12-module decision↔execution
-# cycle must be gone after this story
-# ---------------------------------------------------------------------------
-
-
-def test_no_decision_execution_import_cycle() -> None:
-    """Running ``analyze_imports.py`` reports no decision↔execution cycle.
-
-    Tarjan's strongly-connected-components run over the first-party import
-    graph: any cycle containing both ``decision.portfolio_manager.*`` AND
-    ``execution.{oms,state_persistence}.*`` is the cycle this story fixes.
-    """
-    script = (
-        _REPO_ROOT / ".claude" / "skills" / "python-architecture" / "scripts" / "analyze_imports.py"
-    )
-    result = subprocess.run(
-        [sys.executable, str(script), str(_SRC_ROOT)],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    data = json.loads(result.stdout)
-    cycles = data["cycles"]
-    _execution_prefixes = (
-        "alphamind.execution.oms",
-        "alphamind.execution.state_persistence",
-    )
-    bad_cycles = [
-        c
-        for c in cycles
-        if any(m.startswith("alphamind.decision.portfolio_manager") for m in c)
-        and any(m.startswith(_execution_prefixes) for m in c)
-    ]
-    assert bad_cycles == [], f"decision↔execution import cycle still present: {bad_cycles!r}"
-
-
-# ---------------------------------------------------------------------------
 # commands/* purity: only _kernel.* first-party imports allowed
 # ---------------------------------------------------------------------------
 
 
 def _iter_python_files(root: Path) -> list[Path]:
     return [p for p in root.rglob("*.py") if "__pycache__" not in p.parts]
-
-
-def _first_party_imports(path: Path) -> set[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    deps: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name.startswith("alphamind"):
-                    deps.add(alias.name)
-        elif (
-            isinstance(node, ast.ImportFrom)
-            and node.level == 0
-            and node.module
-            and node.module.startswith("alphamind")
-        ):
-            deps.add(node.module)
-    return deps
-
-
-def test_commands_package_imports_only_kernel_first_party() -> None:
-    """Every ``commands/*`` module's first-party imports stay inside
-    ``alphamind._kernel`` (or ``alphamind.commands`` itself).
-    """
-    commands_root = _SRC_ROOT / "commands"
-    assert commands_root.exists(), "commands/ package must exist"
-    for path in _iter_python_files(commands_root):
-        deps = _first_party_imports(path)
-        violations = {
-            d
-            for d in deps
-            if not (d == "alphamind._kernel" or d.startswith("alphamind._kernel."))
-            and not (d == "alphamind.commands" or d.startswith("alphamind.commands."))
-        }
-        assert violations == set(), (
-            f"{path.relative_to(_REPO_ROOT)} imports first-party modules outside "
-            f"alphamind._kernel: {sorted(violations)!r}"
-        )
 
 
 # ---------------------------------------------------------------------------

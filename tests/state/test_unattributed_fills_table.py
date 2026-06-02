@@ -29,22 +29,6 @@ from alphamind.state.tables.unattributed_fills_codec import record_to_row, row_t
 FIRST_SEEN = datetime(2026, 6, 1, 14, 30, 5, tzinfo=UTC)
 FILL_AT = datetime(2026, 6, 1, 14, 30, 4, tzinfo=UTC)
 
-_EXPECTED_COLS = {
-    "broker_fill_key",
-    "alpaca_order_id",
-    "client_order_id",
-    "event_type",
-    "fill_timestamp",
-    "fill_price",
-    "fill_quantity",
-    "raw_report_json",
-    "first_seen_at",
-    "last_retry_at",
-    "retry_count",
-    "alerted",
-    "escalated",
-}
-
 
 def _unattributed_fill(
     *,
@@ -133,10 +117,6 @@ class TestUnattributedFillRoundTrip:
 
 
 class TestUnattributedFillsTableShape:
-    def test_table_has_expected_columns(self, engine: Engine) -> None:
-        insp = inspect(engine)
-        assert {c["name"] for c in insp.get_columns("unattributed_fills")} == _EXPECTED_COLS
-
     def test_alpaca_order_id_index_present(self, engine: Engine) -> None:
         insp = inspect(engine)
         names = {idx["name"] for idx in insp.get_indexes("unattributed_fills")}

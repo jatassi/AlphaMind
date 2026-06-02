@@ -36,10 +36,6 @@ class TestDirectionEnum:
     def test_members(self) -> None:
         assert set(Direction) == {Direction.LONG, Direction.SHORT}
 
-    def test_string_values(self) -> None:
-        assert Direction.LONG == "LONG"
-        assert Direction.SHORT == "SHORT"
-
 
 class TestInstrumentTypeEnum:
     def test_members(self) -> None:
@@ -49,19 +45,10 @@ class TestInstrumentTypeEnum:
             InstrumentType.STRATEGY,
         }
 
-    def test_string_values(self) -> None:
-        assert InstrumentType.EQUITY == "EQUITY"
-        assert InstrumentType.OPTIONS == "OPTIONS"
-        assert InstrumentType.STRATEGY == "STRATEGY"
-
 
 class TestOptionContractTypeEnum:
     def test_members(self) -> None:
         assert set(OptionContractType) == {OptionContractType.CALL, OptionContractType.PUT}
-
-    def test_string_values(self) -> None:
-        assert OptionContractType.CALL == "CALL"
-        assert OptionContractType.PUT == "PUT"
 
 
 class TestPositionStatusEnum:
@@ -73,20 +60,10 @@ class TestPositionStatusEnum:
             PositionStatus.CANCELLED,
         }
 
-    def test_string_values(self) -> None:
-        assert PositionStatus.PENDING == "PENDING"
-        assert PositionStatus.OPEN == "OPEN"
-        assert PositionStatus.CLOSED == "CLOSED"
-        assert PositionStatus.CANCELLED == "CANCELLED"
-
 
 class TestLocateStatusEnum:
     def test_members(self) -> None:
         assert set(LocateStatus) == {LocateStatus.LOCATED, LocateStatus.AT_RISK_OF_RECALL}
-
-    def test_string_values(self) -> None:
-        assert LocateStatus.LOCATED == "LOCATED"
-        assert LocateStatus.AT_RISK_OF_RECALL == "AT_RISK_OF_RECALL"
 
 
 class TestOptionGreeks:
@@ -96,15 +73,6 @@ class TestOptionGreeks:
         assert g.gamma == 0.1
         assert g.theta == -0.02
         assert g.vega == 0.3
-
-    def test_frozen(self) -> None:
-        g = OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3)
-        with pytest.raises(FrozenInstanceError):
-            g.delta = 0.9  # type: ignore[misc]
-
-    def test_required_fields_enforced(self) -> None:
-        with pytest.raises((ValueError, TypeError)):
-            OptionGreeks(delta=0.5)  # type: ignore[call-arg]
 
     def test_freshness_defaults_all_none_or_false(self) -> None:
         """(a) All freshness fields default to None/False; legacy construction succeeds."""
@@ -175,13 +143,6 @@ class TestOptionGreeks:
         )
         assert g.refresh_failed is True
 
-    def test_frozen_after_freshness_field_set(self) -> None:
-        """(f) Frozen model — can't mutate as_of_timestamp after construction."""
-        ts = datetime.now(tz=UTC)
-        g = OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3, as_of_timestamp=ts)
-        with pytest.raises(FrozenInstanceError):
-            g.as_of_timestamp = datetime.now(tz=UTC)  # type: ignore[misc]
-
     def test_docstring_sign_convention_paragraphs(self) -> None:
         """Class docstring includes the four sign-convention paragraphs."""
         doc = OptionGreeks.__doc__ or ""
@@ -206,21 +167,6 @@ class TestPositionFill:
         )
         assert fill.fill_timestamp == ts
         assert fill.fill_price == 100.0
-
-    def test_frozen(self) -> None:
-        fill = PositionFill(
-            fill_timestamp=self._now_utc(),
-            fill_price=price(100.0),
-            fill_quantity=10.0,
-            slippage=signed_money(0.01),
-            fees=money(1.50),
-        )
-        with pytest.raises(FrozenInstanceError):
-            fill.fill_price = price(200.0)  # type: ignore[misc]
-
-    def test_required_fields_enforced(self) -> None:
-        with pytest.raises((ValueError, TypeError)):
-            PositionFill(fill_price=price(100.0))  # type: ignore[call-arg]
 
     def test_live_execution_estimate_defaults_to_none(self) -> None:
         """(a) live_execution_estimate defaults to None (live-mode case)."""
@@ -289,19 +235,6 @@ class TestEquityPositionDetails:
         assert d.borrow_rate_pct == 0.5
         assert d.locate_status == LocateStatus.LOCATED
 
-    def test_frozen(self) -> None:
-        d = EquityPositionDetails(
-            ticker=Symbol("AAPL"),
-            share_count=100.0,
-            average_cost_basis_per_share=150.0,
-        )
-        with pytest.raises(FrozenInstanceError):
-            d.ticker = Symbol("MSFT")  # type: ignore[misc]
-
-    def test_required_fields_enforced(self) -> None:
-        with pytest.raises((ValueError, TypeError)):
-            EquityPositionDetails(ticker=Symbol("AAPL"))  # type: ignore[call-arg]
-
 
 _GREEKS = OptionGreeks(delta=0.5, gamma=0.05, theta=-0.01, vega=0.2)
 _EXP = date(2025, 6, 20)
@@ -329,15 +262,6 @@ class TestOptionsPositionDetails:
         assert d.contract_type == OptionContractType.CALL
         assert d.greeks.delta == 0.5
 
-    def test_frozen(self) -> None:
-        d = _make_options_details()
-        with pytest.raises(FrozenInstanceError):
-            d.underlying_ticker = Symbol("MSFT")  # type: ignore[misc]
-
-    def test_required_fields_enforced(self) -> None:
-        with pytest.raises((ValueError, TypeError)):
-            OptionsPositionDetails(underlying_ticker=Symbol("AAPL"))  # type: ignore[call-arg]
-
 
 def _make_strategy_leg(**overrides: object) -> StrategyLeg:
     kwargs: dict[str, Any] = {
@@ -354,11 +278,6 @@ class TestStrategyLeg:
         assert leg.leg_id == "leg-1"
         assert leg.options.underlying_ticker == "AAPL"
 
-    def test_frozen(self) -> None:
-        leg = _make_strategy_leg()
-        with pytest.raises(FrozenInstanceError):
-            leg.leg_id = "leg-2"  # type: ignore[misc]
-
 
 class TestStrategyPositionDetails:
     def test_valid_construction(self) -> None:
@@ -374,20 +293,6 @@ class TestStrategyPositionDetails:
         )
         assert d.strategy_type_label == "bull_call_spread"
         assert len(d.legs) == 1
-
-    def test_frozen(self) -> None:
-        leg = _make_strategy_leg()
-        d = StrategyPositionDetails(
-            strategy_type_label="bull_call_spread",
-            legs=(leg,),
-            net_premium_usd=-500.0,
-            max_profit_usd=1000.0,
-            max_loss_usd=500.0,
-            breakeven_levels=(205.0,),
-            strategy_greeks=_GREEKS,
-        )
-        with pytest.raises(FrozenInstanceError):
-            d.strategy_type_label = "other"  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -480,22 +385,6 @@ class TestPositionRecordDiscriminator:
         )
         p = _make_position(details=strat, direction=None)
         assert isinstance(p.details, StrategyPositionDetails)
-
-    def test_construction_from_dict_no_longer_supported(self) -> None:
-        """Post-Pydantic dataclass: dict-payload discriminator parsing now lives in
-        the codec layer (``state/tables/positions_codec.py``); callers construct
-        each variant via its concrete dataclass directly. Documenting the
-        boundary so this regression is intentional, not silent."""
-        # The dataclass accepts the dict but it stays a dict (no auto-conversion).
-        p = _make_position(
-            details={
-                "instrument_type": "EQUITY",
-                "ticker": "AAPL",
-                "share_count": 100.0,
-                "average_cost_basis_per_share": 150.0,
-            }
-        )
-        assert not isinstance(p.details, EquityPositionDetails)
 
     def test_concrete_instance_passes_through(self) -> None:
         """The dataclass stores the variant the caller hands it without conversion."""
@@ -940,12 +829,6 @@ class TestLiveExecutionEstimate:
         """(c) nan in live_adjusted_fill_price raises ValidationError."""
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             _make_live_estimate(live_adjusted_fill_price=price(float("nan")))
-
-    def test_frozen(self) -> None:
-        """(d) Model is frozen — mutation raises FrozenInstanceError."""
-        est = _make_live_estimate()
-        with pytest.raises(FrozenInstanceError):
-            est.estimated_spread_usd = money(1.0)  # type: ignore[misc]
 
     def test_zero_cost_fields_accepted(self) -> None:
         """Cost fields accept exactly zero (ge=0.0 boundary)."""

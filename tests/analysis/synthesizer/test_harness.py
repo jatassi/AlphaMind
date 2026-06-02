@@ -4,17 +4,22 @@ Tests are behaviour-driven through the public interface only:
 ``invoke_synthesizer`` and the exception hierarchy.  The SDK is stubbed via the
 ``sdk_query_fn`` dependency-injection parameter — no test calls the real
 Anthropic API.
+
+Cross-harness machinery (timeout/SDK-failure translation, DiagState write
+contract, prompt-cache behaviour) is pinned canonically in
+``tests/analysis/test_harness_core.py``. Only synthesizer-specific behaviour
+lives here: the EmptyResponseFailure path, the no-retry-on-overflow contract,
+truncated-prose acceptance, portfolio-tools wiring, and the bounded
+empty-response retry loop with progress signalling.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
@@ -25,7 +30,6 @@ from alphamind.analysis.synthesizer.harness import (
     HarnessFailure,
     HarnessSuccess,
     SDKFailure,
-    TimeoutFailure,
     invoke_synthesizer,
 )
 from alphamind.config.models.agents import AllowedModel, BaseAgentConfig
@@ -339,42 +343,7 @@ async def test_auth_failure_raises_sdk_failure(
 
 
 # ---------------------------------------------------------------------------
-# 6. Timeout exceeded → TimeoutFailure
-# ---------------------------------------------------------------------------
-
-
-async def test_timeout_raises_timeout_failure(
-    archive_root: Path,
-    portfolio_reader: _StubPortfolioReader,
-) -> None:
-    """A slow SDK stub causes the harness to raise TimeoutFailure."""
-    tight_config = BaseAgentConfig(
-        model=AllowedModel.sonnet_4_6,
-        prompt="prompts/analysis/synthesizer.md",
-        latency_budget_seconds=1,
-        context_token_budget=12_000,
-        output_token_budget=2_000,
-        tools=[],
-    )
-
-    async def _slow_stub(**kwargs: Any) -> AsyncIterator[Any]:
-        await asyncio.sleep(5)
-        yield  # never reached
-
-    with pytest.raises(TimeoutFailure):
-        await invoke_synthesizer(
-            agent_config=tight_config,
-            user_message="Synthesize.",
-            invocation_id="inv-timeout-001",
-            portfolio_reader=portfolio_reader,
-            archive_root=archive_root,
-            as_of=_AS_OF,
-            sdk_query_fn=_slow_stub,
-        )
-
-
-# ---------------------------------------------------------------------------
-# 7. Portfolio-state MCP tools wired into ClaudeAgentOptions
+# 6. Portfolio-state MCP tools wired into ClaudeAgentOptions
 # ---------------------------------------------------------------------------
 
 
@@ -415,158 +384,7 @@ async def test_portfolio_tools_wired_into_options(
 
 
 # ---------------------------------------------------------------------------
-# 8. Diagnostic archive written on success
-# ---------------------------------------------------------------------------
-
-
-async def test_diagnostic_archive_written_on_success(
-    agent_config: BaseAgentConfig,
-    archive_root: Path,
-    portfolio_reader: _StubPortfolioReader,
-) -> None:
-    """Successful invocation writes prompt.md, user_message.md, response.md,
-    errors.json, and metadata.json under the standard archive path."""
-    stub = _make_stub_query([_make_sdk_response(_SYNTHESIS_TEXT)])
-
-    await invoke_synthesizer(
-        agent_config=agent_config,
-        user_message="Synthesize the briefs.",
-        invocation_id="inv-archive-success",
-        portfolio_reader=portfolio_reader,
-        archive_root=archive_root,
-        as_of=_AS_OF,
-        sdk_query_fn=stub,
-    )
-
-    diag_dir = archive_root / "2026-05-01" / "inv-archive-success" / "analysis" / "synthesizer"
-    assert (diag_dir / "prompt.md").exists()
-    assert (diag_dir / "user_message.md").exists()
-    assert (diag_dir / "response.md").exists()
-    assert (diag_dir / "errors.json").exists()
-    assert (diag_dir / "metadata.json").exists()
-    assert (diag_dir / "response.md").read_text(encoding="utf-8") == _SYNTHESIS_TEXT
-
-
-# ---------------------------------------------------------------------------
-# 9. Diagnostic archive written on failure
-# ---------------------------------------------------------------------------
-
-
-async def test_diagnostic_archive_written_on_failure(
-    agent_config: BaseAgentConfig,
-    archive_root: Path,
-    portfolio_reader: _StubPortfolioReader,
-) -> None:
-    """A failing invocation still writes the diagnostic archive."""
-    stub = _make_stub_query([_make_sdk_response("", stop_reason="end_turn")])
-
-    with pytest.raises(EmptyResponseFailure):
-        await invoke_synthesizer(
-            agent_config=agent_config,
-            user_message="Synthesize.",
-            invocation_id="inv-archive-failure",
-            portfolio_reader=portfolio_reader,
-            archive_root=archive_root,
-            as_of=_AS_OF,
-            sdk_query_fn=stub,
-        )
-
-    diag_dir = archive_root / "2026-05-01" / "inv-archive-failure" / "analysis" / "synthesizer"
-    assert (diag_dir / "prompt.md").exists()
-    assert (diag_dir / "user_message.md").exists()
-    assert (diag_dir / "response.md").exists()
-    assert (diag_dir / "errors.json").exists()
-    assert (diag_dir / "metadata.json").exists()
-    meta = json.loads((diag_dir / "metadata.json").read_text(encoding="utf-8"))
-    assert meta["success"] is False
-
-
-# ---------------------------------------------------------------------------
-# 10. metadata.json includes tool_calls_used, tokens_used, stop_reason,
-#     wall_clock_seconds
-# ---------------------------------------------------------------------------
-
-
-async def test_metadata_json_carries_required_fields(
-    agent_config: BaseAgentConfig,
-    archive_root: Path,
-    portfolio_reader: _StubPortfolioReader,
-) -> None:
-    """metadata.json contains tool_calls_used, tokens_used, stop_reason,
-    wall_clock_seconds — the documented diagnostic-record contract."""
-    stub = _make_stub_query([_make_sdk_response(_SYNTHESIS_TEXT, tool_use_blocks=2)])
-
-    await invoke_synthesizer(
-        agent_config=agent_config,
-        user_message="Synthesize.",
-        invocation_id="inv-meta-001",
-        portfolio_reader=portfolio_reader,
-        archive_root=archive_root,
-        as_of=_AS_OF,
-        sdk_query_fn=stub,
-    )
-
-    meta_path = archive_root / "2026-05-01" / "inv-meta-001" / "analysis" / "synthesizer"
-    meta = json.loads((meta_path / "metadata.json").read_text(encoding="utf-8"))
-    assert meta["tool_calls_used"] == 2
-    assert "tokens_used" in meta
-    assert isinstance(meta["tokens_used"], dict)
-    assert meta["stop_reason"] == "end_turn"
-    assert isinstance(meta["wall_clock_seconds"], (int, float))
-    assert meta["wall_clock_seconds"] >= 0.0
-
-
-# ---------------------------------------------------------------------------
-# 11. System prompt cached per process
-# ---------------------------------------------------------------------------
-
-
-async def test_system_prompt_cached_per_process(
-    agent_config: BaseAgentConfig,
-    archive_root: Path,
-    portfolio_reader: _StubPortfolioReader,
-) -> None:
-    """The synthesizer prompt file is read once per process; subsequent
-    invocations hit the cache."""
-    from alphamind.analysis.synthesizer import harness as harness_mod
-
-    harness_mod._PROMPT_CACHE.clear()
-    read_calls: list[str] = []
-    original_read_text = Path.read_text
-
-    def _counting_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
-        if "synthesizer.md" in str(self):
-            read_calls.append(str(self))
-        return original_read_text(self, *args, **kwargs)
-
-    with patch.object(Path, "read_text", _counting_read_text):
-        await invoke_synthesizer(
-            agent_config=agent_config,
-            user_message="call 1",
-            invocation_id="inv-cache-001",
-            portfolio_reader=portfolio_reader,
-            archive_root=archive_root,
-            as_of=_AS_OF,
-            sdk_query_fn=_make_stub_query([_make_sdk_response(_SYNTHESIS_TEXT)]),
-        )
-        await invoke_synthesizer(
-            agent_config=agent_config,
-            user_message="call 2",
-            invocation_id="inv-cache-002",
-            portfolio_reader=portfolio_reader,
-            archive_root=archive_root,
-            as_of=_AS_OF,
-            sdk_query_fn=_make_stub_query([_make_sdk_response(_SYNTHESIS_TEXT)]),
-        )
-
-    prompt_reads = [p for p in read_calls if "synthesizer.md" in p]
-    assert len(prompt_reads) == 1, (
-        f"Expected 1 prompt read, got {len(prompt_reads)}: {prompt_reads}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# 12. Empty end_turn is retried; exhausting the budget raises EmptyResponseFailure
+# 7. Empty end_turn is retried; exhausting the budget raises EmptyResponseFailure
 # ---------------------------------------------------------------------------
 
 
@@ -604,7 +422,7 @@ async def test_empty_end_turn_exhausts_retries_then_raises(
 
 
 # ---------------------------------------------------------------------------
-# 12b. Empty end_turn then valid prose: retries, succeeds, signals observably
+# 7b. Empty end_turn then valid prose: retries, succeeds, signals observably
 # ---------------------------------------------------------------------------
 
 
@@ -679,29 +497,3 @@ async def test_empty_then_valid_retries_and_succeeds(
     # The retry count reaches the persisted metadata, not just errors.json.
     assert meta["retry_count"] == 1
     assert (diag_dir / "response.md").read_text(encoding="utf-8") == _SYNTHESIS_TEXT
-
-
-# ---------------------------------------------------------------------------
-# 13. Real SDK is never invoked when sdk_query_fn is supplied
-# ---------------------------------------------------------------------------
-
-
-async def test_real_sdk_never_called_when_stub_supplied(
-    agent_config: BaseAgentConfig,
-    archive_root: Path,
-    portfolio_reader: _StubPortfolioReader,
-) -> None:
-    """When sdk_query_fn is supplied, the real claude_agent_sdk.query is never called."""
-    stub = _make_stub_query([_make_sdk_response(_SYNTHESIS_TEXT)])
-
-    with patch("claude_agent_sdk.query") as mock_real:
-        await invoke_synthesizer(
-            agent_config=agent_config,
-            user_message="Synthesize.",
-            invocation_id="inv-stub-001",
-            portfolio_reader=portfolio_reader,
-            archive_root=archive_root,
-            as_of=_AS_OF,
-            sdk_query_fn=stub,
-        )
-        mock_real.assert_not_called()

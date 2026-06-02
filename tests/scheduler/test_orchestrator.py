@@ -19,13 +19,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import Engine, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import (
@@ -36,10 +36,6 @@ from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.modes import Mode
 from alphamind.config.models.run_types import RunType
 from alphamind.config.models.venue import (
-    Alpaca,
-    AlpacaCredentials,
-    SessionHours,
-    SessionWindow,
     VenueConfig,
 )
 
@@ -55,80 +51,18 @@ from alphamind.persistence.session import (
     make_session_factory,
 )
 from alphamind.state.invocation_context.records import (
-    ProcessLifetimeRecord,
     process_lifetime_record_to_row,
 )
 from alphamind.state.tables.invocations import InvocationRow
 from tests.scheduler._regime_helpers import make_regime_output
-
-_NOW = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
-REPO_ROOT = Path(__file__).parent.parent.parent
-SHIPPED_CONFIG_DIR = REPO_ROOT / "config"
-_VENUE_ENV_KEYS: tuple[str, ...] = (
-    "ALPACA_PAPER_KEY",
-    "ALPACA_PAPER_SECRET",
-    "ALPACA_LIVE_KEY",
-    "ALPACA_LIVE_SECRET",
+from tests.scheduler.conftest import (
+    _MAKE_CONTEXT_ENGINES,
+    SHIPPED_CONFIG_DIR,
+    _make_process_lifetime_record,
+    _make_venue_config,
 )
 
-
-def _write_placeholder_env(env_path: Path) -> None:
-    env_path.write_text("\n".join(f"{key}=placeholder" for key in _VENUE_ENV_KEYS) + "\n")
-
-
-@pytest.fixture
-def env_path(tmp_path: Path) -> Path:
-    path = tmp_path / ".env"
-    _write_placeholder_env(path)
-    return path
-
-
-@pytest.fixture
-def archive_root(tmp_path: Path) -> Path:
-    return tmp_path / "archive"
-
-
-def _make_process_lifetime_record() -> ProcessLifetimeRecord:
-    return ProcessLifetimeRecord(
-        process_lifetime_id="proc-orch-1",
-        process_role="pipeline",
-        process_start_at="2026-05-07T14:30:00Z",
-        process_pid=12345,
-        hostname="alpha-prod-01",
-        git_sha="a" * 40,
-        git_branch="main",
-        git_dirty=False,
-        python_version="3.13.1",
-        pip_freeze_hash="0" * 64,
-        pip_freeze_snapshot_path="/tmp/provenance/process_lifetimes/proc-orch-1/pip_freeze.txt",
-        anthropic_sdk_version="0.40.0",
-        claude_agent_sdk_version="0.1.69",
-        os_release="Linux-6.5.0-generic-x86_64",
-    )
-
-
-@pytest.fixture
-async def async_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    """Yield an async session factory bound to an initialized SQLite DB."""
-    db_path = tmp_path / "alphamind.db"
-
-    import alphamind.state.tables  # noqa: F401
-
-    sync_engine = make_engine(str(db_path))
-    try:
-        Base.metadata.create_all(sync_engine)
-        with make_session_factory(sync_engine)() as sess:
-            sess.add(process_lifetime_record_to_row(_make_process_lifetime_record()))
-            sess.commit()
-    finally:
-        sync_engine.dispose()
-
-    async_engine: AsyncEngine = make_async_engine(str(db_path))
-    factory = make_async_session_factory(async_engine)
-    try:
-        yield factory
-    finally:
-        await async_engine.dispose()
+_NOW = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -173,40 +107,11 @@ async def async_factory_with_singletons(
         await async_engine.dispose()
 
 
-@pytest.fixture
-def db_path(tmp_path: Path) -> Path:
-    """Return the sqlite file path the ``async_factory_*`` fixtures use."""
-    return tmp_path / "alphamind.db"
-
-
-def _make_venue_config() -> VenueConfig:
-    creds = AlpacaCredentials(
-        rest_url="https://paper-api.alpaca.markets",
-        ws_url="wss://paper-api.alpaca.markets",
-        api_key_env="ALPACA_PAPER_KEY",
-        api_secret_env="ALPACA_PAPER_SECRET",
-    )
-    return VenueConfig(
-        alpaca=Alpaca(paper=creds, live=creds, rate_limit_per_minute=200),
-        session_hours=SessionHours(
-            regular=SessionWindow(open="09:30", close="16:00"),
-            pre_market=SessionWindow(open="04:00", close="09:30"),
-            after_hours=SessionWindow(open="16:00", close="20:00"),
-        ),
-    )
-
-
 # Sync engines built inside ``_make_context`` register here; the autouse
 # ``_dispose_make_context_engines`` fixture disposes them after every test so
 # Windows SQLite file handles release before pytest's tmp_path teardown runs.
-_MAKE_CONTEXT_ENGINES: list[Engine] = []
-
-
-@pytest.fixture(autouse=True)
-def _dispose_make_context_engines() -> Iterator[None]:
-    yield
-    while _MAKE_CONTEXT_ENGINES:
-        _MAKE_CONTEXT_ENGINES.pop().dispose()
+# (List + fixture hoisted to conftest; name imported below for appends in
+# this file's _make_context.)
 
 
 def _make_context(
@@ -238,7 +143,7 @@ def _make_context(
     return RunInvocationContext(
         session_factory=session_factory,
         sync_session_factory=sync_session_factory,
-        process_lifetime_id="proc-orch-1",
+        process_lifetime_id="proc-driver-1",
         archive_root=archive_root,
         config_dir=SHIPPED_CONFIG_DIR,
         env_path=env_path,
@@ -1450,7 +1355,7 @@ def _make_invocation_row(
     iso = start_at.strftime("%Y-%m-%dT%H:%M:%SZ")
     return InvocationRow(
         invocation_id=invocation_id,
-        process_lifetime_id="proc-orch-1",
+        process_lifetime_id="proc-driver-1",
         start_at=iso,
         phase1_completed_at=iso,
         phase2_completed_at=iso if phase2_completed else None,

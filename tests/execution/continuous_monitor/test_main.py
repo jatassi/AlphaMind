@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 import pytest
@@ -70,10 +71,53 @@ def _silent_logger() -> Iterator[None]:
     logger.setLevel(saved_level)
 
 
-def test_main_run_paper_starts_supervisor_and_returns_cleanly(
+# ---------------------------------------------------------------------------
+# Shared boot fixture — runs monitor_main once and captures supervisor + log
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def _paper_boot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     _silent_logger: None,
+) -> dict[str, Any]:
+    """Run ``monitor_main(['run', '--mode', 'paper'])`` with a patched supervisor
+    and return a dict with the captured supervisor and log path.
+
+    Keys:
+    * ``"supervisor"``  — the ``MonitorSupervisor`` instance passed to ``.run``
+    * ``"log_path"``    — Path to the written ``monitor.log`` file
+    * ``"tmp_path"``    — the ``tmp_path`` fixture value
+    """
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("ALPACA_PAPER_KEY", "test-key")
+    monkeypatch.setenv("ALPACA_PAPER_SECRET", "test-secret")
+    _ensure_db_schema(tmp_path)
+
+    captured: dict[str, Any] = {"tmp_path": tmp_path}
+
+    async def _no_op_run(self: object) -> None:
+        captured["supervisor"] = self
+
+    with mock.patch(
+        "alphamind.execution.continuous_monitor.__main__.MonitorSupervisor.run",
+        _no_op_run,
+    ):
+        monitor_main(["run", "--mode", "paper"])
+
+    captured["log_path"] = tmp_path / "AlphaMind" / "logs" / "monitor.log"
+    return captured
+
+
+# ---------------------------------------------------------------------------
+# Cheap distinct assertions that share _paper_boot
+# ---------------------------------------------------------------------------
+
+
+def test_main_run_paper_starts_supervisor_and_returns_cleanly(
+    _paper_boot: dict[str, Any],
 ) -> None:
     """``run --mode paper`` constructs the supervisor and runs it to completion.
 
@@ -82,25 +126,8 @@ def test_main_run_paper_starts_supervisor_and_returns_cleanly(
     with a paper-mode session and that the session-start line was emitted to
     the configured ``monitor.log``.
     """
-    monkeypatch.setenv("USERPROFILE", str(tmp_path))
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("ALPACA_PAPER_KEY", "test-key")
-    monkeypatch.setenv("ALPACA_PAPER_SECRET", "test-secret")
-    _ensure_db_schema(tmp_path)
-
-    constructed: dict[str, object] = {}
-
-    real_supervisor_cls = "alphamind.execution.continuous_monitor.__main__.MonitorSupervisor"
-
-    async def _no_op_run(self: object) -> None:
-        constructed["supervisor"] = self
-
-    with mock.patch(f"{real_supervisor_cls}.run", _no_op_run):
-        monitor_main(["run", "--mode", "paper"])
-
-    assert "supervisor" in constructed, "MonitorSupervisor.run was not called"
-
-    log_path = tmp_path / "AlphaMind" / "logs" / "monitor.log"
+    assert "supervisor" in _paper_boot, "MonitorSupervisor.run was not called"
+    log_path = _paper_boot["log_path"]
     assert log_path.exists(), "monitor.log was not created by configure_monitor_logging"
     log_contents = log_path.read_text(encoding="utf-8")
     assert "monitor session start" in log_contents
@@ -108,11 +135,25 @@ def test_main_run_paper_starts_supervisor_and_returns_cleanly(
 
 
 def test_main_run_defaults_to_paper_mode(
+    _paper_boot: dict[str, Any],
+) -> None:
+    """Omitting ``--mode`` selects paper — verified via the shared boot fixture log."""
+    log_path = _paper_boot["log_path"]
+    assert "mode=paper" in log_path.read_text(encoding="utf-8")
+
+
+def test_main_run_no_mode_arg_defaults_to_paper(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     _silent_logger: None,
 ) -> None:
-    """Omitting ``--mode`` selects paper."""
+    """Argparse DEFAULT path: ``monitor_main(['run'])`` with no ``--mode`` selects paper.
+
+    The consolidated ``_paper_boot`` fixture always passes ``--mode paper``
+    explicitly, so it does not exercise the argparse default. This test calls
+    ``monitor_main(['run'])`` with no ``--mode`` argument and asserts the log
+    records ``mode=paper`` — proving the argparse default is wired to paper.
+    """
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("ALPACA_PAPER_KEY", "test-key")
@@ -132,21 +173,8 @@ def test_main_run_defaults_to_paper_mode(
     assert "mode=paper" in log_path.read_text(encoding="utf-8")
 
 
-def test_main_rejects_unknown_subcommand(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    _silent_logger: None,
-) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("USERPROFILE", raising=False)
-    with pytest.raises(SystemExit):
-        monitor_main(["bogus"])
-
-
 def test_main_registers_wave_2_and_3_tasks(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    _silent_logger: None,
+    _paper_boot: dict[str, Any],
 ) -> None:
     """Waves 2 + 3 + 4c — the daemon wires ``underlying_stream`` (02b),
     ``fill_stream_consumer`` (02c), ``greeks_refresh`` (03a),
@@ -155,26 +183,9 @@ def test_main_registers_wave_2_and_3_tasks(
     The patch on ``MonitorSupervisor.run`` captures ``self`` so we can read
     the registered task names without driving the asyncio loop.
     """
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("USERPROFILE", raising=False)
-    monkeypatch.setenv("ALPACA_PAPER_KEY", "test-key")
-    monkeypatch.setenv("ALPACA_PAPER_SECRET", "test-secret")
-    _ensure_db_schema(tmp_path)
-
-    captured: dict[str, object] = {}
-
-    async def _no_op_run(self: object) -> None:
-        captured["supervisor"] = self
-
-    with mock.patch(
-        "alphamind.execution.continuous_monitor.__main__.MonitorSupervisor.run",
-        _no_op_run,
-    ):
-        monitor_main(["run", "--mode", "paper"])
-
-    supervisor = captured.get("supervisor")
+    supervisor = _paper_boot.get("supervisor")
     assert supervisor is not None
-    task_names = supervisor.task_names()  # type: ignore[attr-defined]
+    task_names = supervisor.task_names()
     for expected in (
         "underlying_stream",
         "fill_stream_consumer",
@@ -185,6 +196,22 @@ def test_main_registers_wave_2_and_3_tasks(
         "borrow_accrual",
     ):
         assert expected in task_names, f"{expected} not registered; got {task_names!r}"
+
+
+# ---------------------------------------------------------------------------
+# Focused tests retained per ALP-798 PRESERVE list
+# ---------------------------------------------------------------------------
+
+
+def test_main_rejects_unknown_subcommand(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _silent_logger: None,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("USERPROFILE", raising=False)
+    with pytest.raises(SystemExit):
+        monitor_main(["bogus"])
 
 
 def test_main_shares_trigger_id_generator_across_breach_loop_and_bracket_stops(

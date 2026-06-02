@@ -23,25 +23,12 @@ Acceptance criteria (one test per criterion):
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import update
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from alphamind.config.models.distillation import (
-    AnomalyDetection,
-    DistillationConfig,
-    LeadLag,
-    LeadLagPair,
-    NarrativeLag,
-    PersistenceWindows,
-    PredictionMarket,
-    RegimeClassification,
-    RegimeTransition,
-)
 from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation._repository import TickerBaselineRow
 from alphamind.distillation.calibration import CalibrationState
@@ -58,36 +45,23 @@ from alphamind.distillation.q1.output_blocks import (
 )
 from alphamind.persistence.models import (
     AssetUniverse,
-    Base,
     DistillationTickerBaseline,
     OhlcvBars,
     SectorClassification,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
+
+from .conftest import _build_distillation_config as _build_shared_distillation_config
 
 # ---------------------------------------------------------------------------
-# Engine / session fixtures — mirrors the q12 / q1_gap pattern
+# Distillation config builder — Q1 calibration
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    factory = make_session_factory(engine)
-    with factory() as sess:
-        yield sess
-
-
-# ---------------------------------------------------------------------------
-# Distillation config builder — produces a complete config from defaults
-# ---------------------------------------------------------------------------
+#
+# Q1's anomaly tests are calibrated against ``volume_anomaly_sigma=2.5`` /
+# ``price_move_atr_multiple=1.5`` defaults (distinct from the shared
+# conftest builder's ``2.0`` / ``2.5``). This thin wrapper restores those
+# Q1-specific defaults while delegating the full config literal to the
+# shared builder, so call sites that override ``volume_anomaly_sigma`` keep
+# working unchanged.
 
 
 def _build_distillation_config(
@@ -97,91 +71,13 @@ def _build_distillation_config(
     volume_baseline_days: int = 20,
     atr_baseline_days: int = 14,
 ) -> DistillationDomainConfig:
-    """Return a fully-populated :class:`DistillationDomainConfig` for tests.
-
-    Builds the Pydantic ``DistillationConfig`` (the boundary type) and
-    projects it onto the frozen-dataclass mirror that distillation
-    consumers take.
-    """
-    return DistillationConfig(
-        anomaly_detection=AnomalyDetection(
-            volume_anomaly_sigma=volume_anomaly_sigma,
-            price_move_atr_multiple=price_move_atr_multiple,
-            options_low_oi_volume_multiple=5.0,
-            block_trade_min_shares=10_000,
-            block_trade_min_notional_usd=1_000_000,
-            dark_pool_one_sided_window_minutes=60,
-            earnings_revision_cluster_count=3,
-            earnings_revision_cluster_days=5,
-            macro_surprise_percentile=90,
-            funding_stress_component_alert_count=2,
-            funding_stress_component_percentile=80,
-            market_liquidity_alert_percentile=10,
-            news_price_divergence_window_hours=12,
-            news_price_divergence_min_articles=5,
-        ),
-        regime_classification=RegimeClassification(
-            regime_low_vol_vix_max=15.0,
-            regime_normal_vix_min=15.0,
-            regime_normal_vix_max=20.0,
-            regime_elevated_vix_min=20.0,
-            regime_elevated_vix_max=28.0,
-            regime_crisis_vix_min=28.0,
-            regime_term_structure_backwardation_threshold=0.0,
-            regime_vvix_high_percentile=80,
-            regime_vvix_low_percentile=20,
-        ),
-        regime_transition=RegimeTransition(
-            regime_transition_confirmed_invocations=3,
-            regime_transition_indicator_agreement_min=3,
-            regime_skip_emergency_trigger=True,
-        ),
-        lead_lag=LeadLag(
-            pairs=(
-                LeadLagPair(key="credit_to_equity", lead="HYG", lag="SPY"),
-                LeadLagPair(key="semis_to_tech", lead="SOXX", lag="QQQ"),
-                LeadLagPair(key="financials_to_market", lead="XLF", lag="SPY"),
-                LeadLagPair(key="commodity_to_energy_equity", lead="USO", lag="XLE"),
-            ),
-            lead_lag_funding_to_credit_max_days=4,
-            lead_lag_credit_to_equity_max_days=4,
-            lead_lag_semis_to_tech_max_days=3,
-            lead_lag_financials_to_market_max_days=4,
-            lead_lag_commodity_to_energy_equity_max_days=4,
-            lead_lag_overdue_lead_sigma=2.0,
-        ),
-        narrative_lag=NarrativeLag(
-            narrative_lag_correlation_shift_sigma=2.0,
-            correlation_breakdown_sigma=2.0,
-            correlation_min_overlap_fraction=0.9,
-            correlation_noise_floor=0.05,
-            correlation_breakdown_fdr_q=0.05,
-            correlation_locus_pair_count_threshold=3,
-            narrative_lag_media_silence_hours=24,
-        ),
-        persistence_windows=PersistenceWindows(
-            volume_baseline_days=volume_baseline_days,
-            atr_baseline_days=atr_baseline_days,
-            spread_baseline_days=20,
-            correlation_short_days=20,
-            correlation_long_days=60,
-            sentiment_baseline_days=30,
-            sentiment_min_observations=5,
-            gap_fill_baseline_days=60,
-            gap_fill_min_events=3,
-            extended_hours_confirmation_days=30,
-            extended_hours_min_events=3,
-            prediction_market_history_days=30,
-            funding_stress_baseline_days=60,
-            market_liquidity_baseline_days=60,
-        ),
-        prediction_market=PredictionMarket(
-            prediction_market_delta_pp_threshold=10.0,
-            prediction_market_low_liquidity_volume_min_usd=10_000,
-            tracked_default_min_volume_24h_usd=5_000,
-            tracked_categories={},
-        ),
-    ).to_domain()
+    """Return a Q1-calibrated :class:`DistillationDomainConfig` for tests."""
+    return _build_shared_distillation_config(
+        volume_anomaly_sigma=volume_anomaly_sigma,
+        price_move_atr_multiple=price_move_atr_multiple,
+        volume_baseline_days=volume_baseline_days,
+        atr_baseline_days=atr_baseline_days,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -412,68 +308,83 @@ def populated_session(session: Session) -> Session:
 # ---------------------------------------------------------------------------
 
 
-class TestReturnsOutputBlockInstances:
-    """The function returns a list of :class:`OutputBlock` instances."""
+def test_default_fan_out_shape(populated_session: Session) -> None:
+    """One combined assertion for all five structural facts of the default fan-out.
 
-    def test_default_scope_returns_list_of_output_blocks(self, populated_session: Session) -> None:
-        config = _build_distillation_config()
-        as_of = datetime(2026, 4, 25, tzinfo=UTC)
-        blocks = assemble_q1_blocks(populated_session, config=config, as_of=as_of)
-        assert isinstance(blocks, list)
-        assert len(blocks) > 0
-        for block in blocks:
-            assert isinstance(block, OutputBlock)
+    Facts asserted:
+    1. Returns a non-empty list of :class:`OutputBlock` instances.
+    2. ``payload['per_ticker']`` keys are sorted by ticker on every per-ticker block.
+    3. No duplicate ``(audience, block_id)`` pairs — one block per sector/indicator-group.
+    4. Each block's audience is a singleton sector audience.
+    5. Every populated sector audience emits exactly the six documented indicator-group blocks.
+    """
+    config = _build_distillation_config()
+    as_of = datetime(2026, 4, 25, tzinfo=UTC)
+    blocks = assemble_q1_blocks(populated_session, config=config, as_of=as_of)
 
+    # Fact 1 — returns OutputBlock instances.
+    assert isinstance(blocks, list)
+    assert len(blocks) > 0
+    for block in blocks:
+        assert isinstance(block, OutputBlock)
 
-class TestPerTickerPayloadConvention:
-    """Each per-ticker block carries ``payload['per_ticker']`` sorted by ticker."""
+    # Fact 2 — per_ticker payload sorted by ticker.
+    per_ticker_blocks = [b for b in blocks if "per_ticker" in b.payload]
+    assert per_ticker_blocks, "Expected at least one per-ticker block"
+    for block in per_ticker_blocks:
+        keys = list(block.payload["per_ticker"].keys())
+        assert keys == sorted(keys), f"Block {block.block_id} per_ticker keys not sorted: {keys}"
 
-    def test_per_ticker_payload_keys_are_sorted(self, populated_session: Session) -> None:
-        config = _build_distillation_config()
-        as_of = datetime(2026, 4, 25, tzinfo=UTC)
-        blocks = assemble_q1_blocks(populated_session, config=config, as_of=as_of)
-        per_ticker_blocks = [b for b in blocks if "per_ticker" in b.payload]
-        assert per_ticker_blocks, "Expected at least one per-ticker block"
-        for block in per_ticker_blocks:
-            keys = list(block.payload["per_ticker"].keys())
-            assert keys == sorted(keys), (
-                f"Block {block.block_id} per_ticker keys not sorted: {keys}"
-            )
+    # Fact 3 — no duplicate (audience, block_id) pairs.
+    seen: set[tuple[frozenset[OutputAudience], str]] = set()
+    for block in blocks:
+        key = (block.audience, block.block_id)
+        assert key not in seen, (
+            f"Duplicate (audience, block_id) pair: {block.audience} / {block.block_id}"
+        )
+        seen.add(key)
 
+    # Fact 4 — singleton-sector audience on every block.
+    sector_audiences = {
+        OutputAudience.SECTOR_TECH_SEMIS,
+        OutputAudience.SECTOR_FINANCIALS,
+        OutputAudience.SECTOR_ENERGY,
+    }
+    for block in blocks:
+        assert len(block.audience) == 1, (
+            f"Block {block.block_id} audience not singleton: {block.audience}"
+        )
+        (only,) = tuple(block.audience)
+        assert only in sector_audiences, (
+            f"Block {block.block_id} audience {only} not a sector audience"
+        )
 
-class TestOneBlockPerSectorAudienceAndIndicatorGroup:
-    """At most one block per ``(sector_audience, indicator_group)`` pair."""
-
-    def test_no_duplicate_audience_block_id_pairs(self, populated_session: Session) -> None:
-        config = _build_distillation_config()
-        as_of = datetime(2026, 4, 25, tzinfo=UTC)
-        blocks = assemble_q1_blocks(populated_session, config=config, as_of=as_of)
-        seen: set[tuple[frozenset[OutputAudience], str]] = set()
-        for block in blocks:
-            key = (block.audience, block.block_id)
-            assert key not in seen, (
-                f"Duplicate (audience, block_id) pair: {block.audience} / {block.block_id}"
-            )
-            seen.add(key)
-
-    def test_indicator_blocks_audience_is_a_single_sector(self, populated_session: Session) -> None:
-        """Each per-ticker block's audience is ``frozenset({that_sector})``."""
-        config = _build_distillation_config()
-        as_of = datetime(2026, 4, 25, tzinfo=UTC)
-        blocks = assemble_q1_blocks(populated_session, config=config, as_of=as_of)
-        sector_audiences = {
-            OutputAudience.SECTOR_TECH_SEMIS,
-            OutputAudience.SECTOR_FINANCIALS,
-            OutputAudience.SECTOR_ENERGY,
-        }
-        for block in blocks:
-            assert len(block.audience) == 1, (
-                f"Block {block.block_id} audience not singleton: {block.audience}"
-            )
-            (only,) = tuple(block.audience)
-            assert only in sector_audiences, (
-                f"Block {block.block_id} audience {only} not a sector audience"
-            )
+    # Fact 5 — six indicator-group blocks per populated audience.
+    per_audience_block_ids: dict[OutputAudience, set[str]] = {}
+    for block in blocks:
+        (audience,) = tuple(block.audience)
+        per_audience_block_ids.setdefault(audience, set()).add(block.block_id)
+    expected_ids = {
+        BLOCK_ID_TECHNICALS,
+        BLOCK_ID_VOLUME_PROFILE,
+        BLOCK_ID_GAP,
+        BLOCK_ID_RELATIVE_PERFORMANCE,
+        BLOCK_ID_TREND_STATE,
+        BLOCK_ID_DIVERGENCE_FLAGS,
+    }
+    for audience in (
+        OutputAudience.SECTOR_TECH_SEMIS,
+        OutputAudience.SECTOR_FINANCIALS,
+        OutputAudience.SECTOR_ENERGY,
+    ):
+        assert audience in per_audience_block_ids, (
+            f"Audience {audience} produced no blocks; saw {sorted(per_audience_block_ids)}"
+        )
+        actual = per_audience_block_ids[audience]
+        missing = expected_ids - actual
+        assert not missing, (
+            f"Audience {audience} missing blocks {sorted(missing)}; saw {sorted(actual)}"
+        )
 
 
 class TestAnomalyBlocksFire:
@@ -799,40 +710,3 @@ class TestAtrRegimeLabelAndTag:
         )
         assert state is CalibrationState.CALIBRATED
         assert reason is None
-
-
-class TestSixIndicatorGroupsPerAudience:
-    """Each populated audience emits one block per documented indicator group."""
-
-    def test_each_audience_with_tickers_has_six_indicator_blocks(
-        self, populated_session: Session
-    ) -> None:
-        config = _build_distillation_config()
-        as_of = datetime(2026, 4, 25, tzinfo=UTC)
-        blocks = assemble_q1_blocks(populated_session, config=config, as_of=as_of)
-        per_audience_block_ids: dict[OutputAudience, set[str]] = {}
-        for block in blocks:
-            (audience,) = tuple(block.audience)
-            per_audience_block_ids.setdefault(audience, set()).add(block.block_id)
-        expected_ids = {
-            BLOCK_ID_TECHNICALS,
-            BLOCK_ID_VOLUME_PROFILE,
-            BLOCK_ID_GAP,
-            BLOCK_ID_RELATIVE_PERFORMANCE,
-            BLOCK_ID_TREND_STATE,
-            BLOCK_ID_DIVERGENCE_FLAGS,
-        }
-        # Every covered audience emits the six indicator-group blocks.
-        for audience in (
-            OutputAudience.SECTOR_TECH_SEMIS,
-            OutputAudience.SECTOR_FINANCIALS,
-            OutputAudience.SECTOR_ENERGY,
-        ):
-            assert audience in per_audience_block_ids, (
-                f"Audience {audience} produced no blocks; saw {sorted(per_audience_block_ids)}"
-            )
-            actual = per_audience_block_ids[audience]
-            missing = expected_ids - actual
-            assert not missing, (
-                f"Audience {audience} missing blocks {sorted(missing)}; saw {sorted(actual)}"
-            )

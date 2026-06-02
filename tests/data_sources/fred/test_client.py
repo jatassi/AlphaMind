@@ -55,19 +55,3 @@ def test_verify_connectivity_returns_false_on_exception() -> None:
     sdk = _FakeFredSdk(info_error=ValueError("internal server error"))
     client = _make_client(sdk)
     assert client.verify_connectivity() is False
-
-
-class TestProtocolContract:
-    def test_fred_client_implements_fred_api(self) -> None:
-        from alphamind.data_sources.fred._protocol import FredAPI
-        from alphamind.data_sources.fred.client import FredClient
-
-        client = FredClient.__new__(FredClient)
-        proto: FredAPI = client
-        for name in (
-            "verify_connectivity",
-            "get_series",
-            "get_series_info",
-            "get_series_all_releases",
-        ):
-            assert hasattr(proto, name), name

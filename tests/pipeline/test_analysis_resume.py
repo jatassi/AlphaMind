@@ -30,71 +30,45 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from alphamind.analysis._shared import Sector, SignalQuality, TokensUsed
-from alphamind.analysis.adaptive_research.input_bundle import (
-    InputBundle as AdaptiveInputBundle,
-)
-from alphamind.analysis.adaptive_research.loaders import AdaptiveAnomalyInputs
+from alphamind.analysis._shared import Sector, TokensUsed
 from alphamind.analysis.adaptive_research.models import (
-    AdaptiveBrief,
     AdaptiveResearcherResultModel,
 )
 from alphamind.analysis.adaptive_research.runner import AdaptiveResearcherResult
-from alphamind.analysis.domain_researchers.input_bundle import (
-    InputBundle as DomainInputBundle,
-)
 from alphamind.analysis.domain_researchers.models import (
-    SECTOR_PREFIX,
     DomainResearcherOutputModel,
-    Finding,
-    SectorBrief,
-    SignalType,
-    Strength,
 )
 from alphamind.analysis.domain_researchers.orchestrator import DomainResearchersOutput
 from alphamind.analysis.domain_researchers.runner import DomainResearcherResult
-from alphamind.analysis.qualitative_research.input_bundle import (
-    InputBundle as QualInputBundle,
-)
 from alphamind.analysis.qualitative_research.models import (
-    EvidenceLine,
-    NarrativeThread,
-    QualitativeBrief,
     QualitativeResearcherResultModel,
-    SentimentSnapshot,
-    ThreadDirection,
-    TimeHorizon,
 )
-from alphamind.analysis.qualitative_research.news_digest import NewsDigest
 from alphamind.analysis.qualitative_research.runner import QualitativeResearcherResult
 from alphamind.analysis.synthesizer.models import BriefSource, SynthesizerResultModel
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.analysis.synthesizer.runner import SynthesizerResult
-from alphamind.config.models.agents import (
-    AdaptiveAgentConfig,
-    AgentName,
-    AllowedModel,
-    BaseAgentConfig,
-)
-from alphamind.distillation.correlation_brief import CorrelationRegimeBrief
+from alphamind.config.models.agents import AgentName
 from alphamind.distillation.orchestrator import DistillationOutputs
-from alphamind.distillation.output import OutputAudience
-from alphamind.distillation.sector_assembly import SectorOutput
 from alphamind.pipeline import analysis as composition
 from alphamind.pipeline.analysis import run_analysis_pipeline
-from alphamind.portfolio_state.consumers.synthesizer import (
-    SynthesizerExposureSnapshot,
-    SynthesizerPositionSummary,
-    SynthesizerThesisSummary,
-)
 from alphamind.scheduler.debug_e2e.phase_outputs import write_phase_output
+from tests.pipeline._fixtures import (
+    AS_OF,
+    LAST_INVOCATION_TIME,
+    StubPortfolioReader,
+    build_adaptive_result,
+    build_agents_registry,
+    build_distillation_outputs,
+    build_domain_output,
+    build_domain_runner_result,
+    build_qualitative_result,
+)
 
 # ---------------------------------------------------------------------------
 # Shared fixture values
@@ -102,160 +76,33 @@ from alphamind.scheduler.debug_e2e.phase_outputs import write_phase_output
 
 _INVOCATION_ID = "test-inv-resume-target"
 _SOURCE_INVOCATION_ID = "test-inv-resume-source"
-_AS_OF = datetime(2026, 5, 3, 14, 30, 0, tzinfo=UTC)
-_LAST_INVOCATION_TIME = datetime(2026, 5, 3, 12, 30, 0, tzinfo=UTC)
-_REGIME_LABEL_VALUE = "vol_expansion"
+_AS_OF = AS_OF
+_LAST_INVOCATION_TIME = LAST_INVOCATION_TIME
 
 
 # ---------------------------------------------------------------------------
-# Result builders — mirror tests/pipeline/test_analysis_phase_emission.py shapes
+# Result builders — delegate to shared fixtures (with per-file invocation ID)
 # ---------------------------------------------------------------------------
-
-
-def _sector_brief(sector: Sector) -> SectorBrief:
-    prefix = SECTOR_PREFIX[sector]
-    return SectorBrief(
-        invocation_id=_INVOCATION_ID,
-        sector=sector,
-        signal_quality=SignalQuality.HIGH,
-        signal_quality_reason=None,
-        findings=(
-            Finding(
-                finding_id=f"{prefix}-1",
-                headline=f"Headline for {sector.value}.",
-                tickers=("AAA",),
-                signal_type=SignalType.PRICE_ACTION,
-                strength=Strength.STRONG,
-                detail="Detail.",
-            ),
-        ),
-        anomalies=(),
-        thesis_candidates=(),
-    )
 
 
 def _domain_runner_result(sector: Sector) -> DomainResearcherResult:
-    return DomainResearcherResult(
-        sector=sector,
-        brief=_sector_brief(sector),
-        input_bundle=DomainInputBundle(
-            sector=sector,
-            invocation_id=_INVOCATION_ID,
-            as_of=_AS_OF,
-            distillation_text="distill",
-            qualitative_text="qual",
-            bundle_text="bundle",
-        ),
-        tokens_used=TokensUsed(
-            input_tokens=100, output_tokens=50, cache_read_tokens=0, cache_write_tokens=0
-        ),
-        wall_clock_seconds=1.0,
-        retry_count=0,
-    )
+    return build_domain_runner_result(sector, invocation_id=_INVOCATION_ID, as_of=_AS_OF)
 
 
 def _domain_output() -> DomainResearchersOutput:
-    return DomainResearchersOutput(
-        invocation_id=_INVOCATION_ID,
-        as_of=_AS_OF,
-        tech_semis=_domain_runner_result(Sector.TECH_SEMIS),
-        financials=_domain_runner_result(Sector.FINANCIALS),
-        energy=_domain_runner_result(Sector.ENERGY),
-        total_tokens_used=TokensUsed(
-            input_tokens=300, output_tokens=150, cache_read_tokens=0, cache_write_tokens=0
-        ),
-        total_wall_clock_seconds=1.0,
-        total_retry_count=0,
-    )
+    return build_domain_output(invocation_id=_INVOCATION_ID, as_of=_AS_OF)
 
 
 def _qualitative_result() -> QualitativeResearcherResult:
-    return QualitativeResearcherResult(
-        brief=QualitativeBrief(
-            invocation_id=_INVOCATION_ID,
-            signal_quality=SignalQuality.HIGH,
-            signal_quality_reason=None,
-            threads=(
-                NarrativeThread(
-                    thread_id="QR-1",
-                    summary="Quiet day.",
-                    relevance="cross-sector",
-                    direction=ThreadDirection.MIXED,
-                    subject="market",
-                    time_horizon=TimeHorizon.NEAR_TERM,
-                    evidence=(
-                        EvidenceLine(
-                            source_type="news",
-                            observation="No major catalysts.",
-                            citation="ND-1",
-                        ),
-                        EvidenceLine(
-                            source_type="prediction_markets",
-                            observation="Odds unchanged.",
-                            citation="kalshi:none",
-                        ),
-                    ),
-                    implication="No-op.",
-                ),
-            ),
-            catalyst_watches=(),
-            sentiment_snapshot=SentimentSnapshot(
-                extremes="none", divergences="none", regime="neutral"
-            ),
-        ),
-        input_bundle=QualInputBundle(
-            invocation_id=_INVOCATION_ID,
-            as_of=_AS_OF,
-            regime_text="regime: vol_expansion",
-            digest_text="digest",
-            sentiment_text="sentiment",
-            prediction_market_text="prediction",
-            calendar_text="calendar",
-            thesis_text="thesis",
-            bundle_text="bundle",
-        ),
-        news_digest=NewsDigest(
-            as_of=_AS_OF,
-            last_invocation_time=_LAST_INVOCATION_TIME,
-            total_collected=0,
-            total_shown=0,
-            entries=(),
-            digest_text="(no headlines)",
-        ),
-        tokens_used=TokensUsed(
-            input_tokens=200, output_tokens=80, cache_read_tokens=0, cache_write_tokens=0
-        ),
-        tool_calls_used=0,
-        wall_clock_seconds=2.0,
-        retry_count=0,
+    return build_qualitative_result(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        last_invocation_time=_LAST_INVOCATION_TIME,
     )
 
 
 def _adaptive_result() -> AdaptiveResearcherResult:
-    return AdaptiveResearcherResult(
-        brief=AdaptiveBrief(
-            invocation_id=_INVOCATION_ID,
-            threads_investigated_count=0,
-            anomalies_triaged_count=0,
-            anomalies_deferred=(),
-            threads=(),
-        ),
-        input_bundle=AdaptiveInputBundle(
-            invocation_id=_INVOCATION_ID,
-            as_of=_AS_OF,
-            regime_text="regime: vol_expansion",
-            distillation_text="(none)",
-            sector_text="(none)",
-            bundle_text="bundle",
-        ),
-        anomaly_inputs=AdaptiveAnomalyInputs(distillation=(), sector=(), data_freshness=_AS_OF),
-        tokens_used=TokensUsed(
-            input_tokens=400, output_tokens=120, cache_read_tokens=0, cache_write_tokens=0
-        ),
-        tool_calls_used=0,
-        wall_clock_seconds=3.0,
-        retry_count=0,
-    )
+    return build_adaptive_result(invocation_id=_INVOCATION_ID, as_of=_AS_OF)
 
 
 def _synth_result() -> SynthesizerResult:
@@ -277,113 +124,20 @@ def _synth_result() -> SynthesizerResult:
     )
 
 
-def _sector_output(audience: OutputAudience, *, text: str) -> SectorOutput:
-    return SectorOutput(
-        audience=audience,
-        sector_label=audience.value,
-        text=text,
-        tickers=(),
-        block_ids=(),
-        freshness_min=_AS_OF,
-    )
-
-
 def _distillation_outputs() -> DistillationOutputs:
-    return DistillationOutputs(
-        sector_outputs={
-            OutputAudience.SECTOR_TECH_SEMIS: _sector_output(
-                OutputAudience.SECTOR_TECH_SEMIS, text="TECH-DISTILL"
-            ),
-            OutputAudience.SECTOR_FINANCIALS: _sector_output(
-                OutputAudience.SECTOR_FINANCIALS, text="FIN-DISTILL"
-            ),
-            OutputAudience.SECTOR_ENERGY: _sector_output(
-                OutputAudience.SECTOR_ENERGY, text="ENERGY-DISTILL"
-            ),
-        },
-        correlation_regime_brief=CorrelationRegimeBrief(
-            text="[CR-1] regime ctx.\n  detail.\n",
-            reference_index={"CR-1": "regime.label"},
-            freshness_min=_AS_OF,
-        ),
-        universal_regime_label={
-            "regime_label": _REGIME_LABEL_VALUE,
-            "transition_flag": False,
-            "confidence": "high",
-            "freshness_ts": _AS_OF.isoformat(),
-        },
-        invocation_id=_INVOCATION_ID,
-        as_of=_AS_OF,
-        total_blocks=0,
-        total_anomalies=0,
-        non_calibrated_block_count=0,
-        all_blocks=(),
-    )
+    return build_distillation_outputs(invocation_id=_INVOCATION_ID, as_of=_AS_OF)
 
 
-def _make_base_config(prompt: str) -> BaseAgentConfig:
-    return BaseAgentConfig(
-        model=AllowedModel.sonnet_4_6,
-        prompt=prompt,
-        latency_budget_seconds=30,
-        context_token_budget=100_000,
-        output_token_budget=4_000,
-        tools=[],
-    )
+def _agents_registry() -> Any:
+    return build_agents_registry()
 
 
-def _make_adaptive_config() -> AdaptiveAgentConfig:
-    return AdaptiveAgentConfig(
-        model=AllowedModel.sonnet_4_6,
-        prompt="prompts/analysis/adaptive_researcher.md",
-        latency_budget_seconds=120,
-        context_token_budget=120_000,
-        output_token_budget=4_000,
-        tools=[],
-        cumulative_tool_call_limit=15,
-        cumulative_tool_token_budget=2_000,
-        tool_caps={},
-    )
-
-
-def _agents_registry() -> dict[str, BaseAgentConfig]:
-    return {
-        AgentName.tech_semis_researcher.value: _make_base_config(
-            "prompts/analysis/tech_semis_researcher.md"
-        ),
-        AgentName.financials_researcher.value: _make_base_config(
-            "prompts/analysis/financials_researcher.md"
-        ),
-        AgentName.energy_researcher.value: _make_base_config(
-            "prompts/analysis/energy_researcher.md"
-        ),
-        AgentName.qualitative_researcher.value: _make_adaptive_config(),
-        AgentName.adaptive_researcher.value: _make_adaptive_config(),
-        AgentName.synthesizer.value: _make_base_config("prompts/analysis/synthesizer.md"),
-    }
-
-
-def _sectors_registry() -> dict[str, list[str]]:
+def _sectors_registry() -> Any:
     return {
         Sector.TECH_SEMIS.value: ["NVDA", "AMD"],
         Sector.FINANCIALS.value: ["JPM"],
         Sector.ENERGY.value: ["XOM"],
     }
-
-
-class _StubPortfolioReader:
-    def get_positions_summary(self) -> tuple[SynthesizerPositionSummary, ...]:
-        return ()
-
-    def get_active_theses_summary(self) -> tuple[SynthesizerThesisSummary, ...]:
-        return ()
-
-    def get_exposure_snapshot(self) -> SynthesizerExposureSnapshot:
-        return SynthesizerExposureSnapshot(
-            sector_exposure_pct={},
-            net_directional_pct=0.0,
-            gross_exposure_pct=0.0,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -608,7 +362,7 @@ def _drive(
             universe=frozenset({"NVDA", "JPM", "XOM"}),
             agents_config=_agents_registry(),
             sectors_config=_sectors_registry(),
-            portfolio_reader=_StubPortfolioReader(),
+            portfolio_reader=StubPortfolioReader(),
             archive_root=archive_root,
             progress=progress,
             debug_e2e=debug_e2e,

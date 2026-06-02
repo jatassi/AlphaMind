@@ -279,96 +279,33 @@ class TestSSEHeadersAndHeartbeat:
 
 
 class TestSSEFramingForEachEventType:
-    """SSE framing of each of the nine event types — AC requirement."""
+    """SSE framing representative — end-to-end transport via real Uvicorn.
 
-    @pytest.mark.parametrize(
-        ("ctor", "expected_name"),
-        [
-            (
-                lambda: models.InvocationStartedEvent(
-                    invocation_id="inv-1",
-                    run_type="emergency",
-                    started_at=_NOW,
-                ),
-                "invocation_started",
-            ),
-            (
-                lambda: models.PhaseTransitionEvent(
-                    invocation_id="inv-1",
-                    phase="distill",
-                    phase_started_at=_NOW,
-                ),
-                "phase_transition",
-            ),
-            (
-                lambda: models.AgentStartedEvent(
-                    invocation_id="inv-1",
-                    agent_name="analyst",
-                    started_at=_NOW,
-                    latency_budget_seconds=60.0,
-                ),
-                "agent_started",
-            ),
-            (
-                lambda: models.AgentSucceededEvent(
-                    invocation_id="inv-1",
-                    agent_name="analyst",
-                    duration_seconds=12.5,
-                    tokens_used=models.TokensUsed(input=1000, output=200),
-                ),
-                "agent_succeeded",
-            ),
-            (
-                lambda: models.AgentRetryingEvent(
-                    invocation_id="inv-1",
-                    agent_name="analyst",
-                    attempt=2,
-                    reason="timeout",
-                ),
-                "agent_retrying",
-            ),
-            (
-                lambda: models.AgentFailedEvent(
-                    invocation_id="inv-1",
-                    agent_name="analyst",
-                    failure_mode="timeout",
-                ),
-                "agent_failed",
-            ),
-            (
-                lambda: models.InvocationEndedEvent(
-                    invocation_id="inv-1",
-                    status="completed",
-                    commands_issued=3,
-                ),
-                "invocation_ended",
-            ),
-            (
-                lambda: models.NextTriggerChangedEvent(
-                    next_trigger_at=_NOW,
-                    next_trigger_type="market_hours_rolling",
-                ),
-                "next_trigger_changed",
-            ),
-            (
-                lambda: models.HeartbeatEvent(timestamp=_NOW),
-                "heartbeat",
-            ),
-        ],
-    )
-    async def test_each_event_type_frames_correctly(self, ctor: object, expected_name: str) -> None:
+    One Uvicorn-boot representative confirms the full transport path
+    (emitter → queue → route → SSE wire → httpx → parse) for a real
+    event type.  Per-type ``datetime``/``Decimal`` payload serialization
+    and ``model_validate`` round-trips are covered without a server boot
+    by ``TestSSEFramingPerTypeModelValidate`` in ``test_events.py``
+    (ALP-811).
+    """
+
+    async def test_invocation_started_frames_correctly(self) -> None:
         # Long heartbeat so the expected event arrives before any injected heartbeat.
         handle = await _start_server(heartbeat_interval_seconds=30.0)
         try:
             url = f"http://127.0.0.1:{handle.port}/events"
-            event = ctor()  # type: ignore[operator]
+            event = models.InvocationStartedEvent(
+                invocation_id="inv-1",
+                run_type="emergency",
+                started_at=_NOW,
+            )
             records = await _read_sse_records(
                 url,
                 count=1,
                 emit_before_read=[event],
                 emitter=handle.emitter,
             )
-            assert records[0][0] == expected_name
+            assert records[0][0] == "invocation_started"
             # Round-trip the payload through the source Pydantic class.
             type(event).model_validate(records[0][1])
         finally:
