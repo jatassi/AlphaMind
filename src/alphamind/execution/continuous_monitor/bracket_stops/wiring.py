@@ -404,6 +404,7 @@ def register_options_bracket_watcher_task(
     risk_free_rate_provider = make_risk_free_rate_provider(session_factory)
 
     async def _coro(session: MonitorSession, config: ContinuousMonitorConfig) -> None:
+        cadence = float(config.bracket_stop_evaluation_cadence_seconds)
         await run_options_bracket_watcher(
             session,
             config,
@@ -415,9 +416,10 @@ def register_options_bracket_watcher_task(
             invocation_id_provider=invocation_id_provider,
             risk_free_rate_provider=risk_free_rate_provider,
             trigger_ids=trigger_ids,
-            # ALP-819 — feed the supervisor stall watchdog this stop-enforcement
-            # loop's heartbeat so a wedged cycle trips os._exit(1) → NSSM restart.
-            beat=lambda: supervisor.beat("bracket_stops"),
+            # ALP-829 — drive the loop through supervised_loop so beats are
+            # automatic and the watchdog bound is cadence-derived (~1s), not
+            # the old 1h global. Replaces the ALP-819 beat= lambda.
+            loop=lambda: supervisor.supervised_loop("bracket_stops", cadence),
         )
 
     supervisor.register_task(name="bracket_stops", coro_fn=_coro)

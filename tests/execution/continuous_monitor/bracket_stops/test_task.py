@@ -86,13 +86,14 @@ def _trigger_ids(*, session_id: str = "mon-S") -> TriggerIdGenerator:
     return TriggerIdGenerator(session_id=session_id)
 
 
-def _config(*, cadence: float = 1.0) -> ContinuousMonitorConfig:
+def _config(*, cadence: float = 1.0, max_age_seconds: float = 900.0) -> ContinuousMonitorConfig:
     return ContinuousMonitorConfig(
         breach_evaluation_cadence_seconds=60,
         greeks_refresh_interval_minutes=15,
         greeks_refresh_underlying_move_threshold_pct=2.0,
         greeks_refresh_inspection_cadence_seconds=30,
         bracket_stop_evaluation_cadence_seconds=cadence,
+        underlying_price_max_age_seconds=max_age_seconds,
         underlying_stream_provider="alpaca-iex",
         max_reconnect_attempts=5,
         supervisor_shutdown_timeout_seconds=5,
@@ -271,6 +272,24 @@ async def _seed_cache(prices: dict[str, float]) -> UnderlyingPriceCache:
     cache = UnderlyingPriceCache()
     for ticker, value in prices.items():
         await cache.update(UnderlyingQuote(ticker=ticker, price=value, as_of=_NOW))
+    return cache
+
+
+async def _seed_cache_stale(
+    prices: dict[str, float],
+    *,
+    age_seconds: float,
+) -> UnderlyingPriceCache:
+    """Seed the cache with quotes whose ``as_of`` is *age_seconds* before ``_NOW``.
+
+    Use together with ``now=_NOW`` and ``underlying_price_max_age_seconds`` in the
+    config to control freshness in tests: a quote seeded ``age_seconds >
+    max_age_seconds`` reads ``STALE``; one seeded at exactly ``_NOW`` reads ``FRESH``.
+    """
+    cache = UnderlyingPriceCache()
+    stale_as_of = _NOW - timedelta(seconds=age_seconds)
+    for ticker, value in prices.items():
+        await cache.update(UnderlyingQuote(ticker=ticker, price=value, as_of=stale_as_of))
     return cache
 
 
@@ -813,6 +832,140 @@ class TestCacheMiss:
 
 
 # ---------------------------------------------------------------------------
+# Freshness gate — ALP-829
+# ---------------------------------------------------------------------------
+
+
+class TestFreshnessGate:
+    """bracket_stops must never evaluate a position against a stale or absent spot.
+
+    AC: stale spot → skipped (no fire); fresh spot → fires; missing → skipped.
+    """
+
+    async def test_stale_spot_does_not_fire(self) -> None:
+        """A spot older than ``underlying_price_max_age_seconds`` is skipped."""
+        position = _options_position(direction=Direction.LONG)
+        # Threshold=865 LTE; spot 860 would fire if fresh — must not fire when stale.
+        bracket = _price_stop_bracket(threshold=865.0, direction="LTE")
+        # Quote is 1 800s old; max_age is 900s → STALE.
+        cache = await _seed_cache_stale({"NVDA": 860.0}, age_seconds=1800.0)
+        submitter = FakeSubmitter()
+        activity = FakeActivityLog()
+        await _run_bracket_stop_cycle(
+            config=_config(max_age_seconds=900.0),
+            position_repository=FakePositionRepository((position,)),
+            bracket_repository=FakeBracketRepository((bracket,)),
+            cache=cache,
+            submitter=submitter,
+            activity_log=activity.emit,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
+            now=_NOW,
+            risk_free_rate=0.045,
+            fired_legs=set(),
+            stale_tickers=set(),
+        )
+        assert submitter.options_calls == []
+        assert activity.entries == []
+
+    async def test_fresh_spot_fires_exactly_as_before(self) -> None:
+        """A spot within ``underlying_price_max_age_seconds`` fires normally."""
+        position = _options_position(direction=Direction.LONG)
+        bracket = _price_stop_bracket(threshold=865.0, direction="LTE")
+        # Quote seeded at _NOW → age 0 → FRESH.
+        cache = await _seed_cache({"NVDA": 860.0})
+        submitter = FakeSubmitter()
+        activity = FakeActivityLog()
+        await _run_bracket_stop_cycle(
+            config=_config(max_age_seconds=900.0),
+            position_repository=FakePositionRepository((position,)),
+            bracket_repository=FakeBracketRepository((bracket,)),
+            cache=cache,
+            submitter=submitter,
+            activity_log=activity.emit,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
+            now=_NOW,
+            risk_free_rate=0.045,
+            fired_legs=set(),
+            stale_tickers=set(),
+        )
+        assert len(submitter.options_calls) == 1
+        assert len(activity.entries) == 1
+
+    async def test_missing_spot_skips_via_gated_read(self) -> None:
+        """Empty cache → MissingPrice → position skipped (unchanged behavior, gated path)."""
+        position = _options_position(direction=Direction.LONG)
+        bracket = _price_stop_bracket(threshold=865.0, direction="LTE")
+        cache = UnderlyingPriceCache()  # empty
+        submitter = FakeSubmitter()
+        activity = FakeActivityLog()
+        await _run_bracket_stop_cycle(
+            config=_config(max_age_seconds=900.0),
+            position_repository=FakePositionRepository((position,)),
+            bracket_repository=FakeBracketRepository((bracket,)),
+            cache=cache,
+            submitter=submitter,
+            activity_log=activity.emit,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
+            now=_NOW,
+            risk_free_rate=0.045,
+            fired_legs=set(),
+            stale_tickers=set(),
+        )
+        assert submitter.options_calls == []
+        assert activity.entries == []
+
+    async def test_stale_log_fires_once_on_fresh_to_stale_transition(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Skipped-stale warning emits once on the fresh→stale transition, not every cycle."""
+        import logging
+
+        position = _options_position(direction=Direction.LONG)
+        bracket = _price_stop_bracket(threshold=865.0, direction="LTE")
+        cache = await _seed_cache_stale({"NVDA": 860.0}, age_seconds=1800.0)
+
+        stale_tickers: set[str] = set()  # shared across cycles — tracks prior state
+
+        async def _one_cycle() -> None:
+            await _run_bracket_stop_cycle(
+                config=_config(max_age_seconds=900.0),
+                position_repository=FakePositionRepository((position,)),
+                bracket_repository=FakeBracketRepository((bracket,)),
+                cache=cache,
+                submitter=FakeSubmitter(),
+                activity_log=FakeActivityLog().emit,
+                invocation_id_provider=_const_str("inv-001"),
+                monitor_session_id="mon-S",
+                trigger_ids=_trigger_ids(),
+                now=_NOW,
+                risk_free_rate=0.045,
+                fired_legs=set(),
+                stale_tickers=stale_tickers,
+            )
+
+        def _stale_warns() -> int:
+            return sum(
+                1 for r in caplog.records if "NVDA" in r.message and "stale" in r.message.lower()
+            )
+
+        task_logger = "alphamind.execution.continuous_monitor.bracket_stops.task"
+        with caplog.at_level(logging.WARNING, logger=task_logger):
+            await _one_cycle()
+            first_count = _stale_warns()
+            await _one_cycle()  # still stale — no additional log
+            second_count = _stale_warns()
+
+        assert first_count == 1, "stale warning should fire on first stale cycle"
+        assert second_count == 1, "stale warning must not repeat on subsequent stale cycles"
+
+
+# ---------------------------------------------------------------------------
 # Config knob
 # ---------------------------------------------------------------------------
 
@@ -859,13 +1012,19 @@ class TestConfigKnob:
 
 
 # ---------------------------------------------------------------------------
-# Run-forever loop respects cadence
+# Run-forever loop: supervised_loop drives beats + pacing (ALP-829)
 # ---------------------------------------------------------------------------
 
 
 class TestRunForeverLoop:
-    async def test_run_forever_sleeps_on_cadence(self) -> None:
-        """``run_options_bracket_watcher`` sleeps for the configured cadence."""
+    async def test_run_forever_drives_loop_via_supervised_loop(self) -> None:
+        """``run_options_bracket_watcher`` iterates via the ``loop`` seam.
+
+        The ``loop`` callable is the supervisor's ``supervised_loop`` factory
+        (name + cadence pre-bound). The watcher iterates it and no longer owns
+        a trailing sleep or a hand-wired beat. Three iterations complete before
+        the fake loop raises ``CancelledError``.
+        """
         import asyncio
 
         from alphamind.execution.continuous_monitor.bracket_stops.task import (
@@ -877,61 +1036,15 @@ class TestRunForeverLoop:
         bracket = _price_stop_bracket(threshold=865.0, direction="LTE")
         cache = await _seed_cache({"NVDA": 870.0})  # does not fire
         submitter = FakeSubmitter()
-        log = FakeActivityLog()
-        sleep_calls: list[float] = []
+        activity = FakeActivityLog()
+        iterations = 0
 
-        async def _record_sleep(duration: float) -> None:
-            sleep_calls.append(duration)
-            if len(sleep_calls) >= 3:
-                raise asyncio.CancelledError
-
-        session = MonitorSession(
-            session_id="mon-20260511T143000Z-deadbeef",
-            started_at=_NOW,
-            mode="paper",
-        )
-        cfg = _config(cadence=2.5)
-
-        with pytest.raises(asyncio.CancelledError):
-            await run_options_bracket_watcher(
-                session,
-                cfg,
-                position_repository=FakePositionRepository((position,)),
-                bracket_repository=FakeBracketRepository((bracket,)),
-                cache=cache,
-                submitter=submitter,
-                activity_log=log.emit,
-                invocation_id_provider=_const_str("inv-001"),
-                risk_free_rate_provider=_const_float(0.045),
-                trigger_ids=_trigger_ids(session_id=session.session_id),
-                now=lambda: _NOW,
-                sleep=_record_sleep,
-            )
-        assert all(d == 2.5 for d in sleep_calls)
-        assert len(sleep_calls) >= 1
-
-    async def test_run_forever_beats_watchdog_each_cycle(self) -> None:
-        """ALP-819: the watcher feeds the supervisor stall watchdog each cycle
-        so a hung bracket-stop loop trips ``os._exit(1)`` → NSSM restart."""
-        import asyncio
-
-        from alphamind.execution.continuous_monitor.bracket_stops.task import (
-            run_options_bracket_watcher,
-        )
-        from alphamind.execution.continuous_monitor.session import MonitorSession
-
-        position = _options_position(direction=Direction.LONG)
-        bracket = _price_stop_bracket(threshold=865.0, direction="LTE")
-        cache = await _seed_cache({"NVDA": 870.0})  # does not fire
-        submitter = FakeSubmitter()
-        log = FakeActivityLog()
-        beats: list[int] = []
-        sleep_calls: list[float] = []
-
-        async def _record_sleep(duration: float) -> None:
-            sleep_calls.append(duration)
-            if len(sleep_calls) >= 2:
-                raise asyncio.CancelledError
+        async def _fake_loop():  # type: ignore[no-untyped-def]
+            nonlocal iterations
+            for _ in range(3):
+                iterations += 1
+                yield
+            raise asyncio.CancelledError
 
         session = MonitorSession(
             session_id="mon-20260511T143000Z-deadbeef",
@@ -947,13 +1060,129 @@ class TestRunForeverLoop:
                 bracket_repository=FakeBracketRepository((bracket,)),
                 cache=cache,
                 submitter=submitter,
-                activity_log=log.emit,
+                activity_log=activity.emit,
                 invocation_id_provider=_const_str("inv-001"),
                 risk_free_rate_provider=_const_float(0.045),
                 trigger_ids=_trigger_ids(session_id=session.session_id),
                 now=lambda: _NOW,
-                sleep=_record_sleep,
-                beat=lambda: beats.append(1),
+                loop=_fake_loop,
             )
 
-        assert beats  # heartbeat fired each cycle
+        assert iterations == 3
+
+    async def test_watchdog_bound_and_wedged_cycle_trip_via_supervised_loop(self) -> None:
+        """ALP-829: watcher runs through ``supervised_loop`` at the bracket cadence.
+
+        Drives the production ``run_options_bracket_watcher`` through the real
+        ``supervisor.supervised_loop`` (no manual ``register_watch``) and a real
+        ``_watchdog_loop``, and asserts:
+        1. The ``bracket_stops`` watch entry is registered at the cadence-derived
+           (tight) bound — ``cadence * watchdog_cadence_multiplier`` — not the old
+           1h global.
+        2. A wedged cycle (the watcher body blocks, so beats stop) trips
+           ``os._exit(1)``.
+
+        Timing is driven by a fake monotonic clock the watchdog reads; the
+        watchdog's own sleep advances that clock so a stall is reached in a few
+        virtual iterations without real wall-clock waits.
+        """
+        import asyncio
+        from unittest import mock
+
+        from alphamind.execution.continuous_monitor.bracket_stops.task import (
+            run_options_bracket_watcher,
+        )
+        from alphamind.execution.continuous_monitor.session import MonitorSession
+        from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
+
+        position = _options_position(direction=Direction.LONG)
+        bracket = _price_stop_bracket(threshold=865.0, direction="LTE")
+        cache = await _seed_cache({"NVDA": 870.0})  # would not fire anyway
+
+        cadence = 1.0
+        cfg = _config(cadence=cadence)
+        expected_bound = cadence * cfg.watchdog_cadence_multiplier  # 10.0s
+
+        clock = [0.0]
+
+        def _monotonic() -> float:
+            return clock[0]
+
+        exits: list[int] = []
+
+        # The watcher body wedges on its second cycle: the position read hangs
+        # forever, so ``supervised_loop`` beats once then never beats again.
+        class _WedgingRepo:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def get_open_positions(self) -> tuple[PositionRecord, ...]:
+                self.calls += 1
+                if self.calls >= 2:
+                    await asyncio.Event().wait()  # block forever (wedged cycle)
+                return (position,)
+
+        async def _sleep(delay: float) -> None:
+            # Both supervised_loop pacing and the watchdog check-interval route
+            # through here; advancing the clock each call lets the watchdog reach
+            # the stall bound after a few virtual iterations.
+            await asyncio.sleep(0)
+            clock[0] += delay
+
+        session = MonitorSession(
+            session_id="mon-watchdog-test",
+            started_at=_NOW,
+            mode="paper",
+        )
+        supervisor = MonitorSupervisor(
+            session=session,
+            config=cfg,
+            sleep=_sleep,
+            monotonic=_monotonic,
+        )
+        stop_event = asyncio.Event()
+        supervisor._stop_event = stop_event
+
+        def _record_exit_and_stop(code: int) -> None:
+            exits.append(code)
+            stop_event.set()  # let the watchdog loop return cleanly
+
+        with mock.patch(
+            "alphamind.execution.continuous_monitor.supervisor.os._exit",
+            side_effect=_record_exit_and_stop,
+        ):
+            watcher_task = asyncio.ensure_future(
+                run_options_bracket_watcher(
+                    session,
+                    cfg,
+                    position_repository=_WedgingRepo(),
+                    bracket_repository=FakeBracketRepository((bracket,)),
+                    cache=cache,
+                    submitter=FakeSubmitter(),
+                    activity_log=FakeActivityLog().emit,
+                    invocation_id_provider=_const_str("inv-001"),
+                    risk_free_rate_provider=_const_float(0.045),
+                    trigger_ids=_trigger_ids(session_id=session.session_id),
+                    now=lambda: _NOW,
+                    loop=lambda: supervisor.supervised_loop("bracket_stops", cadence),
+                )
+            )
+            watchdog_task = asyncio.ensure_future(supervisor._watchdog_loop())
+            try:
+                # Bounded spin: wait for the watchdog to trip.
+                for _ in range(100_000):
+                    if exits:
+                        break
+                    await asyncio.sleep(0)
+            finally:
+                watcher_task.cancel()
+                watchdog_task.cancel()
+                await asyncio.gather(watcher_task, watchdog_task, return_exceptions=True)
+
+        # 1. Registered at the cadence-derived tight bound (not a 1h global).
+        entry = supervisor._watch.get("bracket_stops")
+        assert entry is not None
+        assert entry.bound_seconds == expected_bound
+
+        # 2. The wedged cycle tripped the watchdog.
+        assert exits == [1], "watchdog must call os._exit(1) when bracket_stops stalls"
