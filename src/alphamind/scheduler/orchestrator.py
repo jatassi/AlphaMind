@@ -961,6 +961,14 @@ def _warn_if_pre_close_projected_late(
         if session_close.tzinfo is None:
             session_close = session_close.replace(tzinfo=UTC)
     except Exception:
+        # Warranted broad-except (ALP-480 third-party-boundary residue): this is a
+        # purely advisory timing guard — it only logs and never mutates state or
+        # affects the trading decision. It wraps the exchange_calendars + pandas
+        # calls above (get_calendar / is_session / session_close / to_pydatetime),
+        # whose failure surface is diverse and version-dependent (invalid-calendar,
+        # out-of-bounds date, Timestamp conversion). Degrade-don't-crash: any
+        # failure logs with exc_info and skips the projection rather than aborting
+        # the invocation over a non-critical log line.
         log.warning("pre_close timing guard: could not resolve session close", exc_info=True)
         return
 

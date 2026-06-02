@@ -167,7 +167,6 @@ def test_remaining_cycles_are_intra_package_only(import_analysis: ScriptOutput) 
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="ALP-816: broad-except count 68 exceeds ALP-763 ceiling of 67")
 def test_l4_broad_except_count_below_audit_baseline(antipattern_findings: ScriptOutput) -> None:
     """Audit L4: ``except Exception`` and bare ``except:`` count.
 
@@ -245,9 +244,18 @@ def test_l4_broad_except_count_below_audit_baseline(antipattern_findings: Script
     # continues to the next interval rather than killing the run-forever backfill task
     # (mirrors the fill consumer's own reconnect supervisor). Each carries an inline
     # rationale comment.
-    assert l4 <= 67, (
-        f"L4 (broad except) count drift: {l4}. Post-ALP-763 "
-        f"ceiling is 67. If this count climbs above 67, audit each new "
+    # Ceiling raised from 67 to 68 (2026-06-02, ALP-816 audit of PR #274's pre_close
+    # projected-completion guard): +1 warranted third-party-boundary handler —
+    # orchestrator.py _warn_if_pre_close_projected_late wraps the exchange_calendars +
+    # pandas session-close resolution (get_calendar / is_session / session_close /
+    # to_pydatetime) whose failure surface is diverse and version-dependent. The guard
+    # is purely advisory (logs only, no state mutation, no effect on the trading
+    # decision), so any failure logs with exc_info and skips the projection rather than
+    # aborting the invocation. Carries an inline rationale comment. (ALP-769 had xfail'd
+    # this test to unblock the CI fallback merge; that marker is now removed.)
+    assert l4 <= 68, (
+        f"L4 (broad except) count drift: {l4}. Post-ALP-816 "
+        f"ceiling is 68. If this count climbs above 68, audit each new "
         f"handler against ALP-480's warranted-residue list."
     )
 
