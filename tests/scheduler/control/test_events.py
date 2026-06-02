@@ -27,9 +27,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import pytest
+from pydantic import BaseModel
 
 from alphamind._kernel.progress import ProgressEmitter
 from alphamind.scheduler.control import events, models
@@ -238,6 +240,100 @@ class TestFraming:
         data_line = framed.split("\ndata: ", 1)[1].rstrip("\n")
         parsed = json.loads(data_line)
         assert parsed["next_trigger_type"] == "pre_open"
+
+
+# ---------------------------------------------------------------------------
+# Per-type wire round-trip at format_sse_record level (ALP-811).
+#
+# Covers the per-type datetime/Decimal payload-field serialization for all
+# 9 event types without booting a server.  Each case: construct the event,
+# emit() it through a subscribed emitter (which calls model_dump(mode="json")
+# once), then frame via format_sse_record and parse the data line back
+# through the originating Pydantic class via model_validate.
+# ---------------------------------------------------------------------------
+
+
+class TestSSEFramingPerTypeModelValidate:
+    """``format_sse_record`` wire round-trip for all 9 event types — no server boot.
+
+    The unique invariant: ``type(event).model_validate(payload)`` succeeds
+    for each event type, meaning the JSON-serialized payload produced by
+    ``emit()`` + ``format_sse_record()`` is accepted back by the originating
+    Pydantic model.  This covers per-type ``datetime`` / ``Decimal``
+    serialization without a Uvicorn boot per type.
+    """
+
+    @pytest.mark.parametrize(
+        "ctor",
+        [
+            lambda: models.InvocationStartedEvent(
+                invocation_id="inv-1",
+                run_type="emergency",
+                started_at=_NOW,
+            ),
+            lambda: models.PhaseTransitionEvent(
+                invocation_id="inv-1",
+                phase="distill",
+                phase_started_at=_NOW,
+            ),
+            lambda: models.AgentStartedEvent(
+                invocation_id="inv-1",
+                agent_name="analyst",
+                started_at=_NOW,
+                latency_budget_seconds=60.0,
+            ),
+            lambda: models.AgentSucceededEvent(
+                invocation_id="inv-1",
+                agent_name="analyst",
+                duration_seconds=12.5,
+                tokens_used=models.TokensUsed(input=1000, output=200),
+            ),
+            lambda: models.AgentRetryingEvent(
+                invocation_id="inv-1",
+                agent_name="analyst",
+                attempt=2,
+                reason="timeout",
+            ),
+            lambda: models.AgentFailedEvent(
+                invocation_id="inv-1",
+                agent_name="analyst",
+                failure_mode="timeout",
+            ),
+            lambda: models.InvocationEndedEvent(
+                invocation_id="inv-1",
+                status="completed",
+                commands_issued=3,
+            ),
+            lambda: models.NextTriggerChangedEvent(
+                next_trigger_at=_NOW,
+                next_trigger_type="market_hours_rolling",
+            ),
+            lambda: models.HeartbeatEvent(timestamp=_NOW),
+        ],
+        ids=[
+            "invocation_started",
+            "phase_transition",
+            "agent_started",
+            "agent_succeeded",
+            "agent_retrying",
+            "agent_failed",
+            "invocation_ended",
+            "next_trigger_changed",
+            "heartbeat",
+        ],
+    )
+    async def test_per_type_model_validate_round_trip(self, ctor: Callable[[], BaseModel]) -> None:
+        """Emit → format_sse_record → parse JSON → model_validate round-trips cleanly."""
+        emitter = events.SSEEventEmitter()
+        event = ctor()
+        async with emitter.subscribe() as q:
+            emitter.emit(event)
+            enqueued = await asyncio.wait_for(q.get(), timeout=1.0)
+        framed = events.format_sse_record(enqueued)
+        data_line = framed.split("\ndata: ", 1)[1].rstrip("\n")
+        payload = json.loads(data_line)
+        # Round-trip the wire payload through the originating Pydantic class.
+        type(event).model_validate(payload)
 
 
 # ---------------------------------------------------------------------------

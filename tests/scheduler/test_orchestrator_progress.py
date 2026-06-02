@@ -11,8 +11,8 @@ Drives :func:`alphamind.scheduler.orchestrator.run_invocation` against a
   and ``run_decision_pipeline`` — both stubs receive the same emitter the
   orchestrator constructed from ``context.debug_e2e.emitter_factory`` and
   use it to emit their own per-phase + per-agent events.
-* Exactly nine ``agent_request`` / ``agent_response`` pairs land, in
-  dependency order, mirroring the production sequence
+* The ``agent_request`` events arrive in canonical dependency-DAG order,
+  mirroring the production sequence
   ``distillation → (3 sectors + qualitative) → adaptive → synthesizer →
   (analyst + strategist) → pre_processor → pm``.
 
@@ -431,18 +431,21 @@ async def test_run_invocation_records_every_phase_boundary(
     assert dones == expected_phases, f"missing phase_done events: {expected_phases - dones}"
 
 
-async def test_run_invocation_records_nine_agent_request_response_pairs(
+async def test_run_invocation_records_agents_in_dependency_order(
     async_factory: async_sessionmaker[AsyncSession],
     env_path: Path,
     archive_root: Path,
     db_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Exactly 9 ``agent_request`` / ``agent_response`` pairs land in dependency order.
+    """Agent ``agent_request`` events arrive in the canonical dependency-DAG order.
 
-    The 9 SDK calls correspond to the parent issue's pre-resolved SDK-call count:
-    3 domain researchers + qualitative + adaptive + synthesizer + analyst +
-    strategist + portfolio_manager.
+    The ordering — distillation → 3 sector researchers → qualitative →
+    adaptive → synthesizer → analyst → strategist → portfolio_manager —
+    is the unique invariant this test protects.  The per-harness emit
+    path is covered by ``tests/analysis/test_harness_core.py``
+    (L932/L981); the field shape of ``agent_response`` is enforced by
+    the ``RecordingProgressEmitter`` stub's own signature.
     """
     from alphamind.scheduler.orchestrator import run_invocation
 
@@ -464,12 +467,6 @@ async def test_run_invocation_records_nine_agent_request_response_pairs(
         now=_NOW,
     )
 
-    requests = [fields for kind, fields in emitter.events if kind == "agent_request"]
-    responses = [fields for kind, fields in emitter.events if kind == "agent_response"]
-
-    assert len(requests) == 9, f"expected 9 agent_request events, got {len(requests)}"
-    assert len(responses) == 9, f"expected 9 agent_response events, got {len(responses)}"
-
     expected_agents_in_order = [
         "tech_semis_researcher",
         "financials_researcher",
@@ -481,21 +478,10 @@ async def test_run_invocation_records_nine_agent_request_response_pairs(
         "strategist",
         "portfolio_manager",
     ]
-    actual_agents = [r["agent"] for r in requests]
+    actual_agents = [fields["agent"] for kind, fields in emitter.events if kind == "agent_request"]
     assert actual_agents == expected_agents_in_order, (
         f"agent_request order mismatch: {actual_agents} != {expected_agents_in_order}"
     )
-
-    # Each agent_response carries the seven fixed fields per parent
-    # issue § (B); cache split added per ALP-701.
-    for response in responses:
-        assert "duration_s" in response
-        assert "input_tokens" in response
-        assert "cache_read_tokens" in response
-        assert "cache_write_tokens" in response
-        assert "output_tokens" in response
-        assert "tool_calls" in response
-        assert "stop_reason" in response
 
 
 async def test_phase1_done_carries_fills_processed(
