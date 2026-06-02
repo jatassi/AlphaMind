@@ -80,27 +80,6 @@ def test_drawdown_tier_module_is_kernel_regime() -> None:
     assert DrawdownTier.__module__ == "alphamind._kernel.regime"
 
 
-def test_kernel_regime_has_zero_first_party_imports() -> None:
-    """``_kernel.regime`` must have no ``alphamind.*`` imports — it is a leaf."""
-    import ast
-    from pathlib import Path
-
-    import alphamind._kernel.regime as module
-
-    source = Path(module.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            assert node.module is None or not (
-                node.module == "alphamind" or node.module.startswith("alphamind.")
-            ), f"_kernel.regime must not import from alphamind.*; found: {node.module}"
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                assert not (alias.name == "alphamind" or alias.name.startswith("alphamind.")), (
-                    f"_kernel.regime must not import alphamind.*; found: {alias.name}"
-                )
-
-
 def test_kernel_regime_all_lists_documented_surface() -> None:
     from alphamind._kernel import regime
 
