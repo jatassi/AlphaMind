@@ -17,8 +17,7 @@
 module-path = "MODULE_PATH"
 timeout = TIMEOUT
 excluded-modules = []
+test-command = "TEST_CMD"
 
 [cosmic-ray.distributor]
 name = "local"
-
-test-command = "TEST_CMD"
