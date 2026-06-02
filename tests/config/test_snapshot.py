@@ -12,7 +12,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-import pytest
 import yaml
 
 from alphamind.config.loaders import (
@@ -152,7 +151,6 @@ def test_compute_snapshot_hash_returns_64_hex_chars() -> None:
     assert all(c in "0123456789abcdef" for c in digest)
 
 
-@pytest.mark.xfail(reason="ALP-815: config YAML drift on main shifted hash")
 def test_pinned_fixture_hash_matches_known_value() -> None:
     """Regression-fixture pin per AC line 67.
 
@@ -221,7 +219,15 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # config/continuous_monitor.yaml and ContinuousMonitorConfig (the one-shot
     # terminal ERROR escalation for long-unresolved unattributed fills),
     # shifting the resolved-config canonical bytes.
-    expected = "040e73622c2467c665370caa82e06a92a8a98661b772adf4245dccc04e9c604c"
+    # Pin corrected 2026-06-02 (ALP-815): the value committed alongside ALP-771's
+    # config change was miscalculated — it never matched the bytes ALP-771 itself
+    # shipped (config/ is unchanged since bb165043, yet that commit's resolver
+    # produces this hash, not the value pinned there). The hash is fully
+    # deterministic (stable across PYTHONHASHSEED; no sets/paths/timestamps feed
+    # it), so this is the canonical digest for the current config tree across all
+    # platforms. ALP-769 had xfail'd this test to unblock the CI fallback merge;
+    # that marker is now removed.
+    expected = "d066aae7f3cf1d469b1dcc4f4b63a45cecd0d1fe1c7cc449f28adaab8747b8e9"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."
