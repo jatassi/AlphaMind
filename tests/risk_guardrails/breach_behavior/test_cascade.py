@@ -56,130 +56,27 @@ from alphamind.risk_guardrails.breach_behavior import (
 )
 from alphamind.risk_guardrails.breach_behavior.cascade import _candidate_set
 from alphamind.risk_guardrails.breach_behavior.types import BreachDetails
-
-# ---------------------------------------------------------------------------
-# Stubs — structural stand-ins for guardrail-evaluation protocols
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class _StubRuleProjection:
-    rule: str
-    status: str
-    current: float
-    limit: float
-    projected_after: float
-    headroom_remaining: float
-    unit: str
-    inverse: bool = False
-
-
-@dataclass(frozen=True)
-class _StubLibraryOutput:
-    per_rule: tuple[_StubRuleProjection, ...]
-
-
-@dataclass(frozen=True)
-class _StubLibraryConfig:
-    effective_limits: dict[str, float]
-
-
-@dataclass(frozen=True)
-class _StubPortfolioState:
-    label: str = "default"
-
-
-@dataclass(frozen=True)
-class _StubMarketInputs:
-    pass
-
-
-@dataclass
-class _ScriptedLibrary:
-    """Drives ``evaluate_proposals`` with caller-scripted outputs.
-
-    Returns ``outputs[i]`` on the i-th call. Records every invocation so tests
-    can assert call counts and proposal shapes.
-
-    The fixture is *input-aware*: it does not derive its return values from
-    call index alone — it only matches by call index given a script. To
-    additionally validate that the orchestrator actually plumbs closes through
-    to the library projection, callers can use :class:`_InputAwareLibrary`
-    instead, which dispatches outputs based on whether ``proposals`` is empty
-    or carries specific position ids.
-    """
-
-    outputs: list[_StubLibraryOutput]
-    calls: list[dict[str, Any]] = field(default_factory=list)
-
-    def __call__(
-        self,
-        *,
-        state: Any,
-        proposals: Sequence[Any],
-        config: Any,
-        market: Any,
-        delta_buffer_factor: float = 1.0,
-    ) -> _StubLibraryOutput:
-        self.calls.append(
-            {
-                "state": state,
-                "proposals": tuple(proposals),
-                "config": config,
-                "market": market,
-                "delta_buffer_factor": delta_buffer_factor,
-            }
-        )
-        idx = min(len(self.calls) - 1, len(self.outputs) - 1)
-        return self.outputs[idx]
-
-
-@dataclass
-class _InputAwareLibrary:
-    """Input-aware ``evaluate_proposals`` stub for cascade-projection tests.
-
-    Returns ``baseline_output`` when called with ``proposals=()``; otherwise
-    looks up an output keyed by the *frozen set of position ids* the caller
-    threaded through as CLOSE-action ProposedDeltas. Tests script outputs by
-    "after closing positions {A}, projection looks like X" semantics, which
-    forces the orchestrator to actually plumb closes through to the library
-    or the test will fail.
-    """
-
-    baseline_output: _StubLibraryOutput
-    post_close_outputs: dict[frozenset[str], _StubLibraryOutput]
-    calls: list[dict[str, Any]] = field(default_factory=list)
-
-    def __call__(
-        self,
-        *,
-        state: Any,
-        proposals: Sequence[Any],
-        config: Any,
-        market: Any,
-        delta_buffer_factor: float = 1.0,
-    ) -> _StubLibraryOutput:
-        proposals_tuple = tuple(proposals)
-        self.calls.append(
-            {
-                "state": state,
-                "proposals": proposals_tuple,
-                "config": config,
-                "market": market,
-                "delta_buffer_factor": delta_buffer_factor,
-            }
-        )
-        if not proposals_tuple:
-            return self.baseline_output
-        position_ids = frozenset(p.existing_position_id for p in proposals_tuple)
-        if position_ids in self.post_close_outputs:
-            return self.post_close_outputs[position_ids]
-        msg = (
-            f"_InputAwareLibrary: no scripted output for proposals "
-            f"{[p.existing_position_id for p in proposals_tuple]!r}; "
-            f"available keys: {sorted(map(sorted, self.post_close_outputs))!r}"
-        )
-        raise AssertionError(msg)
+from tests.risk_guardrails.breach_behavior.fixtures.builders import (
+    InputAwareLibrary as _InputAwareLibrary,
+)
+from tests.risk_guardrails.breach_behavior.fixtures.builders import (
+    ScriptedLibrary as _ScriptedLibrary,
+)
+from tests.risk_guardrails.breach_behavior.fixtures.builders import (
+    StubLibraryConfig as _StubLibraryConfig,
+)
+from tests.risk_guardrails.breach_behavior.fixtures.builders import (
+    StubLibraryOutput as _StubLibraryOutput,
+)
+from tests.risk_guardrails.breach_behavior.fixtures.builders import (
+    StubMarketInputs as _StubMarketInputs,
+)
+from tests.risk_guardrails.breach_behavior.fixtures.builders import (
+    StubPortfolioState as _StubPortfolioState,
+)
+from tests.risk_guardrails.breach_behavior.fixtures.builders import (
+    StubRuleProjection as _StubRuleProjection,
+)
 
 
 def _proj(
