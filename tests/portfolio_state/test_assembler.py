@@ -2089,7 +2089,7 @@ def test_phase1_latency_warning_suppressed_on_monitor_path(
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
-            check_phase1_latency=False,
+            warn_on_phase1_latency=False,
         )
 
     assert not any("latency exceeded" in r.message for r in caplog.records)
