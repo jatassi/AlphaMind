@@ -91,6 +91,7 @@ async def persist_envelope_outcome(
     *,
     config: StatePersistenceConfig,
     dispatch_results: tuple[BrokerDispatchResult | None, ...] | None = None,
+    reprice_markers: tuple[Any, ...] = (),
 ) -> None:
     """Persist per-command writebacks + one ``pm_decision`` for an accepted envelope.
 
@@ -103,6 +104,11 @@ async def persist_envelope_outcome(
     the real broker ids onto the TAKE_PROFIT / first-PRICE_STOP rows (ALP-746).
     ``None`` entries (legacy callers and per-command failures) fall back to the
     synthetic id.
+
+    ``reprice_markers`` (ALP-765): one ``{"ticker", "analyst_price",
+    "marketable_price"}`` dict per enter-now entry repriced by the execution
+    layer. Forwarded into the ``pm_decision`` audit row so a repriced envelope
+    is no longer recorded as unmodified.
     """
     del config  # No knobs consumed at this story; signature is forward-shaped.
 
@@ -120,7 +126,12 @@ async def persist_envelope_outcome(
         )
         accepted_command_ids.append(result.command_id)
 
-    await _emit_pm_decision(handle, envelope=envelope, command_ids=tuple(accepted_command_ids))
+    await _emit_pm_decision(
+        handle,
+        envelope=envelope,
+        command_ids=tuple(accepted_command_ids),
+        reprice_markers=reprice_markers,
+    )
     # Layer-1 parse rejections deliberately skip this — only an accepted
     # envelope's full writeback counts as a Phase 2 commit.
     await stamp_phase_completion(handle, column="phase2_completed_at")
@@ -342,6 +353,7 @@ async def _emit_pm_decision(
     *,
     envelope: PMEnvelope,
     command_ids: tuple[str, ...],
+    reprice_markers: tuple[Any, ...] = (),
 ) -> None:
     """Emit one ``pm_decision`` capturing the full envelope provenance."""
     detail = PMDecisionDetail(
@@ -356,6 +368,7 @@ async def _emit_pm_decision(
         modifications_json=[m.model_dump(mode="json") for m in envelope.modifications],
         resulting_command_ids=command_ids,
         verdict=_VERDICT_TO_PM_VERDICT[envelope.verdict],
+        reprice_markers_json=list(reprice_markers),
     )
     _emit(
         handle,

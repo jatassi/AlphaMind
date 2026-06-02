@@ -2730,3 +2730,113 @@ async def test_over_fill_quarantined_not_integrated(
     assert "fill-phantom-agg" in alerts[0].detail_json
     assert "ALP-766" in alerts[0].detail_json
     await _assert_phase1_completed(factory, handle.invocation_id)
+
+
+async def test_buy_fill_mirrors_settled_cash_alongside_current_cash(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-778 — a buy fill that debits current_cash_usd must also update
+    settled_cash_usd to the same value.
+
+    Prior to the fix, _apply_cash_movement only wrote current_cash_usd;
+    settled stayed frozen at the seed value, overstating deployable capital
+    between reconciliation runs.
+    """
+    from alphamind.execution.write_paths.phase1 import process_unprocessed_fills
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_pending_position(),
+        _make_pending_entry_order(limit_price=150.0),
+        _make_active_thesis(),
+        _make_pending_bracket(),
+    )
+    await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=100_000.0))
+    await _seed_drawdown_state(factory)
+    # Buy 10 shares @ $150 = $1500 debit.
+    await _append_fill(factory, _make_unprocessed_fill(fill_id="fill-1"))
+
+    ctx, handle = await _open_handle(factory)
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash_row is not None
+        assert cash_row.current_cash_usd == pytest.approx(100_000.0 - 1500.0)
+        # ALP-778: settled must track current after every fill.
+        assert cash_row.settled_cash_usd == pytest.approx(100_000.0 - 1500.0)
+
+
+async def test_sell_fill_mirrors_settled_cash_alongside_current_cash(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-778 — a sell fill that credits current_cash_usd must also update
+    settled_cash_usd to the same value."""
+    from alphamind.execution.write_paths.phase1 import process_unprocessed_fills
+    from tests.state._fk_substrate import stub_order_row
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    close_order = _make_pending_entry_order(
+        order_id=OrderId("ord-close-1"),
+        role=OrderRole.CLOSE,
+        direction=OrderDirection.SELL,
+        position_id=PositionId("pos-1"),
+    )
+    entry_order = _make_pending_entry_order()
+    thesis_row, component_rows = thesis_record_to_rows(_make_thesis_with_resolved_components())
+    bracket_row, leg_rows = bracket_record_to_rows(_make_active_bracket())
+    leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
+    seeded_order_ids: set[str] = {entry_order.order_id, close_order.order_id}
+    async with factory() as sess:
+        sess.add(position_record_to_row(_make_open_position()))
+        sess.add(thesis_row)
+        for crow in component_rows:
+            sess.add(crow)
+        sess.add(order_record_to_row(entry_order))
+        sess.add(order_record_to_row(close_order))
+        for oid in leg_order_ids:
+            if oid not in seeded_order_ids:
+                sess.add(stub_order_row(oid, bracket_row.bracket_id))
+                seeded_order_ids.add(oid)
+        sess.add(bracket_row)
+        await sess.flush()
+        for lrow in leg_rows:
+            sess.add(lrow)
+        await sess.commit()
+    # Start with cash reflecting the cost of the open position (10 * $150 = $1500 out).
+    await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=98_500.0))
+    await _seed_drawdown_state(factory)
+    # Sell 10 shares @ $160 = $1600 credit (net P/L = $100).
+    await _append_fill(
+        factory,
+        _make_unprocessed_fill(
+            fill_id="fill-close-1",
+            order_id=OrderId("ord-close-1"),
+            fill_price=160.0,
+            fill_quantity=10.0,
+        ),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash_row is not None
+        # Sell 10 @ $160 = $1600 credit; 98_500 + 1600 = 100_100.
+        assert cash_row.current_cash_usd == pytest.approx(98_500.0 + 1600.0)
+        # ALP-778: settled must track current after sell fills too.
+        assert cash_row.settled_cash_usd == pytest.approx(98_500.0 + 1600.0)

@@ -285,6 +285,7 @@ class TestDispatchPhase2:
             *,
             config: Any,
             dispatch_results: Any = None,
+            reprice_markers: Any = (),
         ) -> None:
             captured_dispatch_results.append(dispatch_results)
 
@@ -339,6 +340,7 @@ class TestDispatchPhase2:
             *,
             config: Any,
             dispatch_results: Any = None,
+            reprice_markers: Any = (),
         ) -> None:
             captured_dispatch_results.append(dispatch_results)
 
@@ -446,6 +448,7 @@ class TestDispatchPhase2:
             *,
             config: Any,
             dispatch_results: Any = None,
+            reprice_markers: Any = (),
         ) -> None:
             captured_sessions.append(handle.session)
 
@@ -534,6 +537,7 @@ class TestDispatchPhase2:
             *,
             config: Any,
             dispatch_results: Any = None,
+            reprice_markers: Any = (),
         ) -> None:
             # Stamp the row's command_execution_summary_json with the
             # current envelope_id as a marker for "this envelope's session

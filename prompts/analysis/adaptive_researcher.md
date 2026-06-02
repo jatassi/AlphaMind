@@ -77,7 +77,7 @@ Cumulative caps (per invocation, overridable per firing trigger via `run_types/<
 - 4,000 tokens of cumulative tool output.
 
 Tool selection discipline:
-- `news_search` for catalyst identification on price/volume anomalies.
+- `news_search` for catalyst identification on price/volume anomalies. For named-equity anomalies, prefer `tickers=[TICKER]` over a free-text `query` — the ticker-JOIN path is more reliable than substring matching. Use `query` for macro or cross-name themes where no single ticker is the subject.
 - `ticker_deep_pull` for granular per-ticker context not in the routine slice.
 - `social_sentiment` for sentiment-shift attribution.
 - `prediction_markets` for probability-shift investigation outside the tracked set.
@@ -126,7 +126,7 @@ The schema constrains:
       "sector": "tech_semis",
       "tools_used": ["news_search", "options_flow", "ticker_deep_pull"],
       "findings": [
-        "news_search \"NVDA institutional positioning\" returned three sell-side notes published in the past 36 hours flagging pre-earnings reposition",
+        "news_search tickers=[NVDA] returned three sell-side notes published in the past 36 hours flagging pre-earnings reposition",
         "options_flow on NVDA shows directional bias to upside calls 2.1× recent baseline; skew unchanged",
         "ticker_deep_pull short-interest figures on NVDA: short interest declined 1.2% over the same window — consistent with covering, not new bearish positioning"
       ],
@@ -144,7 +144,7 @@ The schema constrains:
       "sector": "energy",
       "tools_used": ["news_search", "macro_data"],
       "findings": [
-        "news_search \"refining outage\" returned no recent unplanned-outage headlines on VLO/MPC/PSX",
+        "news_search tickers=[VLO, MPC, PSX] returned no recent unplanned-outage headlines",
         "macro_data crack_spread series: 5-day spread widened ~$2 with no single-day shock — gradual, not event-driven"
       ],
       "assessment": "inconclusive",

@@ -1856,6 +1856,8 @@ async def _apply_cash_movement(
     delta = -(consideration + fees) if is_buy else (consideration - fees)
     cash_row = await _read_cash_row_or_raise(handle)
     cash_row.current_cash_usd = cash_row.current_cash_usd + delta
+    # ALP-778: settled tracks current (no T+2 lag modelled in paper trading).
+    cash_row.settled_cash_usd = cash_row.current_cash_usd
     if is_buy:
         release = _fill_reservation_release_usd(order, fill)
         # Floor at zero (defensive) and wrap in money() — the same non-negative
