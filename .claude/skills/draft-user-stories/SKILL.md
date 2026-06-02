@@ -25,7 +25,7 @@ One argument: the feature name (e.g., `Breach behavior`, `Domain researchers`, `
 
 ## Procedure
 
-Seven phases. Work through them in order. After each phase, briefly tell the operator what you found / chose so they can redirect early if you're off track.
+Eight phases. Work through them in order. After each phase, briefly tell the operator what you found / chose so they can redirect early if you're off track.
 
 ### Phase 1 — Resolve the feature
 
@@ -376,6 +376,22 @@ Each story passes the **fresh-agent test**: a competent engineer who has read no
 
 Each acceptance criterion passes the **atomicity test**: it asserts one observable outcome, and a graders can mark it pass/fail unambiguously by running one command or reading one file.
 
+### Phase 8 — Implementation-readiness pass
+
+After every sub-issue is created and the Phase 7 final pass (every `blockedBy` wired, mid-flight commits absorbed) is done, take one more adversarial read through the whole tree — the parent and every sub-issue — before reporting. You are re-reading your own drafts, so read against the grain: hunt for the latitude you left yourself, not the intent you remember. A first draft routinely smuggles in a choice you deferred without noticing.
+
+Each issue must clear four bars. Fix in place with `save_issue` (description-only — never re-send `blockedBy`; it is append-only, per [`blockedBy` mechanics](#blockedby-mechanics)) and re-fetch to confirm the render, exactly as in Phase 7b.
+
+1. **Zero open design decisions.** No "e.g. X / Y", no "(or Z if cleaner)", no leaving a type's representation, a module's location, a public name, or an API's shape to the implementer when that choice ripples into sibling stories. Pin the concrete `module.py`, the concrete type/union and its fields, the concrete function name and signature, the concrete config key. If the drafter can settle it from the design docs + the code, it is a drafting-time decision — settle it now (the Phase 6 test).
+
+2. **Zero scope ambiguities.** File ownership is crisp: state which files each story owns and hold one writer per file across the tree. Two stories editing the same `task.py` / `wiring.py` for different concerns is a conflict you pay at integration — resolve it by ownership (one story owns the file) or by a `blockedBy` edge that serialises them. No "appropriate", "as needed", or "a sensible default" standing in for a value or a boundary; every edge case the body names has a stated outcome.
+
+3. **Zero hedging.** No A/B/C option forks, no "generalize or alias", no "e.g." offering latitude on a behavior. State the contract positively and singularly (the `feedback_no_decision_trails` discipline). The one legitimate exception is a genuine **dispatch-time** discovery — schema drift, a third-party behavior the docs don't pin, an algorithm case found only in implementation — which stays as a named **surfacing condition**, not a fork. The Phase 6 drafting-time-vs-dispatch-time test is the cut line: if it can be answered without running code, it may not remain a hedge.
+
+4. **Fully self-contained with a Reading list.** Each issue is implementable by a fresh agent from its own body + Reading list (the fresh-agent test above). Crucially, **shared vocabulary must be coherent tree-wide**: a type, seam, module, config key, or error name pinned in its defining story is referenced by that exact name in every consuming story, and each consumer's Reading list points at the defining story. When the pass changes a pinned name in one story, propagate it to every sibling that references it — an inconsistent name across two stories is a scope ambiguity wearing a self-contained costume.
+
+Do this in-thread — the no-delegation rule holds, because coherence across the whole tree is exactly what the pass checks. If the pass surfaces a defect that changes a *decision* rather than its wording (e.g. a foundation story's API shape was underspecified in a way that reshapes its consumers), treat it as a late Phase 6 item: fix the defining story and every consumer in the same pass, then note it in the done-report.
+
 ## Linear specifics
 
 ### Project mapping
@@ -428,6 +444,7 @@ Report back to the operator in this shape (concise; one short paragraph):
 - The number of sub-issues created and the identifier range (e.g., "10 stories, ALP-280 through ALP-289").
 - The dependency-graph shape in one line ("01 → 02 → 03 → 4-way parallel 04* → 3-way parallel 05* → 06 → 07").
 - Cross-feature `blockedBy` count and which sibling work trees they touch.
+- The Phase 8 implementation-readiness result: a one-line tally of what it fixed (open decisions / scope ambiguities / hedges resolved, names propagated), or "clean" if nothing needed changing.
 - Any unresolved gaps surfaced during drafting (missing upstream stories, ambiguous design-doc sections, etc.) — these become the operator's follow-ups.
 
 Then stop. The operator drives next steps from there (typically: dispatch via `/orchestrate`).
