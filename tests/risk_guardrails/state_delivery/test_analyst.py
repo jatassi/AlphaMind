@@ -16,7 +16,6 @@ from alphamind._kernel.regime import (
 )
 from alphamind.portfolio_state.aggregates.risk_budget import (
     RiskBudgetConsumption,
-    RiskBudgetEntry,
 )
 from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
@@ -31,34 +30,11 @@ from alphamind.portfolio_state.consumers.analyst import (
 from alphamind.portfolio_state.records.positions import Direction, InstrumentType
 from alphamind.risk_guardrails.state_delivery import render_analyst_header
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
+from tests.risk_guardrails.state_delivery.fixtures import _make_budget_entry
 
 # ---------------------------------------------------------------------------
-# Fixture builders
+# Fixture builders (shared _make_budget_entry hoisted)
 # ---------------------------------------------------------------------------
-
-
-def _make_budget_entry(
-    *,
-    rule_id: str,
-    rule_label: str,
-    current_value: float,
-    limit_value: float,
-    zone: RiskZone = RiskZone.NORMAL,
-    unit: str = "% of portfolio",
-) -> RiskBudgetEntry:
-    headroom = limit_value - current_value
-    headroom_pct = max(0.0, min(100.0, (headroom / limit_value) * 100.0)) if limit_value else 0.0
-    return RiskBudgetEntry(
-        rule_id=rule_id,
-        rule_label=rule_label,
-        current_value=current_value,
-        limit_value=limit_value,
-        headroom=headroom,
-        headroom_pct_of_limit=headroom_pct,
-        zone=zone,
-        unit=unit,
-        cumulative_invocation_impact_value=0.0,
-    )
 
 
 def _make_active_parameters(

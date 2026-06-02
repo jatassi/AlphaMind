@@ -22,13 +22,11 @@ from alphamind._kernel.regime import (
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.aggregates.risk_budget import (
     RiskBudgetConsumption,
-    RiskBudgetEntry,
 )
 from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )
-from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
 from alphamind.portfolio_state.events.activity_log import (
@@ -54,7 +52,6 @@ from alphamind.portfolio_state.snapshot import (
     SectorExposureEntry,
 )
 from alphamind.portfolio_state.views.positions import PositionView
-from alphamind.risk_guardrails.guardrail_evaluation.types import EscalationZones
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery import (
     CorrelationState,
@@ -65,37 +62,15 @@ from alphamind.risk_guardrails.state_delivery import (
     render_pm_header,
 )
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
+from tests.risk_guardrails.state_delivery.fixtures import (
+    _DEFAULT_POSITION_ZONES,
+    _make_budget_entry,
+    _make_thesis_quality_aggregates,
+)
 
 # ---------------------------------------------------------------------------
-# Fixture builders
+# Fixture builders (shared _DEFAULT/_make_budget hoisted to fixtures/)
 # ---------------------------------------------------------------------------
-
-
-_DEFAULT_POSITION_ZONES = EscalationZones(warning=70.0, critical=85.0, hard_block=95.0)
-
-
-def _make_budget_entry(
-    *,
-    rule_id: str,
-    rule_label: str,
-    current_value: float,
-    limit_value: float,
-    zone: RiskZone = RiskZone.NORMAL,
-    unit: str = "% of portfolio",
-) -> RiskBudgetEntry:
-    headroom = limit_value - current_value
-    headroom_pct = max(0.0, min(100.0, (headroom / limit_value) * 100.0)) if limit_value else 0.0
-    return RiskBudgetEntry(
-        rule_id=rule_id,
-        rule_label=rule_label,
-        current_value=current_value,
-        limit_value=limit_value,
-        headroom=headroom,
-        headroom_pct_of_limit=headroom_pct,
-        zone=zone,
-        unit=unit,
-        cumulative_invocation_impact_value=0.0,
-    )
 
 
 def _make_active_parameters(
@@ -191,21 +166,6 @@ def _make_directional_exposure() -> DirectionalExposure:
         total_short_delta_adjusted_usd=money(80_000.0),
         net_directional_pct_of_portfolio=42.0,
         gross_pct_of_portfolio=78.0,
-    )
-
-
-def _make_thesis_quality_aggregates() -> ThesisQualityAggregate:
-    return ThesisQualityAggregate(
-        as_of_timestamp=datetime(2026, 4, 28, 0, 0, 0, tzinfo=UTC),
-        resolution_counts_by_window=(),
-        duration_stats_by_window=(),
-        invalidation_timing_stats_by_window=(),
-        signal_hit_rates=(),
-        signal_to_thesis_conversions=(),
-        conviction_calibration=(),
-        conviction_sizing_deviation_by_window=(),
-        performance_attribution=(),
-        alpha_beta_decomposition_by_window=(),
     )
 
 
