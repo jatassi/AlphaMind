@@ -157,7 +157,7 @@ _REASON_BY_EMPTY_DIAGNOSIS: dict[NewsEmptyReason, NewsSearchReason] = {
 def _search_news(session: Session, inp: NewsSearchInput, clock: Clock) -> NewsSearchOutput:
     now = clock.now()
 
-    if not inp.query and not inp.tickers:
+    if not inp.query.split() and not inp.tickers:
         return NewsSearchOutput(
             articles=(),
             data_freshness=now,
@@ -171,8 +171,9 @@ def _search_news(session: Session, inp: NewsSearchInput, clock: Clock) -> NewsSe
     as_of_iso = format_iso(as_of)
 
     # Push both filters into SQL: a JOIN/IN against ``news_article_tickers``
-    # constrains by ticker, and a ``LIKE`` on ``lower(headline_text)``
-    # constrains by query. ``DISTINCT`` deduplicates the ticker join.
+    # constrains by ticker; per-token LIKE clauses on ``lower(headline_text)``
+    # and ``lower(topic_tags)`` constrain by query (AND-of-tokens, each token
+    # OR-matched across both columns). ``DISTINCT`` deduplicates the ticker join.
     article_stmt = (
         select(
             NewsArticles.article_id,
@@ -191,21 +192,21 @@ def _search_news(session: Session, inp: NewsSearchInput, clock: Clock) -> NewsSe
         )
         .distinct()
     )
-    if inp.query:
-        # Tokenize on whitespace and require each token to appear in the article
-        # (AND semantics). Each token is matched against ``headline_text`` OR
-        # ``topic_tags`` (OR within a token) so that catalyst keywords stored as
-        # tags surface alongside headline matches. This makes multi-word catalyst
-        # phrases (e.g. "IBM earnings guidance") match articles whose headlines
-        # contain the tokens non-contiguously — fixing the whole-phrase miss that
-        # left adaptive-researcher queries returning no_data (ALP-777).
-        # SQLite's ``lower()`` is ASCII-only; acceptable for the English corpus.
-        for tok in inp.query.split():
-            escaped = tok.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            article_stmt = article_stmt.where(
-                func.lower(NewsArticles.headline_text).like(f"%{escaped}%", escape="\\")
-                | func.lower(NewsArticles.topic_tags).like(f"%{escaped}%", escape="\\")
-            )
+    # Tokenize on whitespace and require each token to appear in the article
+    # (AND semantics). Each token is matched against ``headline_text`` OR the
+    # raw JSON-serialized ``topic_tags`` string (OR within a token), so tokens
+    # present in topic tag values surface alongside headline matches.
+    # Note: the match is against the serialized JSON (e.g. ``["guidance"]``), so
+    # token substrings of tag values also match — acceptable for the use case.
+    # ``lower()`` is ASCII-only in SQLite; fine for the English-news corpus.
+    # Guard on ``.split()`` so a whitespace-only query adds no filter rather
+    # than bypassing the guard and returning the full unfiltered result set.
+    for tok in inp.query.split():
+        escaped = tok.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        article_stmt = article_stmt.where(
+            func.lower(NewsArticles.headline_text).like(f"%{escaped}%", escape="\\")
+            | func.lower(NewsArticles.topic_tags).like(f"%{escaped}%", escape="\\")
+        )
     if inp.tickers:
         ticker_uppers = tuple(t.upper() for t in inp.tickers)
         article_stmt = article_stmt.join(

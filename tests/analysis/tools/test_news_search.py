@@ -5,6 +5,7 @@ Uses an in-memory SQLite database for full integration coverage.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -538,15 +539,18 @@ def test_news_search_multiword_query_noncontiguous_tokens_hit(session: Session) 
 
 
 def test_news_search_multiword_query_topic_tag_match(session: Session) -> None:
-    """A token absent from the headline but present in topic_tags still produces a match."""
-    import json
+    """A token absent from the headline but present in topic_tags still produces a match.
 
+    Uses a real HeadlineType canonical tag value (``guidance``) so the fixture
+    reflects a production-achievable state — arbitrary non-vocab strings like
+    ``catalyst`` or ``earnings_beat`` cannot be persisted by the collector.
+    """
     _add_article(
         session,
         article_id="ibm-tagged",
         headline="IBM stock moves higher after analyst day",
         published_at=_RECENT,
-        topic_tags=json.dumps(["catalyst", "earnings_beat", "guidance"]),
+        topic_tags=json.dumps(["guidance", "analyst_action"]),
     )
     _add_article(
         session,
@@ -557,8 +561,8 @@ def test_news_search_multiword_query_topic_tag_match(session: Session) -> None:
     session.commit()
 
     fn = TOOLS["news_search"].callable_factory(session)
-    # "catalyst" is only in topic_tags, not the headline
-    result: NewsSearchOutput = fn(NewsSearchInput(query="IBM catalyst"))
+    # "guidance" is only in topic_tags, not the headline
+    result: NewsSearchOutput = fn(NewsSearchInput(query="IBM guidance"))
 
     assert result.quality == ToolQuality.COMPLETE
     assert len(result.articles) == 1
