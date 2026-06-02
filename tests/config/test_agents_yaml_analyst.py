@@ -36,9 +36,9 @@ def test_analyst_entry_loads() -> None:
     entry = _load_analyst_entry()
     assert entry.model == "claude-opus-4-8"
     assert entry.prompt == "prompts/decision/analyst.md"
-    assert entry.latency_budget_seconds == 500
-    assert entry.context_token_budget == 8000
-    assert entry.output_token_budget == 100000
+    assert entry.latency_budget_seconds == 750
+    assert entry.context_token_budget == 12000
+    assert entry.output_token_budget == 150000
 
 
 def test_analyst_prompt_path_exists() -> None:
@@ -84,9 +84,9 @@ class TestAgentsYamlPortfolioManagerEntry:
         entry = _load_pm_entry()
         assert entry.model == "claude-opus-4-8"
         assert entry.prompt == "prompts/decision/pm.md"
-        assert entry.latency_budget_seconds == 900
-        assert entry.context_token_budget == 16000
-        assert entry.output_token_budget == 24000
+        assert entry.latency_budget_seconds == 1350
+        assert entry.context_token_budget == 24000
+        assert entry.output_token_budget == 36000
 
     def test_pm_prompt_path_exists(self) -> None:
         """The `prompt:` field resolves to a readable file under the repo root."""

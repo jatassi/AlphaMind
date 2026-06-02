@@ -30,7 +30,14 @@ control_port: 8765
 # pipeline cadence. `off_hours_rolling` and `weekend_saturday` stay valid run
 # types (overlays + enum members remain) but are deliberately unscheduled.
 triggers:
-  pre_open:             "0 9 * * mon-fri"     # 09:00 ET — overnight synthesis, position for the open
+  # pre_open moved 09:00 → 09:35 ET on 2026-06-02: firing 30 min before the
+  # 09:30 NYSE open drew wide/distrusted pre-market quotes (the bar-divergence /
+  # broken-spread gate fell back to recorded bars — see the 06-02 pre_open).
+  # 09:35 lands just after the opening auction settles, so the run anchors on
+  # fresh live prices. Name kept ("pre_open" is now a slight post-open misnomer)
+  # to avoid churning the enum / wire-schema / DB CHECK vocab, per the
+  # market_hours_rolling note below.
+  pre_open:             "35 9 * * mon-fri"    # 09:35 ET — after the open, fresh live quotes
   # `market_hours_rolling` is now a single mid-day fire (a slight misnomer the
   # name keeps to avoid churning the enum / wire-schema / DB CHECK vocab).
   market_hours_rolling: "0 13 * * mon-fri"    # 13:00 ET — single mid-day opportunity / thesis read
