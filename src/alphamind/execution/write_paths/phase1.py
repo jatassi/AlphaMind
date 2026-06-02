@@ -589,7 +589,7 @@ def _over_fill_quarantine_message(fill: FillRecord, order: OrderRecord) -> str:
         f"Fill {fill.fill_id!r} (order {fill.order_id!r}, qty {fill.fill_quantity} @ "
         f"{fill.fill_price}) exceeds order remaining quantity "
         f"{order.remaining_quantity}; quarantined to prevent double-count. Likely "
-        "a recovery-sweep aggregate on an already-fully-filled order (ALP-766)."
+        "a recovery-sweep aggregate on a fully-filled order (ALP-766)."
     )
 
 
