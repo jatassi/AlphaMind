@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Final, Protocol
 from zoneinfo import ZoneInfo
@@ -42,6 +42,7 @@ from alphamind.execution.continuous_monitor.borrow_accrual.recompute import (
     compute_tick,
 )
 from alphamind.execution.continuous_monitor.session import MonitorSession
+from alphamind.execution.continuous_monitor.supervisor import SupervisedLoop
 from alphamind.persistence.models import OhlcvBars
 from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
@@ -92,8 +93,17 @@ Tests pass a closure returning a dict-backed lookup.
 """
 
 NowProvider = Callable[[], datetime]
-SleepCallable = Callable[[float], Awaitable[None]]
 MarketOpenPredicate = Callable[[datetime], bool]
+
+# Short heartbeat cadence for the run-forever loop (ALP-826). The accrual tick
+# fires once per trading day at a wall-clock time, but the loop must iterate far
+# more often than that so the supervisor's stall watchdog sees a steady
+# heartbeat — a once-a-day sleep would look stalled for ~24h. The loop wakes on
+# this cadence, beats, and checks whether the daily wall-clock tick is due inside
+# the body. 60s is well under any plausible watchdog bound yet coarse enough that
+# a multi-minute granularity on the daily tick is immaterial (the tick fires the
+# first iteration at or past its scheduled local time).
+_HEARTBEAT_CADENCE_SECONDS: Final[float] = 60.0
 
 
 class TradingCalendar(Protocol):
@@ -208,13 +218,22 @@ async def run_borrow_accrual_loop(
     borrow_cost_resolver_factory: BorrowCostResolverFactory,
     process_lifetime_id: str,
     calendar: TradingCalendar,
+    loop: SupervisedLoop,
     now: NowProvider = lambda: datetime.now(UTC),
-    sleep: SleepCallable = asyncio.sleep,
 ) -> None:
-    """Long-running task: sleep to next trading-day tick, fire, repeat.
+    """Long-running task: heartbeat on a short cadence, fire on the daily tick.
 
-    The loop body wraps :func:`run_accrual_tick` in the canonical
-    monitor-task fail-fast envelope:
+    *loop* is the supervisor's :meth:`MonitorSupervisor.supervised_loop` iterator
+    with a short heartbeat cadence pre-bound (``_HEARTBEAT_CADENCE_SECONDS``).
+    Each iteration beats the watchdog and checks whether the daily wall-clock
+    tick is due — the tick fires once per trading day, but the loop iterates far
+    more often so the stall watchdog sees a steady heartbeat instead of a ~24h
+    silence. ``next_fire_utc`` tracks the next scheduled fire so the tick fires
+    exactly once when the wall clock crosses it, then advances to the following
+    session.
+
+    The tick wraps :func:`run_accrual_tick` in the canonical monitor-task
+    fail-fast envelope:
 
     * ``asyncio.CancelledError`` propagates so the supervisor's TaskGroup
       can complete shutdown.
@@ -227,23 +246,28 @@ async def run_borrow_accrual_loop(
     """
     del session  # session identity flows through process_lifetime_id closure
     tick_time = _parse_local_time(config.borrow_accrual_tick_local_time)
-    while True:
+    next_fire_utc = _next_tick_utc(
+        current=now(),
+        tick_local_time=tick_time,
+        calendar=calendar,
+    )
+    async for _ in loop():
         current = now()
-        next_fire_utc = _next_tick_utc(
-            current=current,
-            tick_local_time=tick_time,
-            calendar=calendar,
-        )
-        delay = (next_fire_utc - current).total_seconds()
-        if delay > 0.0:
-            await sleep(delay)
-        # ``current`` after the sleep — preserve precise wall-clock semantics
-        # for the activity-log entry's accrual_date.
+        if current < next_fire_utc:
+            continue
+        # The wall clock has reached the scheduled tick. Fire once, then advance
+        # to the next session's tick (``_next_tick_utc`` returns the following
+        # day's tick because today's local time is now in the past).
         await run_accrual_tick(
             session_factory=session_factory,
             borrow_cost_resolver_factory=borrow_cost_resolver_factory,
             process_lifetime_id=process_lifetime_id,
-            now=now(),
+            now=current,
+        )
+        next_fire_utc = _next_tick_utc(
+            current=now(),
+            tick_local_time=tick_time,
+            calendar=calendar,
         )
 
 

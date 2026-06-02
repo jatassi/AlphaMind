@@ -279,9 +279,11 @@ def _register_realized_vol_refresh_task(
 
     async def _refresh_task(_session: MonitorSession, _config: ContinuousMonitorConfig) -> None:
         # Initial refresh already happened at startup; this task drives the
-        # subsequent daily cadence.
-        while True:
-            await asyncio.sleep(interval_seconds)
+        # subsequent daily cadence through the supervisor's supervised_loop seam
+        # (ALP-826) — the loop beats the stall watchdog at the top of each
+        # iteration and paces at ``interval_seconds``, so the task is
+        # liveness-watched with no hand-wired beat() and no trailing sleep.
+        async for _ in supervisor.supervised_loop("realized_vol_refresh", interval_seconds):
             try:
                 tickers = tickers_provider()
                 count = await refresh_realized_vol_map_in_place(
@@ -572,12 +574,17 @@ async def _run_daemon(*, mode: MonitorMode) -> None:  # noqa: PLR0915 — compos
         halt_mode_repo=halt_mode_repo,
         event_emitter=sse_emitter,
     )
+    # ALP-826 — the control surface blocks in ``await server.serve()`` with no
+    # natural per-iteration heartbeat, so it is the one task registered
+    # ``watched=False`` (opted out of the stall watchdog: never warned-about,
+    # never tripped). Port-level liveness for it is a noted follow-up.
     supervisor.register_task(
         name="control_surface",
         coro_fn=make_control_surface_task(
             deps=control_deps,
             port=config.control_port,
         ),
+        watched=False,
     )
 
     try:
