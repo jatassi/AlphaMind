@@ -49,7 +49,6 @@ from alphamind.execution.broker_adapter.errors import (
 )
 from alphamind.execution.broker_adapter.fill_stream import (
     FillReport,
-    FillStreamStalledError,
     OrderStatus,
     subscribe_trade_updates,
     translate_trade_update,
@@ -106,6 +105,10 @@ from alphamind.execution.broker_adapter.retry import (
     Submitted,
     submit_with_retry,
 )
+from alphamind.execution.broker_adapter.stream_staleness import (
+    StreamActivityMonitor,
+    StreamStalledError,
+)
 
 __all__ = [
     "AccountStateQueries",
@@ -120,7 +123,6 @@ __all__ = [
     "EquitySubmission",
     "ExecutionMode",
     "FillReport",
-    "FillStreamStalledError",
     "GatewaySubmissionFailed",
     "MLEGLegAck",
     "MLEGSubmission",
@@ -137,6 +139,8 @@ __all__ = [
     "ReplaceFields",
     "ReplacementAck",
     "ResolvedCredentials",
+    "StreamActivityMonitor",
+    "StreamStalledError",
     "SubmissionOutcome",
     "Submitted",
     "TouchQuote",

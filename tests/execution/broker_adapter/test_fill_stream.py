@@ -30,11 +30,12 @@ from alphamind._kernel.ids import (
 )
 from alphamind.execution.broker_adapter import (
     FillReport,
-    FillStreamStalledError,
     OrderStatus,
+    StreamStalledError,
     subscribe_trade_updates,
     translate_trade_update,
 )
+from alphamind.execution.broker_adapter.stream_staleness import StreamActivityMonitor
 
 # ---------------------------------------------------------------------------
 # Helpers — synthetic alpaca-py payloads
@@ -643,7 +644,7 @@ class TestSubscribeTradeUpdates:
 
 
 # ---------------------------------------------------------------------------
-# subscribe_trade_updates — connected-but-silent stream detection (ALP-819)
+# Staleness kernel (ALP-828) — transport-agnostic StreamActivityMonitor
 # ---------------------------------------------------------------------------
 
 
@@ -664,10 +665,111 @@ class _StepClock:
         return self._t
 
 
+class _ManualClock:
+    """Monotonic substitute the test advances explicitly via ``advance``.
+
+    Unlike ``_StepClock`` (which jumps on every read), this lets a test hold
+    the clock still across several reads and step it deliberately, so the
+    staleness boundary can be probed on both sides without the read-count
+    coupling a fixed-step clock would impose.
+    """
+
+    def __init__(self) -> None:
+        self._t = 0.0
+
+    def advance(self, seconds: float) -> None:
+        self._t += seconds
+
+    def __call__(self) -> float:
+        return self._t
+
+
+class TestStreamActivityMonitor:
+    """The kernel both streams drive (ALP-828): per-slice beat + RTH staleness.
+
+    Transport-agnostic — the monitor knows nothing of ``TradeUpdate`` or
+    alpaca-py; the caller signals activity and pumps a slice per poll tick.
+    """
+
+    def test_beats_every_slice_and_records_activity(self) -> None:
+        beats: list[int] = []
+        clock = _ManualClock()
+        monitor = StreamActivityMonitor(
+            frame_timeout=10.0,
+            is_rth=lambda: True,
+            beat=lambda: beats.append(1),
+            poll_interval=5.0,
+            monotonic=clock,
+        )
+
+        # Two silent slices, then an activity signal, then a third slice — no
+        # stall because the gap never exceeds frame_timeout.
+        monitor.on_slice()
+        clock.advance(4.0)
+        monitor.on_slice()
+        monitor.record_activity()
+        clock.advance(4.0)
+        monitor.on_slice()
+
+        assert beats == [1, 1, 1]
+        assert monitor.poll_interval == pytest.approx(5.0)
+
+    def test_silent_during_rth_past_timeout_raises(self) -> None:
+        clock = _ManualClock()
+        monitor = StreamActivityMonitor(
+            frame_timeout=10.0,
+            is_rth=lambda: True,
+            beat=lambda: None,
+            poll_interval=5.0,
+            monotonic=clock,
+        )
+
+        clock.advance(11.0)  # past frame_timeout with no activity during RTH
+        with pytest.raises(StreamStalledError):
+            monitor.on_slice()
+
+    def test_off_hours_silence_resets_clock_and_never_stalls(self) -> None:
+        beats: list[int] = []
+        clock = _ManualClock()
+        monitor = StreamActivityMonitor(
+            frame_timeout=10.0,
+            is_rth=lambda: False,  # market closed → staleness gate disengaged
+            beat=lambda: beats.append(1),
+            poll_interval=5.0,
+            monotonic=clock,
+        )
+
+        # A long off-hours gap that would trip RTH never stalls; the clock is
+        # reset each slice so the closed-market gap is not charged against the
+        # first RTH window when the market opens.
+        clock.advance(1_000.0)
+        monitor.on_slice()
+        clock.advance(1_000.0)
+        monitor.on_slice()
+
+        assert beats == [1, 1]  # beats fire even with zero activity off-hours
+
+    def test_inert_when_knobs_unset(self) -> None:
+        beats: list[int] = []
+        clock = _StepClock(1_000.0)  # huge jumps would trip any active gate
+        monitor = StreamActivityMonitor(
+            frame_timeout=None,
+            is_rth=None,
+            beat=lambda: beats.append(1),
+            poll_interval=5.0,
+            monotonic=clock,
+        )
+
+        monitor.on_slice()
+        monitor.on_slice()
+
+        assert beats == [1, 1]  # beats still fire; staleness branch is inert
+
+
 class TestSilentStreamStaleness:
     async def test_silent_stream_during_rth_raises_within_threshold(self) -> None:
         """ALP-819: a connected stream that delivers no frames and never raises
-        is detected during RTH — the generator surfaces ``FillStreamStalledError``
+        is detected during RTH — the generator surfaces ``StreamStalledError``
         instead of parking on ``queue.get()`` indefinitely (the 11h hang).
 
         ``_FakeStream._run_forever`` parks (alive, no exception) and no frames
@@ -684,7 +786,7 @@ class TestSilentStreamStaleness:
             monotonic=_StepClock(1000.0),
         )
 
-        with pytest.raises(FillStreamStalledError):
+        with pytest.raises(StreamStalledError):
             await gen.__anext__()
 
         await gen.aclose()
