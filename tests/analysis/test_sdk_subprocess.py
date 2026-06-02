@@ -276,7 +276,7 @@ def test_prepare_validation_state_round_trips_with_real_library_config() -> None
         active_regime=Regime.normal,
         active_mode=Mode.normal,
         active_overlays=(),
-        firing_trigger=RunType.pre_open,
+        firing_trigger=RunType.market_open,
     )
     library_config = from_resolved_config(compose_config(inputs, runtime))
     library_market = MarketInputs(

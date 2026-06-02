@@ -129,7 +129,7 @@ async def seeded_db(db_path: str) -> AsyncIterator[str]:
                 VALUES
                     ('inv-1', 'pl-1', '2026-05-26T10:00:00Z',
                      '2026-05-26T10:05:00Z', '2026-05-26T10:10:00Z',
-                     'scheduled', 'pre_open', 'morning run',
+                     'scheduled', 'market_open', 'morning run',
                      'abc123', 'default', 'normal',
                      'normal', '[]', 'hash1',
                      '/data/config.json', '{}',

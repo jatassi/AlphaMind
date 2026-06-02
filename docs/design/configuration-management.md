@@ -47,7 +47,7 @@ config/
   overlays/
     pre-event.yaml | stress.yaml
   run_types/
-    pre_open.yaml | market_hours_rolling.yaml | pre_close.yaml |
+    market_open.yaml | market_hours_rolling.yaml | pre_close.yaml |
     off_hours_rolling.yaml | weekend_saturday.yaml | weekend_sunday.yaml
 .env                                     # secrets, referenced by name from YAML
 ```
@@ -73,7 +73,7 @@ timezone: US/Eastern
 max_instances: 1
 overlap_dedup_lookback_minutes: 30
 triggers:
-  pre_open:             "0 9 * * mon-fri"     # 09:00 ET
+  market_open:             "0 9 * * mon-fri"     # 09:00 ET
   market_hours_rolling: "0 13 * * mon-fri"    # 13:00 ET — single mid-day read
   pre_close:            "30 15 * * mon-fri"   # 15:30 ET
   weekend_sunday:       "0 18 * * sun"        # 18:00 ET Sun
@@ -444,7 +444,7 @@ Per-trigger overlay that scopes the analysis pipeline to the firing invocation t
 The bundle is **deterministic-only**: it controls two surfaces — the agent roster (which agents fire) and the budget envelope (per-agent latency, output-token, and tool-loop caps; news-digest depth). It does **not** inject any run-type instruction into LLM prompts. Behavioral shaping flows from the synthesizer brief's data composition (which already differs per trigger time — overnight news on pre-open, end-of-day flow on pre-close) and the structural budget envelope. This avoids LLM anchoring on numeric targets in agent prompts.
 
 ```yaml
-# pre_open.yaml — high-density: overnight news, pre-market flow, FOMC overnight moves
+# market_open.yaml — high-density: overnight news, pre-market flow, FOMC overnight moves
 agents:
   enabled:
     - tech_semis_researcher
@@ -491,7 +491,7 @@ The remaining overlay files (`market_hours_rolling.yaml`, `pre_close.yaml`, `wee
 
 | Trigger | Scheduled (Tier B) | Adaptive researcher | Adaptive tool-call cap | Adaptive token cap | News-digest top-N per sector |
 |---|---|---|---|---|---|
-| `pre_open` | yes (09:00) | enabled | 25 | 4000 | 5 |
+| `market_open` | yes (09:00) | enabled | 25 | 4000 | 5 |
 | `market_hours_rolling` | yes (13:00) | enabled | 20 | 3000 | 5 |
 | `pre_close` | yes (15:30) | enabled | 15 | 2500 | 4 |
 | `off_hours_rolling` | no (manual/emergency) | omitted | — | — | 3 |

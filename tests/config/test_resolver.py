@@ -79,7 +79,7 @@ def _compose(
     regime: Regime = Regime.normal,
     mode: Mode = Mode.normal,
     overlays: tuple[Overlay, ...] = (),
-    run_type: RunType = RunType.pre_open,
+    run_type: RunType = RunType.market_open,
     profiles: Mapping[Profile, ProfileConfig] | None = None,
     regimes: Mapping[Regime, RegimeConfig] | None = None,
 ) -> ResolvedConfig:
@@ -165,8 +165,8 @@ def test_off_hours_rolling_omits_adaptive_researcher_from_enabled_agents() -> No
     assert AgentName.adaptive_researcher not in resolved.enabled_agents
 
 
-def test_pre_open_includes_adaptive_researcher_with_tool_call_override() -> None:
-    resolved = _compose(profile_override=Profile.medium, run_type=RunType.pre_open)
+def test_market_open_includes_adaptive_researcher_with_tool_call_override() -> None:
+    resolved = _compose(profile_override=Profile.medium, run_type=RunType.market_open)
     assert AgentName.adaptive_researcher in resolved.enabled_agents
     overrides = resolved.agent_overrides[AgentName.adaptive_researcher]
     assert overrides["cumulative_tool_call_limit"] == 25

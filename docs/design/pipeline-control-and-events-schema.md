@@ -296,7 +296,7 @@ Enum values and structural constraints trace back to these authoritative sources
       "enum": [
         "market_hours_rolling",
         "off_hours_rolling",
-        "pre_open",
+        "market_open",
         "pre_close",
         "weekend_saturday",
         "weekend_sunday",

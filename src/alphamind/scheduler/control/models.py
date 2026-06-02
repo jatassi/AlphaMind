@@ -54,7 +54,7 @@ __all__ = [
 _RunType = Literal[
     "market_hours_rolling",
     "off_hours_rolling",
-    "pre_open",
+    "market_open",
     "pre_close",
     "weekend_saturday",
     "weekend_sunday",

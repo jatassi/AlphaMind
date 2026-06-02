@@ -52,7 +52,7 @@ _TRIGGER_SOURCES = (
     # Scheduler cron triggers — every RunType member doubles as a
     # trigger_source via scheduler/driver.py threading ``trigger_key``
     # through. Keep in sync with ``alphamind.config.models.run_types.RunType``.
-    "pre_open",
+    "market_open",
     "market_hours_rolling",
     "pre_close",
     "off_hours_rolling",

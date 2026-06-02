@@ -8,11 +8,11 @@ overlay holds steady — testing the orchestrator's overlay-composition
 seam in concert with the audit-log activation/deactivation predicates.
 
 Invocation timing aligns the shipped Tier B schedule (ALP-745) —
-``pre_open`` 09:00 ET, ``market_hours_rolling`` 13:00 ET, ``pre_close``
+``market_open`` 09:00 ET, ``market_hours_rolling`` 13:00 ET, ``pre_close``
 15:30 ET — against an FOMC at ``2026-04-29 19:00 UTC`` (15:00 ET) on a
 Wednesday. The activator counts the next ``windows_before_event + 1`` = 3
 unioned firings; on the FOMC day the firings preceding the event are
-``pre_open`` (13:00 UTC) and ``market_hours_rolling`` (17:00 UTC), with
+``market_open`` (13:00 UTC) and ``market_hours_rolling`` (17:00 UTC), with
 ``pre_close`` (19:30 UTC) landing just after it, so:
 
 - Inv 1 (now=12:00 UTC, 08:00 ET) — 2 firings before FOMC → outside pre_event window

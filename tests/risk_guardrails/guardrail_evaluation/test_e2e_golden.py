@@ -125,7 +125,7 @@ def _resolve_config(
     regime: Regime = Regime.normal,
     mode: Mode = Mode.normal,
     overlays: tuple[Overlay, ...] = (),
-    run_type: RunType = RunType.pre_open,
+    run_type: RunType = RunType.market_open,
 ) -> ResolvedConfig:
     """Compose a ``ResolvedConfig`` from the shipped tree under the given dimensions."""
     main = _MAIN.model_copy(update={"active_profile": profile})

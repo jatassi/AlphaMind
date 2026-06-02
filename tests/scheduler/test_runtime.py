@@ -276,7 +276,7 @@ class TestResolveRuntimeDimensions:
         async with async_factory() as session:
             dimensions = await resolve_runtime_dimensions(
                 session,
-                firing_trigger=RunType.pre_open,
+                firing_trigger=RunType.market_open,
                 halt_state=halt_state,
                 pre_event_decision=_active(Overlay.pre_event),
                 stress_decision=_active(Overlay.stress),
@@ -286,5 +286,5 @@ class TestResolveRuntimeDimensions:
             active_regime=Regime.elevated,
             active_mode=Mode.halt,
             active_overlays=(Overlay.pre_event, Overlay.stress),
-            firing_trigger=RunType.pre_open,
+            firing_trigger=RunType.market_open,
         )

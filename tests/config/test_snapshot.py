@@ -122,7 +122,7 @@ def _fixture_resolved() -> ResolvedConfig:
         active_regime=Regime.normal,
         active_mode=Mode.normal,
         active_overlays=(),
-        firing_trigger=RunType.pre_open,
+        firing_trigger=RunType.market_open,
     )
     return compose_config(inputs, runtime)
 
@@ -248,7 +248,12 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # ContinuousMonitorConfig (the connected-but-silent underlying-stream RTH reconnect
     # bound; tighter than fill_stream_stale_timeout_seconds because IEX equity quotes are
     # continuous during RTH), shifting the resolved-config canonical bytes.
-    expected = "9b283a74a3da6b4ae9be2f686ffd999ad0a843fa5e6082c56fa9bc3fe3fc29a2"
+    # Pin updated 2026-06-02 (pre_open -> market_open rename, ALP-822): the
+    # first-of-day run-type was renamed in config/scheduler.yaml (trigger key)
+    # and config/run_types/ (overlay file pre_open.yaml -> market_open.yaml),
+    # both of which feed the resolved-config canonical bytes — only the label
+    # changed; the resolved budgets/roster are identical.
+    expected = "61ab825d799b59e2611c5b0262bc9070e2ac4a7498ead4c110e0220486aeb58d"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

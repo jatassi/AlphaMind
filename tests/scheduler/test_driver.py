@@ -64,7 +64,7 @@ def _make_scheduler_config(
     """Build a ``SchedulerConfig`` for tests with sensible defaults."""
     if triggers is None:
         triggers = {
-            "pre_open": "0 9 * * mon-fri",
+            "market_open": "0 9 * * mon-fri",
             "market_hours_rolling": "30 9,11,13,15 * * mon-fri",
             "pre_close": "30 15 * * mon-fri",
             "off_hours_rolling": "0 0,4,8,20 * * mon-fri",
@@ -180,7 +180,7 @@ class TestRegisterPipelineJobsTriggerResolution:
         cfg = _make_scheduler_config(
             triggers={
                 # The first key is valid; the second is a typo that must fail.
-                "pre_open": "0 9 * * mon-fri",
+                "market_open": "0 9 * * mon-fri",
                 "pre_opn": "0 9 * * mon-fri",
             }
         )
@@ -292,14 +292,14 @@ class TestMakeScheduledJobHappyPath:
 
 
 class TestMakeScheduledJobMarketCalendarGuard:
-    async def test_pre_open_skipped_on_non_trading_day(
+    async def test_market_open_skipped_on_non_trading_day(
         self,
         async_factory: async_sessionmaker[AsyncSession],
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """``pre_open`` on Christmas Day must log skip and never dispatch."""
+        """``market_open`` on Christmas Day must log skip and never dispatch."""
         from alphamind.scheduler import driver as module
         from alphamind.scheduler.driver import _make_scheduled_job
 
@@ -311,9 +311,9 @@ class TestMakeScheduledJobMarketCalendarGuard:
 
         cfg = _make_scheduler_config()
         job = _make_scheduled_job(
-            trigger_key="pre_open",
-            run_type=RunType.pre_open,
-            cron_expression=cfg.triggers["pre_open"],
+            trigger_key="market_open",
+            run_type=RunType.market_open,
+            cron_expression=cfg.triggers["market_open"],
             scheduler_config=cfg,
             context=_make_context(session_factory=async_factory, tmp_path=tmp_path),
         )
@@ -328,7 +328,7 @@ class TestMakeScheduledJobMarketCalendarGuard:
             if "skipped" in record.getMessage() and "non-trading" in record.getMessage()
         ]
         assert skip_messages, "expected a 'skipped — non-trading day' log line"
-        assert "pre_open" in skip_messages[0]
+        assert "market_open" in skip_messages[0]
 
     async def test_weekend_saturday_dispatches_on_non_trading_day(
         self,

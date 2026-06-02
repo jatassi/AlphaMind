@@ -234,12 +234,12 @@ class TestFraming:
         # Sort keys for deterministic on-wire bytes.
         record = events._Event(
             name="next_trigger_changed",
-            data={"next_trigger_type": "pre_open", "next_trigger_at": _NOW.isoformat()},
+            data={"next_trigger_type": "market_open", "next_trigger_at": _NOW.isoformat()},
         )
         framed = events.format_sse_record(record)
         data_line = framed.split("\ndata: ", 1)[1].rstrip("\n")
         parsed = json.loads(data_line)
-        assert parsed["next_trigger_type"] == "pre_open"
+        assert parsed["next_trigger_type"] == "market_open"
 
 
 # ---------------------------------------------------------------------------

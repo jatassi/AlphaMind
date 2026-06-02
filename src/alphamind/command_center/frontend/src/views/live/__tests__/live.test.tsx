@@ -96,7 +96,7 @@ const MOCK_SCHEDULE_DATA = {
   paused: false,
   triggers: [
     { trigger_at: '2026-05-26T14:00:00Z', trigger_type: 'pre_close' },
-    { trigger_at: '2026-05-27T09:30:00Z', trigger_type: 'pre_open' },
+    { trigger_at: '2026-05-27T09:30:00Z', trigger_type: 'market_open' },
   ],
   cached_at: '2026-05-26T09:30:01Z',
 }

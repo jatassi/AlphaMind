@@ -21,7 +21,7 @@ import { extractRefPrefix, isRefPrefix } from '@/views/history/invocation-detail
 
 const COMPLETED_HEADER: InvocationDetailHeader = {
   invocation_id: 'inv-test-001',
-  run_type: 'pre_open',
+  run_type: 'market_open',
   started_at: '2026-05-10T09:00:00',
   ended_at: '2026-05-10T09:10:00',
   status: 'completed',
@@ -115,7 +115,7 @@ describe('HeaderPane', () => {
   it('renders all documented fields', () => {
     render(<HeaderPane header={COMPLETED_HEADER} />)
     expect(screen.getByText('inv-test-001')).toBeInTheDocument()
-    expect(screen.getByText('pre_open')).toBeInTheDocument()
+    expect(screen.getByText('market_open')).toBeInTheDocument()
     expect(screen.getByText('completed')).toBeInTheDocument()
     expect(screen.getByText('deadbeef')).toBeInTheDocument()
     expect(screen.getByText('default')).toBeInTheDocument()

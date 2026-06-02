@@ -37,7 +37,7 @@ def _valid_raw() -> dict[str, Any]:
         "emergency_poll_interval_seconds": 5,
         "market_calendar_exchange": "XNYS",
         "supervisor_shutdown_timeout_seconds": 10,
-        "triggers": {"pre_open": "0 9 * * mon-fri"},
+        "triggers": {"market_open": "0 9 * * mon-fri"},
     }
 
 

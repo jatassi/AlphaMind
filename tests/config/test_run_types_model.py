@@ -234,7 +234,7 @@ def test_run_type_enum_has_seven_members_including_emergency() -> None:
     from alphamind.config.models import RunType
 
     assert {member.value for member in RunType} == {
-        "pre_open",
+        "market_open",
         "market_hours_rolling",
         "pre_close",
         "off_hours_rolling",
@@ -273,7 +273,7 @@ def test_load_run_types_returns_immutable_mapping() -> None:
 
     bundle = load_run_types(CONFIG_DIR)
     with pytest.raises(TypeError):
-        cast(Any, bundle)["pre_open"] = None
+        cast(Any, bundle)["market_open"] = None
 
 
 def test_load_run_types_raises_when_file_missing(tmp_path: Path) -> None:
@@ -283,8 +283,8 @@ def test_load_run_types_raises_when_file_missing(tmp_path: Path) -> None:
     target = tmp_path / "config"
     target.mkdir()
     (target / "run_types").mkdir()
-    pre_open_raw = _valid_run_type_raw()
-    (target / "run_types" / "pre_open.yaml").write_text(yaml.safe_dump(pre_open_raw))
+    market_open_raw = _valid_run_type_raw()
+    (target / "run_types" / "market_open.yaml").write_text(yaml.safe_dump(market_open_raw))
 
     with pytest.raises(FileNotFoundError):
         load_run_types(target)
@@ -293,7 +293,7 @@ def test_load_run_types_raises_when_file_missing(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("filename", "adaptive_present"),
     [
-        ("pre_open.yaml", True),
+        ("market_open.yaml", True),
         ("market_hours_rolling.yaml", True),
         ("pre_close.yaml", True),
         ("weekend_sunday.yaml", True),
@@ -312,7 +312,7 @@ def test_run_type_yaml_adaptive_researcher_membership(
 @pytest.mark.parametrize(
     "filename",
     [
-        "pre_open.yaml",
+        "market_open.yaml",
         "market_hours_rolling.yaml",
         "pre_close.yaml",
         "off_hours_rolling.yaml",
@@ -331,7 +331,7 @@ def test_every_run_type_carries_decision_layer_and_synthesizer(filename: str) ->
 @pytest.mark.parametrize(
     ("filename", "top_n_per_sector"),
     [
-        ("pre_open.yaml", 5),
+        ("market_open.yaml", 5),
         ("market_hours_rolling.yaml", 5),
         ("pre_close.yaml", 4),
         ("off_hours_rolling.yaml", 3),
@@ -350,7 +350,7 @@ def test_news_digest_top_n_per_sector_matches_doc_table(
 @pytest.mark.parametrize(
     ("filename", "tool_call_limit", "tool_token_budget"),
     [
-        ("pre_open.yaml", 25, 4000),
+        ("market_open.yaml", 25, 4000),
         ("market_hours_rolling.yaml", 20, 3000),
         ("pre_close.yaml", 15, 2500),
         ("weekend_sunday.yaml", 20, 3000),
@@ -389,14 +389,14 @@ def test_run_type_filename_stems_cover_scheduled_triggers_and_unscheduled_run_ty
     assert yaml_stems - trigger_keys == {"emergency", "off_hours_rolling", "weekend_saturday"}
 
 
-def test_loaded_bundle_pre_open_has_news_digest_5_3() -> None:
+def test_loaded_bundle_market_open_has_news_digest_5_3() -> None:
     from alphamind.config.loaders import load_run_types
     from alphamind.config.models import RunType
 
     bundle = load_run_types(CONFIG_DIR)
-    pre_open = bundle[RunType.pre_open]
-    assert pre_open.qualitative_researcher.news_digest.top_n_per_sector == 5
-    assert pre_open.qualitative_researcher.news_digest.top_n_high_priority == 3
+    market_open = bundle[RunType.market_open]
+    assert market_open.qualitative_researcher.news_digest.top_n_per_sector == 5
+    assert market_open.qualitative_researcher.news_digest.top_n_high_priority == 3
 
 
 def test_overrides_default_factory_yields_empty_mapping_when_omitted() -> None:

@@ -174,14 +174,14 @@ class TestParseArgsDebugE2E:
                 "run",
                 "--fresh-start",
                 "--once",
-                "pre_open",
+                "market_open",
                 "--reason",
                 "first-run bootstrap",
             ]
         )
         assert args.fresh_start is True
         assert args.debug_e2e is False
-        assert args.once == "pre_open"
+        assert args.once == "market_open"
 
     def test_fresh_start_without_debug_e2e_rejects_mode_live(self) -> None:
         """``--fresh-start --mode live`` is blocked at argparse parallel to
@@ -195,7 +195,7 @@ class TestParseArgsDebugE2E:
                     "run",
                     "--fresh-start",
                     "--once",
-                    "pre_open",
+                    "market_open",
                     "--reason",
                     "first-run bootstrap",
                     "--mode",

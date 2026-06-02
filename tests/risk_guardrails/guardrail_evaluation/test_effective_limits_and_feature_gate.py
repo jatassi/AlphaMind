@@ -101,7 +101,7 @@ def _compose(
     regime: Regime = Regime.normal,
     mode: Mode = Mode.normal,
     overlays: tuple[Overlay, ...] = (),
-    run_type: RunType = RunType.pre_open,
+    run_type: RunType = RunType.market_open,
     execution_override: ExecutionConfig | None = None,
 ) -> ResolvedConfig:
     """Compose a ``ResolvedConfig`` from the shipped tree with overrides."""

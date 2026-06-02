@@ -87,7 +87,7 @@ def _scheduler_config(
         else {
             "market_hours_rolling": "30 9,11,13,15 * * mon-fri",
             "off_hours_rolling": "0 0,4,8,20 * * mon-fri",
-            "pre_open": "0 9 * * mon-fri",
+            "market_open": "0 9 * * mon-fri",
             "pre_close": "30 15 * * mon-fri",
             "weekend_saturday": "0 10 * * sat",
             "weekend_sunday": "0 18 * * sun",

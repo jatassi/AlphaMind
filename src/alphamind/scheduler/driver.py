@@ -45,14 +45,14 @@ log = logging.getLogger(__name__)
 # decision (E). ``emergency`` (story 04b) is never a scheduled trigger.
 _MARKET_CALENDAR_GATED_TRIGGERS: frozenset[RunType] = frozenset(
     {
-        RunType.pre_open,
+        RunType.market_open,
         RunType.market_hours_rolling,
         RunType.pre_close,
         RunType.off_hours_rolling,
     }
 )
 
-# Dedup applies ONLY to rolling triggers — anchored triggers (pre_open,
+# Dedup applies ONLY to rolling triggers — anchored triggers (market_open,
 # pre_close, weekend_*) bypass the dedup guard so the documented schedule
 # is preserved even when a slow invocation finished moments before.
 _DEDUP_GATED_TRIGGERS: frozenset[RunType] = frozenset(
@@ -228,7 +228,7 @@ _SCHEMA_TRIGGER_TYPES: frozenset[str] = frozenset(
     {
         "market_hours_rolling",
         "off_hours_rolling",
-        "pre_open",
+        "market_open",
         "pre_close",
         "weekend_saturday",
         "weekend_sunday",

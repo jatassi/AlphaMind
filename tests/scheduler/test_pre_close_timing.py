@@ -44,7 +44,7 @@ def _make_scheduler_config() -> SchedulerConfig:
             "supervisor_shutdown_timeout_seconds": 10,
             "control_port": 8765,
             "triggers": {
-                "pre_open": "0 9 * * mon-fri",
+                "market_open": "0 9 * * mon-fri",
                 "market_hours_rolling": "0 13 * * mon-fri",
                 "pre_close": "0 15 * * mon-fri",
                 "weekend_sunday": "0 18 * * sun",
@@ -122,7 +122,7 @@ class TestPreCloseTimingGuard:
         factory = _make_sync_factory(tmp_path)
         with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.orchestrator"):
             _warn_if_pre_close_projected_late(
-                firing_run_type=RunType.pre_open,
+                firing_run_type=RunType.market_open,
                 now=_TRADING_DAY.replace(hour=9),
                 sync_session_factory=factory,
                 scheduler_config=_make_scheduler_config(),

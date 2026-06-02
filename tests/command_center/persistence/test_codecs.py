@@ -95,7 +95,7 @@ class TestAlertRecord:
             fired_at="2026-05-26T00:00:00Z",
             acknowledged_at="2026-05-26T00:00:10Z",
             snoozed_until="2026-05-26T01:00:00Z",
-            context_json='{"trigger": "pre_open"}',
+            context_json='{"trigger": "market_open"}',
         )
         row = alert_record_to_row(record)
         roundtrip = alert_record_from_row(row)

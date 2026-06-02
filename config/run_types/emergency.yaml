@@ -1,7 +1,7 @@
 # Emergency invocation — dispatched by the pipeline scheduler when the continuous
 # monitor writes EMERGENCY_INVOCATION_REQUESTED to activity_log per
 # breach-behavior.md § Emergency invocation trigger. Same agent roster + heaviest
-# adaptive-researcher budget as pre_open.yaml — emergencies are high-density events.
+# adaptive-researcher budget as market_open.yaml — emergencies are high-density events.
 
 agents:
   enabled:

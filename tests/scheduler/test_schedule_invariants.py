@@ -154,7 +154,7 @@ class TestShippedScheduleHasNoCollisions:
     def test_exactly_the_four_tier_b_triggers_are_scheduled(self) -> None:
         config = _load_shipped_config()
         assert set(config.triggers) == {
-            "pre_open",
+            "market_open",
             "market_hours_rolling",
             "pre_close",
             "weekend_sunday",
@@ -177,7 +177,7 @@ class TestCollisionDetectionHasTeeth:
     _COLLIDING_TRIGGERS: ClassVar[dict[str, str]] = {
         "market_hours_rolling": "30 9,11,13,15 * * mon-fri",
         "pre_close": "30 15 * * mon-fri",
-        "pre_open": "0 9 * * mon-fri",
+        "market_open": "0 9 * * mon-fri",
     }
 
     def test_colliding_schedule_is_flagged(self) -> None:

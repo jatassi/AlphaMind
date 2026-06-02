@@ -69,7 +69,7 @@ class _FakeSchedulerControl:
         return _NOW
 
     def next_run_preview(self) -> tuple[datetime, str] | None:
-        return (_NOW, "pre_open")
+        return (_NOW, "market_open")
 
 
 class _FakeEmergencyTrigger:

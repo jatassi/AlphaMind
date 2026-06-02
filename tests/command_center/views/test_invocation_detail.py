@@ -51,7 +51,7 @@ def _make_invocation(
     *,
     invocation_id: str,
     start_at: str,
-    trigger_source: str = "pre_open",
+    trigger_source: str = "market_open",
     phase1_completed_at: str | None = None,
     phase2_completed_at: str | None = None,
     snapshot_metadata_json: str | None = None,
@@ -144,7 +144,7 @@ async def seeded_db(tmp_path: Path) -> AsyncIterator[Path]:
             _make_invocation(
                 invocation_id="inv-detail-001",
                 start_at="2026-05-10T09:00:00",
-                trigger_source="pre_open",
+                trigger_source="market_open",
                 phase1_completed_at="2026-05-10T09:05:00",
                 phase2_completed_at="2026-05-10T09:10:00",
                 snapshot_metadata_json='{"abort_reason": null, "error_summary": "none"}',
@@ -283,7 +283,7 @@ class TestInvocationDetailHeader:
         header = resp.json()["header"]
         assert header["status"] == "completed"
         assert header["invocation_id"] == "inv-detail-001"
-        assert header["run_type"] == "pre_open"
+        assert header["run_type"] == "market_open"
 
     def test_header_status_failed_with_abort_reason(self, client: TestClient) -> None:
         resp = client.get("/api/views/history/runs/inv-detail-002")
@@ -340,7 +340,7 @@ class TestArchiveFileStreaming:
         # Use a fixed timestamp that matches inv-detail-001's start_at.
         # The resolver scans for directories starting with "09-00-00".
         date_dir = tmp_path / "archive" / "2026-05-10"
-        inv_dir = date_dir / "09-00-00_pre_open"
+        inv_dir = date_dir / "09-00-00_market_open"
         (inv_dir / "distillation").mkdir(parents=True)
         (inv_dir / "analysis").mkdir()
         (inv_dir / "distillation" / "tech_sector.md").write_text(
@@ -421,7 +421,7 @@ class TestArchiveFileStreaming:
 class TestBriefRetrieval:
     def _make_archive(self, tmp_path: Path) -> Path:
         date_dir = tmp_path / "archive" / "2026-05-10"
-        inv_dir = date_dir / "09-00-00_pre_open"
+        inv_dir = date_dir / "09-00-00_market_open"
         (inv_dir / "analysis").mkdir(parents=True)
         (inv_dir / "analysis" / "synthesis.md").write_text(
             "## CR-1\nFirst correlation finding.\n## CR-2\nSecond correlation finding.",
