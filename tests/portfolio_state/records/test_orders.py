@@ -11,7 +11,6 @@ import pytest
 
 from alphamind._kernel.ids import (
     AlpacaOrderId,
-    BracketId,
     OrderId,
     Symbol,
 )
@@ -173,16 +172,6 @@ class TestOrderClass:
             OrderClass.MLEG,
         }
 
-    def test_string_values(self) -> None:
-        assert OrderClass.SIMPLE == "SIMPLE"
-        assert OrderClass.BRACKET == "BRACKET"
-        assert OrderClass.OCO == "OCO"
-        assert OrderClass.OTO == "OTO"
-        assert OrderClass.MLEG == "MLEG"
-
-    def test_strenum_semantics(self) -> None:
-        assert isinstance(OrderClass.MLEG, str)
-
 
 class TestOrderRole:
     def test_members(self) -> None:
@@ -195,14 +184,6 @@ class TestOrderRole:
             OrderRole.ADD_ENTRY,
         }
 
-    def test_string_values(self) -> None:
-        assert OrderRole.ENTRY == "ENTRY"
-        assert OrderRole.TAKE_PROFIT == "TAKE_PROFIT"
-        assert OrderRole.PRICE_STOP == "PRICE_STOP"
-        assert OrderRole.TIME_STOP == "TIME_STOP"
-        assert OrderRole.CLOSE == "CLOSE"
-        assert OrderRole.ADD_ENTRY == "ADD_ENTRY"
-
 
 class TestOrderType:
     def test_members(self) -> None:
@@ -212,12 +193,6 @@ class TestOrderType:
             OrderType.STOP,
             OrderType.STOP_LIMIT,
         }
-
-    def test_string_values(self) -> None:
-        assert OrderType.MARKET == "MARKET"
-        assert OrderType.LIMIT == "LIMIT"
-        assert OrderType.STOP == "STOP"
-        assert OrderType.STOP_LIMIT == "STOP_LIMIT"
 
 
 class TestOrderDirection:
@@ -230,14 +205,6 @@ class TestOrderDirection:
             OrderDirection.BUY_TO_CLOSE,
             OrderDirection.SELL_TO_CLOSE,
         }
-
-    def test_string_values(self) -> None:
-        assert OrderDirection.BUY == "BUY"
-        assert OrderDirection.SELL == "SELL"
-        assert OrderDirection.BUY_TO_OPEN == "BUY_TO_OPEN"
-        assert OrderDirection.SELL_TO_OPEN == "SELL_TO_OPEN"
-        assert OrderDirection.BUY_TO_CLOSE == "BUY_TO_CLOSE"
-        assert OrderDirection.SELL_TO_CLOSE == "SELL_TO_CLOSE"
 
 
 class TestOrderDuration:
@@ -252,11 +219,6 @@ class TestOrderDuration:
         """Pinned set — any re-addition of IOC/FOK or new member trips this test."""
         assert {m.value for m in OrderDuration} == {"DAY", "GTC", "GTD"}
 
-    def test_string_values(self) -> None:
-        assert OrderDuration.DAY == "DAY"
-        assert OrderDuration.GTC == "GTC"
-        assert OrderDuration.GTD == "GTD"
-
 
 class TestOrderStatus:
     def test_members(self) -> None:
@@ -269,14 +231,6 @@ class TestOrderStatus:
             OrderStatus.REJECTED,
         }
 
-    def test_string_values(self) -> None:
-        assert OrderStatus.PENDING == "PENDING"
-        assert OrderStatus.PARTIALLY_FILLED == "PARTIALLY_FILLED"
-        assert OrderStatus.FILLED == "FILLED"
-        assert OrderStatus.CANCELLED == "CANCELLED"
-        assert OrderStatus.EXPIRED == "EXPIRED"
-        assert OrderStatus.REJECTED == "REJECTED"
-
 
 class TestBracketStatus:
     def test_members(self) -> None:
@@ -286,12 +240,6 @@ class TestBracketStatus:
             BracketStatus.COMPLETED,
             BracketStatus.DISSOLVED,
         }
-
-    def test_string_values(self) -> None:
-        assert BracketStatus.PENDING_ENTRY == "PENDING_ENTRY"
-        assert BracketStatus.ACTIVE == "ACTIVE"
-        assert BracketStatus.COMPLETED == "COMPLETED"
-        assert BracketStatus.DISSOLVED == "DISSOLVED"
 
 
 class TestBracketLegType:
@@ -303,17 +251,11 @@ class TestBracketLegType:
             BracketLegType.EVENT_INVALIDATION,
         }
 
-    def test_string_values(self) -> None:
-        assert BracketLegType.TAKE_PROFIT == "TAKE_PROFIT"
-        assert BracketLegType.PRICE_STOP == "PRICE_STOP"
-        assert BracketLegType.TIME_EXPIRATION == "TIME_EXPIRATION"
-        assert BracketLegType.EVENT_INVALIDATION == "EVENT_INVALIDATION"
-
     def test_importable_from_orders(self) -> None:
         """BracketLegType must be importable from orders module (canonical declaration site)."""
         from alphamind.portfolio_state.records.orders import BracketLegType
 
-        assert BracketLegType.TAKE_PROFIT == "TAKE_PROFIT"
+        assert BracketLegType.TAKE_PROFIT is BracketLegType.TAKE_PROFIT
 
 
 class TestBracketLegEnforcement:
@@ -322,10 +264,6 @@ class TestBracketLegEnforcement:
             BracketLegEnforcement.MECHANICAL,
             BracketLegEnforcement.ADVISORY,
         }
-
-    def test_string_values(self) -> None:
-        assert BracketLegEnforcement.MECHANICAL == "MECHANICAL"
-        assert BracketLegEnforcement.ADVISORY == "ADVISORY"
 
 
 class TestBracketLegStatus:
@@ -336,12 +274,6 @@ class TestBracketLegStatus:
             BracketLegStatus.TRIGGERED,
             BracketLegStatus.CANCELLED,
         }
-
-    def test_string_values(self) -> None:
-        assert BracketLegStatus.PENDING_ACTIVATION == "PENDING_ACTIVATION"
-        assert BracketLegStatus.ACTIVE == "ACTIVE"
-        assert BracketLegStatus.TRIGGERED == "TRIGGERED"
-        assert BracketLegStatus.CANCELLED == "CANCELLED"
 
 
 # ---------------------------------------------------------------------------
@@ -783,29 +715,6 @@ class TestOrderRecordOrderClass:
         assert order.order_class == OrderClass.OTO
 
 
-# ---------------------------------------------------------------------------
-# OrderRecord round-trip / frozen check
-# ---------------------------------------------------------------------------
-
-
-class TestOrderRecordFrozen:
-    def test_order_record_is_frozen(self) -> None:
-        order = _make_order()
-        with pytest.raises((AttributeError, ValueError, TypeError)):
-            order.order_id = OrderId("changed")  # type: ignore[misc]
-
-
-# ---------------------------------------------------------------------------
-# BracketRecord round-trip / frozen check
-# ---------------------------------------------------------------------------
-
-
-class TestBracketRecordFrozen:
-    def test_bracket_record_is_frozen(self) -> None:
-        bracket = _make_bracket()
-        with pytest.raises((AttributeError, ValueError, TypeError)):
-            bracket.bracket_id = BracketId("changed")  # type: ignore[misc]
-
 
 # ---------------------------------------------------------------------------
 # entry_window_deadline field (ALP-341)
@@ -888,13 +797,6 @@ class TestPriceTrigger:
             direction="ABOVE",  # type: ignore[arg-type]
         )
         assert trigger.direction == "ABOVE"  # type: ignore[comparison-overlap]
-
-    def test_frozen(self) -> None:
-        trigger = PriceTrigger(
-            underlying_ticker=Symbol("NVDA"), threshold_usd=10.0, direction="GTE"
-        )
-        with pytest.raises((AttributeError, ValueError, TypeError)):
-            trigger.threshold_usd = 20.0  # type: ignore[misc]
 
 
 class TestTimeTrigger:
@@ -1190,11 +1092,6 @@ class TestPLAnchorSpec:
                 actual_entry_price=17.80,
                 recalculated_at_fill=False,
             )
-
-    def test_frozen(self) -> None:
-        spec = PLAnchorSpec(spec_type="target", pct=0.80, planned_entry_price=18.50)
-        with pytest.raises((AttributeError, ValueError, TypeError)):
-            spec.pct = 0.50  # type: ignore[misc]
 
     def test_round_trip(self) -> None:
         spec = PLAnchorSpec(

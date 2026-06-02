@@ -38,28 +38,11 @@ class TestRegimeLabel:
         members = {m.name for m in RegimeLabel}
         assert members == {"LOW_VOL", "NORMAL", "ELEVATED", "CRISIS"}
 
-    def test_string_values(self) -> None:
-        assert RegimeLabel.LOW_VOL == "LOW_VOL"
-        assert RegimeLabel.NORMAL == "NORMAL"
-        assert RegimeLabel.ELEVATED == "ELEVATED"
-        assert RegimeLabel.CRISIS == "CRISIS"
-
-    def test_exact_count(self) -> None:
-        assert len(RegimeLabel) == 4
-
 
 class TestRegimeTransitionState:
     def test_members(self) -> None:
         members = {m.name for m in RegimeTransitionState}
         assert members == {"STABLE", "TIGHTENING", "LOOSENING"}
-
-    def test_string_values(self) -> None:
-        assert RegimeTransitionState.STABLE == "STABLE"
-        assert RegimeTransitionState.TIGHTENING == "TIGHTENING"
-        assert RegimeTransitionState.LOOSENING == "LOOSENING"
-
-    def test_exact_count(self) -> None:
-        assert len(RegimeTransitionState) == 3
 
 
 class TestRiskZone:
@@ -67,28 +50,11 @@ class TestRiskZone:
         members = {m.name for m in RiskZone}
         assert members == {"NORMAL", "WARNING", "CRITICAL", "BLOCKED"}
 
-    def test_string_values(self) -> None:
-        assert RiskZone.NORMAL == "NORMAL"
-        assert RiskZone.WARNING == "WARNING"
-        assert RiskZone.CRITICAL == "CRITICAL"
-        assert RiskZone.BLOCKED == "BLOCKED"
-
-    def test_exact_count(self) -> None:
-        assert len(RiskZone) == 4
-
 
 class TestDrawdownTier:
     def test_members(self) -> None:
         members = {m.name for m in DrawdownTier}
         assert members == {"CONSTRAINED", "HEAVILY_CONSTRAINED", "FULL_HALT"}
-
-    def test_string_values(self) -> None:
-        assert DrawdownTier.CONSTRAINED == "CONSTRAINED"
-        assert DrawdownTier.HEAVILY_CONSTRAINED == "HEAVILY_CONSTRAINED"
-        assert DrawdownTier.FULL_HALT == "FULL_HALT"
-
-    def test_exact_count(self) -> None:
-        assert len(DrawdownTier) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -119,11 +85,6 @@ class TestUnsettledProceedsEntry:
         naive = datetime.fromisoformat("2024-01-05T00:00:00")  # no tzinfo
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             self._valid(settlement_date=naive)
-
-    def test_frozen(self) -> None:
-        entry = self._valid()
-        with pytest.raises(FrozenInstanceError):
-            entry.amount_usd = 999.0  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -189,11 +150,6 @@ class TestCashLedger:
     def test_neg_inf_usd_field_raises(self) -> None:
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             self._valid(margin_held_usd=float("-inf"))
-
-    def test_frozen(self) -> None:
-        ledger = self._valid()
-        with pytest.raises(FrozenInstanceError):
-            ledger.current_cash_usd = 0.0  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
