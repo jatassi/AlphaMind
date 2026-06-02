@@ -1,0 +1,24 @@
+# cosmic-ray per-module configuration template
+#
+# Usage: run_mutation.sh <module_key> substitutes MODULE_PATH and TEST_CMD
+# before passing this config to cosmic-ray.
+#
+# Fields:
+#   module-path   — path to the Python package directory to mutate (relative to
+#                   the repo root where cosmic-ray is invoked).
+#   test-command  — pytest invocation scoped to that module's test directory.
+#   timeout       — per-mutation timeout in seconds; sized for the suite's
+#                   observed runtime with headroom.
+#
+# Single-threaded local execution is enforced via [cosmic-ray.distributor]
+# name = "local" — no parallelism, no worker daemons needed.
+
+[cosmic-ray]
+module-path = "MODULE_PATH"
+timeout = TIMEOUT
+excluded-modules = []
+
+[cosmic-ray.distributor]
+name = "local"
+
+test-command = "TEST_CMD"
