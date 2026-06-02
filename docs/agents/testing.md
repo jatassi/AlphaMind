@@ -18,17 +18,21 @@ free). The four sanctioned boundaries are the only points where a real call woul
 process boundary, require live credentials, or introduce wall-clock non-determinism;
 everywhere else, use the real objects.
 
-**Before (altitude violation):** The `pipeline/` test suite introduced `_CallLog`, a
-custom kwargs-capture shim that replaced the real `BriefAssembler` and `AnalysisRunner`
-inside `PipelineOrchestrator`. Dozens of test cases asserted `_CallLog.calls[0].kwargs ==
-{"ticker": "AAPL", ...}` — verifying call shape rather than pipeline output. Every
-internal refactor to the assembler or runner broke these tests without breaking any
-real behavior.
+**Anti-pattern (illustrative).** A `pipeline/` test introduces `_CallLog`, a custom
+kwargs-capture shim around the real collaborators, and asserts `_CallLog.calls[0].kwargs
+== {"ticker": "AAPL", ...}` — verifying call shape rather than pipeline output. Every
+internal refactor to the collaborator breaks the test without breaking any real behavior.
 
-**After (correct altitude):** The orchestrator tests drive `PipelineOrchestrator` with
-the real assembler and runner (using an in-memory DB boundary mock and a stubbed LLM
-boundary mock) and assert on the invocation record written to the DB and the signals
-returned — outcomes visible to the next pipeline stage, not internal call shapes.
+**Target (correct altitude).** Drive `PipelineOrchestrator` with the real assembler and
+runner (mocking only the DB and LLM boundaries) and assert on the invocation record
+written to the DB and the signals returned — outcomes visible to the next pipeline stage,
+not internal call shapes.
+
+> Note: this is the *direction of travel*, not a claim that the `pipeline/` suite has
+> fully reached it. That suite still uses a (now-hoisted) `_CallLog` to assert the
+> orchestrator forwards the correct routing inputs to each runner — a real wiring
+> guardrail retained deliberately. Lowering those forwarding assertions to output-level
+> DB/signal checks is a deferred follow-up.
 
 ## Rule 2 — Coverage is a floor, not a target
 
