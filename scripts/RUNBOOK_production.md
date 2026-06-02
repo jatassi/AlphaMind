@@ -460,7 +460,7 @@ passes on the `distillation_ticker_baseline` UNIQUE constraint).
 
 | Run type               | Cron (US/Eastern)          | Fires (ET)                                | Notes                                        |
 |------------------------|----------------------------|-------------------------------------------|----------------------------------------------|
-| `pre_open`             | `0 9 * * mon-fri`          | 09:00 weekdays                            | NYSE-calendar-gated                          |
+| `pre_open`             | `35 9 * * mon-fri`         | 09:35 weekdays                            | NYSE-gated; fires after the 09:30 open for fresh live quotes (name kept — now a slight post-open misnomer) |
 | `market_hours_rolling` | `0 13 * * mon-fri`         | 13:00 weekdays (single mid-day read)      | NYSE-gated; dedup-gated within 30 min        |
 | `pre_close`            | `0 15 * * mon-fri`         | 15:00 weekdays                            | NYSE-gated; sole owner of the close slot     |
 | `weekend_sunday`       | `0 18 * * sun`             | 18:00 Sunday                              | Unconditional                                |
@@ -887,6 +887,25 @@ process. The supervisor's `TaskGroup` shutdown is co-operative — every
 in-flight task gets a `CancelledError` and 10 s to wind down before the
 SIGTERM fallback fires.
 
+**Two restart gotchas that cost real diagnosis time (2026-06-02 monitor wedge):**
+
+- **`Get-Service … Running` does NOT mean healthy.** NSSM reports `Running`
+  while the *wrapper* process is alive; an async-task wedge (e.g. a websocket
+  hang — see § 8.9) leaves the service `Running` for hours while it does no
+  work. Verify a restart by the process **StartTime** (a fresh PID / StartTime)
+  **and** a behavioral signal — the daemon's SSE heartbeat (`8765` / `8766`),
+  fresh structured-log lines, fills flowing — never by `Get-Service Status`
+  alone. Read the StartTime with:
+  ```powershell
+  $p = (Get-CimInstance Win32_Service -Filter "Name='<svc>'").ProcessId
+  (Get-Process -Id $p).StartTime
+  ```
+- **Restarting `alphamind-scheduler` or `alphamind-monitor` while
+  `AlphaMindCommandCenter` is up can be silently refused** (the command center
+  depends on both). Stop CC first, restart the target, then start CC — stop
+  reverse / start forward: `nssm stop AlphaMindCommandCenter` →
+  `nssm restart <target>` → `nssm start AlphaMindCommandCenter`.
+
 **When the operator can restart a single service without coordinating the
 others:**
 
@@ -967,6 +986,47 @@ Walk § 5.7's "Skipped invocations" checklist: NYSE holiday, daemon paused,
 or dedup suppressed it (only around an off-schedule run — under Tier B no two
 scheduled triggers share a minute). The `next_trigger_changed` events on the
 SSE stream are the source of truth for what the scheduler thinks comes next.
+
+### 8.9 Monitor reports `Running` but isn't capturing fills (websocket `WinError 121` wedge)
+
+Seen 2026-06-02: the continuous monitor's Alpaca trade-updates websocket failed
+on `OSError: [WinError 121] The semaphore timeout period has expired`, and the
+`websockets` library reconnect-looped *internally* without ever raising — so the
+fill consumer parked on `await queue.get()` and starved. The process stayed
+`Running` (NSSM only restarts on process **exit**, and the in-process watchdog
+didn't trip) and captured **no fills for ~11 h**, with real-time breach/stop
+monitoring off the whole time. (Code fix tracked in ALP-819; ALP-768 handled the
+*raising* failure path but not this silent-internal-reconnect one.)
+
+**Detection** — the monitor is wedged-but-`Running` when several of these hold:
+
+- No `monitor.log` lines dated **today** (`grep -c "<YYYY-MM-DD>" monitor.log` → `0`).
+- `monitor.out.log` is 0 bytes and `curl -N 127.0.0.1:8766/events` emits no
+  `heartbeat` within ~18 s (the scheduler's `8765` still does — good contrast test).
+- `fill_records` has no rows for fills you know landed on Alpaca (e.g. right
+  after a Phase-2 dispatch), and the matching local order rows stay `PENDING`
+  with `filled_quantity = 0` while Alpaca shows them filled.
+- `monitor.err.log` shows repeated `trading stream websocket error, restarting
+  connection: no close frame received or sent` + `OSError: [WinError 121]`.
+
+**Recovery** — restart the monitor via the § 7 CC-dependency order
+(`nssm stop AlphaMindCommandCenter` → `nssm stop` + `nssm start alphamind-monitor`
+→ `nssm start AlphaMindCommandCenter`); confirm the new session by its
+**StartTime** + an `8766` heartbeat, not `Get-Service`.
+
+**After the restart, expect a brief reconciliation lag — this is normal, not a second bug:**
+
+- The startup replay + the 15-min `activities_backfill` re-capture the missed
+  fills into `fill_records` as `unprocessed`; the **next Phase-1** integrates
+  them (PENDING→OPEN) and `_reconcile_cash` snaps local cash to Alpaca. Cash
+  drift and position divergence persist only until that Phase-1 runs.
+- A real open position whose fill hasn't integrated yet shows `breach_loop
+  DEGRADED` / `no live price received … excluded from stop enforcement` — the
+  underlying-price stream only subscribes to *known* open positions. This is a
+  subscription lag, **not** a dead price feed: confirm the assembler's
+  stale-ticker list names only the un-integrated tickers (established positions
+  still priced), and note the position's broker-side bracket legs still protect
+  it. It clears at the next Phase-1.
 
 ---
 
