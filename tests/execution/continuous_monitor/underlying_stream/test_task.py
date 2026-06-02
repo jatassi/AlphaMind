@@ -493,6 +493,49 @@ class TestReconnect:
             await asyncio.wait_for(task, timeout=3.0)
 
 
+class TestCleanReturnReconnect:
+    """ALP-770 — a clean ``_run_one_connection`` return must not exit the writer loop."""
+
+    async def test_clean_return_triggers_reconnect(self) -> None:
+        """When the stream exits cleanly (no exception), the writer reconnects.
+
+        Before ALP-770 the ``else`` branch executed ``return``, which exited
+        ``run_underlying_stream`` entirely — the writer appeared alive (the
+        process didn't crash) but the cache was frozen. Now the ``else`` branch
+        executes ``continue``, causing the outer while-loop to build a second
+        connection.
+        """
+        reader = _MutableReader(
+            (_equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),)
+        )
+        factory = _FakeFactory()
+        cache = UnderlyingPriceCache()
+        task = asyncio.create_task(
+            run_underlying_stream(
+                _session(),
+                _config(subscription_refresh_seconds=60, max_reconnect_attempts=5),
+                repository=reader,
+                cache=cache,
+                factory=factory,
+            )
+        )
+        try:
+            await asyncio.wait_for(_eventually(lambda: bool(factory.streams)), timeout=1.0)
+            stream1 = factory.streams[0]
+            await asyncio.wait_for(stream1.wait_until_running(), timeout=1.0)
+
+            # Trigger a clean exit (no exception): call stop_ws so _run_forever
+            # returns normally without raising.  The outer loop must reconnect.
+            await stream1.stop_ws()
+
+            # A second stream is built — proving the outer loop did not ``return``.
+            await asyncio.wait_for(_eventually(lambda: len(factory.streams) >= 2), timeout=3.0)
+            assert len(factory.streams) >= 2
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
 class TestCancellation:
     async def test_cancel_calls_stop_ws_and_exits_cleanly(self) -> None:
         reader = _MutableReader(

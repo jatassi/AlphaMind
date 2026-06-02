@@ -73,6 +73,7 @@ def register_breach_loop_task(  # noqa: PLR0913
     risk_free_rate: float,
     breach_response_lookup: Mapping[str, BreachResponse],
     market_hours: MarketHoursClock,
+    max_price_age_seconds: float = 900.0,
     on_immediate_breach: (
         Callable[[BreachLoopResult, RuleEvaluation], Awaitable[None]] | None
     ) = None,
@@ -110,6 +111,7 @@ def register_breach_loop_task(  # noqa: PLR0913
             "activity_log_sink": resolved_sink,
             "on_immediate_breach": resolved_immediate,
             "on_emergency_input": resolved_emergency,
+            "max_price_age_seconds": max_price_age_seconds,
         }
         if on_health_signal is not None:
             kwargs["on_health_signal"] = on_health_signal

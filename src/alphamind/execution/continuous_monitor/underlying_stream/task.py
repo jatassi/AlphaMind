@@ -204,11 +204,12 @@ async def run_underlying_stream(
             await asyncio.sleep(backoff_seconds)
             backoff_seconds = min(backoff_seconds * 2.0, 30.0)
         else:
-            # ``_run_one_connection`` only returns when the stream cleanly
-            # finishes (e.g. ``stop_ws`` was called externally). The task
-            # itself stays alive until cancelled; the next iteration
-            # immediately reconnects so callers don't have to.
-            return
+            # ``_run_one_connection`` only returns on a clean finish (e.g.
+            # ``stop_ws`` called externally). Treat it as a reconnect cycle —
+            # fall through to the top of the loop so the writer never silently
+            # exits while the process stays alive.
+            log.info("underlying_stream clean connection exit; reconnecting")
+            continue
 
 
 async def _run_one_connection(

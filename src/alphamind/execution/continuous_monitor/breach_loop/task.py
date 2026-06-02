@@ -143,7 +143,7 @@ def _safe_emit_health_signal(sink: OnHealthSignal, signal: BreachLoopHealthSigna
         log.exception("breach_loop health-signal sink raised; continuing")
 
 
-async def run_breach_loop(  # noqa: PLR0913 — fan-in is the seam, not incidental complexity
+async def run_breach_loop(  # noqa: PLR0913,C901 — fan-in is the seam, not incidental complexity
     session: MonitorSession,
     config: ContinuousMonitorConfig,
     *,
@@ -160,6 +160,7 @@ async def run_breach_loop(  # noqa: PLR0913 — fan-in is the seam, not incident
     activity_log_sink: ActivityLogSink,
     on_immediate_breach: OnImmediateBreach,
     on_emergency_input: OnEmergencyInput,
+    max_price_age_seconds: float = 900.0,
     on_health_signal: OnHealthSignal = _no_op_health_signal,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> None:
@@ -174,6 +175,11 @@ async def run_breach_loop(  # noqa: PLR0913 — fan-in is the seam, not incident
     # fires once on crossing the threshold, not on every subsequent failure.
     consecutive_failures = 0
     degraded = False
+    # Stale-price tracking (ALP-770). ``stale_consecutive_count`` counts
+    # consecutive ticks where at least one open-position ticker had a stale or
+    # missing live price; ``stale_degraded`` debounces the escalation alert.
+    stale_consecutive_count = 0
+    stale_degraded = False
 
     def _entry_id_factory(local: int) -> str:
         # ``mon-alp-`` prefix mirrors the rest of the continuous-monitor
@@ -190,7 +196,7 @@ async def run_breach_loop(  # noqa: PLR0913 — fan-in is the seam, not incident
             continue
 
         try:
-            await _run_one_tick(
+            had_stale = await _run_one_tick(
                 as_of=as_of,
                 repository=repository,
                 cache=cache,
@@ -206,6 +212,7 @@ async def run_breach_loop(  # noqa: PLR0913 — fan-in is the seam, not incident
                 on_immediate_breach=on_immediate_breach,
                 on_emergency_input=on_emergency_input,
                 entry_id_factory=_entry_id_factory,
+                max_price_age_seconds=max_price_age_seconds,
             )
         except asyncio.CancelledError:
             raise
@@ -256,6 +263,45 @@ async def run_breach_loop(  # noqa: PLR0913 — fan-in is the seam, not incident
                 degraded = False
             consecutive_failures = 0
 
+            # Stale-price escalation (ALP-770): escalate to DEGRADED after N
+            # consecutive ticks where any open-position price was stale or
+            # missing; recover silently when all prices are fresh again.
+            if had_stale:
+                stale_consecutive_count += 1
+                if stale_consecutive_count >= failure_threshold and not stale_degraded:
+                    stale_degraded = True
+                    log.error(
+                        "breach_loop DEGRADED: stale/missing underlying price for %d "
+                        "consecutive cycles (threshold=%d); affected positions excluded "
+                        "from stop enforcement",
+                        stale_consecutive_count,
+                        failure_threshold,
+                    )
+                    _safe_emit_health_signal(
+                        on_health_signal,
+                        BreachLoopHealthSignal(
+                            degraded=True,
+                            consecutive_failures=stale_consecutive_count,
+                            last_error="stale/missing underlying price",
+                        ),
+                    )
+            else:
+                if stale_degraded:
+                    log.warning(
+                        "breach_loop stale-price RECOVERED after %d consecutive cycles",
+                        stale_consecutive_count,
+                    )
+                    _safe_emit_health_signal(
+                        on_health_signal,
+                        BreachLoopHealthSignal(
+                            degraded=False,
+                            consecutive_failures=stale_consecutive_count,
+                            last_error=None,
+                        ),
+                    )
+                    stale_degraded = False
+                stale_consecutive_count = 0
+
         await asyncio.sleep(cadence_seconds)
 
 
@@ -276,8 +322,14 @@ async def _run_one_tick(  # noqa: PLR0913
     on_immediate_breach: OnImmediateBreach,
     on_emergency_input: OnEmergencyInput,
     entry_id_factory: Callable[[int], str],
-) -> None:
-    """Execute one breach-loop tick."""
+    max_price_age_seconds: float,
+) -> bool:
+    """Execute one breach-loop tick.
+
+    Returns True when at least one open-position ticker had a stale or missing
+    live price this tick (excluded from stop enforcement); False when all prices
+    were fresh. The caller accumulates the count for escalation.
+    """
     drawdown_state: DrawdownState = repository.get_drawdown_state()
     regime_output: RegimeAdaptationOutput = await regime_provider()
 
@@ -291,7 +343,38 @@ async def _run_one_tick(  # noqa: PLR0913
     library_snapshot: LibrarySnapshot = await snapshot_provider()
     library_config = library_config_factory(active_risk_parameters)
 
-    underlying_prices = {ticker: quote.price for ticker, quote in cache.get_all().items()}
+    # Per-position freshness gate (ALP-770): only include live prices that are
+    # within the staleness threshold. Stale quotes and tickers absent from the
+    # cache are omitted so ``evaluate_proposals`` cannot fire a PRICE_STOP
+    # against a frozen sentinel.
+    cache_snapshot = cache.get_all()
+    underlying_prices: dict[str, float] = {}
+    stale_tickers: set[str] = set()
+    for ticker, quote in cache_snapshot.items():
+        age = (as_of - quote.as_of).total_seconds()
+        if age > max_price_age_seconds:
+            stale_tickers.add(ticker)
+            log.warning(
+                "underlying price for %s is stale (%.0fs > max %.0fs); "
+                "excluded from stop enforcement",
+                ticker,
+                age,
+                max_price_age_seconds,
+            )
+        else:
+            underlying_prices[ticker] = quote.price
+
+    # Tickers with open positions but no cache entry are treated as missing.
+    expected_tickers = {ep.underlying for ep in library_snapshot.existing_positions.values()}
+    missing_tickers = expected_tickers - cache_snapshot.keys()
+    for ticker in sorted(missing_tickers):
+        log.warning(
+            "no live price received for open-position ticker %s; excluded from stop enforcement",
+            ticker,
+        )
+
+    had_stale_or_missing = bool(stale_tickers or missing_tickers)
+
     market = MarketInputs(
         underlying_prices=underlying_prices,
         risk_free_rate=risk_free_rate,
@@ -366,6 +449,8 @@ async def _run_one_tick(  # noqa: PLR0913
             await on_immediate_breach(result, evaluation)
 
     await on_emergency_input(result)
+
+    return had_stale_or_missing
 
 
 def _build_rule_evaluation(

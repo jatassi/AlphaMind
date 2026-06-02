@@ -56,6 +56,11 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
 from alphamind.risk_guardrails.guardrail_evaluation import (
     PortfolioStateSnapshot as LibrarySnapshot,
 )
+from alphamind.risk_guardrails.guardrail_evaluation.types import (
+    AssetType,
+    Direction,
+    ExistingPosition,
+)
 from alphamind.risk_guardrails.regime_adaptation import RegimeAdaptationOutput
 from alphamind.risk_guardrails.regime_adaptation.types import RegimeAdaptationState
 
@@ -1205,3 +1210,337 @@ async def test_breach_loop_faulty_health_sink_does_not_kill_loop(
     )
 
     assert sleep_calls == [60.0, 60.0, 60.0]
+
+
+# ---------------------------------------------------------------------------
+# ALP-770 — per-position freshness gate + stale-price escalation
+# ---------------------------------------------------------------------------
+
+
+def _library_snapshot_with_position(ticker: str) -> LibrarySnapshot:
+    """Snapshot with one open equity position on *ticker* so the freshness gate
+    detects it as an expected ticker."""
+    ep = ExistingPosition(
+        position_id=f"pos-{ticker}",
+        underlying=ticker,
+        sector="tech",
+        direction=Direction.LONG,
+        asset_type=AssetType.EQUITY,
+        notional_usd=10_000.0,
+        delta_adjusted_exposure_usd=10_000.0,
+        current_greeks=None,
+        daily_borrow_cost_usd=None,
+        reserves_capital_usd=0.0,
+    )
+    return LibrarySnapshot(
+        portfolio_value_usd=100_000.0,
+        cash_usd=90_000.0,
+        reserved_for_pending_orders_usd=0.0,
+        sector_exposure_pct=MappingProxyType({"tech": 10.0}),
+        net_long_pct=10.0,
+        net_short_pct=0.0,
+        gross_pct=10.0,
+        options_delta_pct=0.0,
+        portfolio_theta_pct_per_day=0.0,
+        portfolio_vega_pct_per_iv_point=0.0,
+        total_short_pct=0.0,
+        single_short_max_pct=0.0,
+        daily_borrow_cost_pct=0.0,
+        position_max_size_pct=10.0,
+        existing_positions=MappingProxyType({ep.position_id: ep}),
+    )
+
+
+def _stale_cache(ticker: str, *, price: float, age_seconds: float) -> UnderlyingPriceCache:
+    """Cache with one quote whose as_of is ``age_seconds`` before the tick time used
+    in these tests (2026-05-11T14:30:00Z)."""
+    from datetime import timedelta
+
+    tick_time = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
+    quote_time = tick_time - timedelta(seconds=age_seconds)
+    cache = UnderlyingPriceCache()
+    # Bypass async update — safe here as there is no concurrent access in test setup.
+    cache._quotes[ticker] = UnderlyingQuote(ticker=Symbol(ticker), price=price, as_of=quote_time)
+    return cache
+
+
+@pytest.mark.asyncio
+async def test_stale_price_escalates_to_degraded_after_n_cycles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale price for an open position fires DEGRADED after N consecutive cycles.
+
+    threshold=1; IBM quote is 2h old (7200s >> 60s max_price_age); the first
+    successful tick returns had_stale=True → stale_consecutive_count=1 >= threshold
+    → DEGRADED emitted exactly once.
+    """
+    repo = _StubRepository(
+        drawdown_states=[_drawdown_state()],
+        active_risk_parameters=_active_risk_parameters(),
+    )
+    immediate, emergency, sink = _noop_callbacks()
+    health = _CallableRecord()
+
+    def _on_health(signal: BreachLoopHealthSignal) -> None:
+        health.calls.append((signal,))
+
+    async def _snapshot() -> LibrarySnapshot:
+        return _library_snapshot_with_position("IBM")
+
+    async def _regime() -> RegimeAdaptationOutput:
+        return _regime_output()
+
+    sleep_calls: list[float] = []
+    # IBM price is 2 hours old; max_price_age_seconds=60 → stale
+    cache = _stale_cache("IBM", price=200.0, age_seconds=7200.0)
+
+    async def _go() -> None:
+        await run_breach_loop(
+            _session(),
+            _config(failure_threshold=1),
+            repository=cast(PortfolioStateRepository, repo),
+            cache=cache,
+            snapshot_provider=_snapshot,
+            regime_provider=_regime,
+            progressive_tiers=_progressive_tiers(),
+            library_config_factory=_library_config,
+            iv_provider=_FixtureIvProvider(),
+            risk_free_rate=0.045,
+            breach_response_lookup=_breach_response_lookup(),
+            market_hours=_StubMarketHours(open_flag=True),
+            activity_log_sink=sink,
+            on_immediate_breach=immediate,
+            on_emergency_input=emergency,
+            on_health_signal=_on_health,
+            max_price_age_seconds=60.0,
+            now=lambda: datetime(2026, 5, 11, 14, 30, tzinfo=UTC),
+        )
+
+    await _drive_loop(
+        _go,
+        ticks=1,
+        tick_sentinels=[],
+        sleep_calls=sleep_calls,
+        monkeypatch=monkeypatch,
+        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
+    )
+
+    # One DEGRADED signal fired after 1 stale cycle (threshold=1).
+    assert len(health.calls) == 1
+    signal = health.calls[0][0]
+    assert signal.degraded is True
+    assert signal.consecutive_failures == 1
+    assert signal.last_error is not None
+
+
+@pytest.mark.asyncio
+async def test_missing_price_escalates_to_degraded_after_n_cycles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An open position with no cache entry at all fires DEGRADED (treated as missing).
+
+    threshold=1; IBM has an open position but is absent from the cache.
+    """
+    repo = _StubRepository(
+        drawdown_states=[_drawdown_state()],
+        active_risk_parameters=_active_risk_parameters(),
+    )
+    immediate, emergency, sink = _noop_callbacks()
+    health = _CallableRecord()
+
+    def _on_health(signal: BreachLoopHealthSignal) -> None:
+        health.calls.append((signal,))
+
+    async def _snapshot() -> LibrarySnapshot:
+        return _library_snapshot_with_position("IBM")
+
+    async def _regime() -> RegimeAdaptationOutput:
+        return _regime_output()
+
+    sleep_calls: list[float] = []
+
+    async def _go() -> None:
+        await run_breach_loop(
+            _session(),
+            _config(failure_threshold=1),
+            repository=cast(PortfolioStateRepository, repo),
+            cache=_cache(),  # empty — IBM absent
+            snapshot_provider=_snapshot,
+            regime_provider=_regime,
+            progressive_tiers=_progressive_tiers(),
+            library_config_factory=_library_config,
+            iv_provider=_FixtureIvProvider(),
+            risk_free_rate=0.045,
+            breach_response_lookup=_breach_response_lookup(),
+            market_hours=_StubMarketHours(open_flag=True),
+            activity_log_sink=sink,
+            on_immediate_breach=immediate,
+            on_emergency_input=emergency,
+            on_health_signal=_on_health,
+            max_price_age_seconds=60.0,
+            now=lambda: datetime(2026, 5, 11, 14, 30, tzinfo=UTC),
+        )
+
+    await _drive_loop(
+        _go,
+        ticks=1,
+        tick_sentinels=[],
+        sleep_calls=sleep_calls,
+        monkeypatch=monkeypatch,
+        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
+    )
+
+    assert len(health.calls) == 1
+    assert health.calls[0][0].degraded is True
+
+
+@pytest.mark.asyncio
+async def test_stale_price_escalation_recovers_when_fresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After a stale-price DEGRADED escalation, a fresh price emits RECOVERED.
+
+    threshold=1; tick 1 has a stale IBM price → DEGRADED; tick 2 has a fresh
+    IBM price → RECOVERED; tick 3 is also fresh → no further signal.
+    """
+    repo = _StubRepository(
+        drawdown_states=[_drawdown_state(), _drawdown_state(), _drawdown_state()],
+        active_risk_parameters=_active_risk_parameters(),
+    )
+    immediate, emergency, sink = _noop_callbacks()
+    health = _CallableRecord()
+
+    def _on_health(signal: BreachLoopHealthSignal) -> None:
+        health.calls.append((signal,))
+
+    tick_time = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
+
+    async def _snapshot() -> LibrarySnapshot:
+        return _library_snapshot_with_position("IBM")
+
+    async def _regime() -> RegimeAdaptationOutput:
+        return _regime_output()
+
+    # Tick 1: stale (2 h old quote); ticks 2+: fresh (5 s old).
+    stale_c = _stale_cache("IBM", price=200.0, age_seconds=7200.0)
+    fresh_c = _stale_cache("IBM", price=200.0, age_seconds=5.0)
+    caches = [stale_c, fresh_c, fresh_c]
+
+    # Use a proxy cache that delegates to a swappable underlying so we can
+    # switch from stale → fresh between ticks without reconstructing the loop.
+    class _SwappableCache:
+        def __init__(self) -> None:
+            self._delegates = caches
+            self._i = 0
+
+        def get_all(self) -> Any:
+            return self._delegates[self._i].get_all()
+
+        async def update(self, _quote: UnderlyingQuote) -> None:
+            return None
+
+    swappable: Any = _SwappableCache()
+    real_sleep = asyncio.sleep
+    sleep_count = {"n": 0}
+    sleep_calls: list[float] = []
+
+    async def _fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        sleep_count["n"] += 1
+        swappable._i = min(swappable._i + 1, len(caches) - 1)
+        if sleep_count["n"] >= 3:
+            await real_sleep(0)
+            raise asyncio.CancelledError
+        await real_sleep(0)
+
+    monkeypatch.setattr(
+        "alphamind.execution.continuous_monitor.breach_loop.task.asyncio.sleep",
+        _fake_sleep,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_breach_loop(
+            _session(),
+            _config(failure_threshold=1),
+            repository=cast(PortfolioStateRepository, repo),
+            cache=cast(Any, swappable),
+            snapshot_provider=_snapshot,
+            regime_provider=_regime,
+            progressive_tiers=_progressive_tiers(),
+            library_config_factory=_library_config,
+            iv_provider=_FixtureIvProvider(),
+            risk_free_rate=0.045,
+            breach_response_lookup=_breach_response_lookup(),
+            market_hours=_StubMarketHours(open_flag=True),
+            activity_log_sink=sink,
+            on_immediate_breach=immediate,
+            on_emergency_input=emergency,
+            on_health_signal=_on_health,
+            max_price_age_seconds=60.0,
+            now=lambda: tick_time,
+        )
+
+    # Tick 1 stale → DEGRADED; tick 2 fresh → RECOVERED; tick 3 fresh → no further.
+    assert len(health.calls) == 2
+    assert health.calls[0][0].degraded is True  # DEGRADED on tick 1
+    assert health.calls[1][0].degraded is False  # RECOVERED on tick 2
+
+
+@pytest.mark.asyncio
+async def test_fresh_price_no_escalation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh price for an open position never triggers the stale-price DEGRADED path."""
+    repo = _StubRepository(
+        drawdown_states=[_drawdown_state(), _drawdown_state()],
+        active_risk_parameters=_active_risk_parameters(),
+    )
+    immediate, emergency, sink = _noop_callbacks()
+    health = _CallableRecord()
+
+    def _on_health(signal: BreachLoopHealthSignal) -> None:
+        health.calls.append((signal,))
+
+    async def _snapshot() -> LibrarySnapshot:
+        return _library_snapshot_with_position("IBM")
+
+    async def _regime() -> RegimeAdaptationOutput:
+        return _regime_output()
+
+    # IBM quote is 5 s old; max_price_age_seconds=60 → fresh
+    cache = _stale_cache("IBM", price=200.0, age_seconds=5.0)
+    sleep_calls: list[float] = []
+
+    async def _go() -> None:
+        await run_breach_loop(
+            _session(),
+            _config(failure_threshold=1),
+            repository=cast(PortfolioStateRepository, repo),
+            cache=cache,
+            snapshot_provider=_snapshot,
+            regime_provider=_regime,
+            progressive_tiers=_progressive_tiers(),
+            library_config_factory=_library_config,
+            iv_provider=_FixtureIvProvider(),
+            risk_free_rate=0.045,
+            breach_response_lookup=_breach_response_lookup(),
+            market_hours=_StubMarketHours(open_flag=True),
+            activity_log_sink=sink,
+            on_immediate_breach=immediate,
+            on_emergency_input=emergency,
+            on_health_signal=_on_health,
+            max_price_age_seconds=60.0,
+            now=lambda: datetime(2026, 5, 11, 14, 30, tzinfo=UTC),
+        )
+
+    await _drive_loop(
+        _go,
+        ticks=2,
+        tick_sentinels=[],
+        sleep_calls=sleep_calls,
+        monkeypatch=monkeypatch,
+        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
+    )
+
+    # No health signals: price is fresh the whole time.
+    assert health.calls == []

@@ -1103,3 +1103,74 @@ class TestMakeAdvProvider:
         provider = make_adv_provider(session_factory=db_session_factory)
         result = await provider()
         assert result["AAPL"] == pytest.approx(150.0)
+
+
+# ---------------------------------------------------------------------------
+# _build_price_provider freshness tests (ALP-770)
+# ---------------------------------------------------------------------------
+
+
+from alphamind.execution.continuous_monitor.breach_loop.production_substrate import (  # noqa: E402
+    _build_price_provider,
+)
+
+
+class TestBuildPriceProvider:
+    """ALP-770 — _build_price_provider must carry the quote's real as_of and compute
+    is_stale honestly instead of hardcoding False with a synthetic current-tick timestamp."""
+
+    def _cache_with_quote(
+        self, *, ticker: str, price: float, quote_time: datetime
+    ) -> UnderlyingPriceCache:
+        cache = UnderlyingPriceCache()
+        # Bypass async update to keep test helpers sync; no concurrent access here.
+        cache._quotes[ticker] = UnderlyingQuote(ticker=ticker, price=price, as_of=quote_time)
+        return cache
+
+    def test_fresh_quote_carries_real_as_of_not_synthetic(self) -> None:
+        """The PriceQuote's as_of_timestamp is the cache quote's timestamp, not the tick time."""
+        quote_time = datetime(2026, 6, 1, 17, 0, tzinfo=UTC)
+        tick_time = datetime(2026, 6, 1, 17, 5, tzinfo=UTC)  # 5 min later
+        cache = self._cache_with_quote(ticker="IBM", price=200.0, quote_time=quote_time)
+
+        provider = _build_price_provider(cache, as_of=tick_time, max_price_age_seconds=900.0)
+
+        # The provider carries the real quote timestamp, not tick_time.
+        quote = provider.get_quote("IBM", freshness_threshold_seconds=900.0)
+        assert quote.as_of_timestamp == quote_time
+        assert quote.as_of_timestamp != tick_time
+
+    def test_fresh_quote_is_not_stale(self) -> None:
+        """A quote within the freshness window → is_stale=False via get_quote."""
+        quote_time = datetime(2026, 6, 1, 17, 0, tzinfo=UTC)
+        tick_time = datetime(2026, 6, 1, 17, 5, tzinfo=UTC)  # 5 min (300s) < threshold 900s
+        cache = self._cache_with_quote(ticker="IBM", price=200.0, quote_time=quote_time)
+
+        provider = _build_price_provider(cache, as_of=tick_time, max_price_age_seconds=900.0)
+
+        quote = provider.get_quote("IBM", freshness_threshold_seconds=900.0)
+        assert not quote.is_stale
+
+    def test_old_quote_is_stale(self) -> None:
+        """A quote older than the threshold → is_stale=True via get_quote (ALP-770 root cause)."""
+        quote_time = datetime(2026, 6, 1, 14, 0, tzinfo=UTC)
+        tick_time = datetime(2026, 6, 1, 17, 0, tzinfo=UTC)  # 3 h = 10800s >> 900s threshold
+        cache = self._cache_with_quote(ticker="OXY", price=60.0, quote_time=quote_time)
+
+        provider = _build_price_provider(cache, as_of=tick_time, max_price_age_seconds=900.0)
+
+        quote = provider.get_quote("OXY", freshness_threshold_seconds=900.0)
+        assert quote.is_stale
+
+    def test_absent_ticker_not_in_provider(self) -> None:
+        """A ticker absent from the cache is absent from the price provider (no quote)."""
+        cache = UnderlyingPriceCache()  # empty
+        tick_time = datetime(2026, 6, 1, 17, 0, tzinfo=UTC)
+
+        provider = _build_price_provider(cache, as_of=tick_time, max_price_age_seconds=900.0)
+
+        # get_quote raises for unknown tickers.
+        from alphamind.portfolio_state.pricing import UnknownTickerError
+
+        with pytest.raises(UnknownTickerError):
+            provider.get_quote("IBM", freshness_threshold_seconds=900.0)

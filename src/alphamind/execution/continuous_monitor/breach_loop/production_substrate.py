@@ -430,7 +430,11 @@ async def _assemble_for_breach_loop_tick(  # noqa: PLR0913 — substrate-level s
         prior_active_risk_parameters_provider=_prior_provider,
         config=state_persistence_config,
     )
-    price_provider = _build_price_provider(underlying_cache, as_of=as_of)
+    price_provider = _build_price_provider(
+        underlying_cache,
+        as_of=as_of,
+        max_price_age_seconds=portfolio_state_config.snapshot_freshness_max_price_age_seconds,
+    )
     return assemble_snapshot(
         repository=repository,
         price_provider=price_provider,
@@ -557,16 +561,25 @@ def make_snapshot_provider(
 
 
 def _build_price_provider(
-    underlying_cache: UnderlyingPriceCache, *, as_of: datetime
+    underlying_cache: UnderlyingPriceCache,
+    *,
+    as_of: datetime,
+    max_price_age_seconds: float,
 ) -> StubCurrentPriceProvider:
-    """Project the live underlying-cache into the canonical price-provider shape."""
+    """Project the live underlying-cache into the canonical price-provider shape.
+
+    Carries the quote's real ``as_of`` timestamp (rather than the synthetic
+    current-tick time) so the assembler's ``SnapshotFreshness`` machinery can
+    classify each quote as fresh or stale instead of always seeing
+    ``is_stale=False`` (ALP-770).
+    """
     quotes = {
         ticker: PriceQuote(
             ticker=ticker,
             price_usd=quote.price,
-            as_of_timestamp=as_of,
+            as_of_timestamp=quote.as_of,
             source=PriceSource.INTRADAY_QUOTE,
-            is_stale=False,
+            is_stale=(as_of - quote.as_of).total_seconds() > max_price_age_seconds,
         )
         for ticker, quote in underlying_cache.get_all().items()
     }
