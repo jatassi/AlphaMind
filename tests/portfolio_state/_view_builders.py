@@ -7,13 +7,16 @@ These build PositionView / PortfolioStateSnapshot / rollup views directly
 (for freshness/snapshot tests) or the state objects used in RepositoryFixture
 (for assembler/repository).
 
-ALP-821: this module is now the single source for the low-level record builders
-(_make_cash_ledger, _make_drawdown_state, _make_bracket, _make_pending_order,
-_make_risk_budget, _make_active_risk_parameters). tests/portfolio_state/_fixtures.py
-and tests/portfolio_state/consumers/_builders.py import them from here rather than
-re-declaring the CashLedger(...)/DrawdownState(...) literals, so a new field on
-those records is a single edit. Those two modules keep their own
-_make_open_position/_make_pending_position because each encodes suite-specific
+ALP-821: this module is the single source for the CashLedger/DrawdownState builders
+(_make_cash_ledger, _make_drawdown_state) — both tests/portfolio_state/_fixtures.py
+and tests/portfolio_state/consumers/_builders.py delegate to them rather than
+re-declaring the record literals, so a new field on those records is one edit. It is
+also the source for the bracket/order/risk builders that consumers/_builders.py
+re-exports unchanged (_make_bracket, _make_pending_order, _make_risk_budget,
+_make_active_risk_parameters). _fixtures.py keeps its own richer _make_bracket
+(two protective legs) and _make_active_risk_parameters (populated entries) — those are
+distinct fixtures, never duplicates of these. consumers/_builders.py also keeps its
+own _make_open_position/_make_pending_position because each encodes suite-specific
 fixture values its assertions depend on (merging would force assertion changes).
 """
 

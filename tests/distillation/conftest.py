@@ -11,7 +11,8 @@ fixtures with a ``StaticPool`` + ``check_same_thread=False`` variant: its
 orchestrator/q3 tests drive synchronous DB calls through ``asyncio.to_thread``
 and must share one underlying connection across worker threads. That variant is
 not interchangeable with this plain one, so it stays local to the external
-subtree (and shadows these for tests collected under it).
+subtree — pytest resolves the nearest fixture, so tests under external/ bind to
+that variant and tests elsewhere in the subtree bind to this one.
 
 The FK target tables (``invocations``/``process_lifetimes``) are registered on
 ``Base.metadata`` globally by ``tests/conftest.py``, so no local

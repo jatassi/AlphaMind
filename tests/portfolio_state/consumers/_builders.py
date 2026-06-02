@@ -7,14 +7,14 @@ These are pure data builders (no test logic). Import explicitly in the test modu
 that need them (mirrors the pattern in tests/portfolio_state/_fixtures.py).
 
 ALP-821: the record builders that were byte-identical to ``_view_builders`` are now
-re-exported from there (``_make_bracket``, ``_make_pending_order``,
-``_make_risk_budget``), and ``_make_cash_ledger`` / ``_make_drawdown_state`` /
-``_make_active_risk_params`` delegate to the shared builders while pinning the
-consumer-suite values (e.g. ``true_deployable_capital_usd=44000`` is asserted by
-test_analyst). ``_make_open_position`` / ``_make_pending_position`` stay local
-because they encode AAPL/GOOG fixture values the consumer assertions depend on,
-which differ from the NVDA-based view fixtures — merging would force assertion
-changes.
+re-exported from there unchanged (``_make_bracket``, ``_make_pending_order``,
+``_make_risk_budget``, and ``_make_active_risk_parameters`` under this suite's
+``_make_active_risk_params`` name). ``_make_cash_ledger`` / ``_make_drawdown_state``
+delegate to the shared builders while pinning the consumer-suite values (e.g.
+``true_deployable_capital_usd=44000`` is asserted by test_analyst).
+``_make_open_position`` / ``_make_pending_position`` stay local because they encode
+AAPL/GOOG fixture values the consumer assertions depend on, which differ from the
+NVDA-based view fixtures — merging would force assertion changes.
 """
 
 from __future__ import annotations
@@ -27,9 +27,6 @@ from alphamind._kernel.ids import (
 )
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
-from alphamind.portfolio_state.aggregates.risk_parameters import (
-    ActiveRiskParameterSet,
-)
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -41,7 +38,9 @@ from alphamind.portfolio_state.records.positions import (
 from alphamind.portfolio_state.views.positions import PositionView
 
 from .._view_builders import (
-    _make_active_risk_parameters,
+    _make_active_risk_parameters as _make_active_risk_params,
+)
+from .._view_builders import (
     _make_bracket,
     _make_pending_order,
     _make_risk_budget,
@@ -160,8 +159,8 @@ def _make_pending_position(pos_id: str = "POS-PEND") -> PositionView:
 
 # ---------------------------------------------------------------------------
 # Thin wrappers over the shared builders (ALP-821): preserve the consumer-suite
-# values while keeping the CashLedger/DrawdownState/ActiveRiskParameterSet
-# literals defined once in _view_builders.
+# values while keeping the CashLedger/DrawdownState literals defined once in
+# _view_builders.
 # ---------------------------------------------------------------------------
 
 
@@ -188,7 +187,3 @@ def _make_drawdown_state() -> DrawdownState:
         lifetime_max_drawdown_pct=5.0,
         intraday_drawdown_pct=0.5,
     )
-
-
-def _make_active_risk_params() -> ActiveRiskParameterSet:
-    return _make_active_risk_parameters()
