@@ -24,7 +24,7 @@ Concurrency model — single-writer, multiple-readers, asyncio-only:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -165,6 +165,25 @@ class UnderlyingPriceCache:
         if age_seconds > max_age_seconds:
             return StalePrice(last_price=quote.price, as_of=quote.as_of, age_seconds=age_seconds)
         return FreshPrice(price=quote.price, as_of=quote.as_of)
+
+    def read_all(
+        self,
+        tickers: Iterable[str],
+        *,
+        as_of: datetime,
+        max_age_seconds: float,
+    ) -> Mapping[str, PriceRead]:
+        """Return one :data:`PriceRead` per requested ticker, keyed by ticker.
+
+        The ``breach_loop`` open-set iteration shape: every ticker in *tickers*
+        gets a classified read, and any requested ticker absent from the cache
+        is ``MissingPrice`` — so a consumer iterating the open-position set sees
+        every position, never a silent gap.
+        """
+        return {
+            ticker: self.read(ticker, as_of=as_of, max_age_seconds=max_age_seconds)
+            for ticker in tickers
+        }
 
     def get_all(self) -> Mapping[str, UnderlyingQuote]:
         """Return a snapshot of every ticker → quote pair currently in the cache.

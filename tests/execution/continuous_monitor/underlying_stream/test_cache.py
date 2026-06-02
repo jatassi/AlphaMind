@@ -161,3 +161,17 @@ class TestFreshnessAwareRead:
         missing = cache.read("AAPL", as_of=_AS_OF, max_age_seconds=30.0)
         assert not hasattr(stale, "price")
         assert not hasattr(missing, "price")
+
+
+class TestFreshnessAwareReadAll:
+    async def test_read_all_returns_one_classified_read_per_requested_ticker(self) -> None:
+        cache = UnderlyingPriceCache()
+        await cache.update(_quote("SPY", 500.0, _AS_OF))
+        await cache.update(_quote("AAPL", 200.0, _AS_OF - timedelta(seconds=60)))
+        reads = cache.read_all(
+            ["SPY", "AAPL", "MSFT"], as_of=_AS_OF, max_age_seconds=30.0
+        )
+        assert set(reads) == {"SPY", "AAPL", "MSFT"}
+        assert isinstance(reads["SPY"], FreshPrice)
+        assert isinstance(reads["AAPL"], StalePrice)
+        assert isinstance(reads["MSFT"], MissingPrice)  # requested but absent
