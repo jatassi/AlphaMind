@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import signal
 import sys
-import time
 import unittest.mock as mock
 from datetime import UTC, datetime
 
@@ -23,7 +22,37 @@ import pytest
 
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.continuous_monitor.session import MonitorSession
-from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
+from alphamind.execution.continuous_monitor.supervisor import (
+    MonitorSupervisor,
+    derive_stall_bound,
+)
+
+
+class _FakeClock:
+    """Injectable monotonic clock + sleep for deterministic watchdog timing.
+
+    ``monotonic()`` returns the accumulated virtual time; ``sleep(d)`` yields
+    control to the event loop (so concurrent tasks make progress, like real
+    ``asyncio.sleep``) and advances virtual time by ``d``. The system clock is
+    one of the four sanctioned mock boundaries — faking it here lets a
+    watchdog-bound test trip at an exact virtual elapsed time without any
+    real-wall-clock waiting.
+    """
+
+    def __init__(self, start: float = 1000.0) -> None:
+        self._now = start
+
+    def monotonic(self) -> float:
+        return self._now
+
+    async def sleep(self, delay: float) -> None:
+        # Cooperative yield so sibling tasks (the registered task, the stop
+        # trigger) run, then advance virtual time as a real sleep would.
+        await asyncio.sleep(0)
+        self._now += delay
+
+    def advance(self, delay: float) -> None:
+        self._now += delay
 
 
 def _session() -> MonitorSession:
@@ -34,7 +63,9 @@ def _session() -> MonitorSession:
     )
 
 
-def _config(*, shutdown_timeout: int = 5, watchdog_timeout: int = 3600) -> ContinuousMonitorConfig:
+def _config(
+    *, shutdown_timeout: int = 5, watchdog_multiplier: float = 10.0
+) -> ContinuousMonitorConfig:
     return ContinuousMonitorConfig(
         breach_evaluation_cadence_seconds=60,
         greeks_refresh_interval_minutes=15,
@@ -42,14 +73,22 @@ def _config(*, shutdown_timeout: int = 5, watchdog_timeout: int = 3600) -> Conti
         underlying_stream_provider="alpaca-iex",
         max_reconnect_attempts=5,
         supervisor_shutdown_timeout_seconds=shutdown_timeout,
-        watchdog_stall_timeout_seconds=watchdog_timeout,
+        watchdog_cadence_multiplier=watchdog_multiplier,
     )
 
 
-def _supervisor(*, shutdown_timeout: int = 5, watchdog_timeout: int = 3600) -> MonitorSupervisor:
+def _supervisor(
+    *,
+    shutdown_timeout: int = 5,
+    watchdog_multiplier: float = 10.0,
+    clock: _FakeClock | None = None,
+) -> MonitorSupervisor:
+    fake = clock or _FakeClock()
     return MonitorSupervisor(
         session=_session(),
-        config=_config(shutdown_timeout=shutdown_timeout, watchdog_timeout=watchdog_timeout),
+        config=_config(shutdown_timeout=shutdown_timeout, watchdog_multiplier=watchdog_multiplier),
+        sleep=fake.sleep,
+        monotonic=fake.monotonic,
     )
 
 
@@ -197,102 +236,191 @@ class TestSupervisorTaskCoroSignature:
 
 
 # ---------------------------------------------------------------------------
-# ALP-768 — in-process watchdog (beat + _watchdog_loop)
+# ALP-826 — per-cadence default-on stall watchdog
 # ---------------------------------------------------------------------------
 
 
-class TestBeat:
-    def test_beat_registers_task_on_first_call(self) -> None:
-        supervisor = _supervisor()
-        assert "fill_stream_consumer" not in supervisor._heartbeats
-        supervisor.beat("fill_stream_consumer")
-        assert "fill_stream_consumer" in supervisor._heartbeats
-
-    def test_beat_refreshes_timestamp_on_subsequent_calls(self) -> None:
-        supervisor = _supervisor()
-        supervisor.beat("task")
-        first_ts = supervisor._heartbeats["task"]
-        time.sleep(0.01)  # ensure monotonic advances
-        supervisor.beat("task")
-        assert supervisor._heartbeats["task"] > first_ts
-
-    def test_beat_stores_monotonic_timestamp(self) -> None:
-        before = time.monotonic()
-        supervisor = _supervisor()
-        supervisor.beat("task")
-        after = time.monotonic()
-        ts = supervisor._heartbeats["task"]
-        assert before <= ts <= after
+_EXIT_PATH = "alphamind.execution.continuous_monitor.supervisor.os._exit"
 
 
-class TestWatchdogLoop:
-    async def test_watchdog_does_not_fire_for_fresh_heartbeat(self) -> None:
-        supervisor = _supervisor()
+class _StopAfter:
+    """Injectable sleep that drives a fake clock and stops the watchdog loop.
+
+    Advances *clock* by each requested delay (as a real sleep would) and raises
+    ``CancelledError`` after *passes* sleeps so the run-forever watchdog loop
+    terminates deterministically — mirroring how the supervisor cancels the
+    watchdog at shutdown.
+    """
+
+    def __init__(self, clock: _FakeClock, *, passes: int) -> None:
+        self._clock = clock
+        self._passes = passes
+        self.calls = 0
+
+    async def __call__(self, delay: float) -> None:
+        self.calls += 1
+        if self.calls > self._passes:
+            raise asyncio.CancelledError
+        await asyncio.sleep(0)
+        self._clock.advance(delay)
+
+
+class TestDeriveStallBound:
+    def test_bound_is_cadence_times_multiplier(self) -> None:
+        bound = derive_stall_bound(cadence_seconds=1.0, multiplier=10.0, override_seconds=None)
+        assert bound == 10.0
+
+    def test_override_takes_precedence_over_cadence(self) -> None:
+        bound = derive_stall_bound(cadence_seconds=1.0, multiplier=10.0, override_seconds=120.0)
+        assert bound == 120.0
+
+
+class TestSupervisedLoop:
+    async def test_beats_at_top_of_each_iteration_and_paces_at_cadence(self) -> None:
+        """A loop driven by supervised_loop is watched with no hand-wired beat()."""
+        clock = _FakeClock()
+        supervisor = _supervisor(clock=clock)
+        beats_at: list[float] = []
+        iterations = 0
+
+        async for _ in supervisor.supervised_loop("entry_window", 60.0):
+            # The beat fired at the TOP of this iteration → last_beat is now().
+            beats_at.append(supervisor._watch["entry_window"].last_beat)  # type: ignore[arg-type]
+            iterations += 1
+            if iterations >= 3:
+                break
+
+        # Registered + watched purely by driving the loop (no beat() call site).
+        entry = supervisor._watch["entry_window"]
+        assert entry.watched is True
+        assert entry.bound_seconds == 60.0 * 10.0
+        # Three beats, each at the clock value after the preceding 60s sleep.
+        assert beats_at == [1000.0, 1060.0, 1120.0]
+
+
+class TestPerTaskBounds:
+    async def test_fast_and_slow_tasks_trip_at_independent_bounds(self) -> None:
+        """1s-cadence and 60s-cadence tasks trip os._exit at different bounds.
+
+        No shared global: the fast task (bound 10s) is stale once 10s elapse,
+        while the slow task (bound 600s) is still healthy at the same instant.
+        """
+        clock = _FakeClock()
+        supervisor = _supervisor(clock=clock)
         supervisor._stop_event = asyncio.Event()
-        supervisor.beat("task")  # fresh — elapsed ~ 0
+        supervisor.register_watch("bracket_stops", 1.0)  # bound 10s
+        supervisor.register_watch("breach_loop", 60.0)  # bound 600s
+        supervisor.beat("bracket_stops")
+        supervisor.beat("breach_loop")
+        # Advance past the fast bound but well within the slow bound.
+        clock.advance(20.0)
 
-        # Allow one sleep-then-check iteration, then stop via CancelledError.
-        _call = 0
-
-        async def _one_shot_sleep(_: float) -> None:
-            nonlocal _call
-            _call += 1
-            if _call > 1:
-                raise asyncio.CancelledError()
-
-        exit_calls: list[int] = []
+        exits: list[int] = []
+        stopper = _StopAfter(clock, passes=1)  # one check pass, then cancel
         with (
-            mock.patch("asyncio.sleep", new=_one_shot_sleep),
-            mock.patch(
-                "alphamind.execution.continuous_monitor.supervisor.os._exit",
-                side_effect=exit_calls.append,
-            ),
+            mock.patch(_EXIT_PATH, side_effect=exits.append),
             pytest.raises(asyncio.CancelledError),
         ):
-            # Awaiting directly (not via create_task) so BaseException propagates normally.
+            supervisor._sleep = stopper  # type: ignore[method-assign]
             await supervisor._watchdog_loop()
 
-        assert exit_calls == []
+        # Only the fast task (bound 10s) was stale at +20s; the slow task
+        # (bound 600s) is still healthy — no shared global timeout.
+        assert exits == [1]
 
-    async def test_watchdog_fires_os_exit_for_stale_heartbeat(self) -> None:
-        supervisor = _supervisor()
+    async def test_slow_task_not_tripped_before_its_bound(self) -> None:
+        clock = _FakeClock()
+        supervisor = _supervisor(clock=clock)
         supervisor._stop_event = asyncio.Event()
-        timeout = supervisor._config.watchdog_stall_timeout_seconds
-        # Simulate a heartbeat that was last recorded far past the timeout.
-        supervisor._heartbeats["stale_task"] = time.monotonic() - (timeout + 1)
+        supervisor.register_watch("breach_loop", 60.0)  # bound 600s
+        supervisor.beat("breach_loop")
+        clock.advance(20.0)  # < 600s
 
+        exits: list[int] = []
+        stopper = _StopAfter(clock, passes=1)
         with (
-            mock.patch("asyncio.sleep", new=mock.AsyncMock(return_value=None)),
-            mock.patch(
-                "alphamind.execution.continuous_monitor.supervisor.os._exit",
-                side_effect=SystemExit(1),
-            ),
-            # Await directly so SystemExit propagates to pytest.raises.
-            pytest.raises(SystemExit) as exc_info,
+            mock.patch(_EXIT_PATH, side_effect=exits.append),
+            pytest.raises(asyncio.CancelledError),
         ):
+            supervisor._sleep = stopper  # type: ignore[method-assign]
             await supervisor._watchdog_loop()
-        assert exc_info.value.code == 1
 
-    async def test_watchdog_exits_cleanly_when_stop_event_is_set(self) -> None:
-        """Shutdown guard: no os._exit during graceful stop even if heartbeats are stale."""
-        supervisor = _supervisor()
+        assert exits == []
+
+    async def test_explicit_override_supersedes_cadence_bound(self) -> None:
+        """An irregular task's stall_timeout_seconds override sets its bound."""
+        clock = _FakeClock()
+        supervisor = _supervisor(clock=clock)
         supervisor._stop_event = asyncio.Event()
-        supervisor._stop_event.set()  # shutdown already in progress
-        timeout = supervisor._config.watchdog_stall_timeout_seconds
-        supervisor._heartbeats["stale_task"] = time.monotonic() - (timeout + 1)
+        # cadence 1s would imply bound 10s, but the override pins it to 120s.
+        supervisor.register_watch("irregular", 1.0, stall_timeout_seconds=120.0)
+        supervisor.beat("irregular")
+        clock.advance(60.0)  # past the 10s cadence bound, within the 120s override
 
-        exit_calls: list[int] = []
+        exits: list[int] = []
+        stopper = _StopAfter(clock, passes=1)
         with (
-            mock.patch("asyncio.sleep", new=mock.AsyncMock(return_value=None)),
-            mock.patch(
-                "alphamind.execution.continuous_monitor.supervisor.os._exit",
-                side_effect=exit_calls.append,
-            ),
+            mock.patch(_EXIT_PATH, side_effect=exits.append),
+            pytest.raises(asyncio.CancelledError),
         ):
-            # Should return without raising or appending because stop_event is set.
+            supervisor._sleep = stopper  # type: ignore[method-assign]
             await supervisor._watchdog_loop()
 
-        assert exit_calls == []
+        assert exits == []
+
+
+class TestWatchedOptOut:
+    async def test_unwatched_task_never_trips_and_never_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The control surface (watched=False) is never tripped, never warned."""
+        clock = _FakeClock()
+        supervisor = _supervisor(clock=clock)
+        supervisor._stop_event = asyncio.Event()
+
+        async def _server(session: MonitorSession, config: ContinuousMonitorConfig) -> None:
+            del session, config
+
+        supervisor.register_task(name="control_surface", coro_fn=_server, watched=False)
+        # Far past any conceivable bound; an unwatched task must be ignored.
+        clock.advance(100_000.0)
+
+        exits: list[int] = []
+        stopper = _StopAfter(clock, passes=2)
+        with (
+            mock.patch(_EXIT_PATH, side_effect=exits.append),
+            caplog.at_level("WARNING"),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            supervisor._sleep = stopper  # type: ignore[method-assign]
+            await supervisor._watchdog_loop()
+
+        assert exits == []
+        assert "control_surface" not in caplog.text
+
+
+class TestStartupGraceWarning:
+    async def test_never_beating_watched_task_warns_once_at_startup_grace(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A watched=True task that never beats is named in a startup warning."""
+        clock = _FakeClock()
+        supervisor = _supervisor(clock=clock)
+        supervisor._stop_event = asyncio.Event()
+        supervisor.register_watch("forgot_to_beat", 1.0)  # bound 10s; never beats
+        clock.advance(20.0)  # past the startup-grace bound
+
+        stopper = _StopAfter(clock, passes=2)
+        with (
+            mock.patch(_EXIT_PATH, side_effect=AssertionError("must not exit")),
+            caplog.at_level("WARNING"),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            supervisor._sleep = stopper  # type: ignore[method-assign]
+            await supervisor._watchdog_loop()
+
+        warnings = [r for r in caplog.records if "forgot_to_beat" in r.getMessage()]
+        assert len(warnings) == 1  # latched: one warning, not one per check pass
 
 
 class TestWatchdogShutdown:

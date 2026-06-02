@@ -210,10 +210,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # fill_backfill_interval_seconds: 900 and fill_backfill_lookback_seconds: 259200
     # to config/continuous_monitor.yaml and ContinuousMonitorConfig (the periodic
     # fill-backfill backstop), shifting the resolved-config canonical bytes.
-    # Pin updated 2026-06-02 (in-process watchdog, ALP-768): ALP-768 added
-    # watchdog_stall_timeout_seconds: 3600 to config/continuous_monitor.yaml and
-    # ContinuousMonitorConfig (the MonitorSupervisor heartbeat watchdog),
-    # shifting the resolved-config canonical bytes.
+    # Pin updated 2026-06-02 (in-process watchdog, ALP-768): ALP-768 added the
+    # MonitorSupervisor heartbeat-watchdog stall-timeout knob to
+    # config/continuous_monitor.yaml and ContinuousMonitorConfig, shifting the
+    # resolved-config canonical bytes. (That global knob was later superseded by
+    # ALP-826 — see below.)
     # Pin updated 2026-06-02 (unattributed-fill TTL escalation, ALP-771): ALP-771
     # added unattributed_fill_escalation_ttl_seconds: 1800 to
     # config/continuous_monitor.yaml and ContinuousMonitorConfig (the one-shot
@@ -235,7 +236,14 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # fill_stream_stale_timeout_seconds: 900 to config/continuous_monitor.yaml and
     # ContinuousMonitorConfig (the connected-but-silent fill-stream reconnect bound),
     # shifting the resolved-config canonical bytes.
-    expected = "b923c5b03c108d0693affe06dbbdb32e20ecc18bfb77d6299f65c0e451ae6390"
+    # Pin updated 2026-06-02 (per-cadence stall watchdog, ALP-826): ALP-826 replaced the
+    # global stall-timeout knob with watchdog_cadence_multiplier: 10.0 in
+    # config/continuous_monitor.yaml and ContinuousMonitorConfig (each watched task is now
+    # bounded by cadence_seconds * multiplier instead of one global timeout), shifting the
+    # resolved-config canonical bytes. NOTE: the orchestrator may re-pin once more at
+    # integration when this wave-1 change combines with ALP-827's
+    # underlying_price_max_age_seconds.
+    expected = "43522a65736110bde66ee179bdf83335741f431a66927ce8fb4186e2cb47ca9f"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

@@ -8,6 +8,16 @@ re-raises the first non-``CancelledError`` leaf so callers see the same
 exception surface they did before the migration. Differences from the
 pipeline supervisor: tasks receive ``(session, config)`` and the shutdown
 timeout comes from the config record.
+
+Liveness watchdog (ALP-768 / ALP-826). Every run-forever task drives its
+loop through :meth:`MonitorSupervisor.supervised_loop`, which beats at the
+top of each iteration and paces the loop. Each watched task is bounded by
+its own declared heartbeat cadence (``cadence_seconds *
+watchdog_cadence_multiplier``, or an explicit ``stall_timeout_seconds``
+override) rather than one global timeout, so a 1s safety-critical loop is
+detected far sooner than a 60s loop. A task registered ``watched=True`` (the
+default) that never beats is loud at startup grace; the control-surface HTTP
+server is the one task registered ``watched=False``.
 """
 
 from __future__ import annotations
@@ -18,7 +28,8 @@ import logging
 import os
 import signal
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
+from dataclasses import dataclass
 from typing import Any
 
 from alphamind._kernel.exception_group import first_non_cancelled
@@ -28,7 +39,41 @@ from alphamind.execution.continuous_monitor.session import MonitorSession
 log = logging.getLogger(__name__)
 
 TaskCoroFn = Callable[[MonitorSession, ContinuousMonitorConfig], Coroutine[Any, Any, None]]
+SleepFn = Callable[[float], Awaitable[None]]
+MonotonicFn = Callable[[], float]
 _SHUTDOWN_SIGNALS = (signal.SIGINT, signal.SIGTERM)
+
+
+def derive_stall_bound(
+    *, cadence_seconds: float, multiplier: float, override_seconds: float | None
+) -> float:
+    """Watchdog stall bound for a watched task (pure; functional core).
+
+    The explicit ``override_seconds`` wins for an irregular task; otherwise
+    the bound is the declared heartbeat ``cadence_seconds`` scaled by
+    ``multiplier``. No I/O, no clock — the imperative watchdog loop and the
+    watch-registration path both call this.
+    """
+    if override_seconds is not None:
+        return override_seconds
+    return cadence_seconds * multiplier
+
+
+@dataclass(slots=True)
+class _WatchEntry:
+    """Per-task watchdog state: its stall bound + last-beat timestamp.
+
+    ``last_beat`` is ``None`` until the task first beats — the startup-grace
+    signal. ``watched=False`` opts a task out entirely (the control surface):
+    it is never warned-about and never tripped. ``warned`` latches the
+    never-beaten warning so it fires once, not on every check pass.
+    """
+
+    bound_seconds: float
+    registered_at: float
+    last_beat: float | None = None
+    watched: bool = True
+    warned: bool = False
 
 
 class MonitorSupervisor:
@@ -39,37 +84,132 @@ class MonitorSupervisor:
         *,
         session: MonitorSession,
         config: ContinuousMonitorConfig,
+        sleep: SleepFn = asyncio.sleep,
+        monotonic: MonotonicFn = time.monotonic,
     ) -> None:
         self._session = session
         self._config = config
+        self._sleep = sleep
+        self._monotonic = monotonic
         self._registry: list[tuple[str, TaskCoroFn]] = []
         self._stop_event: asyncio.Event | None = None
-        # Per-task heartbeat timestamps for the in-process watchdog (ALP-768).
-        # Populated by tasks that call beat(); the watchdog loop only watches
-        # names present in this dict (opt-in, not all registered tasks).
-        self._heartbeats: dict[str, float] = {}
+        # Per-task watchdog state (ALP-826). Seeded at task-registration when an
+        # explicit ``watched`` intent is given, and at watch-registration (the
+        # first ``supervised_loop`` iteration or an explicit ``register_watch``)
+        # so the bound is known. ``beat`` updates the last-beat timestamp.
+        self._watch: dict[str, _WatchEntry] = {}
 
-    def register_task(self, *, name: str, coro_fn: TaskCoroFn) -> None:
-        """Register a coroutine factory under *name*; reject duplicates."""
+    def register_task(self, *, name: str, coro_fn: TaskCoroFn, watched: bool = True) -> None:
+        """Register a coroutine factory under *name*; reject duplicates.
+
+        ``watched`` (default ``True``) is the liveness intent. A ``watched=True``
+        task is expected to drive its loop through :meth:`supervised_loop` (or
+        declare a watch + :meth:`beat`); one that never beats is named in a
+        startup-grace warning. ``watched=False`` opts the task out of the
+        watchdog entirely — used only for the control-surface HTTP server,
+        which blocks in ``server.serve()`` with no natural per-iteration
+        heartbeat (port-level liveness is a noted follow-up).
+        """
         if any(existing == name for existing, _ in self._registry):
             msg = f"task name {name!r} already registered"
             raise ValueError(msg)
         self._registry.append((name, coro_fn))
+        if not watched:
+            # Seed an opted-out entry so the watchdog never warns about or trips
+            # this task even if a stray beat ever arrives.
+            self._watch[name] = _WatchEntry(
+                bound_seconds=0.0,
+                registered_at=self._monotonic(),
+                watched=False,
+            )
 
     def task_names(self) -> tuple[str, ...]:
         """Return the registered task names in registration order."""
         return tuple(name for name, _ in self._registry)
 
-    def beat(self, task_name: str) -> None:
-        """Record a liveness heartbeat for *task_name* (ALP-768 watchdog).
+    def register_watch(
+        self,
+        name: str,
+        cadence_seconds: float,
+        *,
+        stall_timeout_seconds: float | None = None,
+    ) -> None:
+        """Declare *name*'s heartbeat cadence so the watchdog can bound it.
 
-        The first call registers *task_name* with the watchdog; subsequent
-        calls reset its timer. The watchdog fires ``os._exit(1)`` if no beat
-        arrives within ``watchdog_stall_timeout_seconds`` of the previous one.
-        Only tasks that call this method are watched — tasks that never beat
-        are ignored, so existing tasks opt in incrementally.
+        Idempotent: re-declaring keeps the existing last-beat timestamp (so a
+        task that already beat is not reset) while refreshing the bound. The
+        public seam both :meth:`supervised_loop` (internally) and a stream
+        poll-loop that beats per slice via :meth:`beat` call to register the
+        cadence used for the bound. A ``watched=False`` opt-out is never
+        overwritten back to watched here.
         """
-        self._heartbeats[task_name] = time.monotonic()
+        existing = self._watch.get(name)
+        if existing is not None and not existing.watched:
+            return
+        bound = derive_stall_bound(
+            cadence_seconds=cadence_seconds,
+            multiplier=self._config.watchdog_cadence_multiplier,
+            override_seconds=stall_timeout_seconds,
+        )
+        if existing is None:
+            self._watch[name] = _WatchEntry(
+                bound_seconds=bound,
+                registered_at=self._monotonic(),
+            )
+        else:
+            existing.bound_seconds = bound
+
+    async def supervised_loop(
+        self,
+        name: str,
+        cadence_seconds: float,
+        *,
+        stall_timeout_seconds: float | None = None,
+    ) -> AsyncIterator[None]:
+        """Heartbeat seam: a run-forever loop drives this as its iterator.
+
+        Usage::
+
+            async for _ in supervisor.supervised_loop(name, cadence):
+                <body>
+
+        Records a beat for *name* at the top of every iteration, yields to run
+        the body, then sleeps ``cadence_seconds`` before the next yield — so the
+        loop body no longer owns its own trailing ``asyncio.sleep`` and beating
+        is automatic (no hand-wired ``beat()``). ``cadence_seconds`` is the
+        heartbeat interval, not the task's functional work interval: a task that
+        acts on a daily wall-clock schedule still iterates on a short cadence and
+        checks the wall clock inside the body. The watchdog bound is
+        ``cadence_seconds * watchdog_cadence_multiplier`` unless
+        ``stall_timeout_seconds`` overrides it.
+        """
+        self.register_watch(name, cadence_seconds, stall_timeout_seconds=stall_timeout_seconds)
+        while True:
+            self.beat(name)
+            yield
+            await self._sleep(cadence_seconds)
+
+    def beat(self, task_name: str) -> None:
+        """Record a liveness heartbeat for *task_name* (ALP-826 watchdog).
+
+        Resets the task's stall timer. A name beaten before any
+        :meth:`register_watch`/:meth:`supervised_loop` declaration is recorded
+        with a zero bound until its cadence is declared — the watchdog skips a
+        watched task until it has a positive bound, so a pre-declaration beat is
+        harmless. A ``watched=False`` task is left opted-out.
+        """
+        existing = self._watch.get(task_name)
+        now = self._monotonic()
+        if existing is None:
+            self._watch[task_name] = _WatchEntry(
+                bound_seconds=0.0,
+                registered_at=now,
+                last_beat=now,
+            )
+            return
+        if not existing.watched:
+            return
+        existing.last_beat = now
 
     def request_stop(self) -> None:
         """Signal the supervisor to begin orderly shutdown."""
@@ -120,32 +260,67 @@ class MonitorSupervisor:
             _remove_signal_handlers(loop)
 
     async def _watchdog_loop(self) -> None:
-        """Periodically check heartbeats; force exit if any watched task stalls."""
-        timeout = self._config.watchdog_stall_timeout_seconds
-        # Check at quarter-period so a stall is detected promptly but the
-        # check overhead is negligible relative to the timeout interval.
-        check_interval = max(1, timeout // 4)
+        """Periodically check each watched task against its own stall bound.
+
+        The check interval keys off the smallest active bound (checked at
+        quarter-period so a stall is detected promptly relative to that task's
+        cadence), not a single global. A watched task that has never beaten
+        within its bound emits a one-shot startup-grace warning naming it
+        (default-on visibility); a watched task that beat and then went silent
+        past its bound trips ``os._exit(1)`` for NSSM to restart.
+        """
         while True:
-            await asyncio.sleep(check_interval)
+            await self._sleep(self._check_interval())
             # Exit cleanly if the supervisor is shutting down — avoids a
             # spurious os._exit(1) while tasks are mid-cancellation.
             if self._stop_event is not None and self._stop_event.is_set():
                 return
-            now = time.monotonic()
-            for name, last in self._heartbeats.items():
-                elapsed = now - last
-                if elapsed > timeout:
+            now = self._monotonic()
+            for name, entry in self._watch.items():
+                if not entry.watched or entry.bound_seconds <= 0.0:
+                    continue
+                if entry.last_beat is None:
+                    # Never beaten — loud at startup grace (one bound elapsed
+                    # since registration), then latch so it does not spam.
+                    if not entry.warned and now - entry.registered_at > entry.bound_seconds:
+                        log.warning(
+                            "watchdog: task %r is registered watched=True but has not "
+                            "beaten within its %.0fs startup-grace bound — it is outside "
+                            "the liveness net (drive it through supervised_loop or call "
+                            "beat()).",
+                            name,
+                            entry.bound_seconds,
+                        )
+                        entry.warned = True
+                    continue
+                elapsed = now - entry.last_beat
+                if elapsed > entry.bound_seconds:
                     log.critical(
                         "watchdog: task %r has not heartbeated in %.0fs "
-                        "(limit %ds) — forcing process exit for NSSM restart",
+                        "(bound %.0fs) — forcing process exit for NSSM restart",
                         name,
                         elapsed,
-                        timeout,
+                        entry.bound_seconds,
                     )
                     # ``_exit`` (not ``sys.exit``) skips atexit handlers and
                     # ``finally`` blocks so the process terminates immediately,
                     # giving NSSM a clean exit code to restart on.
                     os._exit(1)
+
+    def _check_interval(self) -> float:
+        """Quarter of the smallest active bound, floored at 1s.
+
+        Keying off the smallest bound means a 1s-cadence task is checked far
+        more often than the old global quarter-hour, while a process with only
+        coarse tasks still checks cheaply. Falls back to 1s when no task has a
+        positive bound yet (startup, before any cadence is declared).
+        """
+        bounds = [
+            e.bound_seconds for e in self._watch.values() if e.watched and e.bound_seconds > 0.0
+        ]
+        if not bounds:
+            return 1.0
+        return max(1.0, min(bounds) / 4)
 
 
 def _install_signal_handlers(loop: asyncio.AbstractEventLoop, callback: Callable[[], None]) -> None:

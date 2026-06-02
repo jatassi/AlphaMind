@@ -108,13 +108,16 @@ breach_loop_consecutive_failure_alert_threshold: 3
 # ensures it fires once and does not repeat.
 unattributed_fill_escalation_ttl_seconds: 1800
 
-# Seconds without a heartbeat before the in-process watchdog forces os._exit(1)
-# so NSSM recycles the monitor process (ALP-768). Only tasks that call
-# MonitorSupervisor.beat(name) are watched. Set well above the longest
-# legitimate inter-beat gap for opted-in tasks (e.g. breach_loop at 60s cadence
-# → any gap >1h is a genuine stall). Default 3600s (1h) is deliberately
-# conservative to avoid false positives for long-running steady-state tasks.
-watchdog_stall_timeout_seconds: 3600
+# Multiplier applied to a watched task's declared heartbeat cadence to derive its
+# stall bound (ALP-826). The in-process watchdog forces os._exit(1) — so NSSM
+# recycles the monitor process — when a watched task has not heartbeated within
+# cadence_seconds * watchdog_cadence_multiplier (or its explicit
+# stall_timeout_seconds override). Replaces the single global stall-timeout knob:
+# a 1s safety-critical loop (bracket_stops) is now detected within ~10s instead of
+# inheriting a ~1h global bound, while a 60s loop (breach_loop) tolerates a
+# proportionally longer gap. 10x leaves headroom for a slow tick without
+# false-tripping a healthy steady-state task.
+watchdog_cadence_multiplier: 10.0
 
 # Seconds of trade_updates silence during RTH before the fill-stream consumer
 # forces a reconnect (ALP-819). The websockets library reconnects internally on
