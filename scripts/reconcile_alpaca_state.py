@@ -17,6 +17,7 @@ import os
 import re
 import sqlite3
 from decimal import Decimal
+from typing import Any
 
 from alpaca.trading.client import TradingClient
 from dotenv import load_dotenv
@@ -41,7 +42,7 @@ def build_client() -> TradingClient:
     return TradingClient(api_key=api_key, secret_key=secret, paper=True)
 
 
-def load_local() -> dict:
+def load_local() -> dict[str, Any]:
     db = sqlite3.connect(DB_PATH)
     db.row_factory = sqlite3.Row
     orders = {}
@@ -73,7 +74,7 @@ def load_local() -> dict:
     return {"orders": orders, "positions": positions, "cash": cash}
 
 
-def _report_account(acct, local: dict) -> None:
+def _report_account(acct: Any, local: dict[str, Any]) -> None:
     print("=" * 78)
     print("ALPACA ACCOUNT:", acct.status)
     print(f"  cash={acct.cash}  equity={acct.equity}  buying_power={acct.buying_power}")
@@ -87,7 +88,7 @@ def _report_account(acct, local: dict) -> None:
     print(f"  >> CASH DRIFT (alpaca - local current_cash) = {drift}")
 
 
-def _report_positions(apos: dict, local: dict) -> None:
+def _report_positions(apos: dict[str, Any], local: dict[str, Any]) -> None:
     print("=" * 78)
     print("POSITIONS  (alpaca qty | local shares | status)")
     syms = sorted(set(apos) | {p["sym"] for p in local["positions"].values() if p["sym"]})
@@ -105,7 +106,7 @@ def _report_positions(apos: dict, local: dict) -> None:
         print(f"  {s:6} alpaca={a_qty} @ {a_px} uPL={a_pl} | local=[{loc_desc}]{flag}")
 
 
-def _report_orders(aorders: dict, local: dict) -> None:
+def _report_orders(aorders: dict[str, Any], local: dict[str, Any]) -> None:
     print("=" * 78)
     print("ORDERS  (local order -> alpaca status/fill)")
     for aid, lo in sorted(local["orders"].items(), key=lambda kv: kv[1]["order_id"]):
