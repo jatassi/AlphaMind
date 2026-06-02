@@ -20,7 +20,6 @@ from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
-    RiskZone,
 )
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.regt_margin_attribution import RegTExcessAggregates
@@ -103,6 +102,12 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
 )
 from alphamind.risk_guardrails.library_snapshot import to_library_snapshot
 
+from ._view_builders import (
+    _make_active_risk_parameters,
+    _make_cash_ledger,
+    _make_drawdown_state,
+)
+
 # ---------------------------------------------------------------------------
 # Shared timestamps
 # ---------------------------------------------------------------------------
@@ -129,39 +134,6 @@ def _make_config() -> PortfolioStateConfig:
     )
 
 
-def _make_cash_ledger(current_cash: float = 10_000.0) -> CashLedger:
-    return CashLedger(
-        current_cash_usd=current_cash,
-        settled_cash_usd=current_cash,
-        reserved_capital_usd=0.0,
-        available_buying_power_usd=current_cash,
-        margin_held_usd=0.0,
-        unsettled_proceeds=(),
-        cash_pct_of_portfolio=0.0,
-        true_deployable_capital_usd=0.0,
-        regt_excess_trailing_30d_usd=0.0,
-        regt_excess_trailing_90d_usd=0.0,
-        regt_excess_lifetime_usd=0.0,
-    )
-
-
-def _make_drawdown_state(
-    current_drawdown_pct: float = 0.0,
-    drawdown_by_source_pct: dict[str, float] | None = None,
-) -> DrawdownState:
-    return DrawdownState(
-        current_drawdown_pct=current_drawdown_pct,
-        equity_high_water_mark_usd=100_000.0,
-        drawdown_duration_hours=0.0,
-        lifetime_max_drawdown_pct=current_drawdown_pct,
-        intraday_drawdown_pct=0.0,
-        daily_zone=RiskZone.NORMAL,
-        cumulative_zone=RiskZone.NORMAL,
-        cumulative_tier=None,
-        drawdown_by_source_pct=drawdown_by_source_pct or {},
-    )
-
-
 def _make_pnl_inputs() -> PortfolioPnLInputs:
     return PortfolioPnLInputs(
         daily_realized_pnl_usd=0.0,
@@ -171,20 +143,6 @@ def _make_pnl_inputs() -> PortfolioPnLInputs:
         average_win_size_usd=None,
         average_loss_size_usd=None,
         profit_factor=None,
-    )
-
-
-def _make_active_risk_parameters(
-    regime: RegimeLabel = RegimeLabel.NORMAL,
-    parameter_change_flag: bool = False,
-) -> ActiveRiskParameterSet:
-    return ActiveRiskParameterSet(
-        regime_label=regime,
-        transition_state=RegimeTransitionState.STABLE,
-        transition_invocations_remaining=0,
-        parameter_change_flag=parameter_change_flag,
-        entries=(),
-        active_overlays=(),
     )
 
 
@@ -671,7 +629,7 @@ def test_single_equity_position_enrichment() -> None:
     pos = _make_equity_position(share_count=100.0, cost_per_share=500.0)
     fixture = _make_fixture(
         open_positions=(pos,),
-        cash_ledger=_make_cash_ledger(current_cash=0.0),  # no cash, only position
+        cash_ledger=_make_cash_ledger(current_cash_usd=0.0),  # no cash, only position
     )
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider({"NVDA": _make_fresh_quote("NVDA", 520.0)}, _NOW)
@@ -742,7 +700,7 @@ def test_pending_positions_flow_through_all_three_exposure_consumers() -> None:
     )
     fixture = _make_fixture(
         pending_positions=pending_positions,
-        cash_ledger=_make_cash_ledger(current_cash=20_000.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=20_000.0),
         active_risk_parameters=_make_active_risk_parameters_with_entry(
             "position_max_size_pct", 10.0
         ),
@@ -844,7 +802,7 @@ def test_multi_position_rollup() -> None:
     fixture = _make_fixture(
         open_positions=(pos_tech_long, pos_tech_short, pos_health),
         position_modification_trail={"POS-TECH": (modification_trail_entry,)},
-        cash_ledger=_make_cash_ledger(current_cash=0.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=0.0),
     )
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider(
@@ -914,7 +872,7 @@ def test_two_pass_weight_enrichment() -> None:
 
     fixture = _make_fixture(
         open_positions=(pos_a, pos_b),
-        cash_ledger=_make_cash_ledger(current_cash=cash),
+        cash_ledger=_make_cash_ledger(current_cash_usd=cash),
     )
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider(
@@ -956,7 +914,7 @@ def test_stale_price_does_not_abort_assembly(caplog: pytest.LogCaptureFixture) -
     pos = _make_equity_position()
     fixture = _make_fixture(
         open_positions=(pos,),
-        cash_ledger=_make_cash_ledger(current_cash=1000.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=1000.0),
     )
     repo = StubPortfolioStateRepository(fixture)
     stale_quote = _make_stale_quote("NVDA")
@@ -989,7 +947,7 @@ def test_missing_ticker_from_get_quotes_treated_as_stale(caplog: pytest.LogCaptu
     pos = _make_equity_position(ticker=Symbol("UNKNOWN"))
     fixture = _make_fixture(
         open_positions=(pos,),
-        cash_ledger=_make_cash_ledger(current_cash=1000.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=1000.0),
     )
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider({}, _NOW)  # no quotes at all
@@ -1136,7 +1094,7 @@ def test_drawdown_by_source_enriched_when_empty() -> None:
             current_drawdown_pct=5.0,
             drawdown_by_source_pct={},  # empty — assembler should fill
         ),
-        cash_ledger=_make_cash_ledger(current_cash=0.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=0.0),
     )
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider(
@@ -1213,7 +1171,7 @@ def test_pending_order_age_enriched() -> None:
     fixture = _make_fixture(
         open_positions=(pos,),
         pending_orders=(order,),
-        cash_ledger=_make_cash_ledger(current_cash=0.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=0.0),
     )
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider({"NVDA": _make_fresh_quote("NVDA", 520.0)}, _NOW)
@@ -1248,7 +1206,7 @@ def test_strategy_position_missing_leg_price_handled_in_band() -> None:
     pos = _make_strategy_position(leg1_underlying="NVDA", leg2_underlying="AMD")
     fixture = _make_fixture(
         open_positions=(pos,),
-        cash_ledger=_make_cash_ledger(current_cash=0.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=0.0),
     )
     repo = StubPortfolioStateRepository(fixture)
     # Provide NVDA but omit AMD → leg-2 underlying is missing from the price map
@@ -1280,7 +1238,7 @@ def test_determinism() -> None:
     pos = _make_equity_position()
     fixture = _make_fixture(
         open_positions=(pos,),
-        cash_ledger=_make_cash_ledger(current_cash=1000.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=1000.0),
     )
 
     def make_assembled() -> object:
@@ -1312,7 +1270,7 @@ def test_position_age_computed_from_entry_timestamp() -> None:
     pos = _make_equity_position()  # entry_timestamp = _ENTRY_AT = 1.5h before _NOW
     fixture = _make_fixture(
         open_positions=(pos,),
-        cash_ledger=_make_cash_ledger(current_cash=0.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=0.0),
     )
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider({"NVDA": _make_fresh_quote("NVDA", 520.0)}, _NOW)
@@ -1345,7 +1303,7 @@ def test_sector_resolver_used_for_sector_exposure() -> None:
     pos_jnj = _make_equity_position("POS-JNJ", "JNJ", 10.0, 150.0)
     fixture = _make_fixture(
         open_positions=(pos_nvda, pos_jnj),
-        cash_ledger=_make_cash_ledger(current_cash=0.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=0.0),
     )
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider(
@@ -1385,7 +1343,7 @@ def test_assemble_snapshot_returns_assembled_snapshot_bundle() -> None:
     pos = _make_equity_position("POS-NVDA", "NVDA", 10.0, 500.0)
     fixture = _make_fixture(
         open_positions=(pos,),
-        cash_ledger=_make_cash_ledger(current_cash=0.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=0.0),
     )
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider({"NVDA": _make_fresh_quote("NVDA", 520.0)}, _NOW)
@@ -1432,7 +1390,7 @@ def test_assemble_snapshot_exposes_materialized_price_map() -> None:
     pos_b = _make_equity_position("POS-B", "AAPL", 20.0, 150.0)
     fixture = _make_fixture(
         open_positions=(pos_a, pos_b),
-        cash_ledger=_make_cash_ledger(current_cash=0.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=0.0),
     )
     repo = StubPortfolioStateRepository(fixture)
     nvda_quote = _make_fresh_quote("NVDA", 520.0)
@@ -1471,7 +1429,7 @@ def test_assemble_snapshot_price_map_omits_unknown_ticker() -> None:
     pos_unknown = _make_equity_position("POS-WTF", "WTF", 5.0, 100.0)
     fixture = _make_fixture(
         open_positions=(pos_known, pos_unknown),
-        cash_ledger=_make_cash_ledger(current_cash=0.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=0.0),
     )
     repo = StubPortfolioStateRepository(fixture)
     # Provider only knows NVDA — WTF is intentionally absent.
@@ -1503,7 +1461,7 @@ def test_assemble_snapshot_price_map_empty_for_empty_portfolio() -> None:
     fixture = _make_fixture(
         open_positions=(),
         pending_positions=(),
-        cash_ledger=_make_cash_ledger(current_cash=10_000.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=10_000.0),
     )
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider({}, _NOW)
@@ -1706,7 +1664,7 @@ def _assemble_with_option_provider(
     pos = _make_open_options_position(premium=premium)
     fixture = _make_fixture(
         open_positions=(pos,),
-        cash_ledger=_make_cash_ledger(current_cash=0.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=0.0),
     )
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider(
@@ -1774,7 +1732,7 @@ def test_strategy_pricing_mixes_live_leg_with_entry_premium_leg() -> None:
     pos = _make_strategy_position(premium1=leg1_premium, premium2=leg2_premium)
     fixture = _make_fixture(
         open_positions=(pos,),
-        cash_ledger=_make_cash_ledger(current_cash=0.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=0.0),
     )
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider(
@@ -1846,7 +1804,7 @@ def _assemble_credit_strategy(
     leg2_occ = occ_symbol_for_options(pos.details.legs[1].options)
     fixture = _make_fixture(
         open_positions=(pos,),
-        cash_ledger=_make_cash_ledger(current_cash=0.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=0.0),
     )
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider({"NVDA": _make_fresh_quote("NVDA", 520.0)}, _NOW)
@@ -1979,7 +1937,7 @@ def test_equity_unrealized_pnl_pct_divides_by_cost_basis_unchanged() -> None:
     pos = _make_equity_position(share_count=100.0, cost_per_share=500.0)
     fixture = _make_fixture(
         open_positions=(pos,),
-        cash_ledger=_make_cash_ledger(current_cash=0.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=0.0),
     )
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider({"NVDA": _make_fresh_quote("NVDA", 550.0)}, _NOW)
@@ -2040,7 +1998,7 @@ def test_strategy_position_with_bracket_assembles_without_crash() -> None:
     fixture = _make_fixture(
         open_positions=(pos,),
         brackets=(bracket,),
-        cash_ledger=_make_cash_ledger(current_cash=0.0),
+        cash_ledger=_make_cash_ledger(current_cash_usd=0.0),
     )
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider({"NVDA": _make_fresh_quote("NVDA", 520.0)}, _NOW)
