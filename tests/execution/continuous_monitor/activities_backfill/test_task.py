@@ -238,6 +238,20 @@ def _fill_report(*, order_id: str, client_order_id: str, price_: float, qty: flo
     return reports[0]
 
 
+async def _fast_loop() -> AsyncIterator[None]:
+    """Stand-in for ``MonitorSupervisor.supervised_loop`` (ALP-826).
+
+    The real seam beats the watchdog then paces the loop at the task's cadence;
+    these tests exercise the run-forever loop's *behavior* (sweeps run, errors
+    are tolerated, cancellation propagates), not the pacing, so this iterates
+    forever with a near-zero yield. The cadence→watchdog-bound mapping is tested
+    at the supervisor level in ``test_supervisor.py``.
+    """
+    while True:
+        yield
+        await asyncio.sleep(0)
+
+
 def _run_kwargs(
     session_factory: async_sessionmaker[AsyncSession],
     queries: _FakeAccountStateQueries,
@@ -246,6 +260,7 @@ def _run_kwargs(
         "session_factory": session_factory,
         "trading_client_factory": lambda _mode: object(),
         "account_state_queries_factory": lambda _client: queries,
+        "loop": _fast_loop,
     }
 
 

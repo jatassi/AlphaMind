@@ -748,21 +748,57 @@ class TestNextTickUtc:
 
 
 # ---------------------------------------------------------------------------
-# run_borrow_accrual_loop — sleeps to next tick, fires, repeats; respects
-# CancelledError as the supervisor's shutdown signal
+# run_borrow_accrual_loop — heartbeats on a short cadence, fires the tick once
+# the daily wall-clock time is crossed; respects CancelledError as shutdown
 # ---------------------------------------------------------------------------
 
 
+class _StubWallClock:
+    """A controllable wall clock for the borrow-accrual loop tests.
+
+    ``now()`` returns the current value; ``advance(seconds)`` moves it forward.
+    Stands in for the system clock (one of the four sanctioned mock boundaries)
+    so the loop's daily-tick wall-clock check can be exercised with the clock
+    advanced by minutes (sub-daily) without any real waiting.
+    """
+
+    def __init__(self, start: datetime) -> None:
+        self._now = start
+
+    def now(self) -> datetime:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += timedelta(seconds=seconds)
+
+
+def _bounded_loop(*, iterations: int, clock: _StubWallClock, step_seconds: float) -> Any:
+    """A supervised-loop stand-in that advances *clock* between iterations.
+
+    Yields *iterations* times, advancing the wall clock by *step_seconds* before
+    each yield so the loop body's ``now()`` observes time progressing, then
+    raises ``CancelledError`` (the supervisor's shutdown shape). The real seam's
+    watchdog beat + pacing is tested in ``test_supervisor.py``.
+    """
+
+    async def _loop() -> AsyncIterator[None]:
+        for _ in range(iterations):
+            clock.advance(step_seconds)
+            yield
+        raise asyncio.CancelledError
+
+    return _loop
+
+
 class TestRunBorrowAccrualLoop:
-    async def test_respects_cancellation_at_initial_sleep(
+    async def test_respects_cancellation(
         self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """A ``CancelledError`` raised inside ``sleep`` aborts the loop.
+        """A ``CancelledError`` from the supervised loop aborts the task.
 
-        Mirrors the supervisor shutdown path: ``MonitorSupervisor.run``
-        cancels each task on stop. The sleep callable is the supervisor's
-        cooperative-yield point; raising ``CancelledError`` there is the
-        canonical shape ``asyncio.sleep`` produces under cancellation.
+        Mirrors the supervisor shutdown path: ``MonitorSupervisor.run`` cancels
+        each task on stop, surfacing as ``CancelledError`` out of the loop's
+        sleep — modelled here by the loop iterator raising it.
         """
         await _seed_process_lifetime(async_factory)
         config = _default_monitor_config()
@@ -771,9 +807,7 @@ class TestRunBorrowAccrualLoop:
             started_at=datetime(2026, 5, 27, 13, 30, tzinfo=UTC),
             mode="paper",
         )
-
-        async def _sleep_immediately_cancels(_delay: float) -> None:
-            raise asyncio.CancelledError
+        clock = _StubWallClock(datetime(2026, 5, 27, 13, 30, tzinfo=UTC))
 
         with pytest.raises(asyncio.CancelledError):
             await run_borrow_accrual_loop(
@@ -783,17 +817,21 @@ class TestRunBorrowAccrualLoop:
                 borrow_cost_resolver_factory=_stub_resolver_factory({}),
                 process_lifetime_id=_PROCESS_LIFETIME_ID,
                 calendar=_AlwaysOpenCalendar(),
-                now=lambda: datetime(2026, 5, 27, 17, 0, tzinfo=UTC),
-                sleep=_sleep_immediately_cancels,
+                loop=_bounded_loop(iterations=0, clock=clock, step_seconds=60.0),
+                now=clock.now,
             )
 
-    async def test_fires_one_tick_then_loops(
+    async def test_sub_daily_heartbeats_do_not_fire_the_tick(
         self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        """The loop sleeps, fires :func:`run_accrual_tick`, sleeps again.
+        """Iterating for minutes (not a day) before the tick fires nothing.
 
-        We let the first sleep return immediately, observe one tick fired
-        against the DB, then cancel on the second sleep.
+        The loop wakes on its short heartbeat cadence and checks the daily
+        wall-clock tick inside the body. With the clock advanced only minutes —
+        starting before today's 16:00 ET tick — no scheduled tick is crossed, so
+        no accrual is committed even across many heartbeat iterations. (The
+        watchdog beat that keeps the task un-tripped fires inside the real seam;
+        here we assert the functional consequence: no premature tick.)
         """
         await _seed_process_lifetime(async_factory)
         await _seed_position(
@@ -807,14 +845,9 @@ class TestRunBorrowAccrualLoop:
             started_at=datetime(2026, 5, 27, 13, 30, tzinfo=UTC),
             mode="paper",
         )
-
-        call_count = [0]
-
-        async def _sleep(_delay: float) -> None:
-            call_count[0] += 1
-            if call_count[0] >= 2:
-                # Second sleep: end the loop.
-                raise asyncio.CancelledError
+        # 17:00 UTC = 13:00 ET — three hours before the 16:00 ET tick. Advancing
+        # by 60s a few times stays well short of the tick.
+        clock = _StubWallClock(datetime(2026, 5, 27, 17, 0, tzinfo=UTC))
 
         with pytest.raises(asyncio.CancelledError):
             await run_borrow_accrual_loop(
@@ -824,14 +857,57 @@ class TestRunBorrowAccrualLoop:
                 borrow_cost_resolver_factory=_stub_resolver_factory({"ABCD": 10.0}),
                 process_lifetime_id=_PROCESS_LIFETIME_ID,
                 calendar=_AlwaysOpenCalendar(),
-                now=lambda: datetime(2026, 5, 27, 17, 0, tzinfo=UTC),
-                sleep=_sleep,
+                loop=_bounded_loop(iterations=5, clock=clock, step_seconds=60.0),
+                now=clock.now,
             )
 
         async with async_factory() as sess:
             entries = (await sess.execute(select(ActivityLogRow))).scalars().all()
             invocations = (await sess.execute(select(InvocationRow))).scalars().all()
-        assert len(entries) == 1
+        assert entries == []
+        assert invocations == []
+
+    async def test_fires_one_tick_when_wall_clock_crosses_the_scheduled_time(
+        self, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """Crossing the daily tick fires :func:`run_accrual_tick` exactly once.
+
+        The clock starts just before 16:00 ET and advances past it; the loop's
+        wall-clock check then fires the tick a single time even though it keeps
+        iterating afterward (``next_fire_utc`` advances to the next session).
+        """
+        await _seed_process_lifetime(async_factory)
+        await _seed_position(
+            async_factory, _short_equity_record(position_id="pos-1", ticker="ABCD")
+        )
+        await _seed_ohlcv(async_factory, ticker="ABCD", close=50.0)
+
+        config = _default_monitor_config()
+        monitor_session = MonitorSession(
+            session_id="mon-test",
+            started_at=datetime(2026, 5, 27, 13, 30, tzinfo=UTC),
+            mode="paper",
+        )
+        # 19:59:30 UTC = 15:59:30 ET — 30s before the 16:00 ET tick. Two 60s
+        # heartbeats step across the boundary.
+        clock = _StubWallClock(datetime(2026, 5, 27, 19, 59, 30, tzinfo=UTC))
+
+        with pytest.raises(asyncio.CancelledError):
+            await run_borrow_accrual_loop(
+                monitor_session,
+                config,
+                session_factory=async_factory,
+                borrow_cost_resolver_factory=_stub_resolver_factory({"ABCD": 10.0}),
+                process_lifetime_id=_PROCESS_LIFETIME_ID,
+                calendar=_AlwaysOpenCalendar(),
+                loop=_bounded_loop(iterations=4, clock=clock, step_seconds=60.0),
+                now=clock.now,
+            )
+
+        async with async_factory() as sess:
+            entries = (await sess.execute(select(ActivityLogRow))).scalars().all()
+            invocations = (await sess.execute(select(InvocationRow))).scalars().all()
+        assert len(entries) == 1  # exactly one tick despite continued iteration
         assert len(invocations) == 1
 
 

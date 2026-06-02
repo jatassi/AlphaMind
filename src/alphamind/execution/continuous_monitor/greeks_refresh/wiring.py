@@ -343,9 +343,11 @@ def register_greeks_refresh_task(
     activity_log = make_activity_log_emitter(session_factory)
 
     async def _coro(session: MonitorSession, config: ContinuousMonitorConfig) -> None:
+        cadence = float(config.greeks_refresh_inspection_cadence_seconds)
         await run_greeks_refresh(
             session,
             config,
+            loop=lambda: supervisor.supervised_loop("greeks_refresh", cadence),
             repository=repository,
             cache=cache,
             iv_fetch=iv_fetch,

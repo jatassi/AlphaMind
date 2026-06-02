@@ -144,16 +144,21 @@ class ContinuousMonitorConfig(BaseModel):
             "Same HH:MM format as ``SessionWindow.open``/``.close`` in venue.yaml."
         ),
     )
-    watchdog_stall_timeout_seconds: int = Field(
-        default=3600,
-        ge=60,
+    watchdog_cadence_multiplier: float = Field(
+        default=10.0,
+        gt=1.0,
         description=(
-            "Seconds without a heartbeat before the in-process watchdog "
-            "forces ``os._exit(1)`` so NSSM restarts the monitor (ALP-768). "
-            "Only tasks that call ``MonitorSupervisor.beat(name)`` are watched; "
-            "tasks that never beat are ignored. Set conservatively — periodic "
-            "tasks (breach loop, greeks refresh) should beat at every tick; "
-            "the timeout must exceed the longest legitimate inter-tick gap."
+            "Multiplier applied to a watched task's declared heartbeat cadence "
+            "to derive its stall bound (ALP-826). A task is tripped — "
+            "``os._exit(1)`` so NSSM restarts the monitor — when it has not "
+            "heartbeated within ``cadence_seconds * watchdog_cadence_multiplier`` "
+            "(or its explicit ``stall_timeout_seconds`` override, if any). "
+            "Replaces the single global stall-timeout knob: each "
+            "task is now bounded by its own cadence, so a 1s safety-critical loop "
+            "is detected promptly while a 60s loop tolerates a proportionally "
+            "longer gap. ``>1`` so the bound always exceeds one legitimate "
+            "inter-beat interval; 10x leaves headroom for a slow tick without "
+            "false-tripping."
         ),
     )
     fill_stream_stale_timeout_seconds: int = Field(
@@ -172,6 +177,37 @@ class ContinuousMonitorConfig(BaseModel):
             "900s (15 min) matches the fill-backfill interval. Floored at 60s: "
             "a sub-minute value would reconnect (and REST-recover) so often it "
             "would hammer the broker's order-history endpoint."
+        ),
+    )
+
+    underlying_price_max_age_seconds: float = Field(
+        default=900.0,
+        gt=0.0,
+        description=(
+            "Single freshness threshold (seconds) every underlying-price consumer "
+            "passes to UnderlyingPriceCache.read/read_all (ALP-827). A quote older "
+            "than this reads STALE and is excluded from stop enforcement; when "
+            "every open-position ticker is STALE/MISSING the cache's global-stale "
+            "detector escalates (the writer-wedged cold-feed case, ALP-770 class). "
+            "Replaces breach_loop's hardcoded 900.0 default (02d reads this)."
+        ),
+    )
+
+    underlying_stream_stale_timeout_seconds: int = Field(
+        default=60,
+        ge=10,
+        description=(
+            "Seconds of underlying-price quote silence during RTH before the "
+            "underlying-stream consumer forces a budget-neutral reconnect (ALP-832). "
+            "IEX equity quotes are continuous during RTH (unlike sparse fills), "
+            "so this threshold is far tighter than fill_stream_stale_timeout_seconds. "
+            "A needless reconnect is cheap (re-subscribe re-primes the cache) "
+            "relative to a silent-cache hang. Must exceed the longest legitimate "
+            "RTH gap between quotes; 60s is comfortable for active US equities. "
+            "Off-hours the check is disengaged and the clock resets so the "
+            "closed-market gap is not charged against the first RTH window. "
+            "Floored at 10s: a sub-10s value would hammer the broker's websocket "
+            "reconnect path."
         ),
     )
 

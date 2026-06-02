@@ -1211,3 +1211,160 @@ class TestSilentStreamRecovery:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+
+
+# ---------------------------------------------------------------------------
+# Watchdog binding via 01a's per-cadence seam (ALP-828)
+# ---------------------------------------------------------------------------
+
+
+class _SupervisorClock:
+    """Injectable monotonic + sleep for the supervisor (sanctioned clock fake).
+
+    ``monotonic`` returns accumulated virtual time; ``sleep`` cooperatively
+    yields then advances it, exactly like the supervisor's own test clock, so
+    the watchdog can be tripped at an exact virtual elapsed time.
+    """
+
+    def __init__(self, start: float = 1000.0) -> None:
+        self._now = start
+
+    def monotonic(self) -> float:
+        return self._now
+
+    async def sleep(self, delay: float) -> None:
+        await asyncio.sleep(0)
+        self._now += delay
+
+    def advance(self, delay: float) -> None:
+        self._now += delay
+
+
+class TestWatchdogBinding:
+    """The fill consumer adopts 01a's heartbeat seam (ALP-828).
+
+    Proves the consumer DECLARES its poll cadence to the watchdog (so a stall
+    bound derives) and BEATS through ``supervisor.beat`` — exercised through
+    the real ``run_fill_stream_consumer`` body, which owns the binding. The
+    test does not call ``register_watch`` itself; it asserts the consumer does.
+    """
+
+    async def test_consumer_binds_poll_cadence_and_beats_via_supervisor_seam(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
+
+        clock = _SupervisorClock()
+        supervisor = MonitorSupervisor(
+            session=_session(),
+            config=_config(),
+            sleep=clock.sleep,
+            monotonic=clock.monotonic,
+        )
+        stream = _FakeStream()
+        queries = _FakeAccountStateQueries()
+        kwargs = _build_run_kwargs(session_factory, stream, queries)
+
+        task = asyncio.create_task(
+            run_fill_stream_consumer(
+                _session(),
+                _config(),
+                **kwargs,
+                beat=lambda: supervisor.beat("fill_stream_consumer"),
+                register_watch=lambda cadence: supervisor.register_watch(
+                    "fill_stream_consumer", cadence
+                ),
+                stream_poll_interval=2.0,
+            )
+        )
+
+        await _wait_for_handler(stream)
+        # Inject a fill so the consumer beats at least once through the kernel.
+        await stream.inject(
+            _trade_update(event="fill", order=_build_order(client_order_id="order-1"))
+        )
+        await _wait_for_rows(session_factory, expected=1)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        entry = supervisor._watch["fill_stream_consumer"]
+        # Bound derives from the declared poll cadence (2.0s) * the multiplier
+        # (10.0) — NOT a zero bound, which the watchdog could never trip.
+        assert entry.watched is True
+        assert entry.bound_seconds == pytest.approx(2.0 * 10.0)
+        # The consumer beat through the supervisor seam (last_beat is set).
+        assert entry.last_beat is not None
+
+    async def test_starved_consumer_trips_the_watchdog(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        from unittest import mock
+
+        from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
+
+        clock = _SupervisorClock()
+        supervisor = MonitorSupervisor(
+            session=_session(),
+            config=_config(),
+            sleep=clock.sleep,
+            monotonic=clock.monotonic,
+        )
+        supervisor._stop_event = asyncio.Event()
+
+        stream = _FakeStream()
+        queries = _FakeAccountStateQueries()
+        kwargs = _build_run_kwargs(session_factory, stream, queries)
+
+        task = asyncio.create_task(
+            run_fill_stream_consumer(
+                _session(),
+                _config(),
+                **kwargs,
+                beat=lambda: supervisor.beat("fill_stream_consumer"),
+                register_watch=lambda cadence: supervisor.register_watch(
+                    "fill_stream_consumer", cadence
+                ),
+                stream_poll_interval=2.0,
+            )
+        )
+
+        await _wait_for_handler(stream)
+        await stream.inject(
+            _trade_update(event="fill", order=_build_order(client_order_id="order-1"))
+        )
+        await _wait_for_rows(session_factory, expected=1)
+
+        # Freeze the consumer: it can no longer beat (a genuinely-blocked
+        # consumer). Cancel its task so no further beats arrive, then advance
+        # the clock past its derived stall bound (2.0s * 10.0 = 20s).
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        clock.advance(25.0)
+
+        exits: list[int] = []
+        passes = 0
+
+        async def _one_pass(_delay: float) -> None:
+            # Let exactly one watchdog check pass run, then cancel the loop.
+            nonlocal passes
+            passes += 1
+            if passes > 1:
+                raise asyncio.CancelledError
+            await asyncio.sleep(0)
+
+        supervisor._sleep = _one_pass
+        with (
+            mock.patch(
+                "alphamind.execution.continuous_monitor.supervisor.os._exit",
+                side_effect=exits.append,
+            ),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await supervisor._watchdog_loop()
+
+        # The starved fill consumer (beat then silence past its bound) tripped
+        # os._exit(1) → NSSM restart, exactly as ALP-819 required.
+        assert exits == [1]

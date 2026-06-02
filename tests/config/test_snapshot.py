@@ -210,10 +210,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # fill_backfill_interval_seconds: 900 and fill_backfill_lookback_seconds: 259200
     # to config/continuous_monitor.yaml and ContinuousMonitorConfig (the periodic
     # fill-backfill backstop), shifting the resolved-config canonical bytes.
-    # Pin updated 2026-06-02 (in-process watchdog, ALP-768): ALP-768 added
-    # watchdog_stall_timeout_seconds: 3600 to config/continuous_monitor.yaml and
-    # ContinuousMonitorConfig (the MonitorSupervisor heartbeat watchdog),
-    # shifting the resolved-config canonical bytes.
+    # Pin updated 2026-06-02 (in-process watchdog, ALP-768): ALP-768 added the
+    # MonitorSupervisor heartbeat-watchdog stall-timeout knob to
+    # config/continuous_monitor.yaml and ContinuousMonitorConfig, shifting the
+    # resolved-config canonical bytes. (That global knob was later superseded by
+    # ALP-826 — see below.)
     # Pin updated 2026-06-02 (unattributed-fill TTL escalation, ALP-771): ALP-771
     # added unattributed_fill_escalation_ttl_seconds: 1800 to
     # config/continuous_monitor.yaml and ContinuousMonitorConfig (the one-shot
@@ -235,7 +236,19 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # fill_stream_stale_timeout_seconds: 900 to config/continuous_monitor.yaml and
     # ContinuousMonitorConfig (the connected-but-silent fill-stream reconnect bound),
     # shifting the resolved-config canonical bytes.
-    expected = "b923c5b03c108d0693affe06dbbdb32e20ecc18bfb77d6299f65c0e451ae6390"
+    # Pin updated 2026-06-02 (ALP-825 wave-1 integration — combines ALP-826 + ALP-827):
+    # ALP-826 replaced the global watchdog_stall_timeout_seconds knob with
+    # watchdog_cadence_multiplier: 10.0 (each watched task is now bounded by
+    # cadence_seconds * multiplier), and ALP-827 added underlying_price_max_age_seconds: 900
+    # (the single freshness threshold all price consumers pass to
+    # UnderlyingPriceCache.read/read_all) — both in config/continuous_monitor.yaml and
+    # ContinuousMonitorConfig. This is the re-pin for the combined wave-1 config tree.
+    # Pin updated 2026-06-02 (underlying-stream staleness timeout, ALP-832): ALP-832 added
+    # underlying_stream_stale_timeout_seconds: 60 to config/continuous_monitor.yaml and
+    # ContinuousMonitorConfig (the connected-but-silent underlying-stream RTH reconnect
+    # bound; tighter than fill_stream_stale_timeout_seconds because IEX equity quotes are
+    # continuous during RTH), shifting the resolved-config canonical bytes.
+    expected = "9b283a74a3da6b4ae9be2f686ffd999ad0a843fa5e6082c56fa9bc3fe3fc29a2"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

@@ -42,7 +42,9 @@ from alphamind.execution.continuous_monitor.bracket_stops.triggers import (
 )
 from alphamind.execution.continuous_monitor.cascade_dispatch import TriggerIdGenerator
 from alphamind.execution.continuous_monitor.session import MonitorSession
+from alphamind.execution.continuous_monitor.supervisor import SupervisedLoop
 from alphamind.execution.continuous_monitor.underlying_stream.cache import (
+    FreshPrice,
     UnderlyingPriceCache,
 )
 from alphamind.execution.continuous_monitor.underlying_stream.subscriptions import (
@@ -70,7 +72,9 @@ NowProvider = Callable[[], datetime]
 # layer can hit the DB directly without bridging through ``asyncio.run``.
 RiskFreeRateProvider = Callable[[], Awaitable[float]]
 InvocationIdProvider = Callable[[], Awaitable[str]]
-SleepCallable = Callable[[float], Awaitable[None]]
+# A ticker set that persists across cycles: the kernel records tickers that
+# transitioned from FRESH to STALE so the per-transition warning fires once.
+_StaleTickers = set[str]
 
 
 @runtime_checkable
@@ -94,8 +98,25 @@ class BracketRepository(Protocol):
 _FiredLegKey = tuple[str, str]  # (bracket_id, leg_id)
 
 
-def _spot_for_position(position: PositionRecord, cache: UnderlyingPriceCache) -> float | None:
-    """Resolve the underlying spot for a position from the live cache."""
+def _spot_for_position(
+    position: PositionRecord,
+    cache: UnderlyingPriceCache,
+    *,
+    as_of: datetime,
+    max_age_seconds: float,
+    stale_tickers: _StaleTickers,
+) -> float | None:
+    """Resolve the underlying spot for a position via the freshness-aware read.
+
+    Returns a live ``price`` only when the cached quote reads ``FRESH`` (within
+    ``max_age_seconds`` of ``as_of``). ``STALE`` and ``MISSING`` yield ``None``
+    so the caller's ``spot is None`` guard skips the position — a protective stop
+    is never evaluated against a frozen or absent price (ALP-829).
+
+    Logs a WARNING once when a ticker transitions from FRESH to STALE; subsequent
+    cycles where the ticker remains stale emit no additional log so the 1s loop
+    does not spam. ``stale_tickers`` is the cross-cycle mutable tracker for this.
+    """
     details = position.details
     if isinstance(details, OptionsPositionDetails):
         ticker = details.underlying_ticker
@@ -103,8 +124,20 @@ def _spot_for_position(position: PositionRecord, cache: UnderlyingPriceCache) ->
         ticker = details.legs[0].options.underlying_ticker
     else:
         return None
-    quote = cache.get(ticker)
-    return None if quote is None else quote.price
+    read = cache.read(ticker, as_of=as_of, max_age_seconds=max_age_seconds)
+    if isinstance(read, FreshPrice):
+        stale_tickers.discard(ticker)  # recovered — reset prior state
+        return read.price
+    # STALE or MISSING: log once on the fresh→stale transition.
+    if ticker not in stale_tickers:
+        stale_tickers.add(ticker)
+        log.warning(
+            "bracket_stops: underlying spot for %s is %s; "
+            "position skipped this cycle (stop not evaluated against frozen price)",
+            ticker,
+            read.freshness,
+        )
+    return None
 
 
 def _is_options_or_strategy(position: PositionRecord) -> bool:
@@ -175,14 +208,21 @@ async def _run_bracket_stop_cycle(  # noqa: PLR0913 — kernel surfaces every co
     now: datetime,
     risk_free_rate: float,
     fired_legs: set[_FiredLegKey],
+    stale_tickers: _StaleTickers | None = None,
 ) -> None:
     """One inspection-cycle pass — public for testability.
 
     Walks open option / strategy positions, evaluates each active price-based
     or P/L-based leg, fires the closer on satisfied triggers, and marks the
     fired ``(bracket_id, leg_id)`` pair so subsequent cycles don't double-fire.
+
+    ``stale_tickers`` persists across cycles (owned by the run-forever loop):
+    ``_spot_for_position`` logs a WARNING once when a ticker transitions from
+    FRESH to STALE and suppresses repeated warnings while it stays stale. When
+    ``None`` is passed (single-cycle callers, legacy tests) a fresh set is
+    created so the transition warning fires on that cycle's first stale read.
     """
-    del config  # cadence consumed by the run-forever loop; kernel is per-cycle
+    _stale: _StaleTickers = stale_tickers if stale_tickers is not None else set()
     positions = await position_repository.get_open_positions()
     eligible_positions = tuple(p for p in positions if _is_options_or_strategy(p))
     if not eligible_positions:
@@ -196,7 +236,13 @@ async def _run_bracket_stop_cycle(  # noqa: PLR0913 — kernel surfaces every co
         bracket = brackets_by_position.get(position.position_id)
         if bracket is None:
             continue
-        spot = _spot_for_position(position, cache)
+        spot = _spot_for_position(
+            position,
+            cache,
+            as_of=now,
+            max_age_seconds=config.underlying_price_max_age_seconds,
+            stale_tickers=_stale,
+        )
         if spot is None or spot <= 0.0:
             continue
         await _evaluate_bracket_legs(
@@ -375,30 +421,35 @@ async def run_options_bracket_watcher(  # noqa: PLR0913 — orchestrator surface
     invocation_id_provider: InvocationIdProvider,
     risk_free_rate_provider: RiskFreeRateProvider,
     trigger_ids: TriggerIdGenerator,
+    loop: SupervisedLoop,
     now: NowProvider = lambda: datetime.now(UTC),
-    sleep: SleepCallable = asyncio.sleep,
-    beat: Callable[[], None] = lambda: None,
 ) -> None:
     """Long-running task the supervisor registers as ``bracket_stops``.
 
     The loop body delegates to :func:`_run_bracket_stop_cycle` so the same
-    code path the tests exercise drives the production loop. The
-    ``fired_legs`` set is private to this task — per-session memory of which
-    leg has already fired so reads of the same trigger state in subsequent
-    cycles do NOT re-fire.
+    code path the tests exercise drives the production loop.
 
-    Per parent issue ALP-123 § Pre-resolved decision (I), the watcher
-    submits closing orders directly via the broker adapter — no engine
-    envelope — and persists the resulting ``POSITION_CLOSED`` entries with
+    ``loop`` is the supervisor's :meth:`MonitorSupervisor.supervised_loop`
+    iterator factory (name + cadence pre-bound by the wiring). It beats the
+    watchdog at the top of every iteration and paces the loop at
+    ``bracket_stop_evaluation_cadence_seconds``, so this safety-critical task is
+    liveness-watched with no hand-wired ``beat()``. The ~1s cadence yields a
+    tight watchdog bound; a wedged cycle stops beating and trips ``os._exit(1)``
+    → NSSM restart (ALP-829), rather than inheriting the old 1h global bound.
+
+    ``fired_legs`` is private to this task — per-session memory of which leg has
+    already fired so reads of the same trigger state in subsequent cycles do NOT
+    re-fire. ``stale_tickers`` tracks the fresh→stale transition per ticker so
+    the skipped-stale WARNING fires once, not on every 1s cycle.
+
+    Per parent issue ALP-123 § Pre-resolved decision (I), the watcher submits
+    closing orders directly via the broker adapter — no engine envelope — and
+    persists the resulting ``POSITION_CLOSED`` entries with
     ``event_source=BRACKET_MANAGER``.
-
-    ``beat`` (ALP-819), when supplied, is invoked at the top of every cycle so
-    the supervisor's stall watchdog watches this stop-enforcement loop; a
-    wedged cycle stops beating and trips ``os._exit(1)`` → NSSM restart.
     """
     fired_legs: set[_FiredLegKey] = set()
-    while True:
-        beat()
+    stale_tickers: _StaleTickers = set()
+    async for _ in loop():
         try:
             await _run_bracket_stop_cycle(
                 config=config,
@@ -413,16 +464,14 @@ async def run_options_bracket_watcher(  # noqa: PLR0913 — orchestrator surface
                 now=now(),
                 risk_free_rate=await risk_free_rate_provider(),
                 fired_legs=fired_legs,
+                stale_tickers=stale_tickers,
             )
         except asyncio.CancelledError:
             raise
         except Exception:
-            # Per-cycle supervisor per runtime §G1: the cycle should not raise
-            # — each per-position branch handles its own failures. A raise
-            # here indicates a programming bug; log and continue so the loop
-            # survives transient consistency issues. ``BaseException``
-            # (``CancelledError``) re-raised above; other ``BaseException``
-            # subclasses propagate through this branch as it catches only
-            # ``Exception``.
-            log.exception("bracket_stops cycle raised; continuing after sleep")
-        await sleep(float(config.bracket_stop_evaluation_cadence_seconds))
+            # Per-cycle supervisor per runtime §G1: the cycle should not raise —
+            # each per-position branch handles its own failures. A raise here is
+            # a programming bug; log and continue so the loop survives transient
+            # consistency issues. ``CancelledError`` re-raised above so supervisor
+            # shutdown / watchdog cancellation bubbles up.
+            log.exception("bracket_stops cycle raised; continuing")

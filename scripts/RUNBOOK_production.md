@@ -865,16 +865,22 @@ SIGTERM fallback fires.
 **Two restart gotchas that cost real diagnosis time (2026-06-02 monitor wedge):**
 
 - **`Get-Service … Running` does NOT mean healthy.** NSSM reports `Running`
-  while the *wrapper* process is alive; an async-task wedge (e.g. a websocket
-  hang — see § 8.9) leaves the service `Running` for hours while it does no
-  work. Verify a restart by the process **StartTime** (a fresh PID / StartTime)
-  **and** a behavioral signal — the daemon's SSE heartbeat (`8765` / `8766`),
-  fresh structured-log lines, fills flowing — never by `Get-Service Status`
-  alone. Read the StartTime with:
+  while the *wrapper* process is alive; a watched-task wedge now self-recycles
+  within a per-cadence bound — the per-cadence stall watchdog (`cadence_seconds
+  × watchdog_cadence_multiplier`, default 10×) forces `os._exit(1)` so NSSM
+  auto-restarts the monitor. A multi-hour silent wedge of a watched task should
+  not recur. The **one residual exception is the control-surface HTTP server**,
+  which is registered `watched=False` (it blocks in `await server.serve()` with
+  no natural per-iteration heartbeat); that task is not auto-recycled by the
+  watchdog. For everything else, confirm a restart by the process **StartTime**
+  (fresh PID / StartTime) **and** a behavioral signal — the daemon's SSE
+  heartbeat (`8765` / `8766`), fresh structured-log lines, fills flowing — never
+  by `Get-Service Status` alone. Read the StartTime with:
   ```powershell
   $p = (Get-CimInstance Win32_Service -Filter "Name='<svc>'").ProcessId
   (Get-Process -Id $p).StartTime
   ```
+  See § 8.9 for the fill-stream and underlying-stream auto-recovery details.
 - **Restarting `alphamind-scheduler` or `alphamind-monitor` while
   `AlphaMindCommandCenter` is up can be silently refused** (the command center
   depends on both). Stop CC first, restart the target, then start CC — stop
@@ -962,46 +968,114 @@ or dedup suppressed it (only around an off-schedule run — under Tier B no two
 scheduled triggers share a minute). The `next_trigger_changed` events on the
 SSE stream are the source of truth for what the scheduler thinks comes next.
 
-### 8.9 Monitor reports `Running` but isn't capturing fills (websocket `WinError 121` wedge)
+### 8.9 Monitor wedge — fill-stream or underlying-stream silent (connected-but-not-delivering)
 
-Seen 2026-06-02: the continuous monitor's Alpaca trade-updates websocket failed
-on `OSError: [WinError 121] The semaphore timeout period has expired`, and the
+#### Current state (post-ALP-825 hardening)
+
+Both the fill (trade-updates) stream and the underlying-price stream now have
+**two** independent auto-recovery layers:
+
+1. **Budget-neutral reconnect on RTH silence.** Each stream runs a
+   `StreamActivityMonitor` that beats the stall watchdog on every poll slice and
+   raises `StreamStalledError` when the market is open and no frames arrive within
+   the configured timeout (`fill_stream_stale_timeout_seconds = 900 s` for the fill
+   stream; `underlying_stream_stale_timeout_seconds = 60 s` for the price stream).
+   The consumer catches `StreamStalledError` and rebuilds the stream
+   **budget-neutrally** — without consuming a reconnect attempt — so a persistently
+   silent stream keeps recovering rather than exhausting its budget and exiting. REST
+   recovery + the fill-backfill backstop re-capture any gap from a fill-stream
+   reconnect. Off-hours, the silence check is disengaged and the clock resets so the
+   closed-market gap is not charged against the first RTH window.
+
+2. **Per-cadence stall watchdog.** Every watched task drives its loop through
+   `supervised_loop`, which beats the watchdog at the top of each iteration. A task
+   that beats on every poll slice (including idle slices between frames) keeps the
+   watchdog satisfied. A genuinely-blocked task that stops beating trips
+   `os._exit(1)` within `cadence_seconds × watchdog_cadence_multiplier` (the
+   `watchdog_cadence_multiplier` default is 10×), and NSSM auto-restarts the
+   monitor process. This backstop catches a task wedge that the in-stream reconnect
+   could not resolve.
+
+**Operator's primary action** after any suspected monitor wedge:
+
+1. Confirm a fresh PID / StartTime (the watchdog fired and NSSM auto-restarted):
+   ```powershell
+   $p = (Get-CimInstance Win32_Service -Filter "Name='alphamind-monitor'").ProcessId
+   (Get-Process -Id $p).StartTime
+   ```
+2. Confirm a behavioral signal — an `8766` heartbeat within ~18 s of connecting:
+   ```bash
+   curl -N 127.0.0.1:8766/events
+   ```
+3. If the process PID/StartTime is fresh and the heartbeat is live, **auto-recovery
+   succeeded** — no manual restart is needed. Confirm fills are flowing again
+   (check `fill_records` for rows dated today; check `monitor.log` for
+   `websocket_connected` lines).
+
+**Manual § 7 restart is the fallback** when auto-recovery is itself suspect (e.g.
+the StartTime is stale, no `8766` heartbeat is appearing, or `monitor.err.log`
+shows a `reconnect budget exhausted` entry). Use the CC-dependency order:
+`nssm stop AlphaMindCommandCenter` → `nssm stop` + `nssm start alphamind-monitor`
+→ `nssm start AlphaMindCommandCenter`. Confirm by StartTime + heartbeat, not
+`Get-Service`.
+
+#### Pre-fix history (2026-06-02 — for reference only)
+
+Before ALP-825: the continuous monitor's Alpaca trade-updates websocket failed on
+`OSError: [WinError 121] The semaphore timeout period has expired`, and the
 `websockets` library reconnect-looped *internally* without ever raising — so the
 fill consumer parked on `await queue.get()` and starved. The process stayed
-`Running` (NSSM only restarts on process **exit**, and the in-process watchdog
-didn't trip) and captured **no fills for ~11 h**, with real-time breach/stop
-monitoring off the whole time. (Code fix tracked in ALP-819; ALP-768 handled the
-*raising* failure path but not this silent-internal-reconnect one.)
+`Running` (NSSM only restarts on process exit, and the in-process watchdog didn't
+trip) and captured **no fills for ~11 h**, with real-time breach/stop monitoring
+off the whole time. ALP-819 fixed the fill-stream silent-wedge path; ALP-832
+applied the same fix to the underlying-price stream; ALP-826 added the per-cadence
+watchdog backstop.
 
-**Detection** — the monitor is wedged-but-`Running` when several of these hold:
+The old detection signals (if you ever see them again, the post-fix recovery path
+above should already be firing):
 
-- No `monitor.log` lines dated **today** (`grep -c "<YYYY-MM-DD>" monitor.log` → `0`).
-- `monitor.out.log` is 0 bytes and `curl -N 127.0.0.1:8766/events` emits no
-  `heartbeat` within ~18 s (the scheduler's `8765` still does — good contrast test).
-- `fill_records` has no rows for fills you know landed on Alpaca (e.g. right
-  after a Phase-2 dispatch), and the matching local order rows stay `PENDING`
-  with `filled_quantity = 0` while Alpaca shows them filled.
 - `monitor.err.log` shows repeated `trading stream websocket error, restarting
   connection: no close frame received or sent` + `OSError: [WinError 121]`.
+- `fill_records` has no rows for fills you know landed on Alpaca, and the matching
+  local order rows stay `PENDING` with `filled_quantity = 0`.
+- `curl -N 127.0.0.1:8766/events` emits no `heartbeat` within ~18 s.
 
-**Recovery** — restart the monitor via the § 7 CC-dependency order
-(`nssm stop AlphaMindCommandCenter` → `nssm stop` + `nssm start alphamind-monitor`
-→ `nssm start AlphaMindCommandCenter`); confirm the new session by its
-**StartTime** + an `8766` heartbeat, not `Get-Service`.
+#### Two distinct health signals from the breach loop
 
-**After the restart, expect a brief reconciliation lag — this is normal, not a second bug:**
+The breach loop emits two distinct `last_error` labels through the
+`/events` health channel — interpret them differently:
 
-- The startup replay + the 15-min `activities_backfill` re-capture the missed
+- **`"stale/missing underlying price"`** — one or more open-position tickers have a
+  price that is older than `underlying_price_max_age_seconds` (900 s) or has not
+  yet been received at all. This is **subscription lag**: the underlying-price
+  stream only subscribes to *known* open positions, and a fill that hasn't
+  integrated through Phase-1 yet is not a known position. Affected positions are
+  excluded from stop enforcement for that tick; broker-side bracket legs still
+  protect them. **This clears at the next Phase-1 run** — not a dead feed.
+
+- **`"underlying price feed globally stale — writer wedged"`** — every
+  open-position ticker is simultaneously stale or missing. This is the
+  **price stream dead** signal: the whole feed has gone cold. The
+  budget-neutral reconnect path (layer 1 above) should already be firing; if it
+  isn't, confirm via `monitor.err.log` and fall back to the manual restart if
+  needed.
+
+These two signals are consistent with the reconciliation-lag note below: if you
+see `"stale/missing underlying price"` after a monitor restart, it is almost
+certainly subscription lag from un-integrated fills, not a dead feed.
+
+#### After a monitor restart — expect a brief reconciliation lag
+
+- The startup replay + the 15-min `activities_backfill` re-capture missed
   fills into `fill_records` as `unprocessed`; the **next Phase-1** integrates
   them (PENDING→OPEN) and `_reconcile_cash` snaps local cash to Alpaca. Cash
   drift and position divergence persist only until that Phase-1 runs.
-- A real open position whose fill hasn't integrated yet shows `breach_loop
-  DEGRADED` / `no live price received … excluded from stop enforcement` — the
-  underlying-price stream only subscribes to *known* open positions. This is a
-  subscription lag, **not** a dead price feed: confirm the assembler's
+- A real open position whose fill hasn't integrated yet may emit the
+  `"stale/missing underlying price"` health signal — this is subscription lag,
+  **not** a dead price feed (see the two signals above). Confirm the
   stale-ticker list names only the un-integrated tickers (established positions
-  still priced), and note the position's broker-side bracket legs still protect
-  it. It clears at the next Phase-1.
+  are still priced), and note the position's broker-side bracket legs still
+  protect it. It clears at the next Phase-1.
 
 ---
 

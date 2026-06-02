@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.broker_adapter import (
     FillReport,
-    FillStreamStalledError,
+    StreamStalledError,
     recover_missed_fills_since,
     subscribe_trade_updates,
 )
@@ -69,6 +69,7 @@ async def run_fill_stream_consumer(  # noqa: PLR0913 — run-forever orchestrato
     process_lifetime_id: str | None = None,
     is_market_open: Callable[[datetime], bool] | None = None,
     beat: Callable[[], None] = lambda: None,
+    register_watch: Callable[[float], None] = lambda _cadence: None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     monotonic: Callable[[], float] = time.monotonic,
     stream_poll_interval: float = 5.0,
@@ -93,14 +94,25 @@ async def run_fill_stream_consumer(  # noqa: PLR0913 — run-forever orchestrato
     into the connected-but-silent detection and the supervisor's stall
     watchdog. When the websockets library reconnects internally on a transport
     error (WinError 121) without raising or delivering frames, the consume
-    generator raises :class:`FillStreamStalledError` after
+    generator raises :class:`StreamStalledError` after
     ``config.fill_stream_stale_timeout_seconds`` of RTH silence; that is a
     *budget-neutral* reconnect (a deliberate health refresh, not a failure) so
     a persistently silent stream keeps recovering rather than exhausting the
     reconnect budget. ``beat`` is fired on every poll slice and on each
     consume cycle so a genuinely-blocked consumer (stuck in REST recovery or
     persistence) stops beating and trips ``os._exit(1)`` → NSSM restart.
+
+    Watchdog binding (ALP-828). The reconnect-driven outer loop is not a
+    fixed-cadence ``supervised_loop``; its liveness comes from the kernel's
+    per-slice ``beat``. So the task must declare its poll cadence to the
+    watchdog explicitly: ``register_watch`` is called once at startup with
+    ``stream_poll_interval`` so a stall bound (``cadence *
+    watchdog_cadence_multiplier``) derives. Without this declaration a bare
+    ``beat`` would leave the task watched-but-unbounded — the watchdog could
+    never trip it (it would only warn). ``beat`` is 01a's supervisor seam (no
+    hand-wired ``supervisor.beat(...)`` lambda owned here).
     """
+    register_watch(stream_poll_interval)
     queries = account_state_queries_factory(trading_client_factory(session.mode))
     is_rth: Callable[[], bool] | None = (
         (lambda: is_market_open(now())) if is_market_open is not None else None
@@ -151,7 +163,7 @@ async def run_fill_stream_consumer(  # noqa: PLR0913 — run-forever orchestrato
         except asyncio.CancelledError:
             log.info("fill_stream_consumer cancelled cleanly")
             raise
-        except FillStreamStalledError:
+        except StreamStalledError:
             # Connected-but-silent stream detected during RTH (ALP-819): the
             # library reconnect-looped internally without raising or delivering
             # frames. Tear down and rebuild a fresh stream. This is a deliberate
@@ -207,7 +219,7 @@ async def _consume_stream(
     """Drain :func:`subscribe_trade_updates` until the generator exits.
 
     Explicit ``try/finally`` with ``aclose()`` so a propagating exception
-    (e.g., translation error or :class:`FillStreamStalledError`) triggers the
+    (e.g., translation error or :class:`StreamStalledError`) triggers the
     primitive's ``run_task.cancel()`` in deterministic order, rather than
     relying on async-generator GC. The staleness knobs (ALP-819) flow through
     to the primitive's poll loop.

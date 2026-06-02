@@ -11,12 +11,15 @@ spinning up the full monitor daemon.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.execution import (
     FeeSchedule,
     OrderType,
@@ -117,8 +120,6 @@ async def test_paper_mode_callable_is_idempotent_no_estimate_when_inputs_missing
     This covers the production default per parent decision H: empty
     realized-vol substrate → estimates default to None for every fill.
     """
-    from datetime import UTC, datetime
-
     from alphamind._kernel.money import money, price
     from alphamind.execution.continuous_monitor.__main__ import (
         _build_enrichment_callable,
@@ -332,3 +333,189 @@ class TestEmptyMapAlertOnce:
 
         records = [r for r in caplog.records if r.levelname == "ERROR"]
         assert records == []
+
+
+class _StubMonotonic:
+    """A controllable monotonic clock (one of the four sanctioned boundaries).
+
+    ``__call__`` returns the current value; ``advance(seconds)`` moves it
+    forward. The realized-vol refresher's 24h-due check reads it, so the test
+    advances it by minutes (sub-daily) without any real waiting.
+    """
+
+    def __init__(self, start: float = 0.0) -> None:
+        self._t = start
+
+    def __call__(self) -> float:
+        return self._t
+
+    def advance(self, seconds: float) -> None:
+        self._t += seconds
+
+
+class TestRealizedVolRefreshHeartbeat:
+    """ALP-825 review — the refresher heartbeats on a short cadence so its stall
+    bound is trippable, while still running the functional refresh only once/24h.
+    """
+
+    async def test_heartbeats_short_cadence_and_refreshes_at_most_once_per_24h(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The supervised loop paces on the short heartbeat cadence (so the
+        watchdog bound is minutes, not ~240h) and the refresh fires at most once
+        across many heartbeats that span less than 24h.
+
+        This drives the real :meth:`MonitorSupervisor.supervised_loop` seam (real
+        ``register_watch`` + ``beat``) and the real loop body. A fake monotonic
+        clock controls the 24h-due check; a fake ``sleep`` advances that clock by
+        one heartbeat per iteration and ends the run after a bounded number of
+        iterations so the otherwise-run-forever loop terminates.
+        """
+        from alphamind.execution.continuous_monitor.__main__ import (
+            _REALIZED_VOL_HEARTBEAT_CADENCE_SECONDS,
+            _EmptyMapAlertOnce,
+            _register_realized_vol_refresh_task,
+        )
+        from alphamind.execution.continuous_monitor.session import MonitorSession
+        from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
+
+        heartbeat = _REALIZED_VOL_HEARTBEAT_CADENCE_SECONDS
+        clock = _StubMonotonic(start=1000.0)
+        # 30 heartbeats * 60s = 1800s elapsed — far under the 24h functional
+        # interval, so the refresh must fire 0 times after the startup refresh.
+        iterations = 30
+
+        sleep_calls: list[float] = []
+
+        async def _fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+            clock.advance(seconds)
+            if len(sleep_calls) >= iterations:
+                raise asyncio.CancelledError
+
+        config = ContinuousMonitorConfig(
+            breach_evaluation_cadence_seconds=60,
+            greeks_refresh_interval_minutes=15,
+            greeks_refresh_underlying_move_threshold_pct=2.0,
+            underlying_stream_provider="alpaca-iex",
+            max_reconnect_attempts=5,
+            supervisor_shutdown_timeout_seconds=5,
+        )
+        supervisor = MonitorSupervisor(
+            session=MonitorSession(
+                session_id="mon-test",
+                started_at=datetime(2026, 5, 27, 13, 30, tzinfo=UTC),
+                mode="paper",
+            ),
+            config=config,
+            sleep=_fake_sleep,
+            monotonic=clock,
+        )
+
+        refresh_calls: list[int] = []
+
+        def _tickers_provider() -> tuple[str, ...] | None:
+            refresh_calls.append(1)
+            return None
+
+        _register_realized_vol_refresh_task(
+            supervisor,
+            session_factory=session_factory,
+            shared_map={},
+            tickers_provider=_tickers_provider,
+            empty_map_alert=_EmptyMapAlertOnce(),
+            now=clock,
+        )
+        coro_fn = dict(supervisor._registry)["realized_vol_refresh"]
+
+        with pytest.raises(asyncio.CancelledError):
+            await coro_fn(supervisor._session, config)
+
+        # The loop paced on the SHORT heartbeat cadence, not the 24h interval.
+        assert sleep_calls, "loop never iterated"
+        assert all(s == pytest.approx(heartbeat) for s in sleep_calls)
+
+        # Watchdog bound derives from the short cadence (trippable in minutes),
+        # NOT the 24h functional interval (~240h, untrippable for ~10 days).
+        bound = supervisor._watch["realized_vol_refresh"].bound_seconds
+        assert bound == pytest.approx(heartbeat * config.watchdog_cadence_multiplier)
+        assert bound < 24 * 60 * 60
+
+        # The functional 24h refresh did NOT fire across <24h of heartbeats.
+        assert refresh_calls == []
+
+    async def test_refresh_fires_once_24h_due_condition_is_crossed(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Crossing the 24h functional interval fires exactly one refresh.
+
+        Advances the fake monotonic clock past ``interval_seconds`` on the first
+        heartbeat, asserting the refresh runs once (the functional cadence is
+        preserved) rather than every heartbeat.
+        """
+        from alphamind.execution.continuous_monitor.__main__ import (
+            _REALIZED_VOL_HEARTBEAT_CADENCE_SECONDS,
+            _EmptyMapAlertOnce,
+            _register_realized_vol_refresh_task,
+        )
+        from alphamind.execution.continuous_monitor.session import MonitorSession
+        from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
+
+        interval = 24 * 60 * 60
+        clock = _StubMonotonic(start=0.0)
+
+        sleep_calls: list[float] = []
+
+        async def _fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+            # First sleep jumps a full day so the next iteration's due-check
+            # passes; subsequent sleeps are short so no second refresh fires.
+            clock.advance(interval + 1.0 if len(sleep_calls) == 1 else seconds)
+            if len(sleep_calls) >= 4:
+                raise asyncio.CancelledError
+
+        config = ContinuousMonitorConfig(
+            breach_evaluation_cadence_seconds=60,
+            greeks_refresh_interval_minutes=15,
+            greeks_refresh_underlying_move_threshold_pct=2.0,
+            underlying_stream_provider="alpaca-iex",
+            max_reconnect_attempts=5,
+            supervisor_shutdown_timeout_seconds=5,
+        )
+        supervisor = MonitorSupervisor(
+            session=MonitorSession(
+                session_id="mon-test",
+                started_at=datetime(2026, 5, 27, 13, 30, tzinfo=UTC),
+                mode="paper",
+            ),
+            config=config,
+            sleep=_fake_sleep,
+            monotonic=clock,
+        )
+
+        refresh_calls: list[int] = []
+
+        def _tickers_provider() -> tuple[str, ...] | None:
+            refresh_calls.append(1)
+            return None
+
+        _register_realized_vol_refresh_task(
+            supervisor,
+            session_factory=session_factory,
+            shared_map={},
+            tickers_provider=_tickers_provider,
+            empty_map_alert=_EmptyMapAlertOnce(),
+            interval_seconds=float(interval),
+            heartbeat_cadence_seconds=_REALIZED_VOL_HEARTBEAT_CADENCE_SECONDS,
+            now=clock,
+        )
+        coro_fn = dict(supervisor._registry)["realized_vol_refresh"]
+
+        with pytest.raises(asyncio.CancelledError):
+            await coro_fn(supervisor._session, config)
+
+        assert len(refresh_calls) == 1, (
+            f"expected exactly one 24h refresh, got {len(refresh_calls)}"
+        )

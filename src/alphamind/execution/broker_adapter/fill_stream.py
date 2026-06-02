@@ -33,6 +33,7 @@ from alpaca.trading.models import Order, TradeUpdate
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, OccSymbol, make_occ_symbol
+from alphamind.execution.broker_adapter.stream_staleness import StreamActivityMonitor
 
 OrderStatus = Literal[
     "new",
@@ -300,18 +301,6 @@ class _SubscribableStream(Protocol):
     async def _run_forever(self) -> None: ...
 
 
-class FillStreamStalledError(Exception):
-    """A connected ``trade_updates`` stream stopped delivering frames during RTH.
-
-    Raised by :func:`subscribe_trade_updates` when no frame arrives within
-    ``frame_timeout`` while the market is open (ALP-819). The ``websockets``
-    library reconnects internally on a transport error (e.g. ``WinError 121``)
-    without raising or delivering frames, so the ALP-768 done-callback sentinel
-    never fires and ``queue.get()`` would otherwise park forever. The consumer
-    treats this as a budget-neutral signal to tear down and rebuild the stream.
-    """
-
-
 async def subscribe_trade_updates(
     stream: _SubscribableStream,
     *,
@@ -337,13 +326,14 @@ async def subscribe_trade_updates(
     Any exception raised during translation propagates to the consumer so the
     caller's run-loop can catch and trigger reconnect.
 
-    Connected-but-silent detection (ALP-819): the consume loop waits on
-    ``queue.get()`` in ``poll_interval`` slices rather than one unbounded
-    ``await`` so it can (a) call ``beat()`` on every slice — feeding the
-    monitor's stall watchdog a real fill-consumer liveness signal — and
-    (b) raise :class:`FillStreamStalledError` when ``is_rth()`` is true and no
-    frame has arrived for longer than ``frame_timeout``. That catches the
-    library-internal-reconnect path the ALP-768 done-callback misses (the
+    Connected-but-silent detection (ALP-819, ALP-828): the consume loop waits
+    on ``queue.get()`` in ``poll_interval`` slices rather than one unbounded
+    ``await`` and drives the shared :class:`StreamActivityMonitor` kernel — it
+    (a) beats on every slice (feeding the monitor's stall watchdog a real
+    fill-consumer liveness signal), (b) signals activity on each dequeued
+    frame, and (c) raises :class:`StreamStalledError` when ``is_rth()`` is true
+    and no frame has arrived for longer than ``frame_timeout``. That catches
+    the library-internal-reconnect path the ALP-768 done-callback misses (the
     socket flaps, the library re-loops without raising, no sentinel fires).
     All four knobs are optional: with ``frame_timeout``/``is_rth`` unset the
     staleness branch is inert and the loop behaves as an ordinary drain.
@@ -375,12 +365,20 @@ async def subscribe_trade_updates(
     run_task = asyncio.create_task(stream._run_forever())
     run_task.add_done_callback(lambda _t: queue.put_nowait(None))
 
-    last_frame_at = monotonic()
+    # The shared staleness kernel (ALP-828) owns the per-slice beat, the
+    # last-activity clock, and the RTH-gated stall decision; this loop owns the
+    # queue drain and signals activity per dequeued frame.
+    monitor = StreamActivityMonitor(
+        frame_timeout=frame_timeout,
+        is_rth=is_rth,
+        beat=beat,
+        poll_interval=poll_interval,
+        monotonic=monotonic,
+    )
     try:
         while True:
-            beat()
             try:
-                update = await asyncio.wait_for(queue.get(), timeout=poll_interval)
+                update = await asyncio.wait_for(queue.get(), timeout=monitor.poll_interval)
             except TimeoutError:
                 # No frame this slice. If the background task has finished
                 # (raised or returned cleanly) but its None sentinel has not yet
@@ -391,20 +389,15 @@ async def subscribe_trade_updates(
                     run_task.result()  # re-raises run_task's error; None on clean
                     return
                 # A genuinely-quiet stream and a silently-wedged one look
-                # identical here. Force a reconnect only when the market is open
-                # (fills are sparse off-hours) and the silence exceeds
-                # frame_timeout; the consumer's reconnect re-subscribes a fresh
-                # socket and REST-recovers any gap. Off-hours, reset the clock so
-                # the closed-market gap is not charged against the first RTH
-                # window (which would force a spurious reconnect at the open).
-                if frame_timeout is not None and is_rth is not None:
-                    if not is_rth():
-                        last_frame_at = monotonic()
-                    elif monotonic() - last_frame_at > frame_timeout:
-                        msg = f"no trade_updates frame for >{frame_timeout:.0f}s during RTH"
-                        raise FillStreamStalledError(msg) from None
+                # identical here: beat for liveness, and let the kernel force a
+                # reconnect (raising StreamStalledError) only when the market is
+                # open and the silence exceeds frame_timeout — the consumer's
+                # reconnect re-subscribes a fresh socket and REST-recovers any
+                # gap. Off-hours the kernel resets its clock so the closed-market
+                # gap is not charged against the first RTH window.
+                monitor.on_slice()
                 continue
-            last_frame_at = monotonic()
+            monitor.record_activity()
             if update is None:
                 # run_task finished (exception or clean close).
                 # result() re-raises its exception; returns None on clean.

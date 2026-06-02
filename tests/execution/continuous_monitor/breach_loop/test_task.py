@@ -1,17 +1,18 @@
-"""Tests for ``run_breach_loop`` (story 03b / ALP-437).
+"""Tests for ``run_breach_loop`` (story 03b / ALP-437 + ALP-831).
 
-The loop is a run-forever coroutine; tests run it under a fake ``now``
-sequence + a fake ``asyncio.sleep`` shim so the body executes deterministically
-and cooperatively yields after each tick. We drive at most a handful of ticks
-per test and cancel the task to verify ``CancelledError`` exits cleanly.
+The loop is a run-forever coroutine; tests drive it through a fake
+``SupervisedLoop`` factory that iterates a fixed number of ticks, making the
+body execute deterministically and cooperatively.  The watchdog-binding test
+(ALP-831 AC 5) uses a real ``MonitorSupervisor`` with an injected sleep shim so
+the production ``supervised_loop`` path is exercised end-to-end.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -27,6 +28,7 @@ from alphamind.execution.continuous_monitor.breach_loop import (
     run_breach_loop,
 )
 from alphamind.execution.continuous_monitor.session import MonitorSession
+from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor, SupervisedLoop
 from alphamind.execution.continuous_monitor.underlying_stream.cache import (
     UnderlyingPriceCache,
     UnderlyingQuote,
@@ -69,7 +71,12 @@ from alphamind.risk_guardrails.regime_adaptation.types import RegimeAdaptationSt
 # ---------------------------------------------------------------------------
 
 
-def _config(cadence_s: int = 60, *, failure_threshold: int = 3) -> ContinuousMonitorConfig:
+def _config(
+    cadence_s: int = 60,
+    *,
+    failure_threshold: int = 3,
+    underlying_price_max_age_seconds: float = 900.0,
+) -> ContinuousMonitorConfig:
     return ContinuousMonitorConfig(
         breach_evaluation_cadence_seconds=cadence_s,
         greeks_refresh_interval_minutes=15,
@@ -79,6 +86,7 @@ def _config(cadence_s: int = 60, *, failure_threshold: int = 3) -> ContinuousMon
         max_reconnect_attempts=3,
         supervisor_shutdown_timeout_seconds=5,
         breach_loop_consecutive_failure_alert_threshold=failure_threshold,
+        underlying_price_max_age_seconds=underlying_price_max_age_seconds,
     )
 
 
@@ -311,37 +319,26 @@ def _populated_cache() -> UnderlyingPriceCache:
 
 
 # ---------------------------------------------------------------------------
-# Driver: run the loop for N ticks then cancel
+# SupervisedLoop test helpers
 # ---------------------------------------------------------------------------
 
 
-async def _drive_loop(
-    coro_factory: Callable[[], Awaitable[None]],
-    *,
-    ticks: int,
-    tick_sentinels: list[int],
-    sleep_calls: list[float],
-    monkeypatch: pytest.MonkeyPatch,
-    target_module: str,
-) -> None:
-    """Run *coro_factory* under a patched sleep that lets us cap iterations."""
-    real_sleep = asyncio.sleep
-    call_count = {"n": 0}
+def _make_counted_loop(n_ticks: int) -> SupervisedLoop:
+    """Return a SupervisedLoop factory that iterates exactly *n_ticks* times.
 
-    async def _fake_sleep(delay: float) -> None:
-        sleep_calls.append(delay)
-        call_count["n"] += 1
-        if call_count["n"] >= ticks:
-            # Yield to give the loop a chance to read post-sleep, but ultimately
-            # we cancel via the gather mechanism below.
-            await real_sleep(0)
-            raise asyncio.CancelledError
-        await real_sleep(0)
+    Stand-in for ``MonitorSupervisor.supervised_loop``; exercises the loop
+    body a bounded number of times then raises CancelledError so the test
+    completes.  The cadence→watchdog-bound mapping is tested at the supervisor
+    level in ``test_supervisor.py``.
+    """
 
-    monkeypatch.setattr(f"{target_module}.asyncio.sleep", _fake_sleep)
-    tick_sentinels.clear()
-    with pytest.raises(asyncio.CancelledError):
-        await coro_factory()
+    async def _loop() -> AsyncIterator[None]:
+        for _ in range(n_ticks):
+            yield
+            await asyncio.sleep(0)
+        raise asyncio.CancelledError
+
+    return _loop
 
 
 # ---------------------------------------------------------------------------
@@ -350,9 +347,7 @@ async def _drive_loop(
 
 
 @pytest.mark.asyncio
-async def test_loop_in_normal_zone_does_not_invoke_immediate_breach_callback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_loop_in_normal_zone_does_not_invoke_immediate_breach_callback() -> None:
     """No breaches → ``on_immediate_breach`` never fires; ``on_emergency_input`` does."""
     repo = _StubRepository(
         drawdown_states=[_drawdown_state(intraday_pct=0.0)],
@@ -371,11 +366,7 @@ async def test_loop_in_normal_zone_does_not_invoke_immediate_breach_callback(
     async def _sink(entries: Iterable[ActivityLogEntry]) -> None:
         activity_log.calls.append((tuple(entries),))
 
-    sleep_calls: list[float] = []
-    snapshot_provider_calls = {"n": 0}
-
     async def _snapshot() -> LibrarySnapshot:
-        snapshot_provider_calls["n"] += 1
         return _library_snapshot()
 
     async def _regime() -> RegimeAdaptationOutput:
@@ -383,7 +374,7 @@ async def test_loop_in_normal_zone_does_not_invoke_immediate_breach_callback(
 
     market_hours = _StubMarketHours(open_flag=True)
 
-    async def _go() -> None:
+    with pytest.raises(asyncio.CancelledError):
         await run_breach_loop(
             _session(),
             _config(),
@@ -400,27 +391,16 @@ async def test_loop_in_normal_zone_does_not_invoke_immediate_breach_callback(
             activity_log_sink=_sink,
             on_immediate_breach=_immediate,
             on_emergency_input=_emergency,
+            loop=_make_counted_loop(1),
         )
-
-    await _drive_loop(
-        _go,
-        ticks=1,
-        tick_sentinels=[],
-        sleep_calls=sleep_calls,
-        monkeypatch=monkeypatch,
-        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
-    )
 
     assert immediate.calls == []
     assert len(emergency.calls) == 1
     assert isinstance(emergency.calls[0][0], BreachLoopResult)
-    assert sleep_calls == [60.0]
 
 
 @pytest.mark.asyncio
-async def test_immediate_action_hard_block_invokes_callback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_immediate_action_hard_block_invokes_callback() -> None:
     """A snapshot whose net_long_pct breaches → BLOCKED with deferred classification,
     while position_max_loss_equity_pct breaches → BLOCKED with immediate classification."""
     repo = _StubRepository(
@@ -536,10 +516,9 @@ async def test_immediate_action_hard_block_invokes_callback(
             conservative_buffer_pct=10.0,
         )
 
-    sleep_calls: list[float] = []
     market_hours = _StubMarketHours(open_flag=True)
 
-    async def _go() -> None:
+    with pytest.raises(asyncio.CancelledError):
         await run_breach_loop(
             _session(),
             _config(),
@@ -556,16 +535,8 @@ async def test_immediate_action_hard_block_invokes_callback(
             activity_log_sink=_sink,
             on_immediate_breach=_immediate,
             on_emergency_input=_emergency,
+            loop=_make_counted_loop(1),
         )
-
-    await _drive_loop(
-        _go,
-        ticks=1,
-        tick_sentinels=[],
-        sleep_calls=sleep_calls,
-        monkeypatch=monkeypatch,
-        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
-    )
 
     # `single_short_max_pct` is an immediate-action rule per the registry; ensure
     # the callback fired exactly once with that rule.
@@ -580,9 +551,7 @@ async def test_immediate_action_hard_block_invokes_callback(
 
 
 @pytest.mark.asyncio
-async def test_deferred_breach_does_not_invoke_immediate_callback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_deferred_breach_does_not_invoke_immediate_callback() -> None:
     """A deferred-classification rule in BLOCKED → recorded in evaluations,
     but ``on_immediate_breach`` is NOT invoked."""
     repo = _StubRepository(
@@ -626,9 +595,7 @@ async def test_deferred_breach_does_not_invoke_immediate_callback(
     async def _regime() -> RegimeAdaptationOutput:
         return _regime_output()
 
-    sleep_calls: list[float] = []
-
-    async def _go() -> None:
+    with pytest.raises(asyncio.CancelledError):
         await run_breach_loop(
             _session(),
             _config(),
@@ -645,16 +612,8 @@ async def test_deferred_breach_does_not_invoke_immediate_callback(
             activity_log_sink=_sink,
             on_immediate_breach=_immediate,
             on_emergency_input=_emergency,
+            loop=_make_counted_loop(1),
         )
-
-    await _drive_loop(
-        _go,
-        ticks=1,
-        tick_sentinels=[],
-        sleep_calls=sleep_calls,
-        monkeypatch=monkeypatch,
-        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
-    )
 
     assert immediate.calls == []
     assert len(emergency.calls) == 1
@@ -669,7 +628,7 @@ async def test_deferred_breach_does_not_invoke_immediate_callback(
 
 
 @pytest.mark.asyncio
-async def test_market_closed_pauses_evaluation(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_market_closed_pauses_evaluation() -> None:
     """Outside market hours → no evaluation, no callbacks, no events."""
     repo = _StubRepository(
         drawdown_states=[_drawdown_state()],
@@ -696,9 +655,8 @@ async def test_market_closed_pauses_evaluation(monkeypatch: pytest.MonkeyPatch) 
         return _regime_output()
 
     market_hours = _StubMarketHours(open_flag=False)
-    sleep_calls: list[float] = []
 
-    async def _go() -> None:
+    with pytest.raises(asyncio.CancelledError):
         await run_breach_loop(
             _session(),
             _config(),
@@ -715,16 +673,8 @@ async def test_market_closed_pauses_evaluation(monkeypatch: pytest.MonkeyPatch) 
             activity_log_sink=_sink,
             on_immediate_breach=_immediate,
             on_emergency_input=_emergency,
+            loop=_make_counted_loop(2),
         )
-
-    await _drive_loop(
-        _go,
-        ticks=2,
-        tick_sentinels=[],
-        sleep_calls=sleep_calls,
-        monkeypatch=monkeypatch,
-        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
-    )
 
     assert immediate.calls == []
     assert emergency.calls == []
@@ -732,25 +682,43 @@ async def test_market_closed_pauses_evaluation(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.asyncio
-async def test_loop_beats_watchdog_each_tick(monkeypatch: pytest.MonkeyPatch) -> None:
-    """ALP-819: the loop feeds the supervisor stall watchdog a heartbeat on
-    every tick — including while the market is closed — so a hung breach loop
-    (the risk-supervision heartbeat) trips ``os._exit(1)`` → NSSM restart.
+async def test_loop_beats_watchdog_via_supervised_loop() -> None:
+    """ALP-831 AC 5: breach_loop is bound at its cadence and beats on every tick —
+    including closed-market ticks — via the production supervised_loop seam.
+
+    This test drives the loop through a REAL MonitorSupervisor with an injected
+    sleep shim.  The supervisor.beat()/register_watch() path is exercised by
+    supervised_loop itself; we assert (a) the watchdog entry for 'breach_loop'
+    has a positive last_beat after two iterations, and (b) the loop completed
+    both iterations despite the market being closed (i.e. beats on closed ticks).
     """
+    sleep_calls: list[float] = []
+    call_count = {"n": 0}
+    real_sleep = asyncio.sleep
+
+    async def _fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        call_count["n"] += 1
+        # Cancel after 2 iterations so the loop is bounded.
+        if call_count["n"] >= 2:
+            await real_sleep(0)
+            raise asyncio.CancelledError
+        await real_sleep(0)
+
+    import time
+
+    monotonic_calls: list[float] = []
+    _base = time.monotonic()
+
+    def _fake_monotonic() -> float:
+        t = _base + len(monotonic_calls) * 0.1
+        monotonic_calls.append(t)
+        return t
+
     repo = _StubRepository(
         drawdown_states=[_drawdown_state()],
         active_risk_parameters=_active_risk_parameters(),
     )
-    beats: list[int] = []
-
-    async def _immediate(result: BreachLoopResult, evaluation: RuleEvaluation) -> None:
-        del result, evaluation
-
-    async def _emergency(result: BreachLoopResult) -> None:
-        del result
-
-    async def _sink(_entries: Iterable[ActivityLogEntry]) -> None:
-        return None
 
     async def _snapshot() -> LibrarySnapshot:
         return _library_snapshot()
@@ -758,13 +726,29 @@ async def test_loop_beats_watchdog_each_tick(monkeypatch: pytest.MonkeyPatch) ->
     async def _regime() -> RegimeAdaptationOutput:
         return _regime_output()
 
-    market_hours = _StubMarketHours(open_flag=False)
-    sleep_calls: list[float] = []
+    async def _immediate(_result: BreachLoopResult, _evaluation: RuleEvaluation) -> None:
+        return None
 
-    async def _go() -> None:
+    async def _emergency(_result: BreachLoopResult) -> None:
+        return None
+
+    async def _sink(_entries: Iterable[ActivityLogEntry]) -> None:
+        return None
+
+    config = _config(cadence_s=30)
+    session = _session()
+
+    supervisor = MonitorSupervisor(
+        session=session,
+        config=config,
+        sleep=_fake_sleep,
+        monotonic=_fake_monotonic,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
         await run_breach_loop(
-            _session(),
-            _config(),
+            session,
+            config,
             repository=cast(PortfolioStateRepository, repo),
             cache=_cache(),
             snapshot_provider=_snapshot,
@@ -774,29 +758,28 @@ async def test_loop_beats_watchdog_each_tick(monkeypatch: pytest.MonkeyPatch) ->
             iv_provider=_FixtureIvProvider(),
             risk_free_rate=0.045,
             breach_response_lookup=_breach_response_lookup(),
-            market_hours=market_hours,
+            market_hours=_StubMarketHours(open_flag=False),  # closed → beats still fire
             activity_log_sink=_sink,
             on_immediate_breach=_immediate,
             on_emergency_input=_emergency,
-            beat=lambda: beats.append(1),
+            loop=lambda: supervisor.supervised_loop(
+                "breach_loop", float(config.breach_evaluation_cadence_seconds)
+            ),
         )
 
-    await _drive_loop(
-        _go,
-        ticks=2,
-        tick_sentinels=[],
-        sleep_calls=sleep_calls,
-        monkeypatch=monkeypatch,
-        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
-    )
-
-    assert beats  # heartbeat fired despite the market being closed
+    # The watchdog entry for breach_loop must exist and have been beaten.
+    entry = supervisor._watch.get("breach_loop")
+    assert entry is not None, "breach_loop was not registered in the watchdog"
+    assert entry.last_beat is not None, "breach_loop never beat the watchdog"
+    # The bound must be cadence * multiplier (30 * 10.0 = 300s).
+    assert entry.bound_seconds == pytest.approx(300.0)
+    # The loop must have slept at the cadence (proves pacing is driven by supervised_loop).
+    assert sleep_calls, "supervised_loop never slept — beat + pacing not driven"
+    assert sleep_calls[0] == pytest.approx(30.0)
 
 
 @pytest.mark.asyncio
-async def test_halt_onset_emits_halt_activated_then_persists_silent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_halt_onset_emits_halt_activated_then_persists_silent() -> None:
     """Drawdown crossing the daily limit triggers HALT_ACTIVATED on tick 1;
     persistence at the limit on tick 2 emits no event."""
     # Two ticks: tick 1 → daily drawdown 5.0 (==limit 5.0) → halt active.
@@ -826,9 +809,7 @@ async def test_halt_onset_emits_halt_activated_then_persists_silent(
     async def _regime() -> RegimeAdaptationOutput:
         return _regime_output()
 
-    sleep_calls: list[float] = []
-
-    async def _go() -> None:
+    with pytest.raises(asyncio.CancelledError):
         await run_breach_loop(
             _session(),
             _config(),
@@ -845,16 +826,8 @@ async def test_halt_onset_emits_halt_activated_then_persists_silent(
             activity_log_sink=_sink,
             on_immediate_breach=_immediate,
             on_emergency_input=_emergency,
+            loop=_make_counted_loop(2),
         )
-
-    await _drive_loop(
-        _go,
-        ticks=2,
-        tick_sentinels=[],
-        sleep_calls=sleep_calls,
-        monkeypatch=monkeypatch,
-        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
-    )
 
     # Tick 1 should emit one HALT_ACTIVATED; tick 2 should emit zero entries.
     entries_per_tick = [calls[0] for calls in activity_log.calls]
@@ -871,7 +844,7 @@ async def test_halt_onset_emits_halt_activated_then_persists_silent(
 
 
 @pytest.mark.asyncio
-async def test_cumulative_tier3_halt_onset_and_lift(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_cumulative_tier3_halt_onset_and_lift() -> None:
     """Cumulative drawdown crossing the tier-3 threshold triggers HALT_ACTIVATED
     (halt_type=cumulative_drawdown_tier3); a subsequent recovery emits HALT_LIFTED."""
     tiers = _progressive_tiers()
@@ -900,9 +873,7 @@ async def test_cumulative_tier3_halt_onset_and_lift(monkeypatch: pytest.MonkeyPa
     async def _regime() -> RegimeAdaptationOutput:
         return _regime_output()
 
-    sleep_calls: list[float] = []
-
-    async def _go() -> None:
+    with pytest.raises(asyncio.CancelledError):
         await run_breach_loop(
             _session(),
             _config(),
@@ -919,16 +890,8 @@ async def test_cumulative_tier3_halt_onset_and_lift(monkeypatch: pytest.MonkeyPa
             activity_log_sink=_sink,
             on_immediate_breach=_immediate,
             on_emergency_input=_emergency,
+            loop=_make_counted_loop(2),
         )
-
-    await _drive_loop(
-        _go,
-        ticks=2,
-        tick_sentinels=[],
-        sleep_calls=sleep_calls,
-        monkeypatch=monkeypatch,
-        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
-    )
 
     # Tick 1 must include HALT_ACTIVATED with halt_type cumulative_drawdown_tier3.
     tick_1 = activity_log.calls[0][0]
@@ -968,6 +931,12 @@ async def test_cancellation_propagates_cleanly() -> None:
     async def _regime() -> RegimeAdaptationOutput:
         return _regime_output()
 
+    # Use a loop that never cancels on its own so we can test external cancel.
+    async def _infinite_loop() -> AsyncIterator[None]:
+        while True:
+            yield
+            await asyncio.sleep(3600)
+
     async def _go() -> None:
         await run_breach_loop(
             _session(),
@@ -985,6 +954,7 @@ async def test_cancellation_propagates_cleanly() -> None:
             activity_log_sink=_sink,
             on_immediate_breach=_immediate,
             on_emergency_input=_emergency,
+            loop=_infinite_loop,
         )
 
     task = asyncio.create_task(_go())
@@ -997,9 +967,7 @@ async def test_cancellation_propagates_cleanly() -> None:
 
 
 @pytest.mark.asyncio
-async def test_determinism_identical_inputs_produce_identical_result(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_determinism_identical_inputs_produce_identical_result() -> None:
     """Same inputs on consecutive ticks → identical ``BreachLoopResult.rule_evaluations``."""
     repo = _StubRepository(
         drawdown_states=[_drawdown_state(), _drawdown_state()],
@@ -1025,9 +993,7 @@ async def test_determinism_identical_inputs_produce_identical_result(
     # Pin ``now`` so both ticks share an as_of.
     fixed = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
 
-    sleep_calls: list[float] = []
-
-    async def _go() -> None:
+    with pytest.raises(asyncio.CancelledError):
         await run_breach_loop(
             _session(),
             _config(),
@@ -1045,16 +1011,8 @@ async def test_determinism_identical_inputs_produce_identical_result(
             on_immediate_breach=_immediate,
             on_emergency_input=_emergency,
             now=lambda: fixed,
+            loop=_make_counted_loop(2),
         )
-
-    await _drive_loop(
-        _go,
-        ticks=2,
-        tick_sentinels=[],
-        sleep_calls=sleep_calls,
-        monkeypatch=monkeypatch,
-        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
-    )
 
     first = emergency.calls[0][0]
     second = emergency.calls[1][0]
@@ -1084,9 +1042,7 @@ def _noop_callbacks() -> tuple[
 
 
 @pytest.mark.asyncio
-async def test_breach_loop_sustained_failure_alert_fires_then_clears(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_breach_loop_sustained_failure_alert_fires_then_clears() -> None:
     """N consecutive failed ticks fire one degraded signal; the first success clears it.
 
     Threshold 2; the snapshot provider raises on ticks 1-3 then succeeds on
@@ -1113,9 +1069,7 @@ async def test_breach_loop_sustained_failure_alert_fires_then_clears(
     async def _regime() -> RegimeAdaptationOutput:
         return _regime_output()
 
-    sleep_calls: list[float] = []
-
-    async def _go() -> None:
+    with pytest.raises(asyncio.CancelledError):
         await run_breach_loop(
             _session(),
             _config(failure_threshold=2),
@@ -1133,16 +1087,8 @@ async def test_breach_loop_sustained_failure_alert_fires_then_clears(
             on_immediate_breach=immediate,
             on_emergency_input=emergency,
             on_health_signal=_on_health,
+            loop=_make_counted_loop(4),
         )
-
-    await _drive_loop(
-        _go,
-        ticks=4,
-        tick_sentinels=[],
-        sleep_calls=sleep_calls,
-        monkeypatch=monkeypatch,
-        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
-    )
 
     signals = [c[0] for c in health.calls]
     # Exactly one degraded then one recovered — the alert fires once on
@@ -1158,9 +1104,7 @@ async def test_breach_loop_sustained_failure_alert_fires_then_clears(
 
 
 @pytest.mark.asyncio
-async def test_breach_loop_below_threshold_failures_do_not_fire_alert(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_breach_loop_below_threshold_failures_do_not_fire_alert() -> None:
     """Failures that never reach the threshold raise no health signal."""
     repo = _StubRepository(
         drawdown_states=[_drawdown_state()],
@@ -1184,9 +1128,7 @@ async def test_breach_loop_below_threshold_failures_do_not_fire_alert(
     async def _regime() -> RegimeAdaptationOutput:
         return _regime_output()
 
-    sleep_calls: list[float] = []
-
-    async def _go() -> None:
+    with pytest.raises(asyncio.CancelledError):
         await run_breach_loop(
             _session(),
             _config(failure_threshold=3),
@@ -1204,24 +1146,14 @@ async def test_breach_loop_below_threshold_failures_do_not_fire_alert(
             on_immediate_breach=immediate,
             on_emergency_input=emergency,
             on_health_signal=_on_health,
+            loop=_make_counted_loop(3),
         )
-
-    await _drive_loop(
-        _go,
-        ticks=3,
-        tick_sentinels=[],
-        sleep_calls=sleep_calls,
-        monkeypatch=monkeypatch,
-        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
-    )
 
     assert health.calls == []
 
 
 @pytest.mark.asyncio
-async def test_breach_loop_faulty_health_sink_does_not_kill_loop(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_breach_loop_faulty_health_sink_does_not_kill_loop() -> None:
     """A health sink that raises must not crash the loop — resilience is the point."""
     repo = _StubRepository(
         drawdown_states=[_drawdown_state()],
@@ -1238,9 +1170,18 @@ async def test_breach_loop_faulty_health_sink_does_not_kill_loop(
     async def _regime() -> RegimeAdaptationOutput:
         return _regime_output()
 
-    sleep_calls: list[float] = []
+    # The loop must keep ticking (and the fake loop iterator still runs) despite
+    # the sink raising on every degraded emit.
+    iterations = {"n": 0}
 
-    async def _go() -> None:
+    async def _counting_loop() -> AsyncIterator[None]:
+        for _ in range(3):
+            iterations["n"] += 1
+            yield
+            await asyncio.sleep(0)
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
         await run_breach_loop(
             _session(),
             _config(failure_threshold=1),
@@ -1258,20 +1199,10 @@ async def test_breach_loop_faulty_health_sink_does_not_kill_loop(
             on_immediate_breach=immediate,
             on_emergency_input=emergency,
             on_health_signal=_on_health,
+            loop=_counting_loop,
         )
 
-    # The loop must keep ticking (and sleeping) despite the sink raising on
-    # every degraded emit; _drive_loop cancels it after 3 ticks.
-    await _drive_loop(
-        _go,
-        ticks=3,
-        tick_sentinels=[],
-        sleep_calls=sleep_calls,
-        monkeypatch=monkeypatch,
-        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
-    )
-
-    assert sleep_calls == [60.0, 60.0, 60.0]
+    assert iterations["n"] == 3
 
 
 # ---------------------------------------------------------------------------
@@ -1313,11 +1244,42 @@ def _library_snapshot_with_position(ticker: str) -> LibrarySnapshot:
     )
 
 
+class _SwappableCache:
+    """Proxy cache that rotates through a list of real caches across ticks.
+
+    Exposes ``read_all``, ``get_all``, ``global_staleness``, and ``update``
+    so the breach-loop can call all its cache methods.  The ``_i`` index is
+    advanced by the test's loop iterator after each yield.
+    """
+
+    def __init__(self, delegates: list[UnderlyingPriceCache]) -> None:
+        self._delegates = delegates
+        self._i = 0
+
+    def read_all(self, tickers: Any, *, as_of: datetime, max_age_seconds: float) -> Any:
+        return self._delegates[self._i].read_all(
+            tickers, as_of=as_of, max_age_seconds=max_age_seconds
+        )
+
+    def get_all(self) -> Any:
+        return self._delegates[self._i].get_all()
+
+    def global_staleness(
+        self, *, as_of: datetime, max_age_seconds: float, expected_tickers: Any
+    ) -> Any:
+        return self._delegates[self._i].global_staleness(
+            as_of=as_of,
+            max_age_seconds=max_age_seconds,
+            expected_tickers=expected_tickers,
+        )
+
+    async def update(self, _quote: UnderlyingQuote) -> None:
+        return None
+
+
 def _stale_cache(ticker: str, *, price: float, age_seconds: float) -> UnderlyingPriceCache:
     """Cache with one quote whose as_of is ``age_seconds`` before the tick time used
     in these tests (2026-05-11T14:30:00Z)."""
-    from datetime import timedelta
-
     tick_time = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
     quote_time = tick_time - timedelta(seconds=age_seconds)
     cache = UnderlyingPriceCache()
@@ -1327,14 +1289,12 @@ def _stale_cache(ticker: str, *, price: float, age_seconds: float) -> Underlying
 
 
 @pytest.mark.asyncio
-async def test_stale_price_escalates_to_degraded_after_n_cycles(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_stale_price_escalates_to_degraded_after_n_cycles() -> None:
     """A stale price for an open position fires DEGRADED after N consecutive cycles.
 
-    threshold=1; IBM quote is 2h old (7200s >> 60s max_price_age); the first
-    successful tick returns had_stale=True → stale_consecutive_count=1 >= threshold
-    → DEGRADED emitted exactly once.
+    threshold=1; IBM quote is 2h old (7200s >> 60s underlying_price_max_age_seconds);
+    the first successful tick returns had_stale=True → stale_consecutive_count=1
+    >= threshold → DEGRADED emitted exactly once.
     """
     repo = _StubRepository(
         drawdown_states=[_drawdown_state()],
@@ -1352,14 +1312,13 @@ async def test_stale_price_escalates_to_degraded_after_n_cycles(
     async def _regime() -> RegimeAdaptationOutput:
         return _regime_output()
 
-    sleep_calls: list[float] = []
-    # IBM price is 2 hours old; max_price_age_seconds=60 → stale
+    # IBM price is 2 hours old; underlying_price_max_age_seconds=60 → stale
     cache = _stale_cache("IBM", price=200.0, age_seconds=7200.0)
 
-    async def _go() -> None:
+    with pytest.raises(asyncio.CancelledError):
         await run_breach_loop(
             _session(),
-            _config(failure_threshold=1),
+            _config(failure_threshold=1, underlying_price_max_age_seconds=60.0),
             repository=cast(PortfolioStateRepository, repo),
             cache=cache,
             snapshot_provider=_snapshot,
@@ -1374,31 +1333,27 @@ async def test_stale_price_escalates_to_degraded_after_n_cycles(
             on_immediate_breach=immediate,
             on_emergency_input=emergency,
             on_health_signal=_on_health,
-            max_price_age_seconds=60.0,
             now=lambda: datetime(2026, 5, 11, 14, 30, tzinfo=UTC),
+            loop=_make_counted_loop(1),
         )
 
-    await _drive_loop(
-        _go,
-        ticks=1,
-        tick_sentinels=[],
-        sleep_calls=sleep_calls,
-        monkeypatch=monkeypatch,
-        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
-    )
-
     # One DEGRADED signal fired after 1 stale cycle (threshold=1).
-    assert len(health.calls) == 1
-    signal = health.calls[0][0]
+    # (May also include a global-stale signal since only stale/missing entries.)
+    degraded_signals = [c[0] for c in health.calls if c[0].degraded]
+    stale_degraded = [
+        s for s in degraded_signals if s.last_error == "stale/missing underlying price"
+    ]
+    # Exactly one per-ticker DEGRADED (fires-once debounce, ALP-770); the global-stale
+    # signal co-fires on this all-stale tick under a distinct last_error and is excluded.
+    assert len(stale_degraded) == 1
+    signal = stale_degraded[0]
     assert signal.degraded is True
     assert signal.consecutive_failures == 1
     assert signal.last_error is not None
 
 
 @pytest.mark.asyncio
-async def test_missing_price_escalates_to_degraded_after_n_cycles(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_missing_price_escalates_to_degraded_after_n_cycles() -> None:
     """An open position with no cache entry at all fires DEGRADED (treated as missing).
 
     threshold=1; IBM has an open position but is absent from the cache.
@@ -1419,12 +1374,10 @@ async def test_missing_price_escalates_to_degraded_after_n_cycles(
     async def _regime() -> RegimeAdaptationOutput:
         return _regime_output()
 
-    sleep_calls: list[float] = []
-
-    async def _go() -> None:
+    with pytest.raises(asyncio.CancelledError):
         await run_breach_loop(
             _session(),
-            _config(failure_threshold=1),
+            _config(failure_threshold=1, underlying_price_max_age_seconds=60.0),
             repository=cast(PortfolioStateRepository, repo),
             cache=_cache(),  # empty — IBM absent
             snapshot_provider=_snapshot,
@@ -1439,27 +1392,19 @@ async def test_missing_price_escalates_to_degraded_after_n_cycles(
             on_immediate_breach=immediate,
             on_emergency_input=emergency,
             on_health_signal=_on_health,
-            max_price_age_seconds=60.0,
             now=lambda: datetime(2026, 5, 11, 14, 30, tzinfo=UTC),
+            loop=_make_counted_loop(1),
         )
 
-    await _drive_loop(
-        _go,
-        ticks=1,
-        tick_sentinels=[],
-        sleep_calls=sleep_calls,
-        monkeypatch=monkeypatch,
-        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
-    )
-
-    assert len(health.calls) == 1
-    assert health.calls[0][0].degraded is True
+    degraded_calls = [c[0] for c in health.calls if c[0].degraded]
+    stale_degraded = [s for s in degraded_calls if s.last_error == "stale/missing underlying price"]
+    # Exactly one per-ticker DEGRADED for the missing-as-stale escalation (fires-once
+    # debounce, ALP-770); the global-stale signal co-fires under a distinct last_error.
+    assert len(stale_degraded) == 1
 
 
 @pytest.mark.asyncio
-async def test_stale_price_escalation_recovers_when_fresh(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_stale_price_escalation_recovers_when_fresh() -> None:
     """After a stale-price DEGRADED escalation, a fresh price emits RECOVERED.
 
     threshold=1; tick 1 has a stale IBM price → DEGRADED; tick 2 has a fresh
@@ -1486,44 +1431,20 @@ async def test_stale_price_escalation_recovers_when_fresh(
     # Tick 1: stale (2 h old quote); ticks 2+: fresh (5 s old).
     stale_c = _stale_cache("IBM", price=200.0, age_seconds=7200.0)
     fresh_c = _stale_cache("IBM", price=200.0, age_seconds=5.0)
-    caches = [stale_c, fresh_c, fresh_c]
+    swappable: Any = _SwappableCache([stale_c, fresh_c, fresh_c])
 
-    # Use a proxy cache that delegates to a swappable underlying so we can
-    # switch from stale → fresh between ticks without reconstructing the loop.
-    class _SwappableCache:
-        def __init__(self) -> None:
-            self._delegates = caches
-            self._i = 0
-
-        def get_all(self) -> Any:
-            return self._delegates[self._i].get_all()
-
-        async def update(self, _quote: UnderlyingQuote) -> None:
-            return None
-
-    swappable: Any = _SwappableCache()
-    real_sleep = asyncio.sleep
-    sleep_count = {"n": 0}
-    sleep_calls: list[float] = []
-
-    async def _fake_sleep(delay: float) -> None:
-        sleep_calls.append(delay)
-        sleep_count["n"] += 1
-        swappable._i = min(swappable._i + 1, len(caches) - 1)
-        if sleep_count["n"] >= 3:
-            await real_sleep(0)
-            raise asyncio.CancelledError
-        await real_sleep(0)
-
-    monkeypatch.setattr(
-        "alphamind.execution.continuous_monitor.breach_loop.task.asyncio.sleep",
-        _fake_sleep,
-    )
+    # Use a loop that advances the swappable cache index after each tick.
+    async def _counted_swap_loop() -> AsyncIterator[None]:
+        for _ in range(3):
+            yield
+            swappable._i = min(swappable._i + 1, 2)
+            await asyncio.sleep(0)
+        raise asyncio.CancelledError
 
     with pytest.raises(asyncio.CancelledError):
         await run_breach_loop(
             _session(),
-            _config(failure_threshold=1),
+            _config(failure_threshold=1, underlying_price_max_age_seconds=60.0),
             repository=cast(PortfolioStateRepository, repo),
             cache=cast(Any, swappable),
             snapshot_provider=_snapshot,
@@ -1538,20 +1459,20 @@ async def test_stale_price_escalation_recovers_when_fresh(
             on_immediate_breach=immediate,
             on_emergency_input=emergency,
             on_health_signal=_on_health,
-            max_price_age_seconds=60.0,
             now=lambda: tick_time,
+            loop=_counted_swap_loop,
         )
 
-    # Tick 1 stale → DEGRADED; tick 2 fresh → RECOVERED; tick 3 fresh → no further.
-    assert len(health.calls) == 2
-    assert health.calls[0][0].degraded is True  # DEGRADED on tick 1
-    assert health.calls[1][0].degraded is False  # RECOVERED on tick 2
+    # Tick 1 stale → DEGRADED; tick 2 fresh → RECOVERED; tick 3 fresh → none.
+    stale_error = "stale/missing underlying price"
+    degraded = [c[0] for c in health.calls if c[0].degraded and c[0].last_error == stale_error]
+    recovered = [c[0] for c in health.calls if not c[0].degraded]
+    assert len(degraded) == 1  # DEGRADED on tick 1
+    assert len(recovered) == 1  # RECOVERED on tick 2
 
 
 @pytest.mark.asyncio
-async def test_fresh_price_no_escalation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_fresh_price_no_escalation() -> None:
     """A fresh price for an open position never triggers the stale-price DEGRADED path."""
     repo = _StubRepository(
         drawdown_states=[_drawdown_state(), _drawdown_state()],
@@ -1569,14 +1490,13 @@ async def test_fresh_price_no_escalation(
     async def _regime() -> RegimeAdaptationOutput:
         return _regime_output()
 
-    # IBM quote is 5 s old; max_price_age_seconds=60 → fresh
+    # IBM quote is 5 s old; underlying_price_max_age_seconds=60 → fresh
     cache = _stale_cache("IBM", price=200.0, age_seconds=5.0)
-    sleep_calls: list[float] = []
 
-    async def _go() -> None:
+    with pytest.raises(asyncio.CancelledError):
         await run_breach_loop(
             _session(),
-            _config(failure_threshold=1),
+            _config(failure_threshold=1, underlying_price_max_age_seconds=60.0),
             repository=cast(PortfolioStateRepository, repo),
             cache=cache,
             snapshot_provider=_snapshot,
@@ -1591,18 +1511,244 @@ async def test_fresh_price_no_escalation(
             on_immediate_breach=immediate,
             on_emergency_input=emergency,
             on_health_signal=_on_health,
-            max_price_age_seconds=60.0,
             now=lambda: datetime(2026, 5, 11, 14, 30, tzinfo=UTC),
+            loop=_make_counted_loop(2),
         )
 
-    await _drive_loop(
-        _go,
-        ticks=2,
-        tick_sentinels=[],
-        sleep_calls=sleep_calls,
-        monkeypatch=monkeypatch,
-        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
-    )
+    # No stale/missing health signals: price is fresh the whole time.
+    stale_signals = [
+        c[0] for c in health.calls if c[0].last_error == "stale/missing underlying price"
+    ]
+    assert stale_signals == []
 
-    # No health signals: price is fresh the whole time.
-    assert health.calls == []
+
+# ---------------------------------------------------------------------------
+# ALP-831 — new ACs: config-driven threshold, global-stale emitter
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_loop_reads_underlying_price_max_age_from_config() -> None:
+    """ALP-831 AC 2: the loop reads config.underlying_price_max_age_seconds.
+
+    A quote 70s old is stale at threshold=60s and fresh at threshold=900s.
+    The config fixture controls which branch fires without any local default
+    parameter — there is no local max_price_age_seconds to pass.
+    """
+    repo = _StubRepository(
+        drawdown_states=[_drawdown_state()],
+        active_risk_parameters=_active_risk_parameters(),
+    )
+    immediate, emergency, sink = _noop_callbacks()
+    health_60 = _CallableRecord()
+    health_900 = _CallableRecord()
+
+    def _on_health_60(signal: BreachLoopHealthSignal) -> None:
+        health_60.calls.append((signal,))
+
+    def _on_health_900(signal: BreachLoopHealthSignal) -> None:
+        health_900.calls.append((signal,))
+
+    async def _snapshot() -> LibrarySnapshot:
+        return _library_snapshot_with_position("AAPL")
+
+    async def _regime() -> RegimeAdaptationOutput:
+        return _regime_output()
+
+    # AAPL quote is 70 s old.
+    tick_time = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
+    cache = _stale_cache("AAPL", price=180.0, age_seconds=70.0)
+
+    # --- With threshold 60s: 70s > 60s → stale → DEGRADED after 1 cycle ---
+    with pytest.raises(asyncio.CancelledError):
+        await run_breach_loop(
+            _session(),
+            _config(failure_threshold=1, underlying_price_max_age_seconds=60.0),
+            repository=cast(PortfolioStateRepository, repo),
+            cache=cache,
+            snapshot_provider=_snapshot,
+            regime_provider=_regime,
+            progressive_tiers=_progressive_tiers(),
+            library_config_factory=_library_config,
+            iv_provider=_FixtureIvProvider(),
+            risk_free_rate=0.045,
+            breach_response_lookup=_breach_response_lookup(),
+            market_hours=_StubMarketHours(open_flag=True),
+            activity_log_sink=sink,
+            on_immediate_breach=immediate,
+            on_emergency_input=emergency,
+            on_health_signal=_on_health_60,
+            now=lambda: tick_time,
+            loop=_make_counted_loop(1),
+        )
+
+    stale_signals_60 = [
+        c[0] for c in health_60.calls if c[0].last_error == "stale/missing underlying price"
+    ]
+    assert len(stale_signals_60) == 1, "expected DEGRADED at 60s threshold"
+
+    # --- With threshold 900s: 70s < 900s → fresh → no stale escalation ---
+    repo2 = _StubRepository(
+        drawdown_states=[_drawdown_state()],
+        active_risk_parameters=_active_risk_parameters(),
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await run_breach_loop(
+            _session(),
+            _config(failure_threshold=1, underlying_price_max_age_seconds=900.0),
+            repository=cast(PortfolioStateRepository, repo2),
+            cache=cache,
+            snapshot_provider=_snapshot,
+            regime_provider=_regime,
+            progressive_tiers=_progressive_tiers(),
+            library_config_factory=_library_config,
+            iv_provider=_FixtureIvProvider(),
+            risk_free_rate=0.045,
+            breach_response_lookup=_breach_response_lookup(),
+            market_hours=_StubMarketHours(open_flag=True),
+            activity_log_sink=sink,
+            on_immediate_breach=immediate,
+            on_emergency_input=emergency,
+            on_health_signal=_on_health_900,
+            now=lambda: tick_time,
+            loop=_make_counted_loop(1),
+        )
+
+    stale_signals_900 = [
+        c[0] for c in health_900.calls if c[0].last_error == "stale/missing underlying price"
+    ]
+    assert stale_signals_900 == [], "expected no DEGRADED at 900s threshold for 70s old quote"
+
+
+@pytest.mark.asyncio
+async def test_global_stale_emits_distinct_last_error() -> None:
+    """ALP-831 AC 4: when all expected tickers are stale/missing, the emitted
+    health signal carries last_error == 'underlying price feed globally stale —
+    writer wedged', separable from the per-ticker-lag escalation string.
+    """
+    repo = _StubRepository(
+        drawdown_states=[_drawdown_state()],
+        active_risk_parameters=_active_risk_parameters(),
+    )
+    immediate, emergency, sink = _noop_callbacks()
+    health = _CallableRecord()
+
+    def _on_health(signal: BreachLoopHealthSignal) -> None:
+        health.calls.append((signal,))
+
+    async def _snapshot() -> LibrarySnapshot:
+        # One open position on IBM.
+        return _library_snapshot_with_position("IBM")
+
+    async def _regime() -> RegimeAdaptationOutput:
+        return _regime_output()
+
+    tick_time = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
+    # IBM quote is 2 h old (stale); cache otherwise empty → whole feed cold.
+    cache = _stale_cache("IBM", price=200.0, age_seconds=7200.0)
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_breach_loop(
+            _session(),
+            _config(failure_threshold=5, underlying_price_max_age_seconds=60.0),
+            repository=cast(PortfolioStateRepository, repo),
+            cache=cache,
+            snapshot_provider=_snapshot,
+            regime_provider=_regime,
+            progressive_tiers=_progressive_tiers(),
+            library_config_factory=_library_config,
+            iv_provider=_FixtureIvProvider(),
+            risk_free_rate=0.045,
+            breach_response_lookup=_breach_response_lookup(),
+            market_hours=_StubMarketHours(open_flag=True),
+            activity_log_sink=sink,
+            on_immediate_breach=immediate,
+            on_emergency_input=emergency,
+            on_health_signal=_on_health,
+            now=lambda: tick_time,
+            loop=_make_counted_loop(1),
+        )
+
+    # The global-stale signal must appear with the distinct error string.
+    global_stale_signals = [
+        c[0]
+        for c in health.calls
+        if c[0].last_error == "underlying price feed globally stale — writer wedged"
+    ]
+    assert len(global_stale_signals) >= 1
+    assert global_stale_signals[0].degraded is True
+
+
+@pytest.mark.asyncio
+async def test_global_stale_signal_latches_and_rearms_on_recovery() -> None:
+    """ALP-825 review: the global-stale (cold-feed) signal fires once on onset,
+    debounces while the feed stays cold, and re-arms when the feed recovers.
+
+    Five ticks: cold, cold, fresh, cold, cold. The latch must emit the
+    global-stale signal on tick 1 (onset), suppress it on tick 2 (still cold),
+    re-arm on tick 3 (feed fresh), and emit again on tick 4 (new onset) — so
+    exactly TWO global-stale signals across the run, not one per cold tick.
+    Mirrors the per-ticker ``stale_degraded`` latch behaviour.
+    """
+    repo = _StubRepository(
+        drawdown_states=[_drawdown_state() for _ in range(5)],
+        active_risk_parameters=_active_risk_parameters(),
+    )
+    immediate, emergency, sink = _noop_callbacks()
+    health = _CallableRecord()
+
+    def _on_health(signal: BreachLoopHealthSignal) -> None:
+        health.calls.append((signal,))
+
+    async def _snapshot() -> LibrarySnapshot:
+        return _library_snapshot_with_position("IBM")
+
+    async def _regime() -> RegimeAdaptationOutput:
+        return _regime_output()
+
+    tick_time = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
+    stale_c = _stale_cache("IBM", price=200.0, age_seconds=7200.0)
+    fresh_c = _stale_cache("IBM", price=200.0, age_seconds=5.0)
+    # cold, cold, fresh, cold, cold
+    swappable: Any = _SwappableCache([stale_c, stale_c, fresh_c, stale_c, stale_c])
+
+    async def _counted_swap_loop() -> AsyncIterator[None]:
+        for _ in range(5):
+            yield
+            swappable._i = min(swappable._i + 1, 4)
+            await asyncio.sleep(0)
+        raise asyncio.CancelledError
+
+    # failure_threshold high so the per-ticker stale escalation never latches —
+    # isolates the global-stale latch under test.
+    with pytest.raises(asyncio.CancelledError):
+        await run_breach_loop(
+            _session(),
+            _config(failure_threshold=100, underlying_price_max_age_seconds=60.0),
+            repository=cast(PortfolioStateRepository, repo),
+            cache=cast(Any, swappable),
+            snapshot_provider=_snapshot,
+            regime_provider=_regime,
+            progressive_tiers=_progressive_tiers(),
+            library_config_factory=_library_config,
+            iv_provider=_FixtureIvProvider(),
+            risk_free_rate=0.045,
+            breach_response_lookup=_breach_response_lookup(),
+            market_hours=_StubMarketHours(open_flag=True),
+            activity_log_sink=sink,
+            on_immediate_breach=immediate,
+            on_emergency_input=emergency,
+            on_health_signal=_on_health,
+            now=lambda: tick_time,
+            loop=_counted_swap_loop,
+        )
+
+    global_stale_signals = [
+        c[0]
+        for c in health.calls
+        if c[0].last_error == "underlying price feed globally stale — writer wedged"
+    ]
+    # Onset on tick 1, suppressed on tick 2, re-armed on tick 3 (fresh), new
+    # onset on tick 4, suppressed on tick 5 → exactly two emits.
+    assert len(global_stale_signals) == 2
+    assert all(s.degraded is True for s in global_stale_signals)
