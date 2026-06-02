@@ -193,6 +193,24 @@ class ContinuousMonitorConfig(BaseModel):
         ),
     )
 
+    underlying_stream_stale_timeout_seconds: int = Field(
+        default=60,
+        ge=10,
+        description=(
+            "Seconds of underlying-price quote silence during RTH before the "
+            "underlying-stream consumer forces a budget-neutral reconnect (ALP-832). "
+            "IEX equity quotes are continuous during RTH (unlike sparse fills), "
+            "so this threshold is far tighter than fill_stream_stale_timeout_seconds. "
+            "A needless reconnect is cheap (re-subscribe re-primes the cache) "
+            "relative to a silent-cache hang. Must exceed the longest legitimate "
+            "RTH gap between quotes; 60s is comfortable for active US equities. "
+            "Off-hours the check is disengaged and the clock resets so the "
+            "closed-market gap is not charged against the first RTH window. "
+            "Floored at 10s: a sub-10s value would hammer the broker's websocket "
+            "reconnect path."
+        ),
+    )
+
     @field_validator("borrow_accrual_tick_local_time")
     @classmethod
     def _hh_mm_well_formed(cls, value: str) -> str:

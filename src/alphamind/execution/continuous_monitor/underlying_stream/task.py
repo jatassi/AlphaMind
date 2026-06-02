@@ -1,4 +1,4 @@
-"""Underlying-price stream consumer task (story 02b / ALP-434).
+"""Underlying-price stream consumer task (story 02b / ALP-434; ALP-832 staleness).
 
 Run-forever asyncio task that maintains a live Alpaca ``StockDataStream``
 (IEX feed) subscription to the equity underlyings backing open positions,
@@ -14,13 +14,19 @@ Lifecycle:
 * Subscribe to ``compute_target_underlyings(repository)``; register the
   quote handler that translates Alpaca's ``Quote`` payload into an
   :class:`UnderlyingQuote` and writes it to the cache.
-* Drive the alpaca-py ``_run_forever()`` loop on a sibling task.
+* Drive the alpaca-py ``_run_forever()`` loop on a sibling task, with a
+  staleness-watch sibling that beats the supervisor watchdog on every poll
+  slice and raises :class:`~alphamind.execution.broker_adapter.StreamStalledError`
+  on RTH silence beyond ``underlying_stream_stale_timeout_seconds`` (ALP-832).
 * Every ``config.subscription_refresh_seconds``, diff the current target
   set against the live subscription; issue add / remove deltas.
 * On websocket disconnect, the sibling task raises; catch, log, back off
   exponentially, and rebuild the stream. After ``max_reconnect_attempts``
   the exception propagates so the supervisor's exit logging records the
   failure.
+* On :class:`StreamStalledError`, reconnect budget-neutrally: the stream
+  is torn down and rebuilt without consuming ``max_reconnect_attempts`` so
+  a persistently silent stream keeps recovering (ALP-832).
 * On :class:`asyncio.CancelledError`, call ``stream.stop_ws()`` and exit.
 
 The cache is shared across reconnect cycles — quotes seen before a
@@ -33,12 +39,14 @@ import asyncio
 import contextlib
 import logging
 import os
+import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 
 from alphamind._kernel.exception_group import first_non_cancelled
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
+from alphamind.execution.broker_adapter import StreamActivityMonitor, StreamStalledError
 from alphamind.execution.continuous_monitor.session import MonitorMode, MonitorSession
 from alphamind.execution.continuous_monitor.underlying_stream.cache import (
     UnderlyingPriceCache,
@@ -156,20 +164,45 @@ def _quote_to_underlying(payload: Any) -> UnderlyingQuote:
 # ---------------------------------------------------------------------------
 
 
-async def run_underlying_stream(
+async def run_underlying_stream(  # noqa: PLR0913 — run-forever orchestrator surfaces each seam for injection
     session: MonitorSession,
     config: ContinuousMonitorConfig,
     *,
     repository: OpenPositionsReader,
     cache: UnderlyingPriceCache,
     factory: AlpacaStreamFactory,
+    is_market_open: Callable[[datetime], bool] | None = None,
+    beat: Callable[[], None] = lambda: None,
+    register_watch: Callable[[float], None] = lambda _cadence: None,
+    monotonic: Callable[[], float] = time.monotonic,
+    stream_poll_interval: float = 5.0,
 ) -> None:
     """Long-running consumer the supervisor registers as ``underlying_stream``.
 
     See module docstring for the lifecycle contract; raises on reconnect
     budget exhaustion so the supervisor's exit logging records the failure
     and NSSM's restart policy kicks in.
+
+    Stall resilience (ALP-832). ``is_market_open`` + ``beat`` opt this task
+    into the connected-but-silent detection and the supervisor's stall watchdog,
+    mirroring how the fill consumer was wired in ALP-828. During RTH, if no
+    quote arrives within ``config.underlying_stream_stale_timeout_seconds``, the
+    :class:`~alphamind.execution.broker_adapter.StreamActivityMonitor` raises
+    :class:`~alphamind.execution.broker_adapter.StreamStalledError`; that is a
+    *budget-neutral* reconnect — a deliberate health refresh, not a failure — so
+    a persistently silent stream keeps recovering. ``beat`` is fired on every
+    poll slice so a genuinely-blocked writer stops beating and trips the watchdog.
+
+    Watchdog binding (ALP-832). ``register_watch`` is called once at startup with
+    ``stream_poll_interval`` so the watchdog derives a positive stall bound
+    (``poll_interval * watchdog_cadence_multiplier``). Without this declaration a
+    bare ``beat`` would leave the task watched-but-unbounded.
     """
+    register_watch(stream_poll_interval)
+    is_rth: Callable[[], bool] | None = (
+        (lambda: is_market_open(datetime.now(UTC))) if is_market_open is not None else None
+    )
+
     attempts_remaining = config.max_reconnect_attempts
     backoff_seconds = 1.0
     while True:
@@ -180,9 +213,30 @@ async def run_underlying_stream(
                 repository=repository,
                 cache=cache,
                 factory=factory,
+                is_rth=is_rth,
+                beat=beat,
+                monotonic=monotonic,
+                stream_poll_interval=stream_poll_interval,
             )
         except asyncio.CancelledError:
             raise
+        except StreamStalledError:
+            # Connected-but-silent stream detected during RTH (ALP-832): the
+            # websockets library reconnect-looped internally without raising or
+            # delivering frames. Tear down and rebuild a fresh stream. This is a
+            # deliberate health refresh, NOT a failure — reset the reconnect budget
+            # so a persistently silent stream keeps recovering rather than exhausting
+            # the budget and exiting. The next connection gets a full
+            # underlying_stream_stale_timeout_seconds window before it can go stale
+            # again, so this never hot-loops in production.
+            log.warning(
+                "underlying_stream: no quotes for >%ds during RTH; "
+                "forcing reconnect (budget-neutral)",
+                config.underlying_stream_stale_timeout_seconds,
+            )
+            attempts_remaining = config.max_reconnect_attempts
+            backoff_seconds = 1.0
+            continue
         except BaseException as exc:
             # Reconnect-budget supervisor per runtime §G1: ``BaseException``
             # (vs ``Exception``) is intentional — alpaca-py raises raw
@@ -216,21 +270,34 @@ async def run_underlying_stream(
             continue
 
 
-async def _run_one_connection(
+async def _run_one_connection(  # noqa: PLR0913 — internal plumbing; each parameter is one injected seam
     *,
     mode: MonitorMode,
     config: ContinuousMonitorConfig,
     repository: OpenPositionsReader,
     cache: UnderlyingPriceCache,
     factory: AlpacaStreamFactory,
+    is_rth: Callable[[], bool] | None,
+    beat: Callable[[], None],
+    monotonic: Callable[[], float],
+    stream_poll_interval: float,
 ) -> None:
     """Run one connect → subscribe → drain → diff cycle.
 
     Returns cleanly only if the stream's background task exits normally.
     Any websocket failure raises out so the surrounding ``while True`` loop
     in :func:`run_underlying_stream` handles the reconnect budget.
+    :class:`~alphamind.execution.broker_adapter.StreamStalledError` raised
+    by the staleness-watch sibling propagates out budget-neutrally.
     """
     stream = factory.build(mode=mode)
+    monitor = StreamActivityMonitor(
+        frame_timeout=float(config.underlying_stream_stale_timeout_seconds),
+        is_rth=is_rth,
+        beat=beat,
+        poll_interval=stream_poll_interval,
+        monotonic=monotonic,
+    )
 
     async def _handler(payload: Any) -> None:
         try:
@@ -238,6 +305,7 @@ async def _run_one_connection(
         except (AttributeError, ValueError, TypeError):
             log.exception("underlying_stream quote translation failed; payload=%r", payload)
             return
+        monitor.record_activity()
         await cache.update(quote)
 
     # Subscribe to the initial target set.
@@ -253,11 +321,12 @@ async def _run_one_connection(
     # underscore-prefixed name is the library's own convention, not a
     # private method. See ``alpaca.data.live.stock``.
     #
-    # Both sibling tasks live under an :class:`asyncio.TaskGroup` so the
-    # first failure cancels the other automatically and the reconnect
-    # decision flows back to ``run_underlying_stream``. ``run_task`` is
-    # the long-running websocket loop; ``diff_task`` is the periodic
-    # subscription refresher.
+    # Three sibling tasks live under an :class:`asyncio.TaskGroup`:
+    # * ``run_task`` — the long-running websocket loop
+    # * ``diff_task`` — the periodic subscription refresher
+    # * ``watch_task`` — per-slice beat + staleness check (ALP-832)
+    # The first failure cancels the others automatically; ``StreamStalledError``
+    # from ``watch_task`` propagates as a budget-neutral reconnect signal.
     try:
         async with asyncio.TaskGroup() as tg:
             run_task: asyncio.Task[None] = tg.create_task(stream._run_forever())
@@ -270,10 +339,12 @@ async def _run_one_connection(
                     cadence_seconds=config.subscription_refresh_seconds,
                 )
             )
+            watch_task: asyncio.Task[None] = tg.create_task(_staleness_watch_loop(monitor=monitor))
             # When ``run_task`` exits we treat it as the canonical
-            # "connection ended" signal: cancel the diff sibling so the
-            # group exits promptly.
+            # "connection ended" signal: cancel the siblings so the group
+            # exits promptly.
             run_task.add_done_callback(lambda _t: diff_task.cancel())
+            run_task.add_done_callback(lambda _t: watch_task.cancel())
     except asyncio.CancelledError:
         # Supervisor shutdown (external cancellation) — Python 3.13's
         # TaskGroup re-raises ``CancelledError`` bare rather than wrapping
@@ -297,6 +368,22 @@ async def _run_one_connection(
         # disconnect path; ``stop_ws`` is idempotent.
         with contextlib.suppress(Exception):
             await stream.stop_ws()
+
+
+async def _staleness_watch_loop(*, monitor: StreamActivityMonitor) -> None:
+    """Heartbeat + staleness watch: one :meth:`on_slice` per ``poll_interval``.
+
+    Runs as a sibling inside the connection's :class:`asyncio.TaskGroup`. On
+    each iteration it sleeps ``monitor.poll_interval`` seconds then calls
+    :meth:`~StreamActivityMonitor.on_slice`, which beats the watchdog and
+    raises :class:`~alphamind.execution.broker_adapter.StreamStalledError`
+    if RTH silence exceeds the configured threshold. The ``TaskGroup``
+    propagates that exception out of :func:`_run_one_connection` so
+    :func:`run_underlying_stream` performs a budget-neutral reconnect.
+    """
+    while True:
+        await asyncio.sleep(monitor.poll_interval)
+        monitor.on_slice()
 
 
 async def _periodic_subscription_diff(

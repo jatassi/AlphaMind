@@ -139,3 +139,15 @@ fill_stream_stale_timeout_seconds: 900
 # breach_loop's prior hardcoded default while consolidating it to one knob the
 # bracket-stop and greeks-refresh consumers share (02b/02c/02d).
 underlying_price_max_age_seconds: 900
+
+# Seconds of underlying-price quote silence during RTH before the underlying-
+# stream consumer forces a budget-neutral reconnect (ALP-832). IEX equity quotes
+# are continuous during RTH (unlike sparse fills), so the threshold is far
+# tighter than fill_stream_stale_timeout_seconds. A needless reconnect during a
+# quiet-but-healthy session is cheap (re-subscribe re-primes the cache) relative
+# to the 11h silent-cache hang that motivated ALP-768. Must exceed the longest
+# legitimate RTH gap between quotes for a held position; 60s is comfortable for
+# active US equities during market hours. Off-hours, the check is disengaged and
+# the clock resets so the closed-market gap is not charged against the first RTH
+# window.
+underlying_stream_stale_timeout_seconds: 60

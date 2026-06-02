@@ -1,4 +1,4 @@
-"""Tests for ``run_underlying_stream`` (story 02b / ALP-434).
+"""Tests for ``run_underlying_stream`` (story 02b / ALP-434; ALP-832 staleness).
 
 The task is the run-forever consumer the supervisor registers. It:
 
@@ -16,6 +16,10 @@ The task is the run-forever consumer the supervisor registers. It:
 6. When the reconnect budget is exhausted, raises so the supervisor's exit
    logging records the failure.
 7. On ``asyncio.CancelledError``, calls ``stream.stop_ws()`` and exits.
+8. RTH silence beyond ``underlying_stream_stale_timeout_seconds`` forces a
+   budget-neutral reconnect (ALP-832); off-hours the check is disengaged.
+9. The task beats the supervisor watchdog on every poll slice and declares the
+   poll cadence at registration so a blocked writer trips ``os._exit(1)``.
 
 Tests use a fake ``AlpacaStreamFactory`` + fake ``StockDataStream`` — no live
 websocket calls. The fake stream exposes hooks so tests can inject quotes,
@@ -29,6 +33,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -39,6 +44,7 @@ from alphamind._kernel.ids import (
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.continuous_monitor.session import MonitorSession
+from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
 from alphamind.execution.continuous_monitor.underlying_stream import (
     UnderlyingPriceCache,
 )
@@ -46,6 +52,9 @@ from alphamind.execution.continuous_monitor.underlying_stream.task import (
     AlpacaStreamFactory,
     StockDataStreamProtocol,
     run_underlying_stream,
+)
+from alphamind.execution.continuous_monitor.underlying_stream.wiring import (
+    register_underlying_stream_task,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -202,6 +211,7 @@ def _config(
     *,
     subscription_refresh_seconds: int = 30,
     max_reconnect_attempts: int = 3,
+    underlying_stream_stale_timeout_seconds: int = 60,
 ) -> ContinuousMonitorConfig:
     return ContinuousMonitorConfig(
         breach_evaluation_cadence_seconds=60,
@@ -211,6 +221,7 @@ def _config(
         subscription_refresh_seconds=subscription_refresh_seconds,
         max_reconnect_attempts=max_reconnect_attempts,
         supervisor_shutdown_timeout_seconds=5,
+        underlying_stream_stale_timeout_seconds=underlying_stream_stale_timeout_seconds,
     )
 
 
@@ -559,6 +570,408 @@ class TestCancellation:
         with pytest.raises(asyncio.CancelledError):
             await task
         assert stream.stop_ws_called
+
+
+# ---------------------------------------------------------------------------
+# Fake monotonic clock for staleness-boundary tests
+# ---------------------------------------------------------------------------
+
+
+class _FakeClock:
+    """Controllable monotonic clock for staleness tests.
+
+    Starts at ``t=0.0`` and advances only when the test calls ``advance()``.
+    Tests pair this with a ``is_rth`` callable to precisely control when
+    the staleness threshold is crossed.
+    """
+
+    def __init__(self, start: float = 0.0) -> None:
+        self._t = start
+
+    def __call__(self) -> float:
+        return self._t
+
+    def advance(self, seconds: float) -> None:
+        self._t += seconds
+
+
+# ---------------------------------------------------------------------------
+# Staleness / RTH reconnect tests (ALP-832)
+# ---------------------------------------------------------------------------
+
+
+class TestRTHSilenceReconnect:
+    """RTH silence beyond the threshold forces a budget-neutral reconnect."""
+
+    async def test_rth_silence_beyond_threshold_forces_reconnect(self) -> None:
+        """Connected-but-silent underlying stream during RTH forces a reconnect."""
+        reader = _MutableReader(
+            (_equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),)
+        )
+        factory = _FakeFactory()
+        cache = UnderlyingPriceCache()
+        clock = _FakeClock(start=0.0)
+
+        # is_rth=True always (market open); stale_timeout=10s; poll_interval=0.01s
+        # so the test doesn't wait real seconds.
+        beat_count: list[int] = [0]
+        registered_cadences: list[float] = []
+
+        task = asyncio.create_task(
+            run_underlying_stream(
+                _session(),
+                _config(
+                    subscription_refresh_seconds=60,
+                    max_reconnect_attempts=5,
+                    underlying_stream_stale_timeout_seconds=10,
+                ),
+                repository=reader,
+                cache=cache,
+                factory=factory,
+                is_market_open=lambda _dt: True,
+                beat=lambda: beat_count.__setitem__(0, beat_count[0] + 1),
+                register_watch=lambda cadence: registered_cadences.append(cadence),
+                monotonic=clock,
+                stream_poll_interval=0.01,
+            )
+        )
+        try:
+            # Wait for first stream to start running.
+            await asyncio.wait_for(_eventually(lambda: bool(factory.streams)), timeout=1.0)
+            stream1 = factory.streams[0]
+            await asyncio.wait_for(stream1.wait_until_running(), timeout=1.0)
+
+            # Advance clock past the stale threshold (no quotes delivered).
+            clock.advance(11.0)
+
+            # A second stream should be built (budget-neutral reconnect).
+            await asyncio.wait_for(_eventually(lambda: len(factory.streams) >= 2), timeout=3.0)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def test_rth_silence_reconnect_is_budget_neutral(self) -> None:
+        """Staleness reconnect does not consume max_reconnect_attempts."""
+        reader = _MutableReader(
+            (_equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),)
+        )
+        factory = _FakeFactory()
+        cache = UnderlyingPriceCache()
+        clock = _FakeClock(start=0.0)
+
+        # Budget=1: normal disconnects exhaust it, but staleness reconnects must not.
+        task = asyncio.create_task(
+            run_underlying_stream(
+                _session(),
+                _config(
+                    subscription_refresh_seconds=60,
+                    max_reconnect_attempts=1,
+                    underlying_stream_stale_timeout_seconds=10,
+                ),
+                repository=reader,
+                cache=cache,
+                factory=factory,
+                is_market_open=lambda _dt: True,
+                beat=lambda: None,
+                register_watch=lambda _c: None,
+                monotonic=clock,
+                stream_poll_interval=0.01,
+            )
+        )
+        try:
+            await asyncio.wait_for(_eventually(lambda: bool(factory.streams)), timeout=1.0)
+            stream1 = factory.streams[0]
+            await asyncio.wait_for(stream1.wait_until_running(), timeout=1.0)
+
+            # Trip staleness once — should reconnect without consuming budget.
+            clock.advance(11.0)
+            await asyncio.wait_for(_eventually(lambda: len(factory.streams) >= 2), timeout=3.0)
+
+            stream2 = factory.streams[1]
+            await asyncio.wait_for(stream2.wait_until_running(), timeout=1.0)
+
+            # Trip staleness again — still budget-neutral; task still alive.
+            clock.advance(11.0)
+            await asyncio.wait_for(_eventually(lambda: len(factory.streams) >= 3), timeout=3.0)
+
+            # Task is still running (budget not consumed).
+            assert not task.done()
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+class TestOffHoursNoReconnect:
+    """Off-hours: no reconnect and clock resets so opening gap is not charged."""
+
+    async def test_off_hours_silence_does_not_force_reconnect(self) -> None:
+        """When market is closed, extended silence does not trigger reconnect."""
+        reader = _MutableReader(
+            (_equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),)
+        )
+        factory = _FakeFactory()
+        cache = UnderlyingPriceCache()
+        clock = _FakeClock(start=0.0)
+
+        # Market always closed.
+        task = asyncio.create_task(
+            run_underlying_stream(
+                _session(),
+                _config(
+                    subscription_refresh_seconds=60,
+                    max_reconnect_attempts=5,
+                    underlying_stream_stale_timeout_seconds=10,
+                ),
+                repository=reader,
+                cache=cache,
+                factory=factory,
+                is_market_open=lambda _dt: False,
+                beat=lambda: None,
+                register_watch=lambda _c: None,
+                monotonic=clock,
+                stream_poll_interval=0.01,
+            )
+        )
+        try:
+            await asyncio.wait_for(_eventually(lambda: bool(factory.streams)), timeout=1.0)
+            stream1 = factory.streams[0]
+            await asyncio.wait_for(stream1.wait_until_running(), timeout=1.0)
+
+            # Advance well past threshold — no reconnect expected.
+            clock.advance(1000.0)
+
+            # Give the poll loop a few real ticks to execute.
+            await asyncio.sleep(0.1)
+
+            # Only one stream — no budget-neutral reconnect triggered.
+            assert len(factory.streams) == 1
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def test_clock_resets_off_hours_so_open_gap_not_charged(self) -> None:
+        """Clock resets off-hours so the closed-market gap is not charged at RTH open."""
+        reader = _MutableReader(
+            (_equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),)
+        )
+        factory = _FakeFactory()
+        cache = UnderlyingPriceCache()
+        clock = _FakeClock(start=0.0)
+
+        # Market starts closed, then opens.
+        market_open = [False]
+
+        task = asyncio.create_task(
+            run_underlying_stream(
+                _session(),
+                _config(
+                    subscription_refresh_seconds=60,
+                    max_reconnect_attempts=5,
+                    underlying_stream_stale_timeout_seconds=10,
+                ),
+                repository=reader,
+                cache=cache,
+                factory=factory,
+                is_market_open=lambda _dt: market_open[0],
+                beat=lambda: None,
+                register_watch=lambda _c: None,
+                monotonic=clock,
+                stream_poll_interval=0.01,
+            )
+        )
+        try:
+            await asyncio.wait_for(_eventually(lambda: bool(factory.streams)), timeout=1.0)
+            stream1 = factory.streams[0]
+            await asyncio.wait_for(stream1.wait_until_running(), timeout=1.0)
+
+            # Advance a large amount while market is closed — clock should reset each slice.
+            clock.advance(10000.0)
+            await asyncio.sleep(0.05)
+
+            # Now open the market — should NOT immediately trigger a staleness reconnect
+            # because the clock was reset during off-hours.
+            market_open[0] = True
+
+            # A brief RTH period (below threshold) — still no reconnect.
+            clock.advance(5.0)
+            await asyncio.sleep(0.05)
+
+            assert len(factory.streams) == 1, (
+                "Expected no staleness reconnect shortly after market open"
+            )
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+class TestStalenessBeatsWatchdog:
+    """The underlying stream beats the watchdog and is bounded by poll_interval cadence."""
+
+    async def test_register_watch_called_with_poll_interval_at_startup(self) -> None:
+        """register_watch is called with stream_poll_interval at startup."""
+        reader = _MutableReader(
+            (_equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),)
+        )
+        factory = _FakeFactory()
+        cache = UnderlyingPriceCache()
+        clock = _FakeClock()
+
+        registered: list[float] = []
+
+        task = asyncio.create_task(
+            run_underlying_stream(
+                _session(),
+                _config(subscription_refresh_seconds=60),
+                repository=reader,
+                cache=cache,
+                factory=factory,
+                is_market_open=lambda _dt: True,
+                beat=lambda: None,
+                register_watch=lambda cadence: registered.append(cadence),
+                monotonic=clock,
+                stream_poll_interval=5.0,
+            )
+        )
+        try:
+            await asyncio.wait_for(
+                _eventually(lambda: len(registered) >= 1),
+                timeout=1.0,
+            )
+            assert registered[0] == pytest.approx(5.0)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def test_beat_called_on_each_poll_slice(self) -> None:
+        """beat() is called at least once per poll slice."""
+        reader = _MutableReader(
+            (_equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),)
+        )
+        factory = _FakeFactory()
+        cache = UnderlyingPriceCache()
+        clock = _FakeClock()
+
+        beat_count: list[int] = [0]
+
+        task = asyncio.create_task(
+            run_underlying_stream(
+                _session(),
+                _config(subscription_refresh_seconds=60),
+                repository=reader,
+                cache=cache,
+                factory=factory,
+                is_market_open=lambda _dt: True,
+                beat=lambda: beat_count.__setitem__(0, beat_count[0] + 1),
+                register_watch=lambda _c: None,
+                monotonic=clock,
+                stream_poll_interval=0.01,
+            )
+        )
+        try:
+            await asyncio.wait_for(
+                _eventually(lambda: beat_count[0] >= 3),
+                timeout=2.0,
+            )
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def test_blocked_writer_trips_watchdog_via_production_registration_path(
+        self,
+    ) -> None:
+        """A genuinely-blocked writer that stops beating trips os._exit(1) via watchdog.
+
+        This test exercises the PRODUCTION wiring path: ``register_underlying_stream_task``
+        wires ``supervisor.beat`` and ``supervisor.register_watch`` so that the watchdog
+        is properly BOUND at ``poll_interval`` cadence. We verify:
+
+        1. The task registers a watch (positive bound) so the watchdog CAN trip it.
+        2. Once a beat has been recorded, stopping the beat (by freezing the clock)
+           and advancing past the stall bound causes os._exit(1).
+        """
+        reader = _MutableReader(
+            (_equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),)
+        )
+        factory = _FakeFactory()
+        cache = UnderlyingPriceCache()
+        # Shared fake clock: both the supervisor (monotonic) and the stream
+        # (monotonic) use the same advancing clock so beats update last_beat
+        # and then we can freeze it to simulate a stall.
+        fake_clock = _FakeClock(start=1000.0)
+
+        def _recording_mono() -> float:
+            return fake_clock()
+
+        config = _config(
+            subscription_refresh_seconds=60,
+            max_reconnect_attempts=5,
+            underlying_stream_stale_timeout_seconds=60,
+        )
+        # Use a tight multiplier: poll_interval=0.01s → bound=0.02s.
+        # The watchdog check_interval = max(1.0, 0.02/4) = 1.0s (floor).
+        # Use a zero-delay fake sleep in the supervisor so the watchdog
+        # loop ticks as fast as the event loop runs.
+        config = config.model_copy(update={"watchdog_cadence_multiplier": 2.0})
+
+        async def _fast_sleep(_seconds: float) -> None:
+            await asyncio.sleep(0)
+
+        supervisor = MonitorSupervisor(
+            session=_session(),
+            config=config,
+            monotonic=_recording_mono,
+            sleep=_fast_sleep,
+        )
+
+        # Register via the PRODUCTION wiring path — this is the AC requirement.
+        register_underlying_stream_task(
+            supervisor,
+            repository=reader,
+            cache=cache,
+            factory=factory,
+            is_market_open=lambda _dt: True,
+            stream_poll_interval=0.01,
+        )
+
+        # Patch os._exit so the test process doesn't actually die.
+        with patch("os._exit") as mock_exit:
+            supervisor_task = asyncio.create_task(supervisor.run())
+            try:
+                # Wait until the stream is up.
+                await asyncio.wait_for(_eventually(lambda: bool(factory.streams)), timeout=2.0)
+                stream = factory.streams[0]
+                await asyncio.wait_for(stream.wait_until_running(), timeout=1.0)
+
+                # Wait until the watchdog knows about this task's bound (register_watch called).
+                # The task registers on startup before the first await.
+                await asyncio.sleep(0.05)
+
+                # Advance clock to give a beat a chance to land: the stream poll loop
+                # will call on_slice() → beat() after poll_interval (0.01s real).
+                await asyncio.wait_for(
+                    _eventually(
+                        lambda: (
+                            supervisor._watch.get("underlying_stream") is not None
+                            and supervisor._watch["underlying_stream"].last_beat is not None
+                        )
+                    ),
+                    timeout=2.0,
+                )
+
+                # Now leap the fake clock past the stall bound.
+                # bound = poll_interval * multiplier = 0.01 * 2.0 = 0.02s
+                # Add a generous margin so the watchdog trips cleanly.
+                fake_clock.advance(10.0)
+
+                # Watchdog should now call os._exit(1).
+                await asyncio.wait_for(
+                    _eventually(lambda: mock_exit.called),
+                    timeout=3.0,
+                )
+                assert mock_exit.call_args[0][0] == 1
+            finally:
+                supervisor_task.cancel()
+                await asyncio.gather(supervisor_task, return_exceptions=True)
 
 
 # ---------------------------------------------------------------------------
