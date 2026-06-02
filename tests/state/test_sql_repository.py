@@ -1397,6 +1397,44 @@ async def test_get_current_invocation_metadata_missing_row_raises(
         repo.get_current_invocation_metadata()
 
 
+async def test_get_current_invocation_metadata_falls_back_to_completed_when_current_is_null_phase1(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    # Seed a completed prior invocation, then a NULL-phase1 current invocation
+    # (simulating a scheduler pause before Phase-1 commit).
+    _, factory = db
+    prior = _make_invocation_record(
+        invocation_id=_PRIOR_INV_ID, start_at=_PRIOR_START, phase1_completed_at=_PHASE1_AT
+    )
+    await _seed_minimal_invocation(factory, invocation=prior)
+    await _seed_minimal_invocation_extra(factory, _make_invocation_record(phase1_completed_at=None))
+
+    repo = _build_repo(factory)
+    result = repo.get_current_invocation_metadata()
+
+    assert result.invocation_id == _PRIOR_INV_ID
+    assert result.phase1_committed_at == _PHASE1_AT
+    assert result.pipeline_invocation_started_at is None
+
+
+async def test_get_current_invocation_metadata_falls_back_to_completed_when_current_row_is_missing(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    # Seed only a completed prior invocation; the repo is bound to _INV_ID
+    # which has no row — verifies the missing-row fallback path.
+    _, factory = db
+    prior = _make_invocation_record(
+        invocation_id=_PRIOR_INV_ID, start_at=_PRIOR_START, phase1_completed_at=_PHASE1_AT
+    )
+    await _seed_minimal_invocation(factory, invocation=prior)
+
+    repo = _build_repo(factory, invocation_id=_INV_ID)
+    result = repo.get_current_invocation_metadata()
+
+    assert result.invocation_id == _PRIOR_INV_ID
+    assert result.phase1_committed_at == _PHASE1_AT
+
+
 async def test_get_prior_invocation_context_first_invocation_returns_none(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
@@ -1883,3 +1921,61 @@ async def test_assemble_snapshot_against_sql_repo_produces_populated_snapshot(
     assert snap.thesis_quality_aggregates.resolution_counts_by_window == ()
     # Open position market value should be enriched (10 shares at $160).
     assert snap.open_positions[0].current_market_value_usd == 1600.0
+
+
+async def test_assemble_snapshot_under_paused_invocation_uses_fallback_metadata(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """Breach-loop integration: assemble_snapshot succeeds when the bound invocation
+    is paused (NULL phase1_completed_at) by falling back to the prior completed row.
+    AC #2 from ALP-769."""
+    from alphamind.portfolio_state import PortfolioStateConfig
+    from alphamind.portfolio_state.assembler import assemble_snapshot
+    from alphamind.portfolio_state.pricing import (
+        StubCurrentPriceProvider,
+        StubOptionPriceProvider,
+    )
+
+    _, factory = db
+
+    # Seed a completed prior invocation, then a NULL-phase1 current invocation
+    # that the repo is bound to (simulating a scheduler pause).
+    prior = _make_invocation_record(
+        invocation_id=_PRIOR_INV_ID, start_at=_PRIOR_START, phase1_completed_at=_PHASE1_AT
+    )
+    await _seed_minimal_invocation(factory, invocation=prior)
+    await _seed_minimal_invocation_extra(factory, _make_invocation_record(phase1_completed_at=None))
+    await _seed_cash_ledger(factory)
+    await _seed_drawdown_state(factory)
+
+    _prior_snap_path = "/tmp/provenance/inv/resolved.json"
+    repo = _build_repo(
+        factory,
+        prior_active_risk_parameters_for_path={_prior_snap_path: _make_active_risk_parameters()},
+    )
+
+    config = PortfolioStateConfig(
+        pm_decision_log_sliding_window_invocations=5,
+        thesis_resolutions_lookback_trading_days=10,
+        thesis_quality_aggregates_trailing_windows_days=(5, 20),
+        snapshot_freshness_max_phase1_to_snapshot_seconds=300.0,
+        snapshot_freshness_max_price_age_seconds=60.0,
+        snapshot_freshness_max_option_price_age_seconds=300.0,
+    )
+
+    assembled = assemble_snapshot(
+        repository=repo,
+        price_provider=StubCurrentPriceProvider({}, now=_NOW),
+        option_price_provider=StubOptionPriceProvider({}, now=_NOW),
+        sector_resolver=lambda _pos: None,
+        config=config,
+        now=_NOW,
+    )
+    snap = assembled.snapshot
+
+    # Snapshot uses the prior completed invocation's metadata — breach_loop
+    # continues ticking normally despite the paused current invocation.
+    assert snap.invocation_id == _PRIOR_INV_ID
+    assert snap.phase1_committed_at == _PHASE1_AT
+    assert snap.open_positions == ()
+    assert snap.pending_positions == ()
