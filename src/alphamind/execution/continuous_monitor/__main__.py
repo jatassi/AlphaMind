@@ -686,6 +686,12 @@ def _register_fill_stream_consumer(
     to RTH (fills are legitimately sparse off-hours), and ``supervisor.beat``
     feeds the stall watchdog the fill-flow heartbeat so a starved consumer
     trips ``os._exit(1)`` → NSSM restart.
+
+    The reconnect-driven loop is not a fixed-cadence ``supervised_loop``, so the
+    consumer declares its poll cadence to the watchdog itself (ALP-828) via the
+    ``register_watch`` seam wired here to ``supervisor.register_watch`` — a bare
+    ``beat`` without a declared cadence would leave the task watched-but-
+    unbounded, which the watchdog can never trip.
     """
     from alpaca.trading.client import TradingClient
 
@@ -714,6 +720,9 @@ def _register_fill_stream_consumer(
             process_lifetime_id=process_lifetime_id,
             is_market_open=is_market_open,
             beat=lambda: supervisor.beat("fill_stream_consumer"),
+            register_watch=lambda cadence: supervisor.register_watch(
+                "fill_stream_consumer", cadence
+            ),
         )
 
     supervisor.register_task(name="fill_stream_consumer", coro_fn=_fill_stream_consumer_task)

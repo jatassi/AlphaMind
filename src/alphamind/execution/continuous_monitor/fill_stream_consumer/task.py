@@ -69,6 +69,7 @@ async def run_fill_stream_consumer(  # noqa: PLR0913 — run-forever orchestrato
     process_lifetime_id: str | None = None,
     is_market_open: Callable[[datetime], bool] | None = None,
     beat: Callable[[], None] = lambda: None,
+    register_watch: Callable[[float], None] = lambda _cadence: None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     monotonic: Callable[[], float] = time.monotonic,
     stream_poll_interval: float = 5.0,
@@ -100,7 +101,18 @@ async def run_fill_stream_consumer(  # noqa: PLR0913 — run-forever orchestrato
     reconnect budget. ``beat`` is fired on every poll slice and on each
     consume cycle so a genuinely-blocked consumer (stuck in REST recovery or
     persistence) stops beating and trips ``os._exit(1)`` → NSSM restart.
+
+    Watchdog binding (ALP-828). The reconnect-driven outer loop is not a
+    fixed-cadence ``supervised_loop``; its liveness comes from the kernel's
+    per-slice ``beat``. So the task must declare its poll cadence to the
+    watchdog explicitly: ``register_watch`` is called once at startup with
+    ``stream_poll_interval`` so a stall bound (``cadence *
+    watchdog_cadence_multiplier``) derives. Without this declaration a bare
+    ``beat`` would leave the task watched-but-unbounded — the watchdog could
+    never trip it (it would only warn). ``beat`` is 01a's supervisor seam (no
+    hand-wired ``supervisor.beat(...)`` lambda owned here).
     """
+    register_watch(stream_poll_interval)
     queries = account_state_queries_factory(trading_client_factory(session.mode))
     is_rth: Callable[[], bool] | None = (
         (lambda: is_market_open(now())) if is_market_open is not None else None
