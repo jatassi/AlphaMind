@@ -55,11 +55,18 @@ from tests.execution.corporate_actions._handler_substrate import (
     seed_position_cluster,
 )
 
+# ---------------------------------------------------------------------------
+# Equity — combined position + bracket + ledger test
+# ---------------------------------------------------------------------------
 
-async def test_reverse_split_scales_equity_quantity_and_basis(
+
+async def test_reverse_split_equity_projects_position_and_clears_bracket_and_writes_ledger(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """A 1-for-10 reverse split divides shares by 10 and multiplies basis by 10."""
+    """A 1-for-10 reverse split divides shares by 10, multiplies basis by 10,
+    dissolves the bracket with reason ``corporate_action_reverse_split``, writes
+    a PROCESSED ledger anchor, and emits CORPORATE_ACTION_APPLIED and
+    BRACKET_CANCELLED_CORPORATE_ACTION events."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
     from alphamind.execution.corporate_actions.types import CorporateActionActivity
 
@@ -76,7 +83,7 @@ async def test_reverse_split_scales_equity_quantity_and_basis(
     await seed_drawdown_state(factory)
 
     ca = CorporateActionActivity(
-        alpaca_activity_id="ca-rsplit-1",
+        alpaca_activity_id="ca-rsplit-equity-combined-1",
         action_type=CorporateActionType.REVERSE_SPLIT,
         ticker=Symbol("AAPL"),
         new_ticker=None,
@@ -91,6 +98,7 @@ async def test_reverse_split_scales_equity_quantity_and_basis(
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
+        # Position: shares /10, basis x10, flagged for adjustment.
         pos_row = (
             await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
         ).scalar_one()
@@ -99,6 +107,51 @@ async def test_reverse_split_scales_equity_quantity_and_basis(
         assert pos.details.share_count == pytest.approx(10.0)
         assert pos.details.average_cost_basis_per_share == pytest.approx(20.0)
         assert pos.corporate_action_adjustment_needed is True
+
+        # Bracket: dissolved with reverse-split reason.
+        bracket_row = (
+            await sess.execute(select(BracketRow).where(BracketRow.bracket_id == "brk-1"))
+        ).scalar_one()
+        assert bracket_row.status == BracketStatus.DISSOLVED.value
+        assert bracket_row.corporate_action_cancellation_reason == "corporate_action_reverse_split"
+
+        # Activity log: bracket-cancelled event emitted exactly once.
+        log_rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.invocation_id == handle.invocation_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        types = [r.event_type for r in log_rows]
+        applied = [t for t in types if t == EventType.CORPORATE_ACTION_APPLIED.value]
+        assert len(applied) == 1
+        assert types.count(EventType.BRACKET_CANCELLED_CORPORATE_ACTION.value) == 1
+
+        # Ledger: PROCESSED anchor written.
+        ledger_rows = (
+            (
+                await sess.execute(
+                    select(CorporateActionIntegrationLedgerRow).where(
+                        CorporateActionIntegrationLedgerRow.alpaca_activity_id
+                        == "ca-rsplit-equity-combined-1"
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(ledger_rows) == 1
+        assert ledger_rows[0].processing_status == CorporateActionLedgerStatus.PROCESSED.value
+
+
+# ---------------------------------------------------------------------------
+# Cash-impact behaviour (unique to reverse splits)
+# ---------------------------------------------------------------------------
 
 
 async def test_reverse_split_credits_fractional_cash_out_when_cash_impact_positive(
@@ -205,6 +258,11 @@ async def test_reverse_split_no_cash_credit_when_impact_zero(
         )
         cash_entries = [r for r in log_rows if r.event_type == EventType.CASH_CREDITED.value]
         assert cash_entries == []
+
+
+# ---------------------------------------------------------------------------
+# Options + strategy positions
+# ---------------------------------------------------------------------------
 
 
 async def test_reverse_split_options_projects_alpaca_state_and_clears_greeks(
@@ -332,161 +390,9 @@ async def test_reverse_split_strategy_applies_per_leg_projection(
         assert len(applied) == 1
 
 
-async def test_reverse_split_emits_corporate_action_applied(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
-) -> None:
-    """Exactly one CORPORATE_ACTION_APPLIED event is emitted."""
-    from alphamind.execution.corporate_actions import integrate_ca_activity
-    from alphamind.execution.corporate_actions.types import CorporateActionActivity
-
-    _, factory = db
-    await seed_invocation_substrate(factory)
-    await seed_position_cluster(
-        factory,
-        make_open_equity_position(share_count=100.0, average_cost_basis_per_share=2.0),
-        make_pending_entry_order(),
-        make_active_thesis(),
-        make_active_bracket(),
-    )
-    await seed_cash_ledger(factory)
-    await seed_drawdown_state(factory)
-
-    ca = CorporateActionActivity(
-        alpaca_activity_id="ca-rsplit-applied-1",
-        action_type=CorporateActionType.REVERSE_SPLIT,
-        ticker=Symbol("AAPL"),
-        new_ticker=None,
-        ratio_or_amount=10.0,
-        position_id=PositionId("pos-1"),
-        signed_cash_impact_usd=0.0,
-        transaction_time=NOW - timedelta(minutes=5),
-    )
-
-    ctx, handle = await open_handle(factory)
-    await integrate_ca_activity(handle, ca, alpaca_position_lookup=None)
-    await ctx.__aexit__(None, None, None)
-
-    async with factory() as sess:
-        log_rows = (
-            (
-                await sess.execute(
-                    select(ActivityLogRow).where(
-                        ActivityLogRow.invocation_id == handle.invocation_id
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        applied = [r for r in log_rows if r.event_type == EventType.CORPORATE_ACTION_APPLIED.value]
-        assert len(applied) == 1
-
-
-async def test_reverse_split_cancels_bracket(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
-) -> None:
-    """Bracket is dissolved with reason ``corporate_action_reverse_split``."""
-    from alphamind.execution.corporate_actions import integrate_ca_activity
-    from alphamind.execution.corporate_actions.types import CorporateActionActivity
-
-    _, factory = db
-    await seed_invocation_substrate(factory)
-    await seed_position_cluster(
-        factory,
-        make_open_equity_position(share_count=100.0, average_cost_basis_per_share=2.0),
-        make_pending_entry_order(),
-        make_active_thesis(),
-        make_active_bracket(),
-    )
-    await seed_cash_ledger(factory)
-    await seed_drawdown_state(factory)
-
-    ca = CorporateActionActivity(
-        alpaca_activity_id="ca-rsplit-bracket-1",
-        action_type=CorporateActionType.REVERSE_SPLIT,
-        ticker=Symbol("AAPL"),
-        new_ticker=None,
-        ratio_or_amount=10.0,
-        position_id=PositionId("pos-1"),
-        signed_cash_impact_usd=0.0,
-        transaction_time=NOW - timedelta(minutes=5),
-    )
-
-    ctx, handle = await open_handle(factory)
-    await integrate_ca_activity(handle, ca, alpaca_position_lookup=None)
-    await ctx.__aexit__(None, None, None)
-
-    async with factory() as sess:
-        bracket_row = (
-            await sess.execute(select(BracketRow).where(BracketRow.bracket_id == "brk-1"))
-        ).scalar_one()
-        assert bracket_row.status == BracketStatus.DISSOLVED.value
-        assert bracket_row.corporate_action_cancellation_reason == "corporate_action_reverse_split"
-
-        log_rows = (
-            (
-                await sess.execute(
-                    select(ActivityLogRow).where(
-                        ActivityLogRow.invocation_id == handle.invocation_id
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        types = [r.event_type for r in log_rows]
-        assert types.count(EventType.BRACKET_CANCELLED_CORPORATE_ACTION.value) == 1
-
-
-async def test_reverse_split_writes_dedup_ledger(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
-) -> None:
-    """Exactly one ledger row is written for the activity ID."""
-    from alphamind.execution.corporate_actions import integrate_ca_activity
-    from alphamind.execution.corporate_actions.types import CorporateActionActivity
-
-    _, factory = db
-    await seed_invocation_substrate(factory)
-    await seed_position_cluster(
-        factory,
-        make_open_equity_position(share_count=100.0, average_cost_basis_per_share=2.0),
-        make_pending_entry_order(),
-        make_active_thesis(),
-        make_active_bracket(),
-    )
-    await seed_cash_ledger(factory)
-    await seed_drawdown_state(factory)
-
-    ca = CorporateActionActivity(
-        alpaca_activity_id="ca-rsplit-ledger-1",
-        action_type=CorporateActionType.REVERSE_SPLIT,
-        ticker=Symbol("AAPL"),
-        new_ticker=None,
-        ratio_or_amount=10.0,
-        position_id=PositionId("pos-1"),
-        signed_cash_impact_usd=0.0,
-        transaction_time=NOW - timedelta(minutes=5),
-    )
-
-    ctx, handle = await open_handle(factory)
-    await integrate_ca_activity(handle, ca, alpaca_position_lookup=None)
-    await ctx.__aexit__(None, None, None)
-
-    async with factory() as sess:
-        ledger_rows = (
-            (
-                await sess.execute(
-                    select(CorporateActionIntegrationLedgerRow).where(
-                        CorporateActionIntegrationLedgerRow.alpaca_activity_id
-                        == "ca-rsplit-ledger-1"
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        assert len(ledger_rows) == 1
-        assert ledger_rows[0].processing_status == CorporateActionLedgerStatus.PROCESSED.value
+# ---------------------------------------------------------------------------
+# Error paths
+# ---------------------------------------------------------------------------
 
 
 async def test_reverse_split_raises_on_missing_position(

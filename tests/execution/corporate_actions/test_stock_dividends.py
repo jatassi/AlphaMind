@@ -48,11 +48,17 @@ from tests.execution.corporate_actions._handler_substrate import (
     seed_position_cluster,
 )
 
+# ---------------------------------------------------------------------------
+# Equity — combined position + bracket + ledger test
+# ---------------------------------------------------------------------------
 
-async def test_stock_dividend_scales_equity_quantity_and_basis(
+
+async def test_stock_dividend_equity_projects_position_and_clears_bracket_and_writes_ledger(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """A 10% stock dividend multiplies shares by 1.1 and divides basis by 1.1."""
+    """A 10% stock dividend multiplies shares by 1.1, divides basis by 1.1,
+    dissolves the bracket with reason ``corporate_action_stock_dividend``, writes
+    a PROCESSED ledger anchor, and emits a CORPORATE_ACTION_APPLIED event."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
     from alphamind.execution.corporate_actions.types import CorporateActionActivity
 
@@ -69,7 +75,7 @@ async def test_stock_dividend_scales_equity_quantity_and_basis(
     await seed_drawdown_state(factory)
 
     ca = CorporateActionActivity(
-        alpaca_activity_id="ca-stockdiv-1",
+        alpaca_activity_id="ca-stockdiv-equity-combined-1",
         action_type=CorporateActionType.STOCK_DIVIDEND,
         ticker=Symbol("AAPL"),
         new_ticker=None,
@@ -84,6 +90,7 @@ async def test_stock_dividend_scales_equity_quantity_and_basis(
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
+        # Position: shares x1.1, basis /1.1, flagged for adjustment.
         pos_row = (
             await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
         ).scalar_one()
@@ -92,6 +99,49 @@ async def test_stock_dividend_scales_equity_quantity_and_basis(
         assert pos.details.share_count == pytest.approx(110.0)
         assert pos.details.average_cost_basis_per_share == pytest.approx(100.0)
         assert pos.corporate_action_adjustment_needed is True
+
+        # Bracket: dissolved with stock-dividend reason.
+        bracket_row = (
+            await sess.execute(select(BracketRow).where(BracketRow.bracket_id == "brk-1"))
+        ).scalar_one()
+        assert bracket_row.status == BracketStatus.DISSOLVED.value
+        assert bracket_row.corporate_action_cancellation_reason == "corporate_action_stock_dividend"
+
+        # Ledger: PROCESSED anchor written.
+        ledger_rows = (
+            (
+                await sess.execute(
+                    select(CorporateActionIntegrationLedgerRow).where(
+                        CorporateActionIntegrationLedgerRow.alpaca_activity_id
+                        == "ca-stockdiv-equity-combined-1"
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(ledger_rows) == 1
+        assert ledger_rows[0].processing_status == CorporateActionLedgerStatus.PROCESSED.value
+
+        # Activity log: CORPORATE_ACTION_APPLIED emitted exactly once.
+        log_rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.invocation_id == handle.invocation_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        applied = [r for r in log_rows if r.event_type == EventType.CORPORATE_ACTION_APPLIED.value]
+        assert len(applied) == 1
+
+
+# ---------------------------------------------------------------------------
+# Cash-movement behaviour (unique to stock dividends)
+# ---------------------------------------------------------------------------
 
 
 async def test_stock_dividend_no_cash_movement(
@@ -143,6 +193,11 @@ async def test_stock_dividend_no_cash_movement(
         types = {r.event_type for r in log_rows}
         assert EventType.CASH_CREDITED.value not in types
         assert EventType.CASH_DEBITED.value not in types
+
+
+# ---------------------------------------------------------------------------
+# Options + strategy positions
+# ---------------------------------------------------------------------------
 
 
 async def test_stock_dividend_options_projects_alpaca_state(
@@ -262,110 +317,3 @@ async def test_stock_dividend_strategy_applies_per_leg_projection(
         )
         applied = [r for r in log_rows if r.event_type == EventType.CORPORATE_ACTION_APPLIED.value]
         assert len(applied) == 1
-
-
-async def test_stock_dividend_emits_corporate_action_applied(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
-) -> None:
-    """Exactly one CORPORATE_ACTION_APPLIED event is emitted."""
-    from alphamind.execution.corporate_actions import integrate_ca_activity
-    from alphamind.execution.corporate_actions.types import CorporateActionActivity
-
-    _, factory = db
-    await seed_invocation_substrate(factory)
-    await seed_position_cluster(
-        factory,
-        make_open_equity_position(share_count=100.0, average_cost_basis_per_share=110.0),
-        make_pending_entry_order(),
-        make_active_thesis(),
-        make_active_bracket(),
-    )
-    await seed_cash_ledger(factory)
-    await seed_drawdown_state(factory)
-
-    ca = CorporateActionActivity(
-        alpaca_activity_id="ca-stockdiv-applied-1",
-        action_type=CorporateActionType.STOCK_DIVIDEND,
-        ticker=Symbol("AAPL"),
-        new_ticker=None,
-        ratio_or_amount=0.05,
-        position_id=PositionId("pos-1"),
-        signed_cash_impact_usd=0.0,
-        transaction_time=NOW - timedelta(minutes=5),
-    )
-
-    ctx, handle = await open_handle(factory)
-    await integrate_ca_activity(handle, ca, alpaca_position_lookup=None)
-    await ctx.__aexit__(None, None, None)
-
-    async with factory() as sess:
-        log_rows = (
-            (
-                await sess.execute(
-                    select(ActivityLogRow).where(
-                        ActivityLogRow.invocation_id == handle.invocation_id
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        applied = [r for r in log_rows if r.event_type == EventType.CORPORATE_ACTION_APPLIED.value]
-        assert len(applied) == 1
-
-
-async def test_stock_dividend_cancels_bracket_and_writes_ledger(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
-) -> None:
-    """Bracket is dissolved with stock-dividend reason; ledger row written."""
-    from alphamind.execution.corporate_actions import integrate_ca_activity
-    from alphamind.execution.corporate_actions.types import CorporateActionActivity
-
-    _, factory = db
-    await seed_invocation_substrate(factory)
-    await seed_position_cluster(
-        factory,
-        make_open_equity_position(share_count=100.0, average_cost_basis_per_share=110.0),
-        make_pending_entry_order(),
-        make_active_thesis(),
-        make_active_bracket(),
-    )
-    await seed_cash_ledger(factory)
-    await seed_drawdown_state(factory)
-
-    ca = CorporateActionActivity(
-        alpaca_activity_id="ca-stockdiv-bracket-1",
-        action_type=CorporateActionType.STOCK_DIVIDEND,
-        ticker=Symbol("AAPL"),
-        new_ticker=None,
-        ratio_or_amount=0.10,
-        position_id=PositionId("pos-1"),
-        signed_cash_impact_usd=0.0,
-        transaction_time=NOW - timedelta(minutes=5),
-    )
-
-    ctx, handle = await open_handle(factory)
-    await integrate_ca_activity(handle, ca, alpaca_position_lookup=None)
-    await ctx.__aexit__(None, None, None)
-
-    async with factory() as sess:
-        bracket_row = (
-            await sess.execute(select(BracketRow).where(BracketRow.bracket_id == "brk-1"))
-        ).scalar_one()
-        assert bracket_row.status == BracketStatus.DISSOLVED.value
-        assert bracket_row.corporate_action_cancellation_reason == "corporate_action_stock_dividend"
-
-        ledger_rows = (
-            (
-                await sess.execute(
-                    select(CorporateActionIntegrationLedgerRow).where(
-                        CorporateActionIntegrationLedgerRow.alpaca_activity_id
-                        == "ca-stockdiv-bracket-1"
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        assert len(ledger_rows) == 1
-        assert ledger_rows[0].processing_status == CorporateActionLedgerStatus.PROCESSED.value
