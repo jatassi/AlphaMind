@@ -77,7 +77,8 @@ See `docs/agents/testing.md` for rationale and before/after examples.
 `main` is PR-only — never push directly; open a PR. Squash-merge every PR. Don't merge
 until the `ci` workflow is green. Docs/tooling-only PRs skip CI (`paths-ignore`:
 `**.md`, `docs/**`, `.archive/**`, `.claude/**`, `audit-*.html`, `scripts/**`). The CI
-watch/merge loop and the GitHub usage-limit fallback live in `docs/agents/ci.md`.
+watch/merge loop and the GitHub usage-limit fallback live in `docs/agents/ci.md` - check 
+this first if CI fails.
 
 ## Subagents
 
