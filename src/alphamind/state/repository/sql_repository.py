@@ -16,9 +16,11 @@ against the SQL tables shipped in stories 02b and 04a-04e:
   the injected callable provider.
 
 Snapshot isolation enforcement: ``get_current_invocation_metadata``
-raises :class:`RepositoryConsistencyError` when the bound invocation row
-shows ``phase1_completed_at IS NULL`` — covering the happy path required
-by this story; story 07 + 08 verify the full six-step ordering.
+falls back to the most-recently-completed pipeline invocation when the
+bound row is missing or has ``phase1_completed_at IS NULL`` (e.g. scheduler
+paused mid-invocation), so the breach_loop can continue ticking.  Only
+raises :class:`RepositoryConsistencyError` when no completed pipeline
+invocation exists at all.  Story 07 + 08 verify the full six-step ordering.
 
 ALP-454 Pre-resolved decision (C): per the audit, the Protocol surface
 is synchronous (SQLite is the persistence engine; aiosqlite already
@@ -32,6 +34,7 @@ concurrent reader. The provider callables are likewise sync.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 
@@ -117,6 +120,7 @@ from alphamind.state.tables.thesis_components import (
 # inlines sync equivalents of those queries on its own session below.
 
 _PENDING_ORDER_STATUSES = (OrderStatus.PENDING.value, OrderStatus.PARTIALLY_FILLED.value)
+log = logging.getLogger(__name__)
 
 
 def _apply_pragmas(dbapi_connection: object, _connection_record: object) -> None:
@@ -436,18 +440,42 @@ class SqlPortfolioStateRepository:
     def get_current_invocation_metadata(self) -> CurrentInvocationMetadata:
         with self._sync_session_factory() as session:
             row = session.get(InvocationRow, self._invocation_id)
-            if row is None:
-                msg = (
-                    f"invocations row {self._invocation_id!r} is missing — "
-                    "insert_invocation_record should have committed it before snapshot read"
+            # When the bound invocation is missing or paused before Phase-1 commit
+            # (phase1_completed_at IS NULL), the monitor must not go DEGRADED —
+            # fall back to the most-recently-completed *pipeline* invocation
+            # (resolved_config_snapshot_path != '' excludes maintenance ticks,
+            # consistent with get_prior_invocation_context) so the breach_loop
+            # can continue ticking with stale-but-valid state metadata.
+            if row is None or row.phase1_completed_at is None:
+                fallback = session.execute(
+                    select(InvocationRow)
+                    .where(
+                        InvocationRow.phase1_completed_at.is_not(None),
+                        InvocationRow.resolved_config_snapshot_path != "",
+                    )
+                    .order_by(InvocationRow.start_at.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
+                if fallback is None:
+                    msg = (
+                        f"invocations row {self._invocation_id!r} is missing or has "
+                        "phase1_completed_at IS NULL and no completed invocation exists "
+                        "to fall back to"
+                    )
+                    raise RepositoryConsistencyError(msg)
+                log.warning(
+                    "get_current_invocation_metadata: bound invocation %r is paused or missing "
+                    "— ticking against prior completed invocation %r (phase1_committed_at=%s). "
+                    "Snapshot metadata is stale; risk evaluation continues.",
+                    self._invocation_id,
+                    fallback.invocation_id,
+                    fallback.phase1_completed_at,
                 )
-                raise RepositoryConsistencyError(msg)
-            if row.phase1_completed_at is None:
-                msg = (
-                    f"invocations row {self._invocation_id!r} has phase1_completed_at "
-                    "IS NULL — snapshot read attempted before Phase 1 commit"
-                )
-                raise RepositoryConsistencyError(msg)
+                row = fallback
+            # phase1_completed_at is not None: either the if-condition above was False
+            # (bound row already had a non-NULL value) or the fallback WHERE clause
+            # guaranteed it for the fallback row.
+            assert row.phase1_completed_at is not None
             return CurrentInvocationMetadata(
                 invocation_id=row.invocation_id,
                 phase1_committed_at=datetime.fromisoformat(row.phase1_completed_at),
