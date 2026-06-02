@@ -23,7 +23,6 @@ on:
       - 'scripts/**'
       - '.gitignore'
       - '.env.example'
-      - 'scripts/**'
   push:
     branches: [main]
     paths-ignore:
@@ -35,7 +34,6 @@ on:
       - 'scripts/**'
       - '.gitignore'
       - '.env.example'
-      - 'scripts/**'
 
 concurrency:
   group: ci-${{ github.ref }}
