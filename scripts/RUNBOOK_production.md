@@ -635,8 +635,12 @@ from the phase timestamps: a row with a non-null `phase2_completed_at`
 succeeded through Phase 2; a row with `start_at` set but
 `phase2_completed_at` NULL either is still in-flight or aborted mid-pipeline
 (cross-check the SSE stream / `pipeline.log`). Useful columns:
-`trigger_type` (the run-type — `pre_open`, `market_hours_rolling`, etc.),
-`trigger_source` (`scheduled` / manual / `emergency_trigger`),
+`trigger_type` (how the invocation was launched — `scheduled`, `manual`,
+or `emergency`), `trigger_source` (the run-type / origin label — for
+scheduled fires `pre_open`, `market_hours_rolling`, `pre_close`,
+`weekend_sunday`, `off_hours_rolling`, or `borrow_accrual`; `cli` for a
+manual `--once` run; `operator_console` for a command-center action;
+`emergency_trigger` for a breach cascade),
 `trigger_reason` (free-form), `phase1_completed_at` / `phase2_completed_at`
 (lifecycle), `git_sha_at_invocation` (the repo HEAD when the invocation
 ran — useful for confirming which code version a run executed under),
