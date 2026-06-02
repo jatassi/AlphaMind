@@ -26,10 +26,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import cast
 
 import pytest
 from fastapi.routing import Mount
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.command_center.__main__ import _warn_if_mixed_lan_bind_and_access
 from alphamind.command_center.app import (
@@ -134,7 +136,10 @@ class TestBuildAppAndHealthz:
     def test_production_session_factory_threaded_through(self, configs: tuple[Path, Path]) -> None:
         """A sentinel production_session_factory round-trips through build_app (story 04a)."""
         config_dir, _ = configs
-        sentinel = object()
+        # A bare object() suffices to prove pass-through identity; cast to the
+        # declared param type so mypy accepts the sentinel (cast is a runtime
+        # no-op, so the `is sentinel` identity assertion still holds).
+        sentinel = cast("async_sessionmaker[AsyncSession]", object())
         app = build_app(
             command_center_config=load_command_center_config(config_dir),
             security_config=load_security_config(config_dir),
