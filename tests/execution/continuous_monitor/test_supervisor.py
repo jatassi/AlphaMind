@@ -404,6 +404,43 @@ class TestStartupGraceWarning:
         assert len(warnings) == 1  # latched: one warning, not one per check pass
 
 
+class TestBeatWithoutWatchWarns:
+    async def test_beaten_but_unbounded_task_warns_once_and_never_trips(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A task that beats but never declared a cadence is loud, not silent.
+
+        ALP-825 review: a ``beat()`` caller that never calls ``register_watch`` /
+        ``supervised_loop`` (e.g. the still-unmigrated ALP-819 fill/breach/bracket
+        wiring) gets a zero-bound watch entry. The watchdog cannot *trip* it (no
+        bound to measure against) but must not skip it silently — it warns once so
+        a forgotten ``register_watch`` surfaces at runtime instead of leaving a
+        safety-critical task silently outside the liveness net. ``supervised_loop``
+        tasks register their bound before their first beat, so a beaten-but-
+        unbounded task unambiguously means the cadence declaration was skipped.
+        """
+        clock = _FakeClock()
+        supervisor = _supervisor(clock=clock)
+        supervisor._stop_event = asyncio.Event()
+        # beat() with no prior register_watch / supervised_loop → bound 0.0.
+        supervisor.beat("breach_loop")
+        clock.advance(100_000.0)  # far past any conceivable bound
+
+        exits: list[int] = []
+        stopper = _StopAfter(clock, passes=2)
+        with (
+            mock.patch(_EXIT_PATH, side_effect=exits.append),
+            caplog.at_level("WARNING"),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            supervisor._sleep = stopper
+            await supervisor._watchdog_loop()
+
+        assert exits == []  # no bound → cannot trip, only warn
+        warnings = [r for r in caplog.records if "breach_loop" in r.getMessage()]
+        assert len(warnings) == 1  # latched: loud once, not one per check pass
+
+
 class TestStalledLoopTripsWatchdog:
     async def test_supervised_loop_body_that_hangs_trips_os_exit(self) -> None:
         """A task driving supervised_loop whose body wedges stops beating → trip.

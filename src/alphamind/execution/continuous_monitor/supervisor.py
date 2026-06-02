@@ -283,7 +283,27 @@ class MonitorSupervisor:
                 return
             now = self._monotonic()
             for name, entry in self._watch.items():
-                if not entry.watched or entry.bound_seconds <= 0.0:
+                if not entry.watched:
+                    continue
+                if entry.bound_seconds <= 0.0:
+                    # Watched but no cadence declared, so no stall bound applies
+                    # and the task cannot be tripped. A ``supervised_loop`` task
+                    # registers its bound (via ``register_watch``) before its
+                    # first beat, so a task that has *beaten* yet still carries no
+                    # bound called ``beat()`` directly without ``register_watch``
+                    # — it is silently outside the liveness net. Be loud once
+                    # (the default-on visibility guarantee) rather than skipping
+                    # it without a trace, so a forgotten ``register_watch`` in a
+                    # consumer wiring is caught at runtime, not in production.
+                    if not entry.warned and entry.last_beat is not None:
+                        log.warning(
+                            "watchdog: task %r beats but declared no heartbeat "
+                            "cadence (no register_watch / supervised_loop) — it is "
+                            "outside the liveness net; declare its cadence so a "
+                            "stall bound applies.",
+                            name,
+                        )
+                        entry.warned = True
                     continue
                 if entry.last_beat is None:
                     # Never beaten — loud at startup grace (one bound elapsed
