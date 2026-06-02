@@ -1,9 +1,10 @@
 """Tests for ``q7_cross_asset.compute_cross_sector_rotation`` — story 08d.
 
-Cover the rolling sector-ETF relative-performance ratios over 5- and 20-day
-windows, the rotation velocity classification (``slow_regime_shift`` vs.
-``sharp_intraday_event_driven``), and the narrative classification
-(``rate_driven`` / ``growth_driven`` / ``risk_appetite_driven``).
+DB-backed smoke: confirm the loader/shim wires the DB entry point to the
+pure compute core.  The velocity and narrative classification logic is
+fully pinned by ``test_compute.py::TestCrossSectorRotationCompute``.
+
+Reduced in ALP-797 (q7 pure/DB double-altitude reduction).
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import Symbol
-from alphamind.distillation.output import OutputAudience
+from alphamind.distillation.output import OutputAudience, OutputBlock
 from alphamind.distillation.q7 import compute_cross_sector_rotation
 from alphamind.persistence.models import (
     AssetUniverse,
@@ -98,35 +99,20 @@ def _seed_etf_path(
 
 
 # ---------------------------------------------------------------------------
-# Velocity classification — slow regime shift vs. sharp intraday event
+# Loader/persistence smoke
 # ---------------------------------------------------------------------------
 
 
-class TestCrossSectorRotationVelocity:
-    def test_gradual_rotation_classified_slow_regime_shift(self, session: Session) -> None:
-        # 21 days of data. Each ETF starts at 100. Over the trailing 5-day
-        # window, XLK gradually drifts down by 1% / day (so day 0..5 ranking
-        # rotates one position) and the others stay flat. Result: slow
-        # regime shift.
+class TestCrossSectorRotationSmoke:
+    def test_db_entry_point_returns_block_with_audience_and_velocity(
+        self, session: Session
+    ) -> None:
+        """DB shim loads ETF price rows and wires into the pure compute core."""
         as_of = datetime(2026, 4, 30, tzinfo=UTC)
         start_day = as_of - timedelta(days=20)
-
-        # XLK declines slowly (1% per day for last 5 days).
-        xlk_path = [100.0] * 16 + [
-            100.0 * (1.0 - 0.01),
-            100.0 * (1.0 - 0.02),
-            100.0 * (1.0 - 0.03),
-            100.0 * (1.0 - 0.04),
-            100.0 * (1.0 - 0.05),
-        ]
-        # SMH/XLF/XLE: flat path so they share the same start/end ratio.
         flat = [100.0] * 21
-        _seed_etf_path(session, ticker=Symbol("XLK"), closes=xlk_path, start_day=start_day)
-        _seed_etf_path(session, ticker=Symbol("SMH"), closes=flat, start_day=start_day)
-        _seed_etf_path(session, ticker=Symbol("XLF"), closes=flat, start_day=start_day)
-        _seed_etf_path(session, ticker=Symbol("XLE"), closes=flat, start_day=start_day)
-        _seed_etf_path(session, ticker=Symbol("IWM"), closes=flat, start_day=start_day)
-        _seed_etf_path(session, ticker=Symbol("SPY"), closes=flat, start_day=start_day)
+        for ticker in ("XLK", "SMH", "XLF", "XLE", "IWM", "SPY"):
+            _seed_etf_path(session, ticker=Symbol(ticker), closes=flat, start_day=start_day)
         session.commit()
 
         blocks = compute_cross_sector_rotation(
@@ -138,143 +124,8 @@ class TestCrossSectorRotationVelocity:
 
         assert len(blocks) == 1
         block = blocks[0]
+        assert isinstance(block, OutputBlock)
         assert block.block_id == "q7.cross_sector_rotation"
         assert OutputAudience.CORRELATION_REGIME_BRIEF in block.audience
-        assert block.payload["velocity_label"] == "slow_regime_shift"
-
-    def test_sharp_intraday_rotation_classified_event_driven(self, session: Session) -> None:
-        # On the final day, XLK collapses 10% while XLE and XLF rally 8%; this
-        # single-session move shoves multiple sectors past each other →
-        # sharp intraday event driven.
-        as_of = datetime(2026, 4, 30, tzinfo=UTC)
-        start_day = as_of - timedelta(days=20)
-
-        flat = [100.0] * 20
-        xlk_path = [*flat, 90.0]  # last day -10%
-        xle_path = [*flat, 108.0]  # last day +8%
-        xlf_path = [*flat, 108.5]  # last day +8.5%
-        smh_path = [100.0] * 21
-
-        _seed_etf_path(session, ticker=Symbol("XLK"), closes=xlk_path, start_day=start_day)
-        _seed_etf_path(session, ticker=Symbol("SMH"), closes=smh_path, start_day=start_day)
-        _seed_etf_path(session, ticker=Symbol("XLF"), closes=xlf_path, start_day=start_day)
-        _seed_etf_path(session, ticker=Symbol("XLE"), closes=xle_path, start_day=start_day)
-        _seed_etf_path(session, ticker=Symbol("IWM"), closes=smh_path, start_day=start_day)
-        _seed_etf_path(session, ticker=Symbol("SPY"), closes=smh_path, start_day=start_day)
-        session.commit()
-
-        blocks = compute_cross_sector_rotation(
-            session,
-            as_of=as_of,
-            short_window_days=5,
-            long_window_days=20,
-        )
-
-        block = blocks[0]
-        assert block.payload["velocity_label"] == "sharp_intraday_event_driven"
-
-
-# ---------------------------------------------------------------------------
-# Narrative classification — rate / growth / risk-appetite drivers
-# ---------------------------------------------------------------------------
-
-
-class TestCrossSectorRotationNarrative:
-    def _seed_three_sector_etfs_plus_proxies(
-        self,
-        session: Session,
-        *,
-        as_of: datetime,
-        xlk_path: list[float],
-        xlf_path: list[float],
-        xle_path: list[float],
-        smh_path: list[float],
-        iwm_path: list[float],
-        spy_path: list[float],
-    ) -> None:
-        start_day = as_of - timedelta(days=len(xlk_path) - 1)
-        for ticker, path in (
-            ("XLK", xlk_path),
-            ("XLF", xlf_path),
-            ("XLE", xle_path),
-            ("SMH", smh_path),
-            ("IWM", iwm_path),
-            ("SPY", spy_path),
-        ):
-            _seed_etf_path(session, ticker=ticker, closes=path, start_day=start_day)
-
-    def test_rate_driven_when_xlf_xlk_pair_dominates(self, session: Session) -> None:
-        # XLF up 10%, XLK flat, XLE flat, IWM/SPY flat. Strongest pair move
-        # is XLF/XLK → rate_driven.
-        as_of = datetime(2026, 4, 30, tzinfo=UTC)
-        flat = [100.0] * 6  # 5 short-window days plus one base
-        xlf = [100.0, 102.0, 104.0, 106.0, 108.0, 110.0]
-        self._seed_three_sector_etfs_plus_proxies(
-            session,
-            as_of=as_of,
-            xlk_path=list(flat),
-            xlf_path=xlf,
-            xle_path=list(flat),
-            smh_path=list(flat),
-            iwm_path=list(flat),
-            spy_path=list(flat),
-        )
-        session.commit()
-
-        blocks = compute_cross_sector_rotation(
-            session,
-            as_of=as_of,
-            short_window_days=5,
-            long_window_days=20,
-        )
-        assert blocks[0].payload["narrative_label"] == "rate_driven"
-
-    def test_growth_driven_when_xle_xlk_pair_dominates(self, session: Session) -> None:
-        # XLE up 12%, others flat → XLE/XLK pair dominates → growth_driven.
-        as_of = datetime(2026, 4, 30, tzinfo=UTC)
-        flat = [100.0] * 6
-        xle = [100.0, 102.0, 104.0, 107.0, 110.0, 112.0]
-        self._seed_three_sector_etfs_plus_proxies(
-            session,
-            as_of=as_of,
-            xlk_path=list(flat),
-            xlf_path=list(flat),
-            xle_path=xle,
-            smh_path=list(flat),
-            iwm_path=list(flat),
-            spy_path=list(flat),
-        )
-        session.commit()
-
-        blocks = compute_cross_sector_rotation(
-            session,
-            as_of=as_of,
-            short_window_days=5,
-            long_window_days=20,
-        )
-        assert blocks[0].payload["narrative_label"] == "growth_driven"
-
-    def test_risk_appetite_driven_when_iwm_spy_pair_dominates(self, session: Session) -> None:
-        # IWM up 15%, SPY flat → IWM/SPY ratio dominates → risk_appetite.
-        as_of = datetime(2026, 4, 30, tzinfo=UTC)
-        flat = [100.0] * 6
-        iwm = [100.0, 103.0, 106.0, 109.0, 112.0, 115.0]
-        self._seed_three_sector_etfs_plus_proxies(
-            session,
-            as_of=as_of,
-            xlk_path=list(flat),
-            xlf_path=list(flat),
-            xle_path=list(flat),
-            smh_path=list(flat),
-            iwm_path=iwm,
-            spy_path=list(flat),
-        )
-        session.commit()
-
-        blocks = compute_cross_sector_rotation(
-            session,
-            as_of=as_of,
-            short_window_days=5,
-            long_window_days=20,
-        )
-        assert blocks[0].payload["narrative_label"] == "risk_appetite_driven"
+        assert "velocity_label" in block.payload
+        assert "narrative_label" in block.payload

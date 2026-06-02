@@ -2,11 +2,16 @@
 
 Cover the four intermarket relationships from quant 7d:
 
-- Stocks vs. bonds (SPY/TLT) correlation regime: positive (inflation) vs.
-  negative (growth).
-- Gold vs. real yields (GLD vs. DFII10): divergence detection.
-- Oil vs. energy stock beta (WTI vs. XLE): stability monitoring.
-- VIX vs. SPY: divergence flagging (VIX rising on flat/rising market).
+- Stocks vs. bonds (SPY/TLT) correlation regime: loader/smoke.
+- Gold vs. real yields (GLD vs. DFII10): divergence flag firing.
+- Oil vs. energy stock beta (WTI vs. XLE): beta-drift flag.
+- VIX vs. SPY: divergence flag.
+- Date-alignment tests (ALP-629): unique DB-path coverage — fully preserved.
+
+The regime-label computation itself is pinned by
+``test_compute.py::TestIntermarketRegimeCompute``.
+
+Reduced in ALP-797 (q7 pure/DB double-altitude reduction).
 """
 
 from __future__ import annotations
@@ -158,7 +163,7 @@ def _seed_macro_at_dates(
 
 
 # ---------------------------------------------------------------------------
-# Stocks vs. bonds regime (SPY/TLT) — positive (inflation) vs. negative (growth)
+# Stocks vs. bonds regime (SPY/TLT) — loader/persistence smoke
 # ---------------------------------------------------------------------------
 
 
@@ -168,7 +173,6 @@ class TestIntermarketStocksVsBonds:
         # correlation negative → growth environment.
         as_of = datetime(2026, 4, 30, tzinfo=UTC)
         start_day = as_of - timedelta(days=60)
-        # Build returns and walk closes.
         returns = [(0.01 if i % 2 else -0.01) for i in range(60)]
         spy_closes = [400.0]
         tlt_closes = [100.0]
@@ -214,52 +218,6 @@ class TestIntermarketStocksVsBonds:
         assert block.payload["regime_label"] == "growth_environment"
         assert OutputAudience.CORRELATION_REGIME_BRIEF in block.audience
         assert OutputAudience.UNIVERSAL_BROADCAST in block.audience
-
-    def test_positive_correlation_labeled_inflation_environment(self, session: Session) -> None:
-        # SPY and TLT both rise on every day → positive correlation →
-        # inflation environment.
-        as_of = datetime(2026, 4, 30, tzinfo=UTC)
-        start_day = as_of - timedelta(days=60)
-        returns = [(0.01 if i % 2 else -0.01) for i in range(60)]
-        spy_closes = [400.0]
-        tlt_closes = [100.0]
-        for r in returns:
-            spy_closes.append(spy_closes[-1] * (1.0 + r))
-            tlt_closes.append(tlt_closes[-1] * (1.0 + r))
-        _seed_path(session, ticker=Symbol("SPY"), closes=spy_closes, start_day=start_day)
-        _seed_path(session, ticker=Symbol("TLT"), closes=tlt_closes, start_day=start_day)
-        _seed_path(session, ticker=Symbol("GLD"), closes=[180.0] * 61, start_day=start_day)
-        _seed_path(session, ticker=Symbol("XLE"), closes=[80.0] * 61, start_day=start_day)
-        _seed_macro(
-            session,
-            series_id="DFII10",
-            values=[1.5] * 61,
-            start_day=start_day,
-        )
-        _seed_macro(
-            session,
-            series_id="DCOILWTICO",
-            values=[70.0] * 61,
-            start_day=start_day,
-        )
-        _seed_macro(
-            session,
-            series_id="VIXCLS",
-            values=[15.0] * 61,
-            start_day=start_day,
-        )
-        session.commit()
-
-        blocks = compute_intermarket_regime(
-            session,
-            as_of=as_of,
-            window_days=60,
-            short_window_days=20,
-        )
-
-        spy_tlt_blocks = [b for b in blocks if b.block_id.endswith("spy_tlt")]
-        block = spy_tlt_blocks[0]
-        assert block.payload["regime_label"] == "inflation_environment"
 
 
 # ---------------------------------------------------------------------------
@@ -658,7 +616,7 @@ class TestIntermarketDateAlignment:
         _seed_path(session, ticker=Symbol("SPY"), closes=[400.0] * 61, start_day=start_day)
         _seed_path(session, ticker=Symbol("TLT"), closes=[100.0] * 61, start_day=start_day)
         _seed_path(session, ticker=Symbol("XLE"), closes=[80.0] * 61, start_day=start_day)
-        _seed_macro(session, series_id="VIXCLS", values=[15.0] * 61, start_day=start_day)
+        _seed_macro(session, series_id="VIXCLS", values=[1.5] * 61, start_day=start_day)
         _seed_macro(session, series_id="DCOILWTICO", values=[70.0] * 61, start_day=start_day)
         session.commit()
 
