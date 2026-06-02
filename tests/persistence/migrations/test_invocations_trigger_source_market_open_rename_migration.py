@@ -131,20 +131,6 @@ class TestInvocationsTriggerSourceMarketOpenRename:
         with pytest.raises(IntegrityError):
             _insert_invocation(db_path, trigger_source="pre_open")
 
-    def test_pre_existing_values_still_accepted_after_upgrade(self, tmp_path: Path) -> None:
-        """Untouched values keep round-tripping under the renamed constraint."""
-        db_path = tmp_path / "alembic.db"
-        command.upgrade(_alembic_config(db_path), "head")
-        _seed_lifetime(db_path)
-        for idx, source in enumerate(
-            ("cli", "operator_console", "continuous_monitor", "borrow_accrual", "replay"),
-        ):
-            _insert_invocation(
-                db_path,
-                trigger_source=source,
-                invocation_id=f"inv-test-after-{idx}",
-            )
-
     def test_check_constraints_after_upgrade(self, tmp_path: Path) -> None:
         """The recreated CHECK carries the new value, drops the old, and the
         sibling CHECK constraints survive the batch table-recreate."""

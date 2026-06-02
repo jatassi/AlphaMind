@@ -1,6 +1,6 @@
 # Off-hours rolling (every 4h outside market hours, mon-fri) — low-density;
 # adaptive_researcher omitted because overnight signal density drops and
-# persistent anomalies are picked up on the next pre-open run, per
+# persistent anomalies are picked up on the next market_open run, per
 # docs/design/configuration-management.md § run_types/<trigger>.yaml.
 
 agents:
