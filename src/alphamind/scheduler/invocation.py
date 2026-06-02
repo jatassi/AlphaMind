@@ -19,6 +19,7 @@ configuration decisions (J) for the bootstrap path on first-ever invocation.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import subprocess
 from datetime import UTC, datetime
@@ -43,6 +44,9 @@ from alphamind.state.invocation_context.records import (
     TriggerType,
 )
 from alphamind.state.invocation_id import mint_invocation_id
+from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
+
+_logger = logging.getLogger(__name__)
 
 
 async def build_invocation_record(  # noqa: PLR0913 — signature pinned by story 03a spec
@@ -74,7 +78,7 @@ async def build_invocation_record(  # noqa: PLR0913 — signature pinned by stor
         raise ValueError(msg)
 
     start_at = _isoformat_z(now)
-    git_sha = _git_rev_parse_head()
+    git_sha = await _fetch_process_git_sha(session, process_lifetime_id)
     calibration_path = _persist_data_calibration_snapshot(
         archive_root=archive_root, invocation_id=invocation_id, as_of=now
     )
@@ -106,6 +110,46 @@ async def build_invocation_record(  # noqa: PLR0913 — signature pinned by stor
         staleness_flag=None,
         snapshot_metadata_json=None,
     )
+
+
+async def _fetch_process_git_sha(session: AsyncSession, process_lifetime_id: str) -> str:
+    """Return the git SHA recorded when this process started.
+
+    Reads ``process_lifetimes.git_sha`` for ``process_lifetime_id`` rather than
+    shelling out to ``git rev-parse HEAD``. A long-lived pipeline process holds
+    its already-imported code in memory; if the operator pulls without restarting,
+    HEAD advances while the executing code does not. The process-start SHA is the
+    authoritative version for provenance — HEAD is not.
+
+    Also performs a best-effort HEAD comparison and logs a WARNING when the two
+    diverge, making a pull-without-restart visible in the pipeline log.
+    """
+    result = await session.execute(
+        select(ProcessLifetimeRow.git_sha).where(
+            ProcessLifetimeRow.process_lifetime_id == process_lifetime_id
+        )
+    )
+    process_sha = result.scalar_one_or_none()
+    if process_sha is None:
+        msg = f"process_lifetime_id={process_lifetime_id!r} not found in process_lifetimes"
+        raise ValueError(msg)
+
+    try:
+        head_sha = _git_rev_parse_head()
+    except (subprocess.CalledProcessError, OSError) as exc:
+        _logger.debug("git rev-parse HEAD unavailable; skipping divergence check: %s", exc)
+        return process_sha
+
+    if head_sha != process_sha:
+        _logger.warning(
+            "git HEAD (%s) differs from process-launch SHA (%s) for %s — "
+            "the operator may have pulled without restarting the pipeline process",
+            head_sha,
+            process_sha,
+            process_lifetime_id,
+        )
+
+    return process_sha
 
 
 def _isoformat_z(now: datetime) -> str:
@@ -241,9 +285,10 @@ def _data_source_provider_names() -> tuple[str, ...]:
 def _git_rev_parse_head() -> str:
     """Return the 40-character SHA of ``HEAD`` via ``git rev-parse``.
 
-    A non-zero exit raises :class:`subprocess.CalledProcessError`; the spec
-    requires the error to propagate to the caller so the invocation can be
-    aborted before the row is composed.
+    Used only for the best-effort divergence check in
+    :func:`_fetch_process_git_sha`. A non-zero exit raises
+    :class:`subprocess.CalledProcessError`; the caller catches that
+    (and :class:`OSError` for a missing git binary) and skips the check.
     """
     completed = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -281,7 +326,8 @@ async def insert_invocation_record(  # noqa: PLR0913 — composition surface thr
     Steps in order:
 
     1. Mint ``invocation_id`` via :func:`_mint_invocation_id`.
-    2. Open a short read-only session for the freshness query.
+    2. Open a short session to read the process-launch SHA and collection-run
+       freshness timestamps.
     3. Call :func:`load_full_config` to validate, compose, and persist the
        resolved configuration snapshot under
        ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/resolved_config.json``

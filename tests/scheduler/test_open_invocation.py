@@ -19,7 +19,6 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind.config.models.modes import Mode
@@ -222,17 +221,19 @@ class TestInsertInvocationRecord:
         assert row.resolved_config_hash == pipeline_config.snapshot.hash
         assert row.resolved_config_snapshot_path == str(pipeline_config.snapshot.path)
 
-    async def test_fk_violation_raises_and_no_row_lands(
+    async def test_unknown_process_lifetime_id_raises_and_no_row_lands(
         self,
         env_path: Path,
         archive_root: Path,
         tmp_path: Path,
     ) -> None:
-        """FK violation on the ``process_lifetime`` reference aborts the insert.
+        """An unknown process_lifetime_id aborts the invocation with no row written.
 
         Bypasses the seeded fixture so the parent ``process_lifetimes`` row
-        does not exist; the row insertion must raise ``IntegrityError`` and
-        leave no row in the DB.
+        does not exist. Previously the error surfaced as ``IntegrityError`` on
+        the ``invocations`` insert; now ``_fetch_process_git_sha`` raises
+        ``ValueError`` earlier (before any insert), but the observable contract
+        is unchanged: no invocation row lands.
         """
         db_path = tmp_path / "alphamind.db"
 
@@ -246,7 +247,7 @@ class TestInsertInvocationRecord:
         factory = make_async_session_factory(async_engine)
         try:
             now = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
-            with pytest.raises(IntegrityError):
+            with pytest.raises(ValueError, match="not found in process_lifetimes"):
                 await insert_invocation_record(
                     session_factory=factory,
                     process_lifetime_id="proc-does-not-exist",
