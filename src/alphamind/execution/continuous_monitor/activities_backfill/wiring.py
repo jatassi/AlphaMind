@@ -36,6 +36,7 @@ def register_fill_backfill_task(
     venue_config: VenueConfig,
     db_session_factory: async_sessionmaker[AsyncSession],
     enrichment_callable: EnrichmentCallable | None,
+    process_lifetime_id: str | None = None,
 ) -> None:
     """Register the ``fill_backfill`` task on *supervisor* (ALP-763).
 
@@ -67,6 +68,7 @@ def register_fill_backfill_task(
             trading_client_factory=_trading_client_factory,
             account_state_queries_factory=_queries_factory,
             enrichment_callable=enrichment_callable,
+            process_lifetime_id=process_lifetime_id,
         )
 
     supervisor.register_task(name="fill_backfill", coro_fn=_fill_backfill_task)

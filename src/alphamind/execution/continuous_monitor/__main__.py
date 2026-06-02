@@ -483,6 +483,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:  # noqa: PLR0915 — compos
         venue_config=venue_config,
         db_session_factory=db_session_factory,
         enrichment_callable=sse_wrapped_enrichment,
+        process_lifetime_id=process_lifetime_id,
     )
     # ALP-763 — periodic fill-backfill backstop. Sweeps Alpaca on an interval
     # (no websocket disconnect needed) with an independent generous lookback
@@ -495,6 +496,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:  # noqa: PLR0915 — compos
         venue_config=venue_config,
         db_session_factory=db_session_factory,
         enrichment_callable=sse_wrapped_enrichment,
+        process_lifetime_id=process_lifetime_id,
     )
     register_greeks_refresh_task(
         supervisor,
@@ -657,6 +659,7 @@ def _register_fill_stream_consumer(
     venue_config: VenueConfig,
     db_session_factory: async_sessionmaker[AsyncSession],
     enrichment_callable: EnrichmentCallable | None,
+    process_lifetime_id: str | None = None,
 ) -> None:
     """Register the ``fill_stream_consumer`` task (story 02c).
 
@@ -693,6 +696,7 @@ def _register_fill_stream_consumer(
             trading_client_factory=_trading_client_factory,
             account_state_queries_factory=_queries_factory,
             enrichment_callable=enrichment_callable,
+            process_lifetime_id=process_lifetime_id,
         )
 
     supervisor.register_task(name="fill_stream_consumer", coro_fn=_fill_stream_consumer_task)

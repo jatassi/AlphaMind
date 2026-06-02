@@ -33,6 +33,7 @@ from alphamind.execution.continuous_monitor.fill_stream_consumer.translation imp
     fill_report_to_fill_record,
 )
 from alphamind.execution.write_paths.fill_persistence import append_fill_record
+from alphamind.execution.write_paths.phase1 import integrate_recovered_fills
 from alphamind.execution.write_paths.unattributed_fill_persistence import (
     delete_unattributed_fill,
     list_unattributed_fills,
@@ -47,6 +48,7 @@ async def drain_unattributed_fills(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     enrichment_callable: EnrichmentCallable | None = None,
+    process_lifetime_id: str | None = None,
 ) -> int:
     """Re-resolve every queued unattributed fill; return the count integrated.
 
@@ -57,6 +59,11 @@ async def drain_unattributed_fills(
     ``enrichment_callable`` is supplied, mirroring ``persist_fill_report``) and
     the queue row deleted. On failure the row is touched (``retry_count``
     bumped) and alerted once, then left queued.
+
+    When *process_lifetime_id* is supplied and at least one fill was integrated,
+    :func:`integrate_recovered_fills` is called immediately after the drain so
+    the PENDING→OPEN position transition and bracket-leg activation run within
+    seconds rather than waiting for the next scheduled pipeline run (ALP-767).
     """
     async with session_factory() as db:
         queued = await list_unattributed_fills(db)
@@ -97,6 +104,16 @@ async def drain_unattributed_fills(
             "integrated previously-unattributed fill: broker_fill_key=%s order_id=%s",
             queued_fill.broker_fill_key,
             oms_order_id,
+        )
+
+    if integrated > 0 and process_lifetime_id is not None:
+        count = await integrate_recovered_fills(
+            session_factory,
+            process_lifetime_id=process_lifetime_id,
+        )
+        log.info(
+            "fill recovery Phase-1 integration completed: fills_processed=%d",
+            count,
         )
 
     return integrated

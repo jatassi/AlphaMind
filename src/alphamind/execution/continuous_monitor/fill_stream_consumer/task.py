@@ -64,6 +64,7 @@ async def run_fill_stream_consumer(
     trading_client_factory: TradingClientFactory,
     account_state_queries_factory: AccountStateQueriesFactory,
     enrichment_callable: EnrichmentCallable | None = None,
+    process_lifetime_id: str | None = None,
 ) -> None:
     """Run-forever fill-stream consumer.
 
@@ -94,6 +95,7 @@ async def run_fill_stream_consumer(
             await drain_unattributed_fills(
                 session_factory=session_factory,
                 enrichment_callable=enrichment_callable,
+                process_lifetime_id=process_lifetime_id,
             )
         except Exception:
             log.exception("unattributed-fill drain failed; continuing")
