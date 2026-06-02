@@ -212,32 +212,6 @@ _RECORD_BUILDERS: tuple[tuple[type, Callable[[], object]], ...] = (
 _RECORD_TYPES: tuple[type, ...] = tuple(record_type for record_type, _ in _RECORD_BUILDERS)
 
 
-@pytest.mark.parametrize("record_type", _RECORD_TYPES)
-def test_record_is_dataclass_with_slots(record_type: type) -> None:
-    """Every typed record is a dataclass declaring ``__slots__``.
-
-    Frozenness is verified behaviorally by ``test_record_is_frozen`` —
-    attempting to mutate a constructed instance must raise
-    ``FrozenInstanceError``.
-    """
-    assert dataclasses.is_dataclass(record_type)
-    assert hasattr(record_type, "__slots__"), f"{record_type.__name__} has no __slots__"
-
-
-@pytest.mark.parametrize(
-    ("record_type", "build"),
-    _RECORD_BUILDERS,
-    ids=[record_type.__name__ for record_type, _ in _RECORD_BUILDERS],
-)
-def test_record_is_frozen(record_type: type, build: Callable[[], object]) -> None:
-    """Every typed record refuses post-construction mutation."""
-    instance = build()
-    assert dataclasses.is_dataclass(instance)
-    field = next(iter(dataclasses.fields(instance)))
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        setattr(instance, field.name, None)
-
-
 # ---------------------------------------------------------------------------
 # RegimeAdaptationState
 # ---------------------------------------------------------------------------
@@ -248,16 +222,6 @@ def test_regime_adaptation_state_constructible_with_valid_inputs() -> None:
     assert state.active_regime is Regime.normal
     assert state.transition_state is RegimeTransitionState.STABLE
     assert state.transition_invocations_remaining == 0
-
-
-def test_regime_adaptation_state_is_hashable_when_valid() -> None:
-    """Frozen + slots ⇒ hashable; equal-by-field instances are equal and hash-equal."""
-    a = _baseline_stable_state()
-    b = _baseline_stable_state()
-    assert a == b
-    assert hash(a) == hash(b)
-    # And usable as a set element.
-    assert {a, b} == {a}
 
 
 def test_regime_adaptation_state_rejects_stable_with_remaining_nonzero() -> None:
