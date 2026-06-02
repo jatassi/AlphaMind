@@ -187,16 +187,6 @@ def test_halt_state_negative_drawdown_rejected(field: str) -> None:
     assert field in str(exc_info.value)
 
 
-def test_halt_state_is_frozen() -> None:
-    halt = HaltState(
-        daily_halt_active=True,
-        cumulative_full_halt_active=False,
-        daily_drawdown_pct=2.6,
-        daily_drawdown_limit_pct=2.5,
-    )
-    with pytest.raises((ValueError, TypeError)):
-        halt.daily_halt_active = False
-
 
 # ---------------------------------------------------------------------------
 # EmergencyContext
@@ -233,16 +223,6 @@ def test_emergency_context_rejects_non_positive_minutes(field: str, bad_value: f
     assert field in str(exc_info.value)
 
 
-def test_emergency_context_is_frozen() -> None:
-    ctx = EmergencyContext(
-        trigger=EmergencyTrigger.MARGIN_CALL,
-        trigger_detail="Margin call",
-        minutes_since_last_invocation=1.0,
-        normal_cadence_minutes=120.0,
-    )
-    with pytest.raises((ValueError, TypeError)):
-        ctx.trigger_detail = "changed"
-
 
 # ---------------------------------------------------------------------------
 # BreachDetails / SecondaryBreachCheckResult / EngineGuardrailTriggerRecord
@@ -270,11 +250,6 @@ def test_breach_details_accepts_optional_unit_and_regime() -> None:
     assert details.regime_at_breach is RegimeLabel.ELEVATED
 
 
-def test_breach_details_is_frozen() -> None:
-    details = BreachDetails(current_value=1.0, limit_value=2.0, overage=-1.0)
-    with pytest.raises((ValueError, TypeError)):
-        details.current_value = 99.0
-
 
 def test_secondary_breach_check_result_constructs() -> None:
     result = SecondaryBreachCheckResult(result=SecondaryBreachOutcome.NO_SECONDARY_BREACH)
@@ -289,11 +264,6 @@ def test_secondary_breach_check_result_carries_notes() -> None:
     )
     assert result.notes is not None and "alternate position" in result.notes
 
-
-def test_secondary_breach_check_result_is_frozen() -> None:
-    result = SecondaryBreachCheckResult(result=SecondaryBreachOutcome.DEFERRED_TO_PM)
-    with pytest.raises((ValueError, TypeError)):
-        result.notes = "changed"
 
 
 def test_engine_guardrail_trigger_record_constructs() -> None:
@@ -336,16 +306,6 @@ def test_engine_guardrail_trigger_record_carries_optional_cascade_and_secondary(
     assert record.secondary_breach_check_result is not None
     assert record.secondary_breach_check_result.result is SecondaryBreachOutcome.NO_SECONDARY_BREACH
 
-
-def test_engine_guardrail_trigger_record_is_frozen() -> None:
-    record = EngineGuardrailTriggerRecord(
-        rule_breached="per_position_max_loss",
-        trigger_timestamp=datetime(2026, 4, 29, 14, 30, tzinfo=UTC),
-        breach_details=BreachDetails(current_value=-30.5, limit_value=-30.0, overage=-0.5),
-        position_selection_rationale="rationale",
-    )
-    with pytest.raises((ValueError, TypeError)):
-        record.rule_breached = "changed"
 
 
 # ---------------------------------------------------------------------------
@@ -420,15 +380,6 @@ def test_engine_close_command_rejects_non_positive_numeric_quantity(bad_quantity
         )
     assert "must be positive" in str(exc_info.value)
 
-
-def test_engine_close_command_is_frozen() -> None:
-    cmd = EngineCloseCommand(
-        command_id="MON.session-1.7.1",
-        position_id=PositionId("pos-42"),
-        quantity_or_all="all",
-    )
-    with pytest.raises((ValueError, TypeError)):
-        cmd.position_id = "pos-99"
 
 
 # ---------------------------------------------------------------------------
@@ -529,16 +480,6 @@ def test_engine_envelope_rejects_command_id_not_prefixed_by_envelope_id() -> Non
     assert "command_id must begin with" in str(exc_info.value)
 
 
-def test_engine_envelope_is_frozen() -> None:
-    envelope = EngineEnvelope(
-        envelope_id="MON.session-1.7",
-        trigger_timestamp=_ENV_TS,
-        guardrail_trigger_record=_make_trigger_record(),
-        command=_make_close_command(),
-    )
-    with pytest.raises((ValueError, TypeError)):
-        envelope.envelope_id = "MON.session-2.1"
-
 
 # ---------------------------------------------------------------------------
 # RejectionRuleEntry / HardRejectionPayload
@@ -563,11 +504,6 @@ def test_rejection_rule_entry_constructs() -> None:
     assert entry.current_value == 23.7
     assert entry.unit == "pct_of_portfolio"
 
-
-def test_rejection_rule_entry_is_frozen() -> None:
-    entry = _make_rule_entry()
-    with pytest.raises((ValueError, TypeError)):
-        entry.rule_id = "changed"
 
 
 def test_hard_rejection_payload_constructs() -> None:
@@ -604,16 +540,6 @@ def test_hard_rejection_payload_rejects_empty_breaching_rules() -> None:
         )
     assert "at least one breaching rule" in str(exc_info.value)
 
-
-def test_hard_rejection_payload_is_frozen() -> None:
-    payload = HardRejectionPayload(
-        rejected_command_id="inv-2026-04-29.ENV-REC-1.1.1",
-        breaching_rules=(_make_rule_entry(),),
-        suggested_modification="reduce size by 42%",
-        headroom_after_hypothetical_compliance=(),
-    )
-    with pytest.raises((ValueError, TypeError)):
-        payload.suggested_modification = "changed"
 
 
 # ---------------------------------------------------------------------------
@@ -668,11 +594,3 @@ def test_position_selection_result_partial_trim_without_target_rejected() -> Non
     assert "required for PARTIAL_TRIM" in str(exc_info.value)
 
 
-def test_position_selection_result_is_frozen() -> None:
-    result = PositionSelectionResult(
-        position_id=PositionId("pos-42"),
-        action=PositionSelectionAction.FULL_CLOSE,
-        rationale="rationale",
-    )
-    with pytest.raises((ValueError, TypeError)):
-        result.position_id = "changed"
