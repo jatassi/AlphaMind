@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from decimal import ROUND_DOWN, ROUND_UP, Decimal
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from alphamind._kernel.money import Money, Price, price
+from alphamind._kernel.money import Price, money, price
 from alphamind.commands.command_models import EquityInstrument, OpenCommand, PriceLeg
 
 if TYPE_CHECKING:
@@ -201,7 +201,7 @@ async def _rewrite_one(command: OMSCommand, *, quote_source: QuoteSource, bps: f
     # through unchanged and we don't re-assert the type=="limit"/no-stop_price
     # invariant the classifier already guarantees.
     # ALP-765: recompute dollar_value so limit_price x quantity == dollar_value.
-    new_dollar_value = Money(new_limit * Decimal(str(command.position_size.quantity)))
+    new_dollar_value = money(new_limit * Decimal(str(command.position_size.quantity)))
     new_entry = command.entry_order.model_copy(update={"limit_price": new_limit})
     new_position_size = command.position_size.model_copy(update={"dollar_value": new_dollar_value})
     return command.model_copy(update={"entry_order": new_entry, "position_size": new_position_size})
