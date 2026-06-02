@@ -451,11 +451,14 @@ async def _integrate_or_quarantine_fill(
     Two layers keep a single un-integratable fill from wedging the whole batch
     (ALP-761):
 
-    * **Pre-integration gate.** A fill whose target position is in a terminal
-      status (``CANCELLED`` / ``CLOSED``) is an orphan — the per-instrument
-      apply-fill helpers hard-raise on it. Quarantine + alert it up front rather
-      than letting it reach :func:`_apply_fill_to_equity_position`. This is the
-      equity analogue of the strategy path's existing cancel-mid-fill handling.
+    * **Pre-integration gate.** Two checks run before the savepoint mutates
+      anything: (1) a fill whose target position is in a terminal status
+      (``CANCELLED`` / ``CLOSED``) is an orphan — quarantine + alert rather
+      than letting it reach :func:`_apply_fill_to_equity_position`; (2) a fill
+      whose ``fill_quantity`` exceeds the order's ``remaining_quantity`` (beyond
+      ``_QTY_EPSILON``) is an over-fill — quarantine + alert rather than
+      integrating it and double-counting the position (ALP-766). Both arms
+      return ``False`` without entering the savepoint.
 
     * **Defense-in-depth.** Target resolution and the state mutation in
       :func:`_integrate_one_fill` both run under one try; the mutation runs
