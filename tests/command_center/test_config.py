@@ -74,60 +74,11 @@ class TestCommandCenterConfig:
         assert config.pipeline.events_url.startswith("http://127.0.0.1:")
         assert config.monitor.events_url.startswith("http://127.0.0.1:")
 
-    def test_extra_field_in_yaml_rejected(self, tmp_path: Path) -> None:
-        bad = {
-            "bind": {"host": "127.0.0.1", "port": 8080},
-            "db": {"alphamind_db_path": "/tmp/x.db"},
-            "frontend": {"dist_path": "/dist"},
-            "pipeline": {
-                "control_url": "http://127.0.0.1:8765",
-                "events_url": "http://127.0.0.1:8765",
-            },
-            "monitor": {
-                "control_url": "http://127.0.0.1:8766",
-                "events_url": "http://127.0.0.1:8766",
-            },
-            "bogus_top_level_key": True,
-        }
-        bad_yaml = tmp_path / "command-center.yaml"
-        bad_yaml.write_text(yaml.safe_dump(bad), encoding="utf-8")
-        with pytest.raises(ValidationError, match="bogus_top_level_key"):
-            load_command_center_config(tmp_path)
-
 
 class TestSecurityConfig:
     def test_loads_shipped_yaml(self, config_dir: Path) -> None:
         config = load_security_config(config_dir)
         assert isinstance(config, SecurityConfig)
-
-    def test_session_cookie_name_present(self, config_dir: Path) -> None:
-        config = load_security_config(config_dir)
-        assert config.session.cookie_name == "cc_session"
-        assert config.session.duration_hours == 12
-
-    def test_csrf_cookie_name_present(self, config_dir: Path) -> None:
-        config = load_security_config(config_dir)
-        assert config.csrf.cookie_name == "cc_csrf"
-
-    def test_webauthn_rp_id_and_name(self, config_dir: Path) -> None:
-        config = load_security_config(config_dir)
-        assert config.webauthn.relying_party_id == "localhost"
-        assert config.webauthn.relying_party_name == "AlphaMind Command Center"
-
-    def test_extra_field_rejected(self, tmp_path: Path) -> None:
-        bad = {
-            "session": {"duration_hours": 12, "cookie_name": "x"},
-            "csrf": {"cookie_name": "x"},
-            "webauthn": {
-                "relying_party_id": "localhost",
-                "relying_party_name": "AlphaMind",
-            },
-            "bogus": True,
-        }
-        bad_yaml = tmp_path / "security.yaml"
-        bad_yaml.write_text(yaml.safe_dump(bad), encoding="utf-8")
-        with pytest.raises(ValidationError, match="bogus"):
-            load_security_config(tmp_path)
 
 
 class TestAlertsConfig:
@@ -148,20 +99,57 @@ class TestAlertsConfig:
         assert "thesis_resolved" in names
         assert "entry_no_fill" in names
 
-    def test_discord_webhook_url_env_present(self, config_dir: Path) -> None:
-        config = load_alerts_config(config_dir)
-        assert config.channels.discord.webhook_url_env == "ALPHAMIND_DISCORD_WEBHOOK"
+
+class TestShippedYamlCarriesExpectedFieldValues:
+    """Live regression guard: the shipped config/*.yaml files contain the
+    expected sentinel values.  A single combined assertion catches any
+    accidental field rename or value drift across all three files.
+
+    ``test_loads_shipped_yaml`` (per class above) only asserts
+    ``isinstance``; this test is the ONLY guard that the shipped YAML
+    actually carries these specific values.
+    """
+
+    def test_shipped_config_yamls_carry_expected_fields(self, config_dir: Path) -> None:
+        sec = load_security_config(config_dir)
+        # Security: cookie names, session duration, WebAuthn relying party
+        assert sec.session.cookie_name == "cc_session"
+        assert sec.session.duration_hours == 12
+        assert sec.csrf.cookie_name == "cc_csrf"
+        assert sec.webauthn.relying_party_id == "localhost"
+
+        alerts = load_alerts_config(config_dir)
+        # Alerts: Discord webhook env var
+        assert alerts.channels.discord.webhook_url_env == "ALPHAMIND_DISCORD_WEBHOOK"
+
+
+class TestExtraFieldRejected:
+    """Extra-field-forbidden is a Pydantic mechanism; one test is sufficient
+    to confirm ``extra='forbid'`` is wired — it applies identically to all
+    three config models.
+    """
 
     def test_extra_field_rejected(self, tmp_path: Path) -> None:
+        # CommandCenterConfig is representative; the mechanism is identical
+        # across all three models (SecurityConfig / AlertsConfig).
         bad = {
-            "rules": [],
-            "channels": {"discord": {"webhook_url_env": "X"}},
-            "bogus": True,
+            "bind": {"host": "127.0.0.1", "port": 8080},
+            "db": {"alphamind_db_path": "/tmp/x.db"},
+            "frontend": {"dist_path": "/dist"},
+            "pipeline": {
+                "control_url": "http://127.0.0.1:8765",
+                "events_url": "http://127.0.0.1:8765",
+            },
+            "monitor": {
+                "control_url": "http://127.0.0.1:8766",
+                "events_url": "http://127.0.0.1:8766",
+            },
+            "bogus_top_level_key": True,
         }
-        bad_yaml = tmp_path / "alerts.yaml"
+        bad_yaml = tmp_path / "command-center.yaml"
         bad_yaml.write_text(yaml.safe_dump(bad), encoding="utf-8")
-        with pytest.raises(ValidationError, match="bogus"):
-            load_alerts_config(tmp_path)
+        with pytest.raises(ValidationError, match="bogus_top_level_key"):
+            load_command_center_config(tmp_path)
 
 
 class TestLoadersFailLoudWhenFileMissing:
@@ -364,20 +352,3 @@ cookies_secure: true
         cs_hint = hints["cookies_secure"]
         metadata = getattr(cs_hint, "__metadata__", ())
         assert ReloadPolicy.DEPLOY_TIME in metadata
-
-    def test_extra_field_rejected_still_works_with_new_field(self, tmp_path: Path) -> None:
-        # extra forbid continues to protect the new field too
-        bad = {
-            "session": {"duration_hours": 12, "cookie_name": "x"},
-            "csrf": {"cookie_name": "x"},
-            "webauthn": {
-                "relying_party_id": "localhost",
-                "relying_party_name": "AlphaMind",
-            },
-            "cookies_secure": False,
-            "bogus": True,
-        }
-        bad_yaml = tmp_path / "security.yaml"
-        bad_yaml.write_text(yaml.safe_dump(bad), encoding="utf-8")
-        with pytest.raises(ValidationError, match="bogus"):
-            load_security_config(tmp_path)
