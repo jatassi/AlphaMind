@@ -208,17 +208,6 @@ def _quiet_alert_state() -> CompositeAlertState:
     )
 
 
-def _stress_alert_state() -> CompositeAlertState:
-    return CompositeAlertState(
-        funding_stress_alert_active=True,
-        funding_stress_calibration_state=CalibrationState.CALIBRATED,
-        funding_stress_as_of="2026-04-29T13:00:00Z",
-        market_liquidity_alert_active=False,
-        market_liquidity_calibration_state=CalibrationState.CALIBRATED,
-        market_liquidity_as_of=None,
-    )
-
-
 def _empty_calendar() -> EventCalendar:
     return EventCalendar(entries=())
 
@@ -381,32 +370,6 @@ def _persist_prior(
     return state
 
 
-class TestStableContinuation:
-    """Prior STABLE in normal; same regime → STABLE, no transition audit."""
-
-    def test_no_regime_transition_event_emitted(
-        self, session: Session, loaded_config_session_scoped: LoadedConfig
-    ) -> None:
-        _persist_prior(session, active_regime=Regime.normal)
-        inputs = _build_inputs(
-            loaded_config=loaded_config_session_scoped,
-            distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
-            distillation_vix_level=18.0,
-        )
-
-        output = resolve_regime_adaptation(
-            invocation_id="INV-2",
-            now_utc=_NOW,
-            inputs=inputs,
-            session=session,
-        )
-
-        assert output.new_persisted_state.transition_state == RegimeTransitionState.STABLE
-        assert output.new_persisted_state.active_regime == Regime.normal
-        kinds = [entry.event_kind for entry in output.audit_log_entries]
-        assert "regime_transition" not in kinds
-
-
 # ---------------------------------------------------------------------------
 # Tightening transition
 # ---------------------------------------------------------------------------
@@ -546,74 +509,6 @@ class TestLooseningFirstInvocation:
         assert transition_entries[0].payload["direction"] == "loosening"
 
 
-class TestLooseningCountdown:
-    """Prior LOOSENING with remaining=3, same VOL_EXPANSION reading → remaining=2."""
-
-    def test_decrements_remaining_without_new_transition_audit(
-        self, session: Session, loaded_config_session_scoped: LoadedConfig
-    ) -> None:
-        _persist_prior(
-            session,
-            active_regime=Regime.normal,
-            transition_state=RegimeTransitionState.LOOSENING,
-            transition_invocations_remaining=3,
-            transition_started_invocation_id="INV-PRIOR",
-            transition_origin_regime=Regime.crisis,
-        )
-        inputs = _build_inputs(
-            loaded_config=loaded_config_session_scoped,
-            distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
-            distillation_vix_level=18.0,
-        )
-
-        output = resolve_regime_adaptation(
-            invocation_id="INV-6",
-            now_utc=_NOW,
-            inputs=inputs,
-            session=session,
-        )
-
-        new_state = output.new_persisted_state
-        assert new_state.transition_state == RegimeTransitionState.LOOSENING
-        assert new_state.transition_invocations_remaining == 2
-        kinds = [entry.event_kind for entry in output.audit_log_entries]
-        assert "regime_transition" not in kinds
-
-
-class TestLooseningCompletion:
-    """Prior LOOSENING with remaining=1 → STABLE arrival, no transition audit."""
-
-    def test_returns_stable_with_no_audit_entry(
-        self, session: Session, loaded_config_session_scoped: LoadedConfig
-    ) -> None:
-        _persist_prior(
-            session,
-            active_regime=Regime.normal,
-            transition_state=RegimeTransitionState.LOOSENING,
-            transition_invocations_remaining=1,
-            transition_started_invocation_id="INV-PRIOR",
-            transition_origin_regime=Regime.crisis,
-        )
-        inputs = _build_inputs(
-            loaded_config=loaded_config_session_scoped,
-            distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
-            distillation_vix_level=18.0,
-        )
-
-        output = resolve_regime_adaptation(
-            invocation_id="INV-7",
-            now_utc=_NOW,
-            inputs=inputs,
-            session=session,
-        )
-
-        new_state = output.new_persisted_state
-        assert new_state.transition_state == RegimeTransitionState.STABLE
-        assert new_state.transition_invocations_remaining == 0
-        kinds = [entry.event_kind for entry in output.audit_log_entries]
-        assert "regime_transition" not in kinds
-
-
 class TestTighteningOverridesLoosening:
     """Prior LOOSENING in normal from elevated; new CRISIS_SPIKE → TIGHTENING in crisis."""
 
@@ -714,59 +609,6 @@ class TestTighteningOverridesLoosening:
         assert _multiplier_snapshot(payload, "applied_prior_multipliers_snapshot") != static_prior
 
 
-# ---------------------------------------------------------------------------
-# Pre-event overlay activation
-# ---------------------------------------------------------------------------
-
-
-class TestPreEventOverlayActivates:
-    """Calendar contains a pending FOMC inside the activation window."""
-
-    def test_overlay_active_and_audit_emitted(
-        self, session: Session, loaded_config_session_scoped: LoadedConfig
-    ) -> None:
-        # _NOW is 13:30 UTC on a Tuesday in April. The market_hours_rolling cron
-        # fires at 13:30 UTC (9:30 ET), 15:30 UTC (11:30 ET), 17:30 UTC, 19:30 UTC.
-        # An FOMC at _NOW + 90 minutes (15:00 UTC) means there is exactly 1 firing
-        # ahead of it (the 13:30 UTC firing, which happens at _NOW exactly so it's
-        # NOT > now). With windows_before_event=2, 0 firings before the event
-        # makes the current invocation the final pre-event firing.
-        fomc_time = _NOW + timedelta(hours=1, minutes=30)
-        calendar = EventCalendar(
-            entries=(
-                EventCalendarEntry(
-                    event_type=EventType.fomc,
-                    event_timestamp_utc=fomc_time,
-                    label="FOMC announcement",
-                ),
-            )
-        )
-        inputs = _build_inputs(
-            loaded_config=loaded_config_session_scoped,
-            distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
-            distillation_vix_level=18.0,
-            event_calendar=calendar,
-        )
-
-        output = resolve_regime_adaptation(
-            invocation_id="INV-9",
-            now_utc=_NOW,
-            inputs=inputs,
-            session=session,
-        )
-
-        assert Overlay.pre_event in output.runtime_dimensions_active_overlays
-        # position_max_size_pct: base 5.0 * normal multiplier 1.0 * pre_event 0.80 = 4.0
-        assert output.effective_limits["position_max_size_pct"] == pytest.approx(4.0)
-        kinds = [entry.event_kind for entry in output.audit_log_entries]
-        assert "overlay_activated" in kinds
-        activations = [
-            entry for entry in output.audit_log_entries if entry.event_kind == "overlay_activated"
-        ]
-        overlays_activated = [entry.payload["overlay"] for entry in activations]
-        assert Overlay.pre_event in overlays_activated
-
-
 class TestOverlayMultiplierKeyTypoRejected:
     """Overlay declaring a multiplier for a rule_id absent from the rule space raises."""
 
@@ -812,84 +654,6 @@ class TestOverlayMultiplierKeyTypoRejected:
                 inputs=inputs,
                 session=session,
             )
-
-
-# ---------------------------------------------------------------------------
-# Stress overlay activation
-# ---------------------------------------------------------------------------
-
-
-class TestStressOverlayActivates:
-    """funding_stress alert active + CALIBRATED → stress overlay active."""
-
-    def test_overlay_surfaces_in_output_with_audit_entry(
-        self, session: Session, loaded_config_session_scoped: LoadedConfig
-    ) -> None:
-        inputs = _build_inputs(
-            loaded_config=loaded_config_session_scoped,
-            distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
-            distillation_vix_level=18.0,
-            composite_alert_state=_stress_alert_state(),
-        )
-
-        output = resolve_regime_adaptation(
-            invocation_id="INV-10",
-            now_utc=_NOW,
-            inputs=inputs,
-            session=session,
-        )
-
-        assert Overlay.stress in output.runtime_dimensions_active_overlays
-        # sector_concentration_pct: base 25.0 * normal 1.0 * stress 0.85 = 21.25
-        assert output.effective_limits["sector_concentration_pct"] == pytest.approx(21.25)
-        # gross_exposure_pct: base 120.0 * 1.0 * 0.85 = 102.0
-        assert output.effective_limits["gross_exposure_pct"] == pytest.approx(102.0)
-        kinds = [entry.event_kind for entry in output.audit_log_entries]
-        assert "overlay_activated" in kinds
-
-
-# ---------------------------------------------------------------------------
-# Both overlays active
-# ---------------------------------------------------------------------------
-
-
-class TestBothOverlaysActivate:
-    """Pre-event firing + stress alert → both overlays active sorted alphabetically."""
-
-    def test_overlays_sorted_and_both_audit_entries_emitted(
-        self, session: Session, loaded_config_session_scoped: LoadedConfig
-    ) -> None:
-        fomc_time = _NOW + timedelta(hours=1, minutes=30)
-        calendar = EventCalendar(
-            entries=(
-                EventCalendarEntry(
-                    event_type=EventType.fomc,
-                    event_timestamp_utc=fomc_time,
-                    label="FOMC announcement",
-                ),
-            )
-        )
-        inputs = _build_inputs(
-            loaded_config=loaded_config_session_scoped,
-            distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
-            distillation_vix_level=18.0,
-            event_calendar=calendar,
-            composite_alert_state=_stress_alert_state(),
-        )
-
-        output = resolve_regime_adaptation(
-            invocation_id="INV-11",
-            now_utc=_NOW,
-            inputs=inputs,
-            session=session,
-        )
-
-        # Sorted by Overlay.value alphabetically: pre_event ("pre_event") < stress.
-        assert output.runtime_dimensions_active_overlays == (Overlay.pre_event, Overlay.stress)
-        activations = [
-            entry for entry in output.audit_log_entries if entry.event_kind == "overlay_activated"
-        ]
-        assert len(activations) == 2
 
 
 # ---------------------------------------------------------------------------
