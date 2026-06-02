@@ -102,6 +102,12 @@ fill_backfill_lookback_seconds: 259200
 # counter resets to zero on the first successful tick.
 breach_loop_consecutive_failure_alert_threshold: 3
 
+# Seconds after first_seen_at before an unresolved unattributed fill emits a
+# one-shot terminal ERROR escalation (ALP-771). Two drain intervals (2 × 900s)
+# gives one full backfill cycle grace before going loud; the escalation flag
+# ensures it fires once and does not repeat.
+unattributed_fill_escalation_ttl_seconds: 1800
+
 # Seconds without a heartbeat before the in-process watchdog forces os._exit(1)
 # so NSSM recycles the monitor process (ALP-768). Only tasks that call
 # MonitorSupervisor.beat(name) are watched. Set well above the longest

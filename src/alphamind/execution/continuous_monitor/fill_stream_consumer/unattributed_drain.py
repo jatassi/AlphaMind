@@ -20,6 +20,7 @@ failure never wedges the batch.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -38,6 +39,7 @@ from alphamind.execution.write_paths.unattributed_fill_persistence import (
     delete_unattributed_fill,
     list_unattributed_fills,
     mark_unattributed_fill_alerted,
+    mark_unattributed_fill_escalated,
     touch_unattributed_fill_retry,
 )
 
@@ -49,6 +51,8 @@ async def drain_unattributed_fills(
     session_factory: async_sessionmaker[AsyncSession],
     enrichment_callable: EnrichmentCallable | None = None,
     process_lifetime_id: str | None = None,
+    escalation_ttl_seconds: int | None = None,
+    now: Callable[[], datetime] | None = None,
 ) -> int:
     """Re-resolve every queued unattributed fill; return the count integrated.
 
@@ -64,7 +68,14 @@ async def drain_unattributed_fills(
     :func:`integrate_recovered_fills` is called immediately after the drain so
     the PENDING→OPEN position transition and bracket-leg activation run within
     seconds rather than waiting for the next scheduled pipeline run (ALP-767).
+
+    When *escalation_ttl_seconds* is supplied, an unresolved fill whose age
+    (``now() - first_seen_at``) exceeds the TTL emits a one-shot terminal ERROR
+    and is marked ``escalated`` so the alert does not repeat on subsequent drains
+    (ALP-771).
     """
+    _now = now if now is not None else lambda: datetime.now(UTC)
+
     async with session_factory() as db:
         queued = await list_unattributed_fills(db)
 
@@ -74,8 +85,9 @@ async def drain_unattributed_fills(
         async with session_factory() as db:
             oms_order_id = await _resolve_oms_order_id(db, report)
             if oms_order_id is None:
+                observed_at = _now()
                 await touch_unattributed_fill_retry(
-                    db, queued_fill.broker_fill_key, observed_at=datetime.now(UTC)
+                    db, queued_fill.broker_fill_key, observed_at=observed_at
                 )
                 if not queued_fill.alerted:
                     log.warning(
@@ -87,6 +99,25 @@ async def drain_unattributed_fills(
                         report.event_type,
                     )
                     await mark_unattributed_fill_alerted(db, queued_fill.broker_fill_key)
+                if (
+                    escalation_ttl_seconds is not None
+                    and not queued_fill.escalated
+                    and (observed_at - queued_fill.first_seen_at).total_seconds()
+                    >= escalation_ttl_seconds
+                ):
+                    log.error(
+                        "ESCALATED unattributed fill: unresolved after %.0fs TTL — "
+                        "broker_fill_key=%s client_order_id=%s alpaca_order_id=%s event=%s "
+                        "first_seen_at=%s retry_count=%d — operator review required",
+                        escalation_ttl_seconds,
+                        queued_fill.broker_fill_key,
+                        report.client_order_id,
+                        report.alpaca_order_id,
+                        report.event_type,
+                        queued_fill.first_seen_at.isoformat(),
+                        queued_fill.retry_count,
+                    )
+                    await mark_unattributed_fill_escalated(db, queued_fill.broker_fill_key)
                 await db.commit()
                 continue
 

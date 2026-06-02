@@ -53,5 +53,6 @@ class UnattributedFillRow(Base):
     last_retry_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     alerted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    escalated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     __table_args__ = (Index("ix_unattributed_fills_alpaca_order_id", "alpaca_order_id"),)

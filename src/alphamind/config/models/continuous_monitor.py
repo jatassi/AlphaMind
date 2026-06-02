@@ -45,6 +45,9 @@ pre-resolved decision (E):
 * ``fill_backfill_lookback_seconds`` — independent, generous ``since`` lookback
   bound for each backfill sweep — wide enough to re-capture a fill dropped
   earlier in the swing-trading horizon.
+* ``unattributed_fill_escalation_ttl_seconds`` — seconds after ``first_seen_at``
+  before an unresolved unattributed fill emits a one-shot terminal ERROR
+  escalation (ALP-771).
 
 This file is loaded directly by ``alphamind.config.load`` and surfaced on
 ``ResolvedConfig.continuous_monitor``; the resolver does not cascade it
@@ -116,6 +119,18 @@ class ContinuousMonitorConfig(BaseModel):
             "earlier in a position's life is still in-window. append_fill_record's "
             "dedupe makes re-feeding already-persisted fills a no-op, so a wide "
             "window costs only redundant reads."
+        ),
+    )
+    unattributed_fill_escalation_ttl_seconds: int = Field(
+        default=1800,
+        ge=1,
+        description=(
+            "Seconds after ``first_seen_at`` before an unresolved unattributed "
+            "fill emits a one-shot terminal ERROR escalation (ALP-771). The "
+            "escalation fires once per fill via the ``escalated`` flag and does "
+            "not re-fire on subsequent drains. Default 1800s (30 min) = 2x the "
+            "15-min backfill interval, giving one full drain-cycle grace period "
+            "before going loud."
         ),
     )
     borrow_accrual_tick_local_time: str = Field(

@@ -42,6 +42,7 @@ _EXPECTED_COLS = {
     "last_retry_at",
     "retry_count",
     "alerted",
+    "escalated",
 }
 
 
@@ -51,6 +52,7 @@ def _unattributed_fill(
     last_retry_at: datetime | None = None,
     retry_count: int = 0,
     alerted: bool = False,
+    escalated: bool = False,
 ) -> UnattributedFill:
     return UnattributedFill(
         broker_fill_key=broker_fill_key,
@@ -65,6 +67,7 @@ def _unattributed_fill(
         last_retry_at=last_retry_at,
         retry_count=retry_count,
         alerted=alerted,
+        escalated=escalated,
     )
 
 
@@ -107,6 +110,26 @@ class TestUnattributedFillRoundTrip:
         assert readback is not None
         assert readback.alerted == 1
         assert row_to_record(readback) == record
+
+    def test_escalated_flag_round_trips(self, session: Session) -> None:
+        record = _unattributed_fill(alerted=True, escalated=True)
+        session.add(record_to_row(record))
+        session.commit()
+
+        readback = session.get(UnattributedFillRow, "bfk-1")
+        assert readback is not None
+        assert readback.escalated == 1
+        assert row_to_record(readback).escalated is True
+
+    def test_escalated_defaults_false(self, session: Session) -> None:
+        record = _unattributed_fill()
+        session.add(record_to_row(record))
+        session.commit()
+
+        readback = session.get(UnattributedFillRow, "bfk-1")
+        assert readback is not None
+        assert readback.escalated == 0
+        assert row_to_record(readback).escalated is False
 
 
 class TestUnattributedFillsTableShape:

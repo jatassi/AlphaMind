@@ -32,6 +32,7 @@ def record_to_row(record: UnattributedFill) -> UnattributedFillRow:
         ),
         retry_count=record.retry_count,
         alerted=int(record.alerted),
+        escalated=int(record.escalated),
     )
 
 
@@ -52,6 +53,7 @@ def row_to_record(row: UnattributedFillRow) -> UnattributedFill:
         ),
         retry_count=row.retry_count,
         alerted=bool(row.alerted),
+        escalated=bool(row.escalated),
     )
 
 
