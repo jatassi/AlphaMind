@@ -61,12 +61,14 @@ def register_fill_backfill_task(
         return AccountStateQueries(cast(TradingClient, client))
 
     async def _fill_backfill_task(s: MonitorSession, c: ContinuousMonitorConfig) -> None:
+        cadence = float(c.fill_backfill_interval_seconds)
         await run_fill_backfill(
             s,
             c,
             session_factory=db_session_factory,
             trading_client_factory=_trading_client_factory,
             account_state_queries_factory=_queries_factory,
+            loop=lambda: supervisor.supervised_loop("fill_backfill", cadence),
             enrichment_callable=enrichment_callable,
             process_lifetime_id=process_lifetime_id,
         )

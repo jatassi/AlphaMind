@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -49,6 +49,7 @@ from alphamind.execution.continuous_monitor.fill_stream_consumer.unattributed_dr
     drain_unattributed_fills,
 )
 from alphamind.execution.continuous_monitor.session import MonitorSession
+from alphamind.execution.continuous_monitor.supervisor import SupervisedLoop
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +60,6 @@ log = logging.getLogger(__name__)
 TradingClientFactory = Callable[[ExecutionMode], object]
 AccountStateQueriesFactory = Callable[[object], object]
 NowProvider = Callable[[], datetime]
-SleepCallable = Callable[[float], Awaitable[None]]
 
 
 async def run_fill_backfill(  # noqa: PLR0913 — composition root; each kw-arg is one injected seam
@@ -69,10 +69,10 @@ async def run_fill_backfill(  # noqa: PLR0913 — composition root; each kw-arg 
     session_factory: async_sessionmaker[AsyncSession],
     trading_client_factory: TradingClientFactory,
     account_state_queries_factory: AccountStateQueriesFactory,
+    loop: SupervisedLoop,
     enrichment_callable: EnrichmentCallable | None = None,
     process_lifetime_id: str | None = None,
     now: NowProvider = lambda: datetime.now(UTC),
-    sleep: SleepCallable = asyncio.sleep,
 ) -> None:
     """Run-forever periodic fill-backfill backstop.
 
@@ -80,7 +80,11 @@ async def run_fill_backfill(  # noqa: PLR0913 — composition root; each kw-arg 
 
     1. Build the queries surface via the same factory pattern the fill
        consumer uses (``account_state_queries_factory(trading_client_factory(mode))``).
-    2. Loop: run one sweep, then sleep ``fill_backfill_interval_seconds``.
+    2. Drive *loop* (the supervisor's :meth:`supervised_loop` iterator, with the
+       ``fill_backfill_interval_seconds`` cadence pre-bound): each iteration
+       beats the watchdog at the top, runs one sweep, then the seam paces the
+       loop — so the task is liveness-watched with no hand-wired ``beat()`` and
+       no trailing ``sleep``.
     3. Each sweep computes an INDEPENDENT ``since = now - lookback`` (NOT
        max-fill-timestamp), recovers every Alpaca fill in the window through
        :func:`persist_fill_report`, then drains the unattributed-fills queue.
@@ -90,10 +94,9 @@ async def run_fill_backfill(  # noqa: PLR0913 — composition root; each kw-arg 
     """
     queries = account_state_queries_factory(trading_client_factory(session.mode))
     lookback = timedelta(seconds=config.fill_backfill_lookback_seconds)
-    interval = float(config.fill_backfill_interval_seconds)
     escalation_ttl_seconds = config.unattributed_fill_escalation_ttl_seconds
 
-    while True:
+    async for _ in loop():
         try:
             await _run_sweep(
                 queries,
@@ -112,7 +115,6 @@ async def run_fill_backfill(  # noqa: PLR0913 — composition root; each kw-arg 
             # crash the backstop — log and retry on the next interval, matching
             # the fill consumer's reconnect-supervisor tolerance.
             log.exception("fill_backfill sweep failed; retrying next interval")
-        await sleep(interval)
 
 
 async def _run_sweep(
