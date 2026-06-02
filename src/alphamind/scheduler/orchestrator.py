@@ -59,6 +59,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import exchange_calendars
+import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session, sessionmaker
@@ -549,6 +551,15 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     scheduler_config = SchedulerConfig.model_validate(read_yaml_file(config_dir / "scheduler.yaml"))
     overlays_map = load_overlays(config_dir)
 
+    # ALP-774 — warn early when this pre_close invocation is projected to
+    # submit orders after the session close based on recent pipeline durations.
+    _warn_if_pre_close_projected_late(
+        firing_run_type=firing_run_type,
+        now=now,
+        sync_session_factory=context.sync_session_factory,
+        scheduler_config=scheduler_config,
+    )
+
     # Step 1a: read drawdown state + compose a base ActiveRiskParameterSet
     # so we can compute halt_state before resolving runtime dimensions.
     drawdown_state = await read_drawdown_state(session_factory)
@@ -884,6 +895,94 @@ def _assemble_phase1_snapshot(
         now=datetime.now(UTC),
     )
     return assembled, repository
+
+
+_PRE_CLOSE_TIMING_RECENT_N = 5
+
+
+def _parse_invocation_timestamp(raw: str) -> datetime:
+    text = raw.replace("Z", "+00:00") if raw.endswith("Z") else raw
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _warn_if_pre_close_projected_late(
+    *,
+    firing_run_type: RunType,
+    now: datetime,
+    sync_session_factory: sessionmaker[Session],
+    scheduler_config: SchedulerConfig,
+) -> None:
+    """Log a WARNING when a pre_close run is projected to miss the session close.
+
+    Computes the rolling average wall-clock of the most recent completed
+    invocations to project when phase2 will complete. Non-pre_close fires and
+    non-trading days are silently skipped.
+    """
+    if firing_run_type is not RunType.pre_close:
+        return
+
+    with sync_session_factory() as session:
+        rows = session.execute(
+            select(InvocationRow.start_at, InvocationRow.phase2_completed_at)
+            .where(InvocationRow.phase2_completed_at.is_not(None))
+            .where(InvocationRow.trigger_source == "pre_close")
+            .order_by(InvocationRow.start_at.desc())
+            .limit(_PRE_CLOSE_TIMING_RECENT_N)
+        ).all()
+
+    durations: list[float] = []
+    for start_raw, end_raw in rows:
+        try:
+            start_ts = _parse_invocation_timestamp(start_raw)
+            end_ts = _parse_invocation_timestamp(end_raw)
+            durations.append((end_ts - start_ts).total_seconds())
+        except (ValueError, TypeError):
+            continue
+
+    if not durations:
+        log.debug("pre_close timing guard: no prior completed invocations to project from")
+        return
+
+    avg_secs = sum(durations) / len(durations)
+    projected_completion = now + timedelta(seconds=avg_secs)
+
+    try:
+        calendar = exchange_calendars.get_calendar(scheduler_config.market_calendar_exchange)
+        pd_date = pd.Timestamp(now.date())
+        if not calendar.is_session(pd_date):
+            log.debug("pre_close timing guard: %s is not a trading session", now.date())
+            return
+        close_ts = calendar.session_close(pd_date)
+        session_close = close_ts.to_pydatetime()
+        if session_close.tzinfo is None:
+            session_close = session_close.replace(tzinfo=UTC)
+    except Exception:
+        log.warning("pre_close timing guard: could not resolve session close", exc_info=True)
+        return
+
+    if projected_completion > session_close:
+        overshoot_secs = (projected_completion - session_close).total_seconds()
+        log.warning(
+            "pre_close timing: projected completion %s is %.0fs after session close %s "
+            "(rolling avg of %d recent invocations = %.0fs); "
+            "orders may submit post-close",
+            projected_completion.isoformat(),
+            overshoot_secs,
+            session_close.isoformat(),
+            len(durations),
+            avg_secs,
+        )
+    else:
+        margin_secs = (session_close - projected_completion).total_seconds()
+        log.debug(
+            "pre_close timing: projected completion %s; session close %s; margin=%.0fs",
+            projected_completion.isoformat(),
+            session_close.isoformat(),
+            margin_secs,
+        )
 
 
 _LAST_INVOCATION_FALLBACK = timedelta(hours=24)
