@@ -91,6 +91,7 @@ async def run_fill_backfill(  # noqa: PLR0913 — composition root; each kw-arg 
     queries = account_state_queries_factory(trading_client_factory(session.mode))
     lookback = timedelta(seconds=config.fill_backfill_lookback_seconds)
     interval = float(config.fill_backfill_interval_seconds)
+    escalation_ttl_seconds = config.unattributed_fill_escalation_ttl_seconds
 
     while True:
         try:
@@ -100,6 +101,7 @@ async def run_fill_backfill(  # noqa: PLR0913 — composition root; each kw-arg 
                 session_factory=session_factory,
                 enrichment_callable=enrichment_callable,
                 process_lifetime_id=process_lifetime_id,
+                escalation_ttl_seconds=escalation_ttl_seconds,
                 now=now,
             )
         except asyncio.CancelledError:
@@ -120,6 +122,7 @@ async def _run_sweep(
     session_factory: async_sessionmaker[AsyncSession],
     enrichment_callable: EnrichmentCallable | None,
     process_lifetime_id: str | None,
+    escalation_ttl_seconds: int,
     now: NowProvider,
 ) -> None:
     """Run one backfill sweep: recover missing fills, then drain the queue.
@@ -156,6 +159,7 @@ async def _run_sweep(
         session_factory=session_factory,
         enrichment_callable=enrichment_callable,
         process_lifetime_id=process_lifetime_id,
+        escalation_ttl_seconds=escalation_ttl_seconds,
     )
 
 

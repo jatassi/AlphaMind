@@ -148,6 +148,7 @@ class UnattributedFill(BaseModel):
     last_retry_at: datetime | None
     retry_count: int
     alerted: bool
+    escalated: bool = False
 
 
 __all__ = [

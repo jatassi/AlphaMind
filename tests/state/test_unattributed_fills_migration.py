@@ -1,8 +1,9 @@
-"""Tests for the Alembic migration that adds ``unattributed_fills`` (ALP-763).
+"""Tests for the Alembic migration that adds ``escalated`` to ``unattributed_fills`` (ALP-771).
 
-Pins the upgrade-then-downgrade idempotency contract and the column-set the
-migration installs. The revision is pinned so a future migration landing on top
-does not silently shift this test's downgrade target.
+Pins the upgrade-then-downgrade idempotency contract and the column-set at head.
+The revision is pinned so a future migration does not silently shift the
+downgrade target. The downgrade removes the ``escalated`` column but keeps the
+table (``c1b2a3d4e5f6`` revises ``a2f8c1d4e6b9`` which created the table).
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from sqlalchemy import inspect
 
 from alphamind.persistence.session import make_engine
 
-_REVISION = "a2f8c1d4e6b9"
+_REVISION = "c1b2a3d4e5f6"
 
 _EXPECTED_COLS = {
     "broker_fill_key",
@@ -31,6 +32,7 @@ _EXPECTED_COLS = {
     "last_retry_at",
     "retry_count",
     "alerted",
+    "escalated",
 }
 
 
@@ -61,7 +63,8 @@ class TestUnattributedFillsMigration:
         finally:
             eng.dispose()
 
-    def test_downgrade_drops_table(self, tmp_path: Path) -> None:
+    def test_downgrade_removes_escalated_column(self, tmp_path: Path) -> None:
+        """Downgrading c1b2a3d4e5f6 → a2f8c1d4e6b9 drops ``escalated``; table stays."""
         db_path = tmp_path / "alembic.db"
         cfg = _alembic_config(db_path)
         command.upgrade(cfg, _REVISION)
@@ -70,7 +73,10 @@ class TestUnattributedFillsMigration:
         eng = make_engine(str(db_path))
         try:
             insp = inspect(eng)
-            assert "unattributed_fills" not in set(insp.get_table_names())
+            assert "unattributed_fills" in set(insp.get_table_names())
+            col_names = {c["name"] for c in insp.get_columns("unattributed_fills")}
+            assert "escalated" not in col_names
+            assert "alerted" in col_names
         finally:
             eng.dispose()
 

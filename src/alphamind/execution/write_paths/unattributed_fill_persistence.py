@@ -69,6 +69,15 @@ async def mark_unattributed_fill_alerted(session: AsyncSession, broker_fill_key:
     )
 
 
+async def mark_unattributed_fill_escalated(session: AsyncSession, broker_fill_key: str) -> None:
+    """Flag the queued fill as escalated so the terminal alert fires exactly once."""
+    await session.execute(
+        update(UnattributedFillRow)
+        .where(UnattributedFillRow.broker_fill_key == broker_fill_key)
+        .values(escalated=1)
+    )
+
+
 async def touch_unattributed_fill_retry(
     session: AsyncSession, broker_fill_key: str, *, observed_at: datetime
 ) -> None:
@@ -94,5 +103,6 @@ __all__ = [
     "delete_unattributed_fill",
     "list_unattributed_fills",
     "mark_unattributed_fill_alerted",
+    "mark_unattributed_fill_escalated",
     "touch_unattributed_fill_retry",
 ]

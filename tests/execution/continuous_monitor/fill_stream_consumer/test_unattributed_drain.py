@@ -49,6 +49,7 @@ from alphamind.execution.continuous_monitor.fill_stream_consumer.unattributed_dr
     drain_unattributed_fills,
 )
 from alphamind.execution.write_paths.unattributed_fill_persistence import (
+    append_unattributed_fill,
     list_unattributed_fills,
 )
 from alphamind.persistence.models import Base
@@ -58,7 +59,7 @@ from alphamind.persistence.session import (
     make_engine,
     make_session_factory,
 )
-from alphamind.state.records import FillRecord
+from alphamind.state.records import FillRecord, UnattributedFill
 from alphamind.state.tables.fill_records import FillRecordRow
 from tests.state._fk_substrate import seed_position_cluster, stub_order_row
 
@@ -845,3 +846,137 @@ class TestPhase1IntegrationOnDrain:
             ).scalar_one()
         pos = pos_row_to_record(pos_row)
         assert pos.status == PositionStatus.OPEN
+
+
+# ---------------------------------------------------------------------------
+# ALP-771 — one-shot terminal escalation for long-unresolved fills
+# ---------------------------------------------------------------------------
+
+_DRAIN_LOG = "alphamind.execution.continuous_monitor.fill_stream_consumer.unattributed_drain"
+
+_SEEN_AT_771 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+
+def _park_out_of_band_fill(
+    *,
+    client_order_id: str,
+    first_seen_at: datetime,
+    alerted: bool = True,
+    retry_count: int = 0,
+) -> UnattributedFill:
+    """Build an out-of-band UnattributedFill with a valid FillReport JSON payload."""
+    report = _fill_report(
+        order_id=uuid4(),
+        client_order_id=client_order_id,
+        price=50.0,
+        qty=10.0,
+    )
+    return UnattributedFill(
+        broker_fill_key=derive_broker_fill_key(report),
+        alpaca_order_id=report.alpaca_order_id,
+        client_order_id=client_order_id,
+        event_type="fill",
+        fill_timestamp=first_seen_at,
+        fill_price=50.0,
+        fill_quantity=10.0,
+        raw_report_json=report.model_dump_json(),
+        first_seen_at=first_seen_at,
+        last_retry_at=None,
+        retry_count=retry_count,
+        alerted=alerted,
+    )
+
+
+class TestEscalation:
+    """ALP-771 — one-shot terminal ERROR escalation for long-unresolved fills.
+
+    After the configured TTL the drain emits a single ERROR and marks the row
+    ``escalated``; subsequent drains must not re-fire the alert.
+    """
+
+    async def test_escalation_fires_once_when_ttl_exceeded(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        fill = _park_out_of_band_fill(client_order_id="oob-1", first_seen_at=_SEEN_AT_771)
+        async with session_factory() as sess:
+            await append_unattributed_fill(sess, fill)
+            await sess.commit()
+
+        # 'now' is 2 hours past first_seen_at — well beyond the 30-min TTL.
+        observed = _SEEN_AT_771 + timedelta(hours=2)
+        with caplog.at_level("ERROR", logger=_DRAIN_LOG):
+            await drain_unattributed_fills(
+                session_factory=session_factory,
+                escalation_ttl_seconds=1800,
+                now=lambda: observed,
+            )
+
+        errors = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert len(errors) == 1
+        assert "ESCALATED" in errors[0].getMessage()
+
+        async with session_factory() as sess:
+            queued = await list_unattributed_fills(sess)
+        assert len(queued) == 1
+        assert queued[0].escalated is True
+
+        # Second drain at an even later 'now': no further ERROR alert.
+        caplog.clear()
+        with caplog.at_level("ERROR", logger=_DRAIN_LOG):
+            await drain_unattributed_fills(
+                session_factory=session_factory,
+                escalation_ttl_seconds=1800,
+                now=lambda: observed + timedelta(hours=1),
+            )
+        assert [r for r in caplog.records if r.levelname == "ERROR"] == []
+
+    async def test_no_escalation_before_ttl(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        fill = _park_out_of_band_fill(client_order_id="oob-2", first_seen_at=_SEEN_AT_771)
+        async with session_factory() as sess:
+            await append_unattributed_fill(sess, fill)
+            await sess.commit()
+
+        # 'now' is only 5 min after first_seen_at — under the 30-min TTL.
+        observed = _SEEN_AT_771 + timedelta(minutes=5)
+        with caplog.at_level("ERROR", logger=_DRAIN_LOG):
+            await drain_unattributed_fills(
+                session_factory=session_factory,
+                escalation_ttl_seconds=1800,
+                now=lambda: observed,
+            )
+
+        assert [r for r in caplog.records if r.levelname == "ERROR"] == []
+        async with session_factory() as sess:
+            queued = await list_unattributed_fills(sess)
+        assert queued[0].escalated is False
+
+    async def test_no_escalation_when_ttl_not_configured(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """No escalation_ttl_seconds → fills accumulate retries indefinitely without escalating."""
+        fill = _park_out_of_band_fill(client_order_id="oob-3", first_seen_at=_SEEN_AT_771)
+        async with session_factory() as sess:
+            await append_unattributed_fill(sess, fill)
+            await sess.commit()
+
+        # 'now' is years later — but no TTL configured.
+        observed = _SEEN_AT_771 + timedelta(days=365)
+        with caplog.at_level("ERROR", logger=_DRAIN_LOG):
+            await drain_unattributed_fills(
+                session_factory=session_factory,
+                escalation_ttl_seconds=None,
+                now=lambda: observed,
+            )
+
+        assert [r for r in caplog.records if r.levelname == "ERROR"] == []
+        async with session_factory() as sess:
+            queued = await list_unattributed_fills(sess)
+        assert queued[0].escalated is False

@@ -118,6 +118,18 @@ class ContinuousMonitorConfig(BaseModel):
             "window costs only redundant reads."
         ),
     )
+    unattributed_fill_escalation_ttl_seconds: int = Field(
+        default=1800,
+        ge=1,
+        description=(
+            "Seconds after ``first_seen_at`` before an unresolved unattributed "
+            "fill emits a one-shot terminal ERROR escalation (ALP-771). The "
+            "escalation fires once per fill via the ``escalated`` flag and does "
+            "not re-fire on subsequent drains. Default 1800s (30 min) = 2x the "
+            "15-min backfill interval, giving one full drain-cycle grace period "
+            "before going loud."
+        ),
+    )
     borrow_accrual_tick_local_time: str = Field(
         default="16:00",
         description=(

@@ -96,6 +96,7 @@ async def run_fill_stream_consumer(
                 session_factory=session_factory,
                 enrichment_callable=enrichment_callable,
                 process_lifetime_id=process_lifetime_id,
+                escalation_ttl_seconds=config.unattributed_fill_escalation_ttl_seconds,
             )
         except Exception:
             log.exception("unattributed-fill drain failed; continuing")
