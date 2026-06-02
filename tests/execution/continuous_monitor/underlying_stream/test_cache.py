@@ -14,15 +14,23 @@ contents at the moment of call.
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from alphamind._kernel.ids import Symbol
 from alphamind.execution.continuous_monitor.underlying_stream import (
+    FreshPrice,
+    MissingPrice,
+    StalePrice,
     UnderlyingPriceCache,
     UnderlyingQuote,
 )
+
+# Fixed reference instant the freshness tests read against. Quotes are built at
+# controlled offsets from this and the same instant is passed as ``as_of`` to
+# the reads — no clock patching (the clock is injected as a value).
+_AS_OF = datetime(2026, 5, 11, 14, 30, 0, tzinfo=UTC)
 
 
 def _quote(ticker: str, price: float, as_of: datetime | None = None) -> UnderlyingQuote:
@@ -109,3 +117,47 @@ class TestUnderlyingPriceCacheConcurrency:
         spy = snapshot["SPY"]
         assert spy is not None
         assert spy.price in {500.0, 501.0, 502.0}
+
+
+class TestFreshnessAwareRead:
+    async def test_read_within_threshold_is_fresh_with_price(self) -> None:
+        cache = UnderlyingPriceCache()
+        await cache.update(_quote("SPY", 500.25, _AS_OF))
+        read = cache.read("SPY", as_of=_AS_OF, max_age_seconds=30.0)
+        assert isinstance(read, FreshPrice)
+        assert read.price == 500.25
+        assert read.as_of == _AS_OF
+
+    async def test_read_older_than_threshold_is_stale_with_price_and_age(self) -> None:
+        cache = UnderlyingPriceCache()
+        quote_as_of = _AS_OF - timedelta(seconds=45)
+        await cache.update(_quote("SPY", 499.0, quote_as_of))
+        read = cache.read("SPY", as_of=_AS_OF, max_age_seconds=30.0)
+        assert isinstance(read, StalePrice)
+        assert read.last_price == 499.0
+        assert read.as_of == quote_as_of
+        assert read.age_seconds == 45.0
+
+    async def test_read_exactly_at_threshold_is_fresh(self) -> None:
+        """Age == max_age_seconds is within tolerance (only strictly older is stale)."""
+        cache = UnderlyingPriceCache()
+        await cache.update(_quote("SPY", 500.0, _AS_OF - timedelta(seconds=30)))
+        read = cache.read("SPY", as_of=_AS_OF, max_age_seconds=30.0)
+        assert isinstance(read, FreshPrice)
+
+    async def test_read_absent_ticker_is_missing(self) -> None:
+        cache = UnderlyingPriceCache()
+        read = cache.read("SPY", as_of=_AS_OF, max_age_seconds=30.0)
+        assert isinstance(read, MissingPrice)
+
+    async def test_stale_and_missing_do_not_expose_fresh_price_attribute(self) -> None:
+        """AC: STALE/MISSING must not expose ``price`` through the FRESH attribute.
+
+        Runtime shadow of the mypy guarantee — a consumer is forced to branch.
+        """
+        cache = UnderlyingPriceCache()
+        await cache.update(_quote("SPY", 499.0, _AS_OF - timedelta(seconds=45)))
+        stale = cache.read("SPY", as_of=_AS_OF, max_age_seconds=30.0)
+        missing = cache.read("AAPL", as_of=_AS_OF, max_age_seconds=30.0)
+        assert not hasattr(stale, "price")
+        assert not hasattr(missing, "price")
