@@ -70,7 +70,9 @@ def _now_utc() -> datetime:
     return datetime.now(UTC)
 
 
-def _config(*, max_reconnect_attempts: int = 5) -> ContinuousMonitorConfig:
+def _config(
+    *, max_reconnect_attempts: int = 5, fill_stream_stale_timeout_seconds: int = 900
+) -> ContinuousMonitorConfig:
     return ContinuousMonitorConfig(
         breach_evaluation_cadence_seconds=60,
         greeks_refresh_interval_minutes=15,
@@ -78,6 +80,7 @@ def _config(*, max_reconnect_attempts: int = 5) -> ContinuousMonitorConfig:
         underlying_stream_provider="alpaca-iex",
         max_reconnect_attempts=max_reconnect_attempts,
         supervisor_shutdown_timeout_seconds=5,
+        fill_stream_stale_timeout_seconds=fill_stream_stale_timeout_seconds,
     )
 
 
@@ -1088,3 +1091,123 @@ class TestUuidResolution:
             queued = await list_unattributed_fills(session)
         assert len(queued) == 1
         assert queued[0].alerted is True
+
+
+# ---------------------------------------------------------------------------
+# Connected-but-silent stream recovery (ALP-819)
+# ---------------------------------------------------------------------------
+
+
+class _StepClock:
+    """Monotonic substitute advancing ``step`` seconds per call (ALP-819).
+
+    Lets the staleness branch trip deterministically without real sleeps —
+    every read jumps forward, so the elapsed-since-last-frame comparison
+    crosses ``fill_stream_stale_timeout_seconds`` on the first poll.
+    """
+
+    def __init__(self, step: float) -> None:
+        self._t = 0.0
+        self._step = step
+
+    def __call__(self) -> float:
+        self._t += self._step
+        return self._t
+
+
+async def _wait_for_count(items: list[Any], *, at_least: int, timeout_seconds: float = 5.0) -> None:
+    deadline = asyncio.get_event_loop().time() + timeout_seconds
+    while asyncio.get_event_loop().time() < deadline:
+        if len(items) >= at_least:
+            return
+        await asyncio.sleep(0.01)
+
+
+class TestSilentStreamRecovery:
+    async def test_rth_silent_stream_reconnects_without_consuming_budget(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """ALP-819: a connected stream that never delivers a frame and never
+        raises is detected during RTH and forces a reconnect — and that
+        reconnect is budget-neutral, so a persistently silent stream keeps
+        recovering instead of exhausting ``max_reconnect_attempts`` and exiting.
+
+        Each ``_FakeStream`` parks on ``_run_forever`` (alive, no exception)
+        and receives no frame — the exact library-internal-reconnect signature
+        the ALP-768 done-callback never catches.
+        """
+        streams_built: list[_FakeStream] = []
+
+        def stream_factory(_mode: str) -> _FakeStream:
+            stream = _FakeStream()
+            streams_built.append(stream)
+            return stream
+
+        beats: list[int] = []
+        queries = _FakeAccountStateQueries()
+        kwargs = _build_run_kwargs(session_factory, _FakeStream(), queries)
+        kwargs["stream_factory"] = stream_factory
+
+        task = asyncio.create_task(
+            run_fill_stream_consumer(
+                _session(),
+                # Explicit 60s timeout (the floor) so the test does not depend on
+                # the config default; _StepClock(1000) exceeds it on every poll.
+                _config(max_reconnect_attempts=2, fill_stream_stale_timeout_seconds=60),
+                **kwargs,
+                is_market_open=lambda _at: True,
+                beat=lambda: beats.append(1),
+                monotonic=_StepClock(1000.0),
+                stream_poll_interval=0.01,
+            )
+        )
+
+        # Three reconnects exceeds the 2-attempt reconnect budget — only
+        # possible if a stale-driven reconnect does NOT count as a failure.
+        await _wait_for_count(streams_built, at_least=3)
+
+        assert not task.done()  # budget never exhausted
+        assert len(streams_built) >= 3
+        assert beats  # watchdog heartbeats fired while the stream was silent
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    async def test_off_hours_silent_stream_does_not_reconnect(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """Outside RTH a silent stream must NOT churn reconnects — fills are
+        legitimately sparse off-hours. The single connected stream stays put.
+        """
+        streams_built: list[_FakeStream] = []
+
+        def stream_factory(_mode: str) -> _FakeStream:
+            stream = _FakeStream()
+            streams_built.append(stream)
+            return stream
+
+        queries = _FakeAccountStateQueries()
+        kwargs = _build_run_kwargs(session_factory, _FakeStream(), queries)
+        kwargs["stream_factory"] = stream_factory
+
+        task = asyncio.create_task(
+            run_fill_stream_consumer(
+                _session(),
+                _config(fill_stream_stale_timeout_seconds=60),
+                **kwargs,
+                is_market_open=lambda _at: False,  # market closed
+                monotonic=_StepClock(1000.0),
+                stream_poll_interval=0.01,
+            )
+        )
+
+        # Let many poll intervals elapse; no stale-driven reconnect must occur.
+        await asyncio.sleep(0.1)
+
+        assert len(streams_built) == 1
+        assert not task.done()
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task

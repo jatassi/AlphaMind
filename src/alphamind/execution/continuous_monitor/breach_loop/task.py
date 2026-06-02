@@ -143,7 +143,7 @@ def _safe_emit_health_signal(sink: OnHealthSignal, signal: BreachLoopHealthSigna
         log.exception("breach_loop health-signal sink raised; continuing")
 
 
-async def run_breach_loop(  # noqa: PLR0913,PLR0912,C901 — fan-in is the seam, not incidental complexity
+async def run_breach_loop(  # noqa: PLR0913,PLR0912,PLR0915,C901 — fan-in is the seam, not incidental complexity
     session: MonitorSession,
     config: ContinuousMonitorConfig,
     *,
@@ -163,8 +163,16 @@ async def run_breach_loop(  # noqa: PLR0913,PLR0912,C901 — fan-in is the seam,
     max_price_age_seconds: float = 900.0,
     on_health_signal: OnHealthSignal = _no_op_health_signal,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    beat: Callable[[], None] = lambda: None,
 ) -> None:
-    """Run-forever breach-evaluation loop. See module docstring for the contract."""
+    """Run-forever breach-evaluation loop. See module docstring for the contract.
+
+    ``beat`` (ALP-819), when supplied, is invoked at the top of every tick —
+    including ticks skipped because the market is closed — so the supervisor's
+    stall watchdog watches the risk-supervision heartbeat itself. A loop wedged
+    on a hung collaborator stops beating and trips ``os._exit(1)`` → NSSM
+    restart, rather than masquerading as healthy on the process surfaces.
+    """
     del session  # carried for signature uniformity; the loop reads identity via logging
     cadence_seconds = float(config.breach_evaluation_cadence_seconds)
     failure_threshold = config.breach_loop_consecutive_failure_alert_threshold
@@ -190,6 +198,9 @@ async def run_breach_loop(  # noqa: PLR0913,PLR0912,C901 — fan-in is the seam,
         return f"mon-alp-{entry_counter['n']:012d}-{local:02d}"
 
     while True:
+        # Heartbeat first (ALP-819): the watchdog must see liveness on every
+        # tick, including closed-market ticks that skip evaluation below.
+        beat()
         as_of = now()
         if not market_hours.is_market_open(as_of):
             await asyncio.sleep(cadence_seconds)

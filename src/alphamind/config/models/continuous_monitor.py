@@ -48,6 +48,9 @@ pre-resolved decision (E):
 * ``unattributed_fill_escalation_ttl_seconds`` — seconds after ``first_seen_at``
   before an unresolved unattributed fill emits a one-shot terminal ERROR
   escalation (ALP-771).
+* ``fill_stream_stale_timeout_seconds`` — seconds of trade_updates silence
+  during RTH before the fill-stream consumer forces a reconnect (ALP-819),
+  catching the library-internal-reconnect path the ALP-768 sentinel misses.
 
 This file is loaded directly by ``alphamind.config.load`` and surfaced on
 ``ResolvedConfig.continuous_monitor``; the resolver does not cascade it
@@ -151,6 +154,24 @@ class ContinuousMonitorConfig(BaseModel):
             "tasks that never beat are ignored. Set conservatively — periodic "
             "tasks (breach loop, greeks refresh) should beat at every tick; "
             "the timeout must exceed the longest legitimate inter-tick gap."
+        ),
+    )
+    fill_stream_stale_timeout_seconds: int = Field(
+        default=900,
+        ge=60,
+        description=(
+            "Seconds of trade_updates silence during RTH before the fill-stream "
+            "consumer forces a reconnect (ALP-819). The websockets library "
+            "reconnects internally on a transport error (WinError 121) without "
+            "raising or delivering frames, so the ALP-768 sentinel never fires "
+            "and the consumer starves on queue.get(). On silence past this "
+            "bound the stream is torn down and rebuilt; REST recovery on each "
+            "reconnect (plus the fill-backfill backstop) re-captures any gap, "
+            "so a needless reconnect during a quiet-but-healthy session is "
+            "cheap. Must exceed the longest legitimate RTH gap between fills; "
+            "900s (15 min) matches the fill-backfill interval. Floored at 60s: "
+            "a sub-minute value would reconnect (and REST-recover) so often it "
+            "would hammer the broker's order-history endpoint."
         ),
     )
 

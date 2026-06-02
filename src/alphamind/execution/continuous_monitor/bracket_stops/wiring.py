@@ -415,6 +415,9 @@ def register_options_bracket_watcher_task(
             invocation_id_provider=invocation_id_provider,
             risk_free_rate_provider=risk_free_rate_provider,
             trigger_ids=trigger_ids,
+            # ALP-819 — feed the supervisor stall watchdog this stop-enforcement
+            # loop's heartbeat so a wedged cycle trips os._exit(1) → NSSM restart.
+            beat=lambda: supervisor.beat("bracket_stops"),
         )
 
     supervisor.register_task(name="bracket_stops", coro_fn=_coro)

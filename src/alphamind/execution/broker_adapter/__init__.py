@@ -49,6 +49,7 @@ from alphamind.execution.broker_adapter.errors import (
 )
 from alphamind.execution.broker_adapter.fill_stream import (
     FillReport,
+    FillStreamStalledError,
     OrderStatus,
     subscribe_trade_updates,
     translate_trade_update,
@@ -119,6 +120,7 @@ __all__ = [
     "EquitySubmission",
     "ExecutionMode",
     "FillReport",
+    "FillStreamStalledError",
     "GatewaySubmissionFailed",
     "MLEGLegAck",
     "MLEGSubmission",

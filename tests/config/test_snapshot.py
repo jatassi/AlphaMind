@@ -231,7 +231,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # config/agents.yaml raised analyst/strategist/portfolio_manager latency/context/
     # output budgets 50% (ALP-820 timeout mitigation) and config/scheduler.yaml moved
     # pre_open 09:00 -> 09:35 ET, both shifting the resolved-config canonical bytes.
-    expected = "028f49dec580d022ecc4976f79420cf8734457764816a31bdf61815c9ed7a069"
+    # Pin updated 2026-06-02 (fill-stream staleness timeout, ALP-819): ALP-819 added
+    # fill_stream_stale_timeout_seconds: 900 to config/continuous_monitor.yaml and
+    # ContinuousMonitorConfig (the connected-but-silent fill-stream reconnect bound),
+    # shifting the resolved-config canonical bytes.
+    expected = "b923c5b03c108d0693affe06dbbdb32e20ecc18bfb77d6299f65c0e451ae6390"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

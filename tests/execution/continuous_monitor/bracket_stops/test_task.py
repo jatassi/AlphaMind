@@ -909,3 +909,51 @@ class TestRunForeverLoop:
             )
         assert all(d == 2.5 for d in sleep_calls)
         assert len(sleep_calls) >= 1
+
+    async def test_run_forever_beats_watchdog_each_cycle(self) -> None:
+        """ALP-819: the watcher feeds the supervisor stall watchdog each cycle
+        so a hung bracket-stop loop trips ``os._exit(1)`` → NSSM restart."""
+        import asyncio
+
+        from alphamind.execution.continuous_monitor.bracket_stops.task import (
+            run_options_bracket_watcher,
+        )
+        from alphamind.execution.continuous_monitor.session import MonitorSession
+
+        position = _options_position(direction=Direction.LONG)
+        bracket = _price_stop_bracket(threshold=865.0, direction="LTE")
+        cache = await _seed_cache({"NVDA": 870.0})  # does not fire
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+        beats: list[int] = []
+        sleep_calls: list[float] = []
+
+        async def _record_sleep(duration: float) -> None:
+            sleep_calls.append(duration)
+            if len(sleep_calls) >= 2:
+                raise asyncio.CancelledError
+
+        session = MonitorSession(
+            session_id="mon-20260511T143000Z-deadbeef",
+            started_at=_NOW,
+            mode="paper",
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await run_options_bracket_watcher(
+                session,
+                _config(cadence=2.5),
+                position_repository=FakePositionRepository((position,)),
+                bracket_repository=FakeBracketRepository((bracket,)),
+                cache=cache,
+                submitter=submitter,
+                activity_log=log.emit,
+                invocation_id_provider=_const_str("inv-001"),
+                risk_free_rate_provider=_const_float(0.045),
+                trigger_ids=_trigger_ids(session_id=session.session_id),
+                now=lambda: _NOW,
+                sleep=_record_sleep,
+                beat=lambda: beats.append(1),
+            )
+
+        assert beats  # heartbeat fired each cycle

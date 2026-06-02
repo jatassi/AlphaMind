@@ -732,6 +732,68 @@ async def test_market_closed_pauses_evaluation(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.asyncio
+async def test_loop_beats_watchdog_each_tick(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ALP-819: the loop feeds the supervisor stall watchdog a heartbeat on
+    every tick — including while the market is closed — so a hung breach loop
+    (the risk-supervision heartbeat) trips ``os._exit(1)`` → NSSM restart.
+    """
+    repo = _StubRepository(
+        drawdown_states=[_drawdown_state()],
+        active_risk_parameters=_active_risk_parameters(),
+    )
+    beats: list[int] = []
+
+    async def _immediate(result: BreachLoopResult, evaluation: RuleEvaluation) -> None:
+        del result, evaluation
+
+    async def _emergency(result: BreachLoopResult) -> None:
+        del result
+
+    async def _sink(_entries: Iterable[ActivityLogEntry]) -> None:
+        return None
+
+    async def _snapshot() -> LibrarySnapshot:
+        return _library_snapshot()
+
+    async def _regime() -> RegimeAdaptationOutput:
+        return _regime_output()
+
+    market_hours = _StubMarketHours(open_flag=False)
+    sleep_calls: list[float] = []
+
+    async def _go() -> None:
+        await run_breach_loop(
+            _session(),
+            _config(),
+            repository=cast(PortfolioStateRepository, repo),
+            cache=_cache(),
+            snapshot_provider=_snapshot,
+            regime_provider=_regime,
+            progressive_tiers=_progressive_tiers(),
+            library_config_factory=_library_config,
+            iv_provider=_FixtureIvProvider(),
+            risk_free_rate=0.045,
+            breach_response_lookup=_breach_response_lookup(),
+            market_hours=market_hours,
+            activity_log_sink=_sink,
+            on_immediate_breach=_immediate,
+            on_emergency_input=_emergency,
+            beat=lambda: beats.append(1),
+        )
+
+    await _drive_loop(
+        _go,
+        ticks=2,
+        tick_sentinels=[],
+        sleep_calls=sleep_calls,
+        monkeypatch=monkeypatch,
+        target_module="alphamind.execution.continuous_monitor.breach_loop.task",
+    )
+
+    assert beats  # heartbeat fired despite the market being closed
+
+
+@pytest.mark.asyncio
 async def test_halt_onset_emits_halt_activated_then_persists_silent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
