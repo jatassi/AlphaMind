@@ -156,11 +156,15 @@ def _project_theses(
     result = []
     for thesis in snapshot.active_theses:
         pos = snapshot.position_by_id(thesis.position_id)
-        ticker = _ticker_from_position(pos) if pos is not None else ""
+        # A closed-position thesis remains ACTIVE until the analysis pipeline
+        # resolves it (ALP-131); its position is gone from the snapshot. Skip
+        # it rather than emit a summary with an empty ticker (ALP-834).
+        if pos is None:
+            continue
         result.append(
             SynthesizerThesisSummary(
                 position_id=thesis.position_id,
-                ticker=ticker,
+                ticker=_ticker_from_position(pos),
                 summary=thesis.summary,
                 key_catalyst=thesis.key_catalyst,
                 time_expectation_hours=thesis.time_expectation_hours,

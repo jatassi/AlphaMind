@@ -69,7 +69,6 @@ from alphamind.portfolio_state.records.positions import (
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
     ThesisComponent,
-    ThesisComponentOutcome,
     ThesisComponentType,
     ThesisRecord,
     ThesisRecordStatus,
@@ -437,58 +436,6 @@ def _make_active_thesis(
     )
 
 
-def _make_thesis_with_resolved_components(
-    thesis_id: str = "thesis-1",
-    position_id: str = "pos-1",
-) -> ThesisRecord:
-    """ACTIVE thesis whose components already carry a resolution_outcome.
-
-    Story 07 transitions ``status`` to RESOLVED on position closure but
-    leaves the components' resolution_outcome alone (analyst owns that).
-    For the exit-fill happy-path test we pre-populate the outcomes so the
-    resulting RESOLVED ThesisRecord remains valid.
-    """
-    components = tuple(
-        ThesisComponent(
-            component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=ThesisId(thesis_id),
-            component_type=ct,
-            linked_bracket_leg_type=None,
-            linked_bracket_leg_id=None,
-            instrument_reference="AAPL",
-            narrative=f"{ct.value} narrative",
-            key_assumptions=(),
-            generation_timestamp=_NOW - timedelta(hours=4),
-            resolution_outcome=ThesisComponentOutcome.VALIDATED,
-            resolution_notes=None,
-        )
-        for ct in (
-            ThesisComponentType.ENTRY_RATIONALE,
-            ThesisComponentType.TARGET_RATIONALE,
-            ThesisComponentType.INVALIDATION_RATIONALE,
-        )
-    )
-    generation_at = _NOW - timedelta(hours=4)
-    time_expectation_hours = 24.0
-    return ThesisRecord(
-        thesis_id=ThesisId(thesis_id),
-        position_id=PositionId(position_id),
-        summary="AAPL momentum",
-        key_catalyst="Q3 earnings beat",
-        position_size_rationale="Sized at 5%",
-        components=components,
-        status=ThesisRecordStatus.ACTIVE,
-        generation_timestamp=generation_at,
-        time_expectation_hours=time_expectation_hours,
-        age_hours=4.0,
-        expected_resolution_at=generation_at + timedelta(hours=time_expectation_hours),
-        resolution_timestamp=None,
-        resolution_category=None,
-        resolution_pnl_usd=None,
-        entry_fill_gap_usd=None,
-    )
-
-
 def _make_unprocessed_fill(
     fill_id: str,
     *,
@@ -756,11 +703,12 @@ async def test_entry_fill_transitions_pending_position_to_open(
     assert EventType.CASH_DEBITED.value in types
 
 
-async def test_exit_fill_closes_position_and_resolves_thesis(
+async def test_exit_fill_closes_position_and_leaves_thesis_active(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """Happy-path exit fill: position OPEN → CLOSED, realized P/L computed,
-    bracket DISSOLVED, thesis RESOLVED."""
+    bracket DISSOLVED, linked thesis left ACTIVE (ALP-834 — thesis resolution
+    is owned by the analysis pipeline, not execution)."""
     from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
@@ -779,7 +727,7 @@ async def test_exit_fill_closes_position_and_resolves_thesis(
     from tests.state._fk_substrate import stub_order_row
 
     entry_order = _make_pending_entry_order()
-    thesis_row, component_rows = thesis_record_to_rows(_make_thesis_with_resolved_components())
+    thesis_row, component_rows = thesis_record_to_rows(_make_active_thesis())
     bracket_row, leg_rows = bracket_record_to_rows(_make_active_bracket())
     leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
     seeded_order_ids: set[str] = {entry_order.order_id, close_order.order_id}
@@ -834,16 +782,16 @@ async def test_exit_fill_closes_position_and_resolves_thesis(
         ).scalar_one()
         assert bracket_row.status == BracketStatus.DISSOLVED.value
 
-        # Thesis transitions ACTIVE → RESOLVED with resolution_timestamp set.
+        # Thesis is left ACTIVE — resolution (category, P/L, component outcomes)
+        # is authored later by the analysis pipeline (ALP-131), not execution.
         thesis_row = (
             await sess.execute(select(ThesisRow).where(ThesisRow.thesis_id == "thesis-1"))
         ).scalar_one()
-        assert thesis_row.status == ThesisRecordStatus.RESOLVED.value
-        assert thesis_row.resolution_timestamp is not None
-        # resolution_category remains None — analyst pipeline owns that.
+        assert thesis_row.status == ThesisRecordStatus.ACTIVE.value
+        assert thesis_row.resolution_timestamp is None
         assert thesis_row.resolution_category is None
 
-        # Activity log carries position_closed + bracket_dissolved + thesis_resolved.
+        # Activity log carries position_closed + bracket_dissolved; no thesis_resolved.
         log_rows = (
             (
                 await sess.execute(
@@ -858,7 +806,7 @@ async def test_exit_fill_closes_position_and_resolves_thesis(
         types = {r.event_type for r in log_rows}
     assert EventType.POSITION_CLOSED.value in types
     assert EventType.BRACKET_DISSOLVED.value in types
-    assert EventType.THESIS_RESOLVED.value in types
+    assert EventType.THESIS_RESOLVED.value not in types
     assert EventType.CASH_CREDITED.value in types
     assert EventType.ORDER_FILLED.value in types
 
@@ -883,7 +831,7 @@ async def test_take_profit_leg_fill_marks_leg_filled_and_closes_position(
         position_id=PositionId("pos-1"),
     )
     entry_order = _make_pending_entry_order()
-    thesis_row, component_rows = thesis_record_to_rows(_make_thesis_with_resolved_components())
+    thesis_row, component_rows = thesis_record_to_rows(_make_active_thesis())
     bracket_row, leg_rows = bracket_record_to_rows(_make_active_bracket())
     leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
     seeded_order_ids: set[str] = {entry_order.order_id, tp_order.order_id}
@@ -1509,8 +1457,8 @@ async def test_open_position_with_missing_thesis_row_rejected_at_commit(
 ) -> None:
     """FK enforcement prevents committing a position that references a non-existent
     thesis row — deferred FK on positions.thesis_id raises IntegrityError at COMMIT.
-    This is the schema-level guard for the invariant that Phase 1's
-    _maybe_resolve_thesis path previously enforced at the application layer.
+    This is the schema-level guard ensuring a position can never reference a
+    missing thesis row.
     """
     from sqlalchemy.exc import IntegrityError
 
@@ -2644,7 +2592,7 @@ async def test_sell_fill_mirrors_settled_cash_alongside_current_cash(
         position_id=PositionId("pos-1"),
     )
     entry_order = _make_pending_entry_order()
-    thesis_row, component_rows = thesis_record_to_rows(_make_thesis_with_resolved_components())
+    thesis_row, component_rows = thesis_record_to_rows(_make_active_thesis())
     bracket_row, leg_rows = bracket_record_to_rows(_make_active_bracket())
     leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
     seeded_order_ids: set[str] = {entry_order.order_id, close_order.order_id}

@@ -1023,11 +1023,12 @@ async def test_full_close_fill_transitions_position_closed_and_dissolves_bracket
         ).scalar_one()
         assert bracket_row_after.status == BracketStatus.DISSOLVED.value
 
-        # Thesis RESOLVED.
+        # Thesis left ACTIVE — resolution is owned by the analysis pipeline (ALP-834).
         thesis_row_after = (
             await sess.execute(select(ThesisRow).where(ThesisRow.thesis_id == "thesis-opt-1"))
         ).scalar_one()
-        assert thesis_row_after.status == ThesisRecordStatus.RESOLVED.value
+        assert thesis_row_after.status == ThesisRecordStatus.ACTIVE.value
+        assert thesis_row_after.resolution_timestamp is None
 
         # Cash credited by close proceeds: 5 * 11.00 * 100 = $5500.
         cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
@@ -1048,7 +1049,7 @@ async def test_full_close_fill_transitions_position_closed_and_dissolves_bracket
         types = {r.event_type for r in log_rows}
     assert EventType.POSITION_CLOSED.value in types
     assert EventType.BRACKET_DISSOLVED.value in types
-    assert EventType.THESIS_RESOLVED.value in types
+    assert EventType.THESIS_RESOLVED.value not in types
     assert EventType.CASH_CREDITED.value in types
     # Full close should NOT also emit position_reduced.
     assert EventType.POSITION_REDUCED.value not in types

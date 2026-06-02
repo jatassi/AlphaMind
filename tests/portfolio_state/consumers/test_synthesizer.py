@@ -550,6 +550,17 @@ class TestProjectSynthesizerViewHappyPath:
         assert t.key_catalyst == "earnings beat"
         assert t.time_expectation_hours == 24.0
 
+    def test_thesis_with_absent_position_excluded(self) -> None:
+        """ALP-834 — a closed-position thesis stays ACTIVE until the analysis
+        pipeline (ALP-131) resolves it. Its position is gone from the snapshot,
+        so the projection skips it rather than emitting an empty-ticker summary."""
+        present = _make_thesis("THESIS-001", "POS-001")
+        orphaned = _make_thesis("THESIS-CLOSED", "POS-CLOSED")
+        snapshot = _make_snapshot(active_theses=(present, orphaned))
+        view = project_synthesizer_view(snapshot, sector_resolver=_simple_sector_resolver())
+        assert {t.position_id for t in view.theses} == {"POS-001"}
+        assert all(t.ticker for t in view.theses)
+
     def test_exposure_net_directional(self) -> None:
         snapshot = _make_snapshot()
         view = project_synthesizer_view(snapshot, sector_resolver=_simple_sector_resolver())

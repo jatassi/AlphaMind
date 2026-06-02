@@ -67,7 +67,6 @@ from alphamind.portfolio_state.events.activity_log import (
     PositionOpenMechanism,
     PositionReducedDetail,
     ReconciliationAlertDetail,
-    ThesisResolvedDetail,
 )
 from alphamind.portfolio_state.records.orders import (
     BracketLegStatus,
@@ -92,7 +91,6 @@ from alphamind.portfolio_state.records.positions import (
     StrategyPositionDetails,
     position_direction,
 )
-from alphamind.portfolio_state.records.theses import ThesisRecordStatus
 from alphamind.risk_guardrails.guardrail_evaluation.types import MarketInputs
 from alphamind.state.config import StatePersistenceConfig
 from alphamind.state.invocation_context.activity_log import (
@@ -133,7 +131,6 @@ from alphamind.state.tables.positions_codec import (
 from alphamind.state.tables.positions_codec import (
     row_to_record as position_row_to_record,
 )
-from alphamind.state.tables.theses import ThesisRow
 
 log = logging.getLogger(__name__)
 
@@ -152,8 +149,8 @@ class StateInconsistencyError(RuntimeError):
     """Raised when a Tier-1 row references a parent FK target that is missing.
 
     The Phase 1 mutators (``_activate_bracket``, ``_dissolve_bracket``,
-    ``_maybe_resolve_thesis``, ``_cancel_bracket_for_corporate_action``)
-    expect every FK reference they read to point at a live row. A missing
+    ``_cancel_bracket_for_corporate_action``) expect every FK reference they
+    read to point at a live row. A missing
     target would silently no-op and mask state corruption — we raise
     instead so the surrounding ``InvocationContext`` rolls back and the
     operator sees the violation.
@@ -177,7 +174,6 @@ class _FillIntegrationOutcome:
     position_before: PositionRecord
     position_after: PositionRecord
     bracket_status_change: BracketStatus | None
-    thesis_resolved: bool
     cash_delta_usd: Decimal
     direction_is_buy: bool
     strategy_incomplete_legs: tuple[str, ...] = ()
@@ -718,7 +714,6 @@ async def _integrate_one_fill(
             bracket_status_change,
             incomplete_legs,
         )
-    thesis_resolved = await _maybe_resolve_thesis(handle, position, updated_position, fill)
     cash_delta = await _apply_cash_movement(handle, order, fill)
 
     if direction_is_buy:
@@ -730,7 +725,6 @@ async def _integrate_one_fill(
         position_before=position,
         position_after=updated_position,
         bracket_status_change=bracket_status_change,
-        thesis_resolved=thesis_resolved,
         cash_delta_usd=cash_delta,
         direction_is_buy=direction_is_buy,
         strategy_incomplete_legs=incomplete_legs,
@@ -1784,42 +1778,6 @@ async def _bracket_leg_order_ids(handle: InvocationHandle, bracket_id: str) -> t
 
 
 # ---------------------------------------------------------------------------
-# Thesis updates
-# ---------------------------------------------------------------------------
-
-
-async def _maybe_resolve_thesis(
-    handle: InvocationHandle,
-    position_before: PositionRecord,
-    position_after: PositionRecord,
-    fill: FillRecord,
-) -> bool:
-    """On position closure, mark the linked thesis RESOLVED with timestamp.
-
-    ``resolution_category`` and component-level outcomes are owned by the
-    analysis pipeline; this story only records the closure timestamp.
-    """
-    if (position_before.status, position_after.status) != (
-        PositionStatus.OPEN,
-        PositionStatus.CLOSED,
-    ):
-        return False
-    thesis_id = position_after.thesis_id
-    if thesis_id is None:
-        return False
-    thesis_row = await handle.session.get(ThesisRow, thesis_id)
-    if thesis_row is None:
-        msg = (
-            f"position {position_after.position_id!r} references thesis "
-            f"{thesis_id!r}, but thesis row is missing"
-        )
-        raise StateInconsistencyError(msg)
-    thesis_row.status = ThesisRecordStatus.RESOLVED.value
-    thesis_row.resolution_timestamp = fill.fill_timestamp.isoformat().replace("+00:00", "Z")
-    return True
-
-
-# ---------------------------------------------------------------------------
 # Cash + drawdown
 # ---------------------------------------------------------------------------
 
@@ -1978,7 +1936,6 @@ async def _emit_fill_activity_log_entries(
     position_before = outcome.position_before
     position_after = outcome.position_after
     bracket_status_change = outcome.bracket_status_change
-    thesis_resolved = outcome.thesis_resolved
     cash_delta_usd = outcome.cash_delta_usd
     direction_is_buy = outcome.direction_is_buy
     bracket_id = position_after.bracket_id
@@ -2115,20 +2072,6 @@ async def _emit_fill_activity_log_entries(
                     "strategist re-evaluates the partial mleg residual on its next "
                     "invocation per broker-adapter.md § Multi-leg fill events § Cancellation"
                 ),
-            ),
-        )
-
-    if thesis_resolved and thesis_id is not None:
-        _emit(
-            handle,
-            event_type=EventType.THESIS_RESOLVED,
-            order_id=None,
-            position_id=pos_id,
-            thesis_id=thesis_id,
-            timestamp=fill.fill_timestamp,
-            detail=ThesisResolvedDetail(
-                resolution_category="",
-                component_outcomes_json={},
             ),
         )
 

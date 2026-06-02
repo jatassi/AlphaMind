@@ -753,10 +753,12 @@ async def test_cash_merger_equity_emits_position_closed_and_cash_credited(
         assert cash_row.current_cash_usd == pytest.approx(107_500.0)
 
 
-async def test_cash_merger_resolves_linked_thesis(
+async def test_cash_merger_leaves_linked_thesis_active(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """Cash merger marks the linked thesis RESOLVED with resolution_timestamp set."""
+    """Cash merger closes the position but leaves the linked thesis ACTIVE
+    (ALP-834 — thesis resolution is owned by the analysis pipeline, not the
+    corporate-action handler)."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
     from alphamind.execution.corporate_actions.types import CorporateActionActivity
 
@@ -790,8 +792,8 @@ async def test_cash_merger_resolves_linked_thesis(
     async with factory() as sess:
         thesis_row = await sess.get(ThesisRow, "thesis-1")
         assert thesis_row is not None
-        assert thesis_row.status == ThesisRecordStatus.RESOLVED.value
-        assert thesis_row.resolution_timestamp is not None
+        assert thesis_row.status == ThesisRecordStatus.ACTIVE.value
+        assert thesis_row.resolution_timestamp is None
 
 
 async def test_cash_merger_no_thesis_does_not_raise(
