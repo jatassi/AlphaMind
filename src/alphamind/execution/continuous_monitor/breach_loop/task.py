@@ -143,7 +143,7 @@ def _safe_emit_health_signal(sink: OnHealthSignal, signal: BreachLoopHealthSigna
         log.exception("breach_loop health-signal sink raised; continuing")
 
 
-async def run_breach_loop(  # noqa: PLR0913,C901 — fan-in is the seam, not incidental complexity
+async def run_breach_loop(  # noqa: PLR0913,PLR0912,C901 — fan-in is the seam, not incidental complexity
     session: MonitorSession,
     config: ContinuousMonitorConfig,
     *,
@@ -252,20 +252,25 @@ async def run_breach_loop(  # noqa: PLR0913,C901 — fan-in is the seam, not inc
                     "breach_loop RECOVERED after %d consecutive failed ticks",
                     consecutive_failures,
                 )
-                _safe_emit_health_signal(
-                    on_health_signal,
-                    BreachLoopHealthSignal(
-                        degraded=False,
-                        consecutive_failures=consecutive_failures,
-                        last_error=None,
-                    ),
-                )
                 degraded = False
+                # Emit recovered only when stale-price escalation is also clear;
+                # if the stale condition is still active the process is still
+                # degraded and a premature recovered signal would mislead the
+                # operator surface.
+                if not stale_degraded:
+                    _safe_emit_health_signal(
+                        on_health_signal,
+                        BreachLoopHealthSignal(
+                            degraded=False,
+                            consecutive_failures=consecutive_failures,
+                            last_error=None,
+                        ),
+                    )
             consecutive_failures = 0
 
             # Stale-price escalation (ALP-770): escalate to DEGRADED after N
             # consecutive ticks where any open-position price was stale or
-            # missing; recover silently when all prices are fresh again.
+            # missing; recover when all prices are fresh again.
             if had_stale:
                 stale_consecutive_count += 1
                 if stale_consecutive_count >= failure_threshold and not stale_degraded:
@@ -291,15 +296,19 @@ async def run_breach_loop(  # noqa: PLR0913,C901 — fan-in is the seam, not inc
                         "breach_loop stale-price RECOVERED after %d consecutive cycles",
                         stale_consecutive_count,
                     )
-                    _safe_emit_health_signal(
-                        on_health_signal,
-                        BreachLoopHealthSignal(
-                            degraded=False,
-                            consecutive_failures=stale_consecutive_count,
-                            last_error=None,
-                        ),
-                    )
                     stale_degraded = False
+                    # Emit recovered only when tick-failure escalation is also
+                    # clear; a concurrent tick-failure DEGRADED keeps the
+                    # process degraded even though prices are fresh again.
+                    if not degraded:
+                        _safe_emit_health_signal(
+                            on_health_signal,
+                            BreachLoopHealthSignal(
+                                degraded=False,
+                                consecutive_failures=stale_consecutive_count,
+                                last_error=None,
+                            ),
+                        )
                 stale_consecutive_count = 0
 
         await asyncio.sleep(cadence_seconds)

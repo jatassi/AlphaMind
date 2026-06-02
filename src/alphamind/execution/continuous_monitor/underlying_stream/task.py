@@ -205,10 +205,14 @@ async def run_underlying_stream(
             backoff_seconds = min(backoff_seconds * 2.0, 30.0)
         else:
             # ``_run_one_connection`` only returns on a clean finish (e.g.
-            # ``stop_ws`` called externally). Treat it as a reconnect cycle —
-            # fall through to the top of the loop so the writer never silently
+            # ``stop_ws`` called externally). Reset the reconnect budget and
+            # backoff so a healthy period of clean reconnects does not leave
+            # the error-handling state in a degraded condition, then fall
+            # through to the top of the loop so the writer never silently
             # exits while the process stays alive.
             log.info("underlying_stream clean connection exit; reconnecting")
+            attempts_remaining = config.max_reconnect_attempts
+            backoff_seconds = 1.0
             continue
 
 
