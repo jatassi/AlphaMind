@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -22,6 +23,9 @@ class PMDecisionDetail:
     modifications_json: list[dict[str, Any]]
     resulting_command_ids: tuple[str, ...]
     verdict: PMVerdict
+    # ALP-765: execution-layer enter-now reprices that happened after the PM
+    # authored the verdict. Empty for envelopes with no enter-now limit entries.
+    reprice_markers_json: list[dict[str, Any]] = dataclasses.field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)

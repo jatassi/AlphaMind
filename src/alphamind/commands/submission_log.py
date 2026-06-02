@@ -49,12 +49,19 @@ class SubmissionLogEntry:
     (``_AbandonedCommandEntry``) lives in the decision layer; downstream
     consumers read ``.command_id`` / ``.command_type`` / ``.failure_reason``
     / ``.retry_attempt_count`` structurally.
+
+    ``reprice_markers`` (ALP-765) carries one ``{"ticker", "analyst_price",
+    "marketable_price"}`` dict per enter-now entry that was repriced by the
+    execution-layer deterministic step. Empty when no enter-now repricing
+    occurred. Forwarded by ``dispatch_phase2`` to ``persist_envelope_outcome``
+    so the ``pm_decision`` audit row reflects the execution-layer movement.
     """
 
     envelope: PMEnvelope
     submission_results: tuple[SubmissionResult, ...]
     dispatch_results: tuple[Any, ...] | None = None
     abandoned_entries: tuple[Any, ...] = ()
+    reprice_markers: tuple[Any, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

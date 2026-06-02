@@ -437,6 +437,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
         submission_results,
         dispatch_results,
         abandoned_entries,
+        reprice_markers,
     ) = await _maybe_route_accepted_commands(
         envelope=envelope,
         submission_results=submission_results,
@@ -475,6 +476,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
                 submission_results=submission_results,
                 dispatch_results=dispatch_results,
                 abandoned_entries=abandoned_entries,
+                reprice_markers=reprice_markers,
             ),
         ),
     )
@@ -501,6 +503,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
             submission_results,
             state_persistence_config,
             dispatch_results=dispatch_results,
+            reprice_markers=reprice_markers,
         )
         for abandoned in abandoned_entries:
             await _emit_command_abandoned_via_phase2(
@@ -547,12 +550,14 @@ async def _maybe_route_accepted_commands(
     tuple[SubmissionResult, ...],
     tuple[BrokerDispatchResult | None, ...] | None,
     tuple[_AbandonedCommandEntry, ...],
+    tuple[Any, ...],
 ]:
     """Re-price enter-now entries, then route accepted commands to the broker.
 
-    Returns ``(envelope, submission_results, dispatch_results, abandoned_entries)``.
-    A no-op (broker triple absent — the fixture-only path) returns the inputs
-    unchanged with ``dispatch_results=None`` and no abandoned entries.
+    Returns ``(envelope, submission_results, dispatch_results, abandoned_entries,
+    reprice_markers)``. A no-op (broker triple absent — the fixture-only path)
+    returns the inputs unchanged with ``dispatch_results=None``, no abandoned
+    entries, and empty ``reprice_markers``.
 
     When the broker triple (``client`` + ``queries`` + ``execution_config``) is
     present (broker-routing coordinated swap, story 03e / ALP-390):
@@ -570,23 +575,43 @@ async def _maybe_route_accepted_commands(
       accepted → rejected, and its dispatch entry carries a gateway-failure
       marker the writeback step uses to skip persistence + emit
       ``command_abandoned``.
+    * ALP-765: ``reprice_markers`` carries one dict per repriced enter-now entry
+      so the caller can stamp the ``pm_decision`` audit row and ``SubmissionLogEntry``
+      with the execution-layer price movement.
     """
     dispatch_results: tuple[BrokerDispatchResult | None, ...] | None = None
     abandoned_entries: tuple[_AbandonedCommandEntry, ...] = ()
+    reprice_markers: tuple[Any, ...] = ()
     if client is None or queries is None or execution_config is None:
-        return envelope, submission_results, dispatch_results, abandoned_entries
+        return envelope, submission_results, dispatch_results, abandoned_entries, reprice_markers
     if quote_source is not None:
         from alphamind.execution.broker_adapter.entry_pricing import (
             rewrite_enter_now_entries,
         )
 
+        old_commands = envelope.commands
         new_commands = await rewrite_enter_now_entries(
-            envelope.commands,
+            old_commands,
             quote_source=quote_source,
             bps_through_touch=execution_config.marketable_entry_bps_through_touch,
         )
-        if new_commands != envelope.commands:
+        if new_commands != old_commands:
             envelope = envelope.model_copy(update={"commands": new_commands})
+            markers: list[Any] = []
+            for old_cmd, new_cmd in zip(old_commands, new_commands, strict=True):
+                if old_cmd is not new_cmd:
+                    old_lp = getattr(getattr(old_cmd, "entry_order", None), "limit_price", None)
+                    new_lp = getattr(getattr(new_cmd, "entry_order", None), "limit_price", None)
+                    ticker = getattr(getattr(new_cmd, "instrument", None), "ticker", None)
+                    if old_lp is not None and new_lp is not None and ticker is not None:
+                        markers.append(
+                            {
+                                "ticker": ticker,
+                                "analyst_price": str(old_lp),
+                                "marketable_price": str(new_lp),
+                            }
+                        )
+            reprice_markers = tuple(markers)
     submission_results, dispatch_results, abandoned_entries = await _route_through_broker(
         envelope=envelope,
         submission_results=submission_results,
@@ -597,7 +622,7 @@ async def _maybe_route_accepted_commands(
         broker_dispatch=broker_dispatch,
         quote_source=quote_source,
     )
-    return envelope, submission_results, dispatch_results, abandoned_entries
+    return envelope, submission_results, dispatch_results, abandoned_entries, reprice_markers
 
 
 def _build_position_lookup(pm_view: PortfolioManagerView) -> PositionLookup:

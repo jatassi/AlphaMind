@@ -141,6 +141,34 @@ async def test_enter_now_short_rewritten_to_marketable_limit() -> None:
 
 
 @pytest.mark.asyncio
+async def test_enter_now_reprice_recomputes_dollar_value() -> None:
+    """ALP-765: dollar_value == limit_price x quantity after a reprice.
+
+    Before the fix, _rewrite_one updated only limit_price and left dollar_value
+    at the analyst's stale reference — the persisted command was internally
+    inconsistent (DVN incident: dollar_value=3084.9 = 70x44.07 but limit=46.46).
+    """
+    # SCHW short: analyst limit 85.5, bid 85.10 → marketable 85.05, qty 25.
+    command = _equity_open(entry_order=EntryOrder(type="limit", limit_price=price("85.5")))
+    source = _FakeQuoteSource({"SCHW": _BID_ASK})
+
+    (rewritten,) = await rewrite_enter_now_entries(
+        (command,), quote_source=source, bps_through_touch=5.0
+    )
+
+    assert isinstance(rewritten, OpenCommand)
+    new_limit = rewritten.entry_order.limit_price
+    assert new_limit is not None
+    qty = Decimal(str(rewritten.position_size.quantity))
+    expected_dollar_value = new_limit * qty  # 85.05 x 25 = 2126.25
+
+    actual = Decimal(str(rewritten.position_size.dollar_value))
+    assert abs(actual - expected_dollar_value) < Decimal("0.001")
+    # Regression guard: old dollar_value (2000.0) must no longer be returned.
+    assert rewritten.position_size.dollar_value != command.position_size.dollar_value
+
+
+@pytest.mark.asyncio
 async def test_long_enter_now_rewritten_to_marketable_buy_limit() -> None:
     # Coherent long bracket: stop (80) below entry, take-profit (90) above.
     command = _equity_open(
