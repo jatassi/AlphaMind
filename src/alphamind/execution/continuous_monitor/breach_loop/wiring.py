@@ -112,6 +112,9 @@ def register_breach_loop_task(  # noqa: PLR0913
             "on_immediate_breach": resolved_immediate,
             "on_emergency_input": resolved_emergency,
             "max_price_age_seconds": max_price_age_seconds,
+            # ALP-819 — feed the supervisor stall watchdog the breach-loop
+            # (risk-supervision) heartbeat so a wedged loop trips os._exit(1).
+            "beat": lambda: supervisor.beat("breach_loop"),
         }
         if on_health_signal is not None:
             kwargs["on_health_signal"] = on_health_signal

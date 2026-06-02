@@ -24,7 +24,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import AsyncGenerator
+import time
+from collections.abc import AsyncGenerator, Callable
 from datetime import UTC, datetime
 from typing import Any, Final, Literal, Protocol, cast
 
@@ -299,8 +300,26 @@ class _SubscribableStream(Protocol):
     async def _run_forever(self) -> None: ...
 
 
+class FillStreamStalledError(Exception):
+    """A connected ``trade_updates`` stream stopped delivering frames during RTH.
+
+    Raised by :func:`subscribe_trade_updates` when no frame arrives within
+    ``frame_timeout`` while the market is open (ALP-819). The ``websockets``
+    library reconnects internally on a transport error (e.g. ``WinError 121``)
+    without raising or delivering frames, so the ALP-768 done-callback sentinel
+    never fires and ``queue.get()`` would otherwise park forever. The consumer
+    treats this as a budget-neutral signal to tear down and rebuild the stream.
+    """
+
+
 async def subscribe_trade_updates(
     stream: _SubscribableStream,
+    *,
+    frame_timeout: float | None = None,
+    is_rth: Callable[[], bool] | None = None,
+    beat: Callable[[], None] = lambda: None,
+    poll_interval: float = 5.0,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> AsyncGenerator[FillReport]:
     """Subscribe to ``trade_updates`` and yield ``FillReport`` per event.
 
@@ -317,6 +336,17 @@ async def subscribe_trade_updates(
     cleanly and the background ``stream._run_forever()`` task is cancelled.
     Any exception raised during translation propagates to the consumer so the
     caller's run-loop can catch and trigger reconnect.
+
+    Connected-but-silent detection (ALP-819): the consume loop waits on
+    ``queue.get()`` in ``poll_interval`` slices rather than one unbounded
+    ``await`` so it can (a) call ``beat()`` on every slice — feeding the
+    monitor's stall watchdog a real fill-consumer liveness signal — and
+    (b) raise :class:`FillStreamStalledError` when ``is_rth()`` is true and no
+    frame has arrived for longer than ``frame_timeout``. That catches the
+    library-internal-reconnect path the ALP-768 done-callback misses (the
+    socket flaps, the library re-loops without raising, no sentinel fires).
+    All four knobs are optional: with ``frame_timeout``/``is_rth`` unset the
+    staleness branch is inert and the loop behaves as an ordinary drain.
     """
     # None is used as a sentinel: the done-callback puts it when run_task
     # finishes so queue.get() unblocks even if no fill events arrive.
@@ -345,9 +375,28 @@ async def subscribe_trade_updates(
     run_task = asyncio.create_task(stream._run_forever())
     run_task.add_done_callback(lambda _t: queue.put_nowait(None))
 
+    last_frame_at = monotonic()
     try:
         while True:
-            update = await queue.get()
+            beat()
+            try:
+                update = await asyncio.wait_for(queue.get(), timeout=poll_interval)
+            except TimeoutError:
+                # No frame this slice. A genuinely-quiet stream and a
+                # silently-wedged one look identical here, so force a reconnect
+                # only when the market is open (fills are sparse off-hours) and
+                # the silence exceeds frame_timeout. The consumer's reconnect
+                # re-subscribes a fresh socket and REST-recovers any gap.
+                if (
+                    frame_timeout is not None
+                    and is_rth is not None
+                    and is_rth()
+                    and monotonic() - last_frame_at > frame_timeout
+                ):
+                    msg = f"no trade_updates frame for >{frame_timeout:.0f}s during RTH"
+                    raise FillStreamStalledError(msg) from None
+                continue
+            last_frame_at = monotonic()
             if update is None:
                 # run_task finished (exception or clean close).
                 # result() re-raises its exception; returns None on clean.

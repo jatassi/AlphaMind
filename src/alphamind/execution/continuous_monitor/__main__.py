@@ -27,6 +27,7 @@ import asyncio
 import logging
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from datetime import datetime
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, assert_never, cast
@@ -483,6 +484,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:  # noqa: PLR0915 — compos
         venue_config=venue_config,
         db_session_factory=db_session_factory,
         enrichment_callable=sse_wrapped_enrichment,
+        is_market_open=calendar_cache.is_market_open,
         process_lifetime_id=process_lifetime_id,
     )
     # ALP-763 — periodic fill-backfill backstop. Sweeps Alpaca on an interval
@@ -659,6 +661,7 @@ def _register_fill_stream_consumer(
     venue_config: VenueConfig,
     db_session_factory: async_sessionmaker[AsyncSession],
     enrichment_callable: EnrichmentCallable | None,
+    is_market_open: Callable[[datetime], bool],
     process_lifetime_id: str | None = None,
 ) -> None:
     """Register the ``fill_stream_consumer`` task (story 02c).
@@ -671,6 +674,11 @@ def _register_fill_stream_consumer(
     enriches each translated ``FillRecord`` with a ``LiveExecutionEstimate``
     before persistence. Live mode passes ``None`` so the hot path is
     unchanged.
+
+    ``is_market_open`` (ALP-819) gates the connected-but-silent staleness check
+    to RTH (fills are legitimately sparse off-hours), and ``supervisor.beat``
+    feeds the stall watchdog the fill-flow heartbeat so a starved consumer
+    trips ``os._exit(1)`` → NSSM restart.
     """
     from alpaca.trading.client import TradingClient
 
@@ -697,6 +705,8 @@ def _register_fill_stream_consumer(
             account_state_queries_factory=_queries_factory,
             enrichment_callable=enrichment_callable,
             process_lifetime_id=process_lifetime_id,
+            is_market_open=is_market_open,
+            beat=lambda: supervisor.beat("fill_stream_consumer"),
         )
 
     supervisor.register_task(name="fill_stream_consumer", coro_fn=_fill_stream_consumer_task)

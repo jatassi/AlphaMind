@@ -30,6 +30,7 @@ from alphamind._kernel.ids import (
 )
 from alphamind.execution.broker_adapter import (
     FillReport,
+    FillStreamStalledError,
     OrderStatus,
     subscribe_trade_updates,
     translate_trade_update,
@@ -638,4 +639,85 @@ class TestSubscribeTradeUpdates:
         with pytest.raises(StopAsyncIteration):
             await anext_task
 
+        await gen.aclose()
+
+
+# ---------------------------------------------------------------------------
+# subscribe_trade_updates — connected-but-silent stream detection (ALP-819)
+# ---------------------------------------------------------------------------
+
+
+class _StepClock:
+    """Monotonic-clock substitute that advances ``step`` seconds per call.
+
+    Lets the staleness branch be exercised deterministically without real
+    sleeps — each ``monotonic()`` read jumps forward, so the elapsed-since-
+    last-frame comparison crosses ``frame_timeout`` on the first poll.
+    """
+
+    def __init__(self, step: float) -> None:
+        self._t = 0.0
+        self._step = step
+
+    def __call__(self) -> float:
+        self._t += self._step
+        return self._t
+
+
+class TestSilentStreamStaleness:
+    async def test_silent_stream_during_rth_raises_within_threshold(self) -> None:
+        """ALP-819: a connected stream that delivers no frames and never raises
+        is detected during RTH — the generator surfaces ``FillStreamStalledError``
+        instead of parking on ``queue.get()`` indefinitely (the 11h hang).
+
+        ``_FakeStream._run_forever`` parks (alive, no exception) and no frames
+        are injected — the exact library-internal-reconnect signature the
+        ALP-768 done-callback never catches.
+        """
+        stream = _FakeStream()
+
+        gen = subscribe_trade_updates(
+            stream,
+            frame_timeout=10.0,
+            is_rth=lambda: True,
+            poll_interval=0.01,
+            monotonic=_StepClock(1000.0),
+        )
+
+        with pytest.raises(FillStreamStalledError):
+            await gen.__anext__()
+
+        await gen.aclose()
+        # The wedged background task is torn down on the stall path so the
+        # consumer's reconnect rebuilds a fresh stream.
+        await asyncio.sleep(0)
+        assert stream.run_cancelled
+
+    async def test_off_hours_silent_stream_beats_without_stalling(self) -> None:
+        """Outside RTH a silent stream must NOT stall — fills are legitimately
+        sparse off-hours — but the watchdog heartbeat must still fire so a
+        genuinely-blocked consumer is distinguishable from a quiet one.
+        """
+        stream = _FakeStream()
+        beats: list[int] = []
+
+        gen = subscribe_trade_updates(
+            stream,
+            frame_timeout=10.0,
+            is_rth=lambda: False,  # market closed → staleness gate disengaged
+            beat=lambda: beats.append(1),
+            poll_interval=0.01,
+            monotonic=_StepClock(1000.0),
+        )
+        anext_task = asyncio.create_task(gen.__anext__())
+
+        # Let several poll intervals elapse without injecting a frame.
+        await asyncio.sleep(0.05)
+
+        assert not anext_task.done()  # no stall off-hours
+        assert beats  # heartbeats fired despite zero frames
+
+        anext_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await anext_task
         await gen.aclose()

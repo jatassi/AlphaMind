@@ -377,6 +377,7 @@ async def run_options_bracket_watcher(  # noqa: PLR0913 — orchestrator surface
     trigger_ids: TriggerIdGenerator,
     now: NowProvider = lambda: datetime.now(UTC),
     sleep: SleepCallable = asyncio.sleep,
+    beat: Callable[[], None] = lambda: None,
 ) -> None:
     """Long-running task the supervisor registers as ``bracket_stops``.
 
@@ -390,9 +391,14 @@ async def run_options_bracket_watcher(  # noqa: PLR0913 — orchestrator surface
     submits closing orders directly via the broker adapter — no engine
     envelope — and persists the resulting ``POSITION_CLOSED`` entries with
     ``event_source=BRACKET_MANAGER``.
+
+    ``beat`` (ALP-819), when supplied, is invoked at the top of every cycle so
+    the supervisor's stall watchdog watches this stop-enforcement loop; a
+    wedged cycle stops beating and trips ``os._exit(1)`` → NSSM restart.
     """
     fired_legs: set[_FiredLegKey] = set()
     while True:
+        beat()
         try:
             await _run_bracket_stop_cycle(
                 config=config,

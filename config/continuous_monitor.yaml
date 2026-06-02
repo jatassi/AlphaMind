@@ -115,3 +115,15 @@ unattributed_fill_escalation_ttl_seconds: 1800
 # → any gap >1h is a genuine stall). Default 3600s (1h) is deliberately
 # conservative to avoid false positives for long-running steady-state tasks.
 watchdog_stall_timeout_seconds: 3600
+
+# Seconds of trade_updates silence during RTH before the fill-stream consumer
+# forces a reconnect (ALP-819). The websockets library reconnects internally on
+# a transport error (WinError 121) without raising or delivering frames, so the
+# ALP-768 done-callback sentinel never fires and the consumer starves on
+# queue.get(). On silence past this bound the stream is torn down and rebuilt;
+# REST recovery on each reconnect + the fill-backfill backstop re-capture any
+# gap, so a needless reconnect during a quiet-but-healthy session is cheap.
+# Must exceed the longest legitimate RTH gap between fills; 900s (15 min)
+# matches fill_backfill_interval_seconds. Off-hours the check is disengaged
+# (fills are legitimately sparse) — only the watchdog guards a hung consumer.
+fill_stream_stale_timeout_seconds: 900

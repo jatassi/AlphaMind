@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 
@@ -28,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.broker_adapter import (
     FillReport,
+    FillStreamStalledError,
     recover_missed_fills_since,
     subscribe_trade_updates,
 )
@@ -55,7 +57,7 @@ TradingClientFactory = Callable[[ExecutionMode], object]
 AccountStateQueriesFactory = Callable[[object], object]
 
 
-async def run_fill_stream_consumer(
+async def run_fill_stream_consumer(  # noqa: PLR0913 — run-forever orchestrator surfaces each seam (factories, clock, watchdog) for injection
     session: MonitorSession,
     config: ContinuousMonitorConfig,
     *,
@@ -65,6 +67,11 @@ async def run_fill_stream_consumer(
     account_state_queries_factory: AccountStateQueriesFactory,
     enrichment_callable: EnrichmentCallable | None = None,
     process_lifetime_id: str | None = None,
+    is_market_open: Callable[[datetime], bool] | None = None,
+    beat: Callable[[], None] = lambda: None,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    monotonic: Callable[[], float] = time.monotonic,
+    stream_poll_interval: float = 5.0,
 ) -> None:
     """Run-forever fill-stream consumer.
 
@@ -81,11 +88,27 @@ async def run_fill_stream_consumer(
     4. On websocket exception, run recovery again with the latest in-DB
        timestamp, then sleep exponentially-backed-off and reconnect.
     5. On ``asyncio.CancelledError``, exit cleanly.
+
+    Stall resilience (ALP-819). ``is_market_open`` + ``beat`` opt this task
+    into the connected-but-silent detection and the supervisor's stall
+    watchdog. When the websockets library reconnects internally on a transport
+    error (WinError 121) without raising or delivering frames, the consume
+    generator raises :class:`FillStreamStalledError` after
+    ``config.fill_stream_stale_timeout_seconds`` of RTH silence; that is a
+    *budget-neutral* reconnect (a deliberate health refresh, not a failure) so
+    a persistently silent stream keeps recovering rather than exhausting the
+    reconnect budget. ``beat`` is fired on every poll slice and on each
+    consume cycle so a genuinely-blocked consumer (stuck in REST recovery or
+    persistence) stops beating and trips ``os._exit(1)`` → NSSM restart.
     """
     queries = account_state_queries_factory(trading_client_factory(session.mode))
+    is_rth: Callable[[], bool] | None = (
+        (lambda: is_market_open(now())) if is_market_open is not None else None
+    )
 
     attempt = 0
     while True:
+        beat()
         # Opportunistic recovery of quarantined fills (ALP-763): a fill parked
         # because its ``orders`` row had not yet committed integrates as soon as
         # that row exists. Run it each reconnect cycle alongside REST recovery.
@@ -116,6 +139,11 @@ async def run_fill_stream_consumer(
                 stream_factory(session.mode),
                 session_factory=session_factory,
                 enrichment_callable=enrichment_callable,
+                frame_timeout=float(config.fill_stream_stale_timeout_seconds),
+                is_rth=is_rth,
+                beat=beat,
+                poll_interval=stream_poll_interval,
+                monotonic=monotonic,
             )
             # ``_consume_stream`` is run-forever; a clean return is treated
             # the same as a failure (a buggy stream that closes immediately
@@ -123,6 +151,23 @@ async def run_fill_stream_consumer(
         except asyncio.CancelledError:
             log.info("fill_stream_consumer cancelled cleanly")
             raise
+        except FillStreamStalledError:
+            # Connected-but-silent stream detected during RTH (ALP-819): the
+            # library reconnect-looped internally without raising or delivering
+            # frames. Tear down and rebuild a fresh stream. This is a deliberate
+            # health refresh, NOT a failure — reset the reconnect budget so a
+            # persistently silent stream keeps recovering (REST recovery on each
+            # cycle + the fill-backfill backstop re-capture any gap) rather than
+            # exhausting the budget and exiting. The next ``_consume_stream``
+            # gets a full ``fill_stream_stale_timeout_seconds`` window before it
+            # can go stale again, so this never hot-loops in production.
+            log.warning(
+                "fill_stream_consumer: trade_updates silent for >%ds during RTH; "
+                "forcing reconnect (budget-neutral)",
+                config.fill_stream_stale_timeout_seconds,
+            )
+            attempt = 0
+            continue
         except Exception:
             # Reconnect-budget supervisor per runtime §G1: any websocket /
             # downstream failure counts an attempt; on exhaustion we re-raise
@@ -153,17 +198,31 @@ async def _consume_stream(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     enrichment_callable: EnrichmentCallable | None,
+    frame_timeout: float | None = None,
+    is_rth: Callable[[], bool] | None = None,
+    beat: Callable[[], None] = lambda: None,
+    poll_interval: float = 5.0,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> None:
     """Drain :func:`subscribe_trade_updates` until the generator exits.
 
     Explicit ``try/finally`` with ``aclose()`` so a propagating exception
-    (e.g., translation error) triggers the primitive's ``run_task.cancel()``
-    in deterministic order, rather than relying on async-generator GC.
+    (e.g., translation error or :class:`FillStreamStalledError`) triggers the
+    primitive's ``run_task.cancel()`` in deterministic order, rather than
+    relying on async-generator GC. The staleness knobs (ALP-819) flow through
+    to the primitive's poll loop.
     """
     # ``subscribe_trade_updates`` accepts any object honouring the
     # ``_SubscribableStream`` Protocol; the cast keeps mypy quiet without
     # coupling to the alpaca-py class.
-    gen = subscribe_trade_updates(stream)  # type: ignore[arg-type]
+    gen = subscribe_trade_updates(
+        stream,  # type: ignore[arg-type]
+        frame_timeout=frame_timeout,
+        is_rth=is_rth,
+        beat=beat,
+        poll_interval=poll_interval,
+        monotonic=monotonic,
+    )
     try:
         async for report in gen:
             await persist_fill_report(
