@@ -462,7 +462,7 @@ passes on the `distillation_ticker_baseline` UNIQUE constraint).
 |------------------------|----------------------------|-------------------------------------------|----------------------------------------------|
 | `pre_open`             | `0 9 * * mon-fri`          | 09:00 weekdays                            | NYSE-calendar-gated                          |
 | `market_hours_rolling` | `0 13 * * mon-fri`         | 13:00 weekdays (single mid-day read)      | NYSE-gated; dedup-gated within 30 min        |
-| `pre_close`            | `30 15 * * mon-fri`        | 15:30 weekdays                            | NYSE-gated; sole owner of the close slot     |
+| `pre_close`            | `0 15 * * mon-fri`         | 15:00 weekdays                            | NYSE-gated; sole owner of the close slot     |
 | `weekend_sunday`       | `0 18 * * sun`             | 18:00 Sunday                              | Unconditional                                |
 | `off_hours_rolling`    | (unscheduled)              | Manual / emergency only                   | Valid run type; overlay retained, not on cron |
 | `weekend_saturday`     | (unscheduled)              | Manual / emergency only                   | Valid run type; overlay retained, not on cron |
