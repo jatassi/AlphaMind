@@ -490,7 +490,7 @@ def drive_analysis_pipeline(
 
     return asyncio.run(
         run_analysis_pipeline(
-            session=None,  # noqa: arg-type  # stub doesn't touch the session
+            session=None,  # type: ignore[arg-type]  # stub doesn't touch the session
             invocation_id=INVOCATION_ID,
             as_of=AS_OF,
             last_invocation_time=LAST_INVOCATION_TIME,
