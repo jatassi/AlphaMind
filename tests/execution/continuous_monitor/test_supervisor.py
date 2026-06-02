@@ -15,6 +15,8 @@ from __future__ import annotations
 import asyncio
 import signal
 import sys
+import time
+import unittest.mock as mock
 from datetime import UTC, datetime
 
 import pytest
@@ -32,7 +34,7 @@ def _session() -> MonitorSession:
     )
 
 
-def _config(*, shutdown_timeout: int = 5) -> ContinuousMonitorConfig:
+def _config(*, shutdown_timeout: int = 5, watchdog_timeout: int = 3600) -> ContinuousMonitorConfig:
     return ContinuousMonitorConfig(
         breach_evaluation_cadence_seconds=60,
         greeks_refresh_interval_minutes=15,
@@ -40,11 +42,15 @@ def _config(*, shutdown_timeout: int = 5) -> ContinuousMonitorConfig:
         underlying_stream_provider="alpaca-iex",
         max_reconnect_attempts=5,
         supervisor_shutdown_timeout_seconds=shutdown_timeout,
+        watchdog_stall_timeout_seconds=watchdog_timeout,
     )
 
 
-def _supervisor(*, shutdown_timeout: int = 5) -> MonitorSupervisor:
-    return MonitorSupervisor(session=_session(), config=_config(shutdown_timeout=shutdown_timeout))
+def _supervisor(*, shutdown_timeout: int = 5, watchdog_timeout: int = 3600) -> MonitorSupervisor:
+    return MonitorSupervisor(
+        session=_session(),
+        config=_config(shutdown_timeout=shutdown_timeout, watchdog_timeout=watchdog_timeout),
+    )
 
 
 class TestRegisterTask:
@@ -188,3 +194,126 @@ class TestSupervisorTaskCoroSignature:
         await asyncio.gather(supervisor.run(), trigger_stop_after_first_pass())
         assert isinstance(captured["session"], MonitorSession)
         assert isinstance(captured["config"], ContinuousMonitorConfig)
+
+
+# ---------------------------------------------------------------------------
+# ALP-768 — in-process watchdog (beat + _watchdog_loop)
+# ---------------------------------------------------------------------------
+
+
+class TestBeat:
+    def test_beat_registers_task_on_first_call(self) -> None:
+        supervisor = _supervisor()
+        assert "fill_stream_consumer" not in supervisor._heartbeats
+        supervisor.beat("fill_stream_consumer")
+        assert "fill_stream_consumer" in supervisor._heartbeats
+
+    def test_beat_refreshes_timestamp_on_subsequent_calls(self) -> None:
+        supervisor = _supervisor()
+        supervisor.beat("task")
+        first_ts = supervisor._heartbeats["task"]
+        time.sleep(0.01)  # ensure monotonic advances
+        supervisor.beat("task")
+        assert supervisor._heartbeats["task"] > first_ts
+
+    def test_beat_stores_monotonic_timestamp(self) -> None:
+        before = time.monotonic()
+        supervisor = _supervisor()
+        supervisor.beat("task")
+        after = time.monotonic()
+        ts = supervisor._heartbeats["task"]
+        assert before <= ts <= after
+
+
+class TestWatchdogLoop:
+    async def test_watchdog_does_not_fire_for_fresh_heartbeat(self) -> None:
+        supervisor = _supervisor()
+        supervisor._stop_event = asyncio.Event()
+        supervisor.beat("task")  # fresh — elapsed ~ 0
+
+        # Allow one sleep-then-check iteration, then stop via CancelledError.
+        _call = 0
+
+        async def _one_shot_sleep(_: float) -> None:
+            nonlocal _call
+            _call += 1
+            if _call > 1:
+                raise asyncio.CancelledError()
+
+        exit_calls: list[int] = []
+        with (
+            mock.patch("asyncio.sleep", new=_one_shot_sleep),
+            mock.patch(
+                "alphamind.execution.continuous_monitor.supervisor.os._exit",
+                side_effect=exit_calls.append,
+            ),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            # Awaiting directly (not via create_task) so BaseException propagates normally.
+            await supervisor._watchdog_loop()
+
+        assert exit_calls == []
+
+    async def test_watchdog_fires_os_exit_for_stale_heartbeat(self) -> None:
+        supervisor = _supervisor()
+        supervisor._stop_event = asyncio.Event()
+        timeout = supervisor._config.watchdog_stall_timeout_seconds
+        # Simulate a heartbeat that was last recorded far past the timeout.
+        supervisor._heartbeats["stale_task"] = time.monotonic() - (timeout + 1)
+
+        with (
+            mock.patch("asyncio.sleep", new=mock.AsyncMock(return_value=None)),
+            mock.patch(
+                "alphamind.execution.continuous_monitor.supervisor.os._exit",
+                side_effect=SystemExit(1),
+            ),
+            # Await directly so SystemExit propagates to pytest.raises.
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            await supervisor._watchdog_loop()
+        assert exc_info.value.code == 1
+
+    async def test_watchdog_exits_cleanly_when_stop_event_is_set(self) -> None:
+        """Shutdown guard: no os._exit during graceful stop even if heartbeats are stale."""
+        supervisor = _supervisor()
+        supervisor._stop_event = asyncio.Event()
+        supervisor._stop_event.set()  # shutdown already in progress
+        timeout = supervisor._config.watchdog_stall_timeout_seconds
+        supervisor._heartbeats["stale_task"] = time.monotonic() - (timeout + 1)
+
+        exit_calls: list[int] = []
+        with (
+            mock.patch("asyncio.sleep", new=mock.AsyncMock(return_value=None)),
+            mock.patch(
+                "alphamind.execution.continuous_monitor.supervisor.os._exit",
+                side_effect=exit_calls.append,
+            ),
+        ):
+            # Should return without raising or appending because stop_event is set.
+            await supervisor._watchdog_loop()
+
+        assert exit_calls == []
+
+
+class TestWatchdogShutdown:
+    async def test_graceful_stop_cancels_watchdog_without_hanging(self) -> None:
+        """run() must return within the shutdown timeout — the watchdog must not block __aexit__."""
+        started = asyncio.Event()
+
+        async def _blocking_task(session: MonitorSession, config: ContinuousMonitorConfig) -> None:
+            del session, config
+            started.set()
+            await asyncio.Future()  # blocks until cancelled
+
+        supervisor = _supervisor(shutdown_timeout=3)
+        supervisor.register_task(name="blocking", coro_fn=_blocking_task)
+
+        async def _stop_after_start() -> None:
+            await started.wait()
+            supervisor.request_stop()
+
+        # asyncio.wait_for with a generous ceiling catches a hang if it occurs.
+        await asyncio.wait_for(
+            asyncio.gather(supervisor.run(), _stop_after_start()),
+            timeout=5.0,
+        )

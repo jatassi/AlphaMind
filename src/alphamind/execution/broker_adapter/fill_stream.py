@@ -318,7 +318,11 @@ async def subscribe_trade_updates(
     Any exception raised during translation propagates to the consumer so the
     caller's run-loop can catch and trigger reconnect.
     """
-    queue: asyncio.Queue[TradeUpdate] = asyncio.Queue()
+    # None is used as a sentinel: the done-callback puts it when run_task
+    # finishes so queue.get() unblocks even if no fill events arrive.
+    # The queue is unbounded (maxsize=0) — put_nowait() in the done-callback
+    # must not raise QueueFull. Do not cap this queue.
+    queue: asyncio.Queue[TradeUpdate | None] = asyncio.Queue()
 
     async def _handler(update: TradeUpdate) -> None:
         await queue.put(update)
@@ -331,13 +335,24 @@ async def subscribe_trade_updates(
     # cleanly. The bare :func:`asyncio.create_task` lets us manage the
     # background task's lifecycle through the generator's ``try/finally``
     # and suppress its cleanup-time exceptions so the consumer observes
-    # only its own failures (translation errors or ``CancelledError``);
-    # the monitor's run-loop owns reconnect on websocket failure.
+    # only its own failures (translation errors or ``CancelledError``).
+    #
+    # The done-callback links run_task's lifecycle to the consumer: when
+    # _run_forever() raises (e.g. OSError on a broken pipe) or returns
+    # cleanly, the sentinel unblocks queue.get() so the consumer can
+    # inspect run_task.result() and propagate the failure to the
+    # monitor's reconnect loop (fill_stream_consumer/task.py:123-135).
     run_task = asyncio.create_task(stream._run_forever())
+    run_task.add_done_callback(lambda _t: queue.put_nowait(None))
 
     try:
         while True:
             update = await queue.get()
+            if update is None:
+                # run_task finished (exception or clean close).
+                # result() re-raises its exception; returns None on clean.
+                run_task.result()
+                return
             for report in translate_trade_update(update):
                 yield report
     finally:

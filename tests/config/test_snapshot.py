@@ -210,7 +210,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # fill_backfill_interval_seconds: 900 and fill_backfill_lookback_seconds: 259200
     # to config/continuous_monitor.yaml and ContinuousMonitorConfig (the periodic
     # fill-backfill backstop), shifting the resolved-config canonical bytes.
-    expected = "782912b92a27ba12e2ad168b94196e560a2c4f9f5310732a530934b2aad71028"
+    # Pin updated 2026-06-02 (in-process watchdog, ALP-768): ALP-768 added
+    # watchdog_stall_timeout_seconds: 3600 to config/continuous_monitor.yaml and
+    # ContinuousMonitorConfig (the MonitorSupervisor heartbeat watchdog),
+    # shifting the resolved-config canonical bytes.
+    expected = "46db138bcdc2aee03a4e30024ffc907d1fa64e9b9d30d8cf27a3d7d1e48eb646"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."
