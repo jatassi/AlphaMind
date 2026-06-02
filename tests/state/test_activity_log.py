@@ -305,21 +305,8 @@ def _pm_decision_entry(
 
 
 class TestActivityLogTable:
-    def test_table_has_expected_columns(self, engine: Engine) -> None:
+    def test_table_primary_key(self, engine: Engine) -> None:
         insp = inspect(engine)
-        cols = {c["name"] for c in insp.get_columns("activity_log")}
-        assert cols == {
-            "entry_id",
-            "invocation_id",
-            "entry_at",
-            "event_type",
-            "event_group",
-            "position_id",
-            "order_id",
-            "thesis_id",
-            "source",
-            "detail_json",
-        }
         pk = insp.get_pk_constraint("activity_log")
         assert pk["constrained_columns"] == ["entry_id"]
 

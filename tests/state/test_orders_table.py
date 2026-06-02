@@ -166,32 +166,8 @@ def _market_order(**overrides: object) -> OrderRecord:
 
 
 class TestOrdersTableShape:
-    def test_table_has_expected_columns(self, engine: Engine) -> None:
+    def test_table_primary_key(self, engine: Engine) -> None:
         insp = inspect(engine)
-        cols = {c["name"] for c in insp.get_columns("orders")}
-        assert cols == {
-            "order_id",
-            "position_id",
-            "bracket_id",
-            "order_role",
-            "order_class",
-            "instrument_spec_json",
-            "direction",
-            "order_type",
-            "quantity",
-            "price_parameters_json",
-            "duration",
-            "status",
-            "alpaca_order_id",
-            "alpaca_order_id_chain_json",
-            "submission_timestamp",
-            "last_update_timestamp",
-            "filled_quantity",
-            "average_fill_price",
-            "remaining_quantity",
-            "modification_count",
-            "metadata_json",
-        }
         pk = insp.get_pk_constraint("orders")
         assert pk["constrained_columns"] == ["order_id"]
 

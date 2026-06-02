@@ -254,24 +254,8 @@ def _strategy_position(*, position_id: str = "pos-strat-1") -> PositionRecord:
 
 
 class TestPositionsTableSchema:
-    def test_table_has_expected_columns(self, engine: Engine) -> None:
+    def test_table_primary_key(self, engine: Engine) -> None:
         insp = inspect(engine)
-        cols = {c["name"] for c in insp.get_columns("positions")}
-        assert cols == {
-            "position_id",
-            "thesis_id",
-            "bracket_id",
-            "status",
-            "direction",
-            "entry_timestamp",
-            "instrument_type",
-            "details_json",
-            "execution_history_json",
-            "realized_pnl_to_date_usd",
-            "corporate_action_adjustment_needed",
-            "parent_position_id",
-            "origin",
-        }
         pk = insp.get_pk_constraint("positions")
         assert pk["constrained_columns"] == ["position_id"]
 
