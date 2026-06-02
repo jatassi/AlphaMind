@@ -8,13 +8,14 @@ database (WAL mode is not available on in-memory databases).
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import Symbol
@@ -38,7 +39,15 @@ from alphamind.persistence.models import (
     TickerChangeHistory,
     TreasuryAuctions,
 )
-from alphamind.persistence.session import _resolve_path, make_engine, make_session_factory
+from alphamind.persistence.retry import run_with_sqlite_busy_retry
+from alphamind.persistence.session import (
+    _resolve_path,
+    begin_write_immediate,
+    make_async_engine,
+    make_async_session_factory,
+    make_engine,
+    make_session_factory,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -221,6 +230,231 @@ class TestPragmas:
         with file_engine.connect() as conn:
             result = conn.execute(text("PRAGMA busy_timeout")).scalar()
         assert result == 60000
+
+    async def test_journal_mode_and_busy_timeout_on_async_engine(self, tmp_path: Path) -> None:
+        """ALP-824 regression: the isolation/begin-hook change keeps the four pragmas
+        live on the async (aiosqlite) engine, not only the sync one."""
+        engine = make_async_engine(str(tmp_path / "async_pragmas.db"))
+        try:
+            async with engine.connect() as conn:
+                journal_mode = (await conn.exec_driver_sql("PRAGMA journal_mode")).scalar()
+                busy_timeout = (await conn.exec_driver_sql("PRAGMA busy_timeout")).scalar()
+                foreign_keys = (await conn.exec_driver_sql("PRAGMA foreign_keys")).scalar()
+        finally:
+            await engine.dispose()
+        assert journal_mode == "wal"
+        assert busy_timeout == 60000
+        assert foreign_keys == 1
+
+
+# ---------------------------------------------------------------------------
+# AC (ALP-824): selective BEGIN IMMEDIATE write-transaction support
+# ---------------------------------------------------------------------------
+
+
+def _capture_begin_statements(engine: Engine) -> list[str]:
+    """Record every ``BEGIN ...`` the engine emits into a returned list."""
+    seen: list[str] = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _cap(_conn: object, _cursor: object, statement: str, *_rest: object) -> None:
+        if statement.upper().startswith("BEGIN"):
+            seen.append(statement)
+
+    return seen
+
+
+class TestBeginMode:
+    """The async begin hook emits ``BEGIN <mode>`` from the ``sqlite_begin_mode``
+    option; the sync engine keeps pysqlite's implicit BEGIN (ALP-824)."""
+
+    async def test_unmarked_async_transaction_stays_deferred(self, tmp_path: Path) -> None:
+        engine = make_async_engine(str(tmp_path / "deferred.db"))
+        begins = _capture_begin_statements(engine.sync_engine)
+        try:
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+                await conn.rollback()
+        finally:
+            await engine.dispose()
+        assert begins == ["BEGIN DEFERRED"]
+
+    async def test_begin_write_immediate_helper_emits_begin_immediate(self, tmp_path: Path) -> None:
+        engine = make_async_engine(str(tmp_path / "immediate_helper.db"))
+        begins = _capture_begin_statements(engine.sync_engine)
+        factory = make_async_session_factory(engine)
+        try:
+            async with factory() as session:
+                await begin_write_immediate(session)
+                await session.execute(text("SELECT 1"))
+                await session.rollback()
+        finally:
+            await engine.dispose()
+        assert begins == ["BEGIN IMMEDIATE"]
+
+    def test_sync_engine_keeps_implicit_begin(self, file_engine: Engine) -> None:
+        """The begin hooks are async-only: the sync engine emits no explicit BEGIN,
+        preserving pysqlite's lazy implicit BEGIN so an in-flight
+        ``PRAGMA foreign_keys=OFF`` (Alembic batch migrations) still runs in
+        autocommit. Guards against re-broadening the begin hook to the sync engine."""
+        begins = _capture_begin_statements(file_engine)
+        with file_engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+            conn.execute(text("CREATE TABLE _t (id INTEGER PRIMARY KEY)"))
+            conn.commit()
+        assert begins == []
+
+    async def test_begin_write_immediate_rejects_open_transaction(self, tmp_path: Path) -> None:
+        """The helper refuses an already-open transaction rather than silently
+        degrading IMMEDIATE to the default deferred begin."""
+        engine = make_async_engine(str(tmp_path / "guard.db"))
+        factory = make_async_session_factory(engine)
+        try:
+            async with factory() as session:
+                await session.execute(text("SELECT 1"))  # opens a deferred txn
+                with pytest.raises(RuntimeError, match="before the session opens"):
+                    await begin_write_immediate(session)
+                await session.rollback()
+        finally:
+            await engine.dispose()
+
+
+class TestCrossWriterSnapshotConflict:
+    """Reproduce the two-writer race the fix targets (ALP-824)."""
+
+    @staticmethod
+    async def _seed(engine: object) -> None:
+        async with engine.begin() as conn:  # type: ignore[attr-defined]
+            await conn.exec_driver_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)")
+            await conn.exec_driver_sql("INSERT INTO t (id, v) VALUES (1, 0)")
+
+    async def test_deferred_read_then_write_upgrade_raises_busy_snapshot(
+        self, tmp_path: Path
+    ) -> None:
+        """Deferred path: A reads (snapshot), B commits, A's write-upgrade fails
+        immediately with SQLITE_BUSY_SNAPSHOT — the production bug."""
+        db = str(tmp_path / "race.db")
+        engine_a = make_async_engine(db)
+        engine_b = make_async_engine(db)
+        try:
+            await self._seed(engine_b)
+            conn_a = await engine_a.connect()  # deferred by default
+            await conn_a.exec_driver_sql("SELECT v FROM t WHERE id = 1")  # read snapshot
+            async with engine_b.begin() as conn_b:  # writer B commits in between
+                await conn_b.exec_driver_sql("UPDATE t SET v = 1 WHERE id = 1")
+            with pytest.raises(OperationalError) as excinfo:
+                await conn_a.exec_driver_sql("UPDATE t SET v = 99 WHERE id = 1")
+            await conn_a.rollback()
+            await conn_a.close()
+        finally:
+            await engine_a.dispose()
+            await engine_b.dispose()
+        assert excinfo.value.orig is not None
+        assert getattr(excinfo.value.orig, "sqlite_errorname", "") == "SQLITE_BUSY_SNAPSHOT"
+
+    async def test_immediate_holder_serializes_concurrent_writer(self, tmp_path: Path) -> None:
+        """IMMEDIATE path: the holder takes the write lock up front, so a concurrent
+        writer *waits* (governed by busy_timeout) and commits after — no error."""
+        db = str(tmp_path / "race2.db")
+        engine_a = make_async_engine(db)
+        engine_b = make_async_engine(db)
+        await self._seed(engine_a)
+        factory_a = make_async_session_factory(engine_a)
+        factory_b = make_async_session_factory(engine_b)
+        order: list[str] = []
+        a_holds_lock = asyncio.Event()
+        try:
+
+            async def holder() -> None:
+                async with factory_a() as session:
+                    await begin_write_immediate(session)
+                    await session.execute(text("UPDATE t SET v = 10 WHERE id = 1"))
+                    order.append("A_wrote")
+                    a_holds_lock.set()
+                    await asyncio.sleep(0.2)  # hold the write lock while B contends
+                    await session.commit()
+                    order.append("A_committed")
+
+            async def contender() -> None:
+                await a_holds_lock.wait()
+                async with factory_b() as session:
+                    # Blocks on A's write lock instead of raising BUSY_SNAPSHOT.
+                    await session.execute(text("UPDATE t SET v = 20 WHERE id = 1"))
+                    order.append("B_wrote")
+                    await session.commit()
+                    order.append("B_committed")
+
+            await asyncio.gather(holder(), contender())
+            async with engine_a.connect() as conn:
+                final_v = (await conn.exec_driver_sql("SELECT v FROM t WHERE id = 1")).scalar()
+        finally:
+            await engine_a.dispose()
+            await engine_b.dispose()
+        # B waited for A: it wrote only after A committed, then committed last.
+        assert order == ["A_wrote", "A_committed", "B_wrote", "B_committed"]
+        assert final_v == 20
+
+
+class TestSqliteBusyRetry:
+    """``run_with_sqlite_busy_retry`` semantics (ALP-824)."""
+
+    @staticmethod
+    def _locked_error() -> OperationalError:
+        return OperationalError("UPDATE t", {}, Exception("database is locked"))
+
+    async def test_returns_success_after_transient_failures(self) -> None:
+        calls = {"n": 0}
+
+        async def op() -> str:
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise self._locked_error()
+            return "ok"
+
+        result = await run_with_sqlite_busy_retry(op, attempts=5, base_backoff_s=0.0)
+        assert result == "ok"
+        assert calls["n"] == 3
+
+    async def test_reraises_non_transient_operational_error_immediately(self) -> None:
+        calls = {"n": 0}
+
+        async def op() -> str:
+            calls["n"] += 1
+            raise OperationalError("UPDATE t", {}, Exception("no such table: t"))
+
+        with pytest.raises(OperationalError, match="no such table"):
+            await run_with_sqlite_busy_retry(op, attempts=5, base_backoff_s=0.0)
+        assert calls["n"] == 1  # not retried
+
+    async def test_reraises_after_exhausting_attempts(self) -> None:
+        calls = {"n": 0}
+
+        async def op() -> str:
+            calls["n"] += 1
+            raise self._locked_error()
+
+        with pytest.raises(OperationalError, match="database is locked"):
+            await run_with_sqlite_busy_retry(op, attempts=3, base_backoff_s=0.0)
+        assert calls["n"] == 3
+
+    async def test_detects_transient_via_sqlite_errorname(self) -> None:
+        """A lock is classified transient by ``orig.sqlite_errorname`` even when the
+        message text does not contain a lock marker (robust to message drift)."""
+
+        class _SnapshotConflictError(Exception):
+            sqlite_errorname = "SQLITE_BUSY_SNAPSHOT"
+
+        calls = {"n": 0}
+
+        async def op() -> str:
+            calls["n"] += 1
+            if calls["n"] < 2:
+                raise OperationalError("UPDATE t", {}, _SnapshotConflictError("snapshot conflict"))
+            return "ok"
+
+        result = await run_with_sqlite_busy_retry(op, attempts=3, base_backoff_s=0.0)
+        assert result == "ok"
+        assert calls["n"] == 2
 
 
 # ---------------------------------------------------------------------------
