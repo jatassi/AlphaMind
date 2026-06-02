@@ -42,6 +42,8 @@ from alphamind.portfolio_state.records.orders import (
     OrderRecord,
     PriceTrigger,
     TimeTrigger,
+    direction_to_side,
+    order_direction,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -655,7 +657,24 @@ def _render_pending_order_row(order: OrderRecord, current_price: float) -> str:
     limit_price = order.price_parameters.limit_price
     if limit_price is not None and limit_price > 0:
         limit_float = float(limit_price)
-        distance_pct = ((current_price - limit_float) / limit_float) * 100.0
+        direction = order_direction(order)
+        is_equity = order.instrument_spec.instrument_type == InstrumentType.EQUITY
+        if is_equity and direction is not None:
+            side = direction_to_side(direction)
+            abs_pct = abs((limit_float - current_price) / current_price * 100.0)
+            is_marketable = (
+                limit_float >= current_price if side == "buy" else limit_float <= current_price
+            )
+            if is_marketable:
+                fill_label = f"{abs_pct:.1f}% through market — marketable / high fill-likelihood"
+            else:
+                fill_label = f"{abs_pct:.1f}% from market — away from fill / low fill-likelihood"
+            return f"    {order.order_id}: {role} @ ${limit_float:.2f}, age {age}, {fill_label}"
+        # Options / MLEG strategy: the limit is a premium while current_price is
+        # the underlying spot, so spot-vs-limit marketability is not meaningful.
+        # Fall back to an unsigned distance on the same current_price basis as
+        # the equity branch above (so magnitudes are comparable across rows).
+        distance_pct = ((current_price - limit_float) / current_price) * 100.0
         distance_str = _format_signed_pct(distance_pct)
         return (
             f"    {order.order_id}: {role} @ ${limit_float:.2f}, "
