@@ -320,10 +320,10 @@ class TestSummarizeEmaPairsNullOnShortSeries:
         assert isinstance(result.ema_20, float)
 
     def test_ema_summary_type_annotation_is_optional(self) -> None:
-        """_EmaSummary fields carry 'float | None' annotations (not bare 'float')."""
+        """_EmaSummary fields carry float | None annotations (not bare float)."""
         for field_name in ("ema_20", "ema_20_slope", "ema_50_slope", "distance_from_ema_20_in_atr"):
             annotation = _EmaSummary.__dataclass_fields__[field_name].type
-            assert annotation != "float", (
+            assert annotation is not float, (
                 f"_EmaSummary.{field_name} is bare float — must be float | None"
             )
 

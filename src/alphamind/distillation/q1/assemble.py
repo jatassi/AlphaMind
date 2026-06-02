@@ -545,6 +545,8 @@ def _trend_state_payload_for_ticker(
     adx = compute_adx(highs, lows, closes, period=_ADX_PERIOD)
     atr = compute_atr(highs, lows, closes, period=_ATR_PERIOD)
     ema = _summarize_ema_pairs(closes, atr=float(atr))
+    # None slopes (EMA still accumulating) → 0.0 sentinel → range_bound;
+    # CalibrationState.ACCUMULATING (returned below) signals payload unreliability.
     trend_state = classify_trend_state(
         adx=float(adx.value),
         ema_20_slope=ema.ema_20_slope if ema.ema_20_slope is not None else 0.0,
