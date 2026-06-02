@@ -308,68 +308,83 @@ def populated_session(session: Session) -> Session:
 # ---------------------------------------------------------------------------
 
 
-class TestReturnsOutputBlockInstances:
-    """The function returns a list of :class:`OutputBlock` instances."""
+def test_default_fan_out_shape(populated_session: Session) -> None:
+    """One combined assertion for all five structural facts of the default fan-out.
 
-    def test_default_scope_returns_list_of_output_blocks(self, populated_session: Session) -> None:
-        config = _build_distillation_config()
-        as_of = datetime(2026, 4, 25, tzinfo=UTC)
-        blocks = assemble_q1_blocks(populated_session, config=config, as_of=as_of)
-        assert isinstance(blocks, list)
-        assert len(blocks) > 0
-        for block in blocks:
-            assert isinstance(block, OutputBlock)
+    Facts asserted:
+    1. Returns a non-empty list of :class:`OutputBlock` instances.
+    2. ``payload['per_ticker']`` keys are sorted by ticker on every per-ticker block.
+    3. No duplicate ``(audience, block_id)`` pairs — one block per sector/indicator-group.
+    4. Each block's audience is a singleton sector audience.
+    5. Every populated sector audience emits exactly the six documented indicator-group blocks.
+    """
+    config = _build_distillation_config()
+    as_of = datetime(2026, 4, 25, tzinfo=UTC)
+    blocks = assemble_q1_blocks(populated_session, config=config, as_of=as_of)
 
+    # Fact 1 — returns OutputBlock instances.
+    assert isinstance(blocks, list)
+    assert len(blocks) > 0
+    for block in blocks:
+        assert isinstance(block, OutputBlock)
 
-class TestPerTickerPayloadConvention:
-    """Each per-ticker block carries ``payload['per_ticker']`` sorted by ticker."""
+    # Fact 2 — per_ticker payload sorted by ticker.
+    per_ticker_blocks = [b for b in blocks if "per_ticker" in b.payload]
+    assert per_ticker_blocks, "Expected at least one per-ticker block"
+    for block in per_ticker_blocks:
+        keys = list(block.payload["per_ticker"].keys())
+        assert keys == sorted(keys), f"Block {block.block_id} per_ticker keys not sorted: {keys}"
 
-    def test_per_ticker_payload_keys_are_sorted(self, populated_session: Session) -> None:
-        config = _build_distillation_config()
-        as_of = datetime(2026, 4, 25, tzinfo=UTC)
-        blocks = assemble_q1_blocks(populated_session, config=config, as_of=as_of)
-        per_ticker_blocks = [b for b in blocks if "per_ticker" in b.payload]
-        assert per_ticker_blocks, "Expected at least one per-ticker block"
-        for block in per_ticker_blocks:
-            keys = list(block.payload["per_ticker"].keys())
-            assert keys == sorted(keys), (
-                f"Block {block.block_id} per_ticker keys not sorted: {keys}"
-            )
+    # Fact 3 — no duplicate (audience, block_id) pairs.
+    seen: set[tuple[frozenset[OutputAudience], str]] = set()
+    for block in blocks:
+        key = (block.audience, block.block_id)
+        assert key not in seen, (
+            f"Duplicate (audience, block_id) pair: {block.audience} / {block.block_id}"
+        )
+        seen.add(key)
 
+    # Fact 4 — singleton-sector audience on every block.
+    sector_audiences = {
+        OutputAudience.SECTOR_TECH_SEMIS,
+        OutputAudience.SECTOR_FINANCIALS,
+        OutputAudience.SECTOR_ENERGY,
+    }
+    for block in blocks:
+        assert len(block.audience) == 1, (
+            f"Block {block.block_id} audience not singleton: {block.audience}"
+        )
+        (only,) = tuple(block.audience)
+        assert only in sector_audiences, (
+            f"Block {block.block_id} audience {only} not a sector audience"
+        )
 
-class TestOneBlockPerSectorAudienceAndIndicatorGroup:
-    """At most one block per ``(sector_audience, indicator_group)`` pair."""
-
-    def test_no_duplicate_audience_block_id_pairs(self, populated_session: Session) -> None:
-        config = _build_distillation_config()
-        as_of = datetime(2026, 4, 25, tzinfo=UTC)
-        blocks = assemble_q1_blocks(populated_session, config=config, as_of=as_of)
-        seen: set[tuple[frozenset[OutputAudience], str]] = set()
-        for block in blocks:
-            key = (block.audience, block.block_id)
-            assert key not in seen, (
-                f"Duplicate (audience, block_id) pair: {block.audience} / {block.block_id}"
-            )
-            seen.add(key)
-
-    def test_indicator_blocks_audience_is_a_single_sector(self, populated_session: Session) -> None:
-        """Each per-ticker block's audience is ``frozenset({that_sector})``."""
-        config = _build_distillation_config()
-        as_of = datetime(2026, 4, 25, tzinfo=UTC)
-        blocks = assemble_q1_blocks(populated_session, config=config, as_of=as_of)
-        sector_audiences = {
-            OutputAudience.SECTOR_TECH_SEMIS,
-            OutputAudience.SECTOR_FINANCIALS,
-            OutputAudience.SECTOR_ENERGY,
-        }
-        for block in blocks:
-            assert len(block.audience) == 1, (
-                f"Block {block.block_id} audience not singleton: {block.audience}"
-            )
-            (only,) = tuple(block.audience)
-            assert only in sector_audiences, (
-                f"Block {block.block_id} audience {only} not a sector audience"
-            )
+    # Fact 5 — six indicator-group blocks per populated audience.
+    per_audience_block_ids: dict[OutputAudience, set[str]] = {}
+    for block in blocks:
+        (audience,) = tuple(block.audience)
+        per_audience_block_ids.setdefault(audience, set()).add(block.block_id)
+    expected_ids = {
+        BLOCK_ID_TECHNICALS,
+        BLOCK_ID_VOLUME_PROFILE,
+        BLOCK_ID_GAP,
+        BLOCK_ID_RELATIVE_PERFORMANCE,
+        BLOCK_ID_TREND_STATE,
+        BLOCK_ID_DIVERGENCE_FLAGS,
+    }
+    for audience in (
+        OutputAudience.SECTOR_TECH_SEMIS,
+        OutputAudience.SECTOR_FINANCIALS,
+        OutputAudience.SECTOR_ENERGY,
+    ):
+        assert audience in per_audience_block_ids, (
+            f"Audience {audience} produced no blocks; saw {sorted(per_audience_block_ids)}"
+        )
+        actual = per_audience_block_ids[audience]
+        missing = expected_ids - actual
+        assert not missing, (
+            f"Audience {audience} missing blocks {sorted(missing)}; saw {sorted(actual)}"
+        )
 
 
 class TestAnomalyBlocksFire:
@@ -695,40 +710,3 @@ class TestAtrRegimeLabelAndTag:
         )
         assert state is CalibrationState.CALIBRATED
         assert reason is None
-
-
-class TestSixIndicatorGroupsPerAudience:
-    """Each populated audience emits one block per documented indicator group."""
-
-    def test_each_audience_with_tickers_has_six_indicator_blocks(
-        self, populated_session: Session
-    ) -> None:
-        config = _build_distillation_config()
-        as_of = datetime(2026, 4, 25, tzinfo=UTC)
-        blocks = assemble_q1_blocks(populated_session, config=config, as_of=as_of)
-        per_audience_block_ids: dict[OutputAudience, set[str]] = {}
-        for block in blocks:
-            (audience,) = tuple(block.audience)
-            per_audience_block_ids.setdefault(audience, set()).add(block.block_id)
-        expected_ids = {
-            BLOCK_ID_TECHNICALS,
-            BLOCK_ID_VOLUME_PROFILE,
-            BLOCK_ID_GAP,
-            BLOCK_ID_RELATIVE_PERFORMANCE,
-            BLOCK_ID_TREND_STATE,
-            BLOCK_ID_DIVERGENCE_FLAGS,
-        }
-        # Every covered audience emits the six indicator-group blocks.
-        for audience in (
-            OutputAudience.SECTOR_TECH_SEMIS,
-            OutputAudience.SECTOR_FINANCIALS,
-            OutputAudience.SECTOR_ENERGY,
-        ):
-            assert audience in per_audience_block_ids, (
-                f"Audience {audience} produced no blocks; saw {sorted(per_audience_block_ids)}"
-            )
-            actual = per_audience_block_ids[audience]
-            missing = expected_ids - actual
-            assert not missing, (
-                f"Audience {audience} missing blocks {sorted(missing)}; saw {sorted(actual)}"
-            )
