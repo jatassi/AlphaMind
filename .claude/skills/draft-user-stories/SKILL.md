@@ -1,11 +1,11 @@
 ---
 name: draft-user-stories
-description: Use to draft Linear user stories for an AlphaMind feature listed in the "Ready for implementation" section of `docs/project-tracker.md`. Triggers on `/draft-user-stories <Feature>` and operator phrases like "draft user stories for Breach behavior", "decompose Domain researchers into stories", "write requirements for the Synthesizer feature", "break State persistence into user stories", "set up the work tree for Portfolio manager". The skill gathers context from the feature's design and architecture docs (and up/downstream features), decomposes the work into ordered user-story candidates, creates or updates the parent Linear Issue with design-doc links + cross-feature `blockedBy` + dependency graph + orchestrate-skill instructions, and drafts each user story as a sub-issue using the User Story template — atomic testable acceptance criteria, parallelism-aware naming (1, 2, 3a/3b, 4), `blockedBy` links between stories, all in Todo status. Use this skill whenever an AlphaMind feature needs its implementation work tree drafted, even when the operator says "plan the work for X" or "set up X for implementation" — those phrasings still mean drafting user stories. Do NOT use for one-off bug fixes, refactors, or work outside AlphaMind.
+description: Use to draft Linear user stories for an AlphaMind feature. Triggers on `/draft-user-stories <Feature>` and operator phrases like "draft user stories for Breach behavior", "decompose Domain researchers into stories", "write requirements for the Synthesizer feature", "break State persistence into user stories", "set up the work tree for Portfolio manager". The skill gathers context from the feature's design and architecture docs (and up/downstream features), decomposes the work into ordered user-story candidates, creates or updates the parent Linear Issue with design-doc links + cross-feature `blockedBy` + dependency graph + orchestrate-skill instructions, and drafts each user story as a sub-issue using the User Story template — atomic testable acceptance criteria, parallelism-aware naming (1, 2, 3a/3b, 4), `blockedBy` links between stories, all in Todo status. Use this skill whenever an AlphaMind feature needs its implementation work tree drafted, even when the operator says "plan the work for X" or "set up X for implementation" — those phrasings still mean drafting user stories. Do NOT use for one-off bug fixes, refactors, or work outside AlphaMind.
 ---
 
 # Draft user stories for an AlphaMind feature
 
-The operator names a feature from the "Ready for implementation" section of `docs/project-tracker.md` (e.g., "Breach behavior", "Domain researchers", "Portfolio manager"). You produce the Linear work tree for it: one parent Issue (with cross-feature gates, dependency graph, and orchestrator-specific instructions) and an ordered set of sub-issue user stories with `blockedBy` links wired up.
+The operator names a feature (e.g., "Breach behavior", "Domain researchers", "Portfolio manager"). You produce the Linear work tree for it: one parent Issue (with cross-feature gates, dependency graph, and orchestrator-specific instructions) and an ordered set of sub-issue user stories with `blockedBy` links wired up.
 
 The output of a successful run is a Linear work tree that an agent can pick up via `/orchestrate` and execute end-to-end without further requirements work.
 
@@ -21,7 +21,7 @@ The Explore agent for *finding* a file you can't locate by name is fine — that
 
 ## Inputs
 
-One argument: the exact feature name as written in `docs/project-tracker.md` (e.g., `Breach behavior`, `Domain researchers`, `Portfolio manager`). Match is case-insensitive but otherwise verbatim — if the operator's argument doesn't resolve to a single bullet under "Ready for implementation", surface the candidates and ask which one.
+One argument: the feature name (e.g., `Breach behavior`, `Domain researchers`, `Portfolio manager`). If the operator's argument doesn't resolve to a single feature with design docs, surface the candidates and ask which one.
 
 ## Procedure
 
@@ -29,13 +29,12 @@ Seven phases. Work through them in order. After each phase, briefly tell the ope
 
 ### Phase 1 — Resolve the feature
 
-Read `docs/project-tracker.md` and locate the bullet under "Ready for implementation" matching the argument. Capture:
+Locate the feature's design/architecture docs (search `docs/design/` and `docs/architecture/` by the feature name; use the Explore agent if you can't find them by name). Capture:
 
-- The **section** it lives under (e.g., "Risk guardrails", "Analysis layer") — this maps to the Linear Project (see [Linear specifics](#linear-specifics)).
-- The **status marker** — `_requirements pending_`, `_stories drafted_`, `_in progress_`, `_done_`. If status is anything other than `_requirements pending_`, surface this and confirm with the operator before proceeding (they may want to add stories to an in-progress feature, or they may have named the wrong feature).
-- The **design/architecture doc paths** linked from the bullet — typically one or more files under `docs/design/<section>/` and possibly `docs/architecture/`. Capture every link.
+- The **section** it lives under (e.g., "Risk guardrails", "Analysis layer") — this maps to the Linear Project (see [Linear specifics](#linear-specifics)). The design docs live under `docs/design/<section>/`, so the section is usually evident from the doc path.
+- The **design/architecture doc paths** for the feature — typically one or more files under `docs/design/<section>/` and possibly `docs/architecture/`. Capture every path.
 
-**Then verify the tracker status against the as-built code.** Per memory `feedback_verify_backlog_prose`, the project-tracker prose can lag the codebase — especially when sibling features have implemented typed records or utilities ahead of their owning feature being formally drafted (canonical example: Portfolio state ALP-53 shipped `PositionRecord`, `ThesisRecord`, `OrderRecord`, `BracketRecord` under `portfolio_state/records/` long before "Position & thesis model" was drafted, leaving the latter listed as `_requirements pending_` despite ~279 import sites already consuming the records). Open the design doc just long enough to extract the primary typed records or named functions it claims to ship, then grep for them across `src/` and `tests/` (e.g., `grep -rln <RecordName> src/ tests/`). If substantial hits exist outside the feature's own scaffolded directories, the as-built has diverged from the tracker. Surface the divergence to the operator *before* reading the design docs end-to-end — present it as a shape question (typical options: "mark as already done; close parent issue", "add the small remainders only — N stories", "move-to-canonical-home refactor"). The operator's answer determines whether you do a full Phase 2 + decomposition or a much smaller one. Skipping this check costs ~20 minutes of context-building per feature when the answer turns out to be "remainders only" or "already done".
+**Then verify the feature's drafting status against the as-built code.** Per memory `feedback_verify_backlog_prose`, backlog prose can lag the codebase — especially when sibling features have implemented typed records or utilities ahead of their owning feature being formally drafted (canonical example: Portfolio state ALP-53 shipped `PositionRecord`, `ThesisRecord`, `OrderRecord`, `BracketRecord` under `portfolio_state/records/` long before "Position & thesis model" was drafted, despite ~279 import sites already consuming the records). Open the design doc just long enough to extract the primary typed records or named functions it claims to ship, then grep for them across `src/` and `tests/` (e.g., `grep -rln <RecordName> src/ tests/`). If substantial hits exist outside the feature's own scaffolded directories, the as-built has diverged from the design intent. Surface the divergence to the operator *before* reading the design docs end-to-end — present it as a shape question (typical options: "mark as already done; close parent issue", "add the small remainders only — N stories", "move-to-canonical-home refactor"). The operator's answer determines whether you do a full Phase 2 + decomposition or a much smaller one. Skipping this check costs ~20 minutes of context-building per feature when the answer turns out to be "remainders only" or "already done".
 
 Then check Linear for an existing parent Issue:
 
@@ -43,7 +42,7 @@ Then check Linear for an existing parent Issue:
 list_issues(team="AlphaMind", project="<Section name>", query="<Feature name>")
 ```
 
-If a parent Issue already exists with a matching title, you'll **update** it in Phase 7 rather than create. If multiple match, surface them and ask. If none match, you'll create one in Phase 7.
+If a parent Issue already exists with a matching title — especially one that already has sub-issues — surface this and confirm with the operator before proceeding (they may want to add stories to an in-progress feature, or they may have named the wrong feature); otherwise you'll **update** it in Phase 7 rather than create. If multiple match, surface them and ask. If none match, you'll create one in Phase 7.
 
 ### Phase 2 — Gather context
 
@@ -56,7 +55,7 @@ Read the feature's design docs end-to-end. Then walk the up/downstream graph:
 
 The bar for "enough context": you can write each user story's acceptance criteria without having to re-open the design doc. If you can't, keep reading.
 
-**Audit existing code when it exists.** If the feature already has substantial as-built code (the tracker-vs-as-built check in Phase 1 surfaced existing implementation, or upstream features ship typed records / modules this feature will consume), invoke `Skill("python-architecture")` in audit mode scoped to the relevant subdivision (the feature's package, or an upstream feature's package whose contract you'll lean on). Treat the audit findings as inputs to decomposition:
+**Audit existing code when it exists.** If the feature already has substantial as-built code (the as-built check in Phase 1 surfaced existing implementation, or upstream features ship typed records / modules this feature will consume), invoke `Skill("python-architecture")` in audit mode scoped to the relevant subdivision (the feature's package, or an upstream feature's package whose contract you'll lean on). Treat the audit findings as inputs to decomposition:
 
 - **Load-bearing findings** that touch the feature's surface (primitive obsession in a record this feature consumes, a shallow-module swarm in an upstream the feature extends, a layer violation crossing into the feature's intended scope) become candidate stories or constraints on story scope. A "Money should be a domain primitive" finding upstream becomes either a coordinated-edit note in the parent Issue, a hard gate on the upstream's draft tree, or — if owned by this feature — its own typed-record story.
 - **High-yield findings** (mutable defaults, naive datetimes, missing timeouts) that live inside the feature's planned scope fold into the relevant story's scope without becoming a story of their own.
@@ -208,7 +207,7 @@ Decision:
 - **`ok == false` (exit 1)** — surface to the operator *before any writes*. Report `active`, `buffer`, `needed`, and `required` from the JSON. Recommend running the consolidation rollup per the `project_linear_consolidation` memory and the `/linear-consolidate` skill — `uv run python scripts/linear_consolidation_candidates.py` ranks which shipped feature would free the most slots, and `scripts/check_linear_cap.py --breakdown` shows where the active issues sit. Ask whether to (a) pause for rollup, (b) proceed accepting that the cap may fire mid-drafting (you will catch the error gracefully and surface the remaining drafts inline as a hand-off), or (c) trim story count if you can identify a fold.
 - **exit 2** — the script failed (missing `LINEAR_API_KEY` in `.env`, or a network/API error; the stderr message says which). Surface it to the operator and resolve the cause before proceeding — don't fall back to a manual MCP count.
 
-The cap is occasionally enforced at counts above 250 — Linear's exact threshold depends on workspace age and account state. Treat the check as early-warning, not exact predictor. If a create fails despite a pre-flight `ok == true`, fall through to the "drafting did not complete cleanly" branch in 7b's tracker-commit guidance and inline the remaining drafts in the operator hand-off.
+The cap is occasionally enforced at counts above 250 — Linear's exact threshold depends on workspace age and account state. Treat the check as early-warning, not exact predictor. If a create fails despite a pre-flight `ok == true`, surface the blocker and inline the remaining drafts in the operator hand-off.
 
 #### 7a. Parent Issue
 
@@ -310,9 +309,7 @@ When you re-fetch a description you just wrote, the Linear renderer will have au
 After all sub-issues are created, do a final pass:
 
 - Verify every `blockedBy` edge from your dependency graph is wired (re-run `get_issue(id, includeRelations=true)` on a few stories and spot-check).
-- **Check for mid-flight commits to `main`.** Drafting takes 30–60 minutes; the codebase can move during that window. Run `git log <starting-sha>..main --oneline` (where `<starting-sha>` is whatever HEAD was at Phase 1 — capture it then if you anticipate a long session) or `git log --oneline -10` and look for any commits that landed since you started reading. For each new commit, run `git show --stat <sha>` and check whether its file changes overlap any path or symbol referenced in your stories' Reading lists, Scope sections, or coordinated-edit blocks. Common overlap patterns: a fix to a file your stories extend (typed-record edits, MCP-server wrappers, harness diagnostic surfaces); a sibling work tree shipping a typed record your story depends on; a refactor that renames a symbol your acceptance criteria mention. If overlap exists, surface to the operator with a one-line summary of each commit's impact and absorb the changes into affected stories *before* updating the tracker — Reading-list pointers, Scope deliverables, acceptance criteria, and the parent Issue's Pre-resolved decisions can all need touch-ups. The cost of catching this here is minutes; the cost of catching it after dispatch is a subagent diverging from a stale spec.
-- Update `docs/project-tracker.md`: change the feature's status from `_requirements pending_` to `_stories drafted_`. (This is a single-line edit; do it inline.)
-- **Commit and push the tracker change.** Stage only `docs/project-tracker.md`, commit with `chore(project-tracker): mark <feature> stories drafted` (mirror the in-tree style — see prior `chore(project-tracker): ...` commits), and push to the default remote. This is the canonical last step on successful drafting: it advertises the new state to anyone watching the repo and avoids leaving the tracker out-of-sync with Linear. Skip only when drafting did NOT complete cleanly — e.g., a surfacing condition fired mid-flight, the Linear cap blocked some sub-issues, or any in-flight ambiguity is unresolved. In those cases, leave the tracker change uncommitted, surface the blocker, and let the operator decide whether to commit-as-is or wait.
+- **Check for mid-flight commits to `main`.** Drafting takes 30–60 minutes; the codebase can move during that window. Run `git log <starting-sha>..main --oneline` (where `<starting-sha>` is whatever HEAD was at Phase 1 — capture it then if you anticipate a long session) or `git log --oneline -10` and look for any commits that landed since you started reading. For each new commit, run `git show --stat <sha>` and check whether its file changes overlap any path or symbol referenced in your stories' Reading lists, Scope sections, or coordinated-edit blocks. Common overlap patterns: a fix to a file your stories extend (typed-record edits, MCP-server wrappers, harness diagnostic surfaces); a sibling work tree shipping a typed record your story depends on; a refactor that renames a symbol your acceptance criteria mention. If overlap exists, surface to the operator with a one-line summary of each commit's impact and absorb the changes into affected stories *before* finalizing the work tree — Reading-list pointers, Scope deliverables, acceptance criteria, and the parent Issue's Pre-resolved decisions can all need touch-ups. The cost of catching this here is minutes; the cost of catching it after dispatch is a subagent diverging from a stale spec.
 
 ### User Story sub-issue template
 
@@ -383,7 +380,7 @@ Each acceptance criterion passes the **atomicity test**: it asserts one observab
 
 ### Project mapping
 
-| `docs/project-tracker.md` section | Linear Project          |
+| Section                           | Linear Project          |
 | --------------------------------- | ----------------------- |
 | Foundation                        | Foundation              |
 | Data layer                        | Data layer              |
@@ -420,7 +417,7 @@ If a `blockedBy` link fails (e.g., the upstream issue doesn't exist), surface th
 - **Stories that bundle "and" of two algorithmic concerns.** Re-split. The dependency graph is cheaper to maintain than ambiguous scope.
 - **Adding a per-feature verify story by reflex.** Post-ALP-502, the central `scripts/verify_debug_e2e.py` covers any feature that composes into the pipeline. Only add a per-feature verify story for the exceptions documented in Phase 4 (operator monitoring, offline pure-function verifier, out-of-pipeline operator behavior). When unsure, surface in Phase 6 and default to omitting.
 - **Acceptance criteria that test "the system works".** Replace with criteria that test *observable behaviors* of *named functions* with *named inputs*.
-- **Skipping the operator-confirmation step in Phase 1** when the feature's status isn't `_requirements pending_`. Drafting stories on top of an in-progress work tree without confirming intent corrupts that tree.
+- **Skipping the operator-confirmation step in Phase 1** when a populated parent Issue already exists. Drafting stories on top of an in-progress work tree without confirming intent corrupts that tree.
 - **"Surface to operator" gates for drafting-time decisions.** Per Phase 6: if a decision can be made without running code (yaml value, encoding choice, pipeline cadence, scope boundary, stub strategy), settle it during drafting. Writing "the orchestrator should surface this before dispatch" turns the operator's review into N small interruptions during dispatch instead of one batched session before drafting — and the orchestrator typically lacks the context the drafter had to recommend a default.
 
 ## When you're done
@@ -432,7 +429,6 @@ Report back to the operator in this shape (concise; one short paragraph):
 - The dependency-graph shape in one line ("01 → 02 → 03 → 4-way parallel 04* → 3-way parallel 05* → 06 → 07").
 - Cross-feature `blockedBy` count and which sibling work trees they touch.
 - Any unresolved gaps surfaced during drafting (missing upstream stories, ambiguous design-doc sections, etc.) — these become the operator's follow-ups.
-- The single-line `docs/project-tracker.md` status update, and the commit hash from the push (or "left uncommitted because <reason>" if you skipped that step).
 
 Then stop. The operator drives next steps from there (typically: dispatch via `/orchestrate`).
 
