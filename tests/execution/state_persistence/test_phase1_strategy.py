@@ -1587,10 +1587,12 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
         ).scalar_one()
         assert bracket_after.status == BracketStatus.DISSOLVED.value
 
+        # Thesis left ACTIVE — resolution is owned by the analysis pipeline (ALP-834).
         thesis_after = (
             await sess.execute(select(ThesisRow).where(ThesisRow.thesis_id == "thesis-strat-1"))
         ).scalar_one()
-        assert thesis_after.status == ThesisRecordStatus.RESOLVED.value
+        assert thesis_after.status == ThesisRecordStatus.ACTIVE.value
+        assert thesis_after.resolution_timestamp is None
 
         log_rows = (
             (
@@ -1606,7 +1608,7 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
         types = {r.event_type for r in log_rows}
     assert EventType.POSITION_CLOSED.value in types
     assert EventType.BRACKET_DISSOLVED.value in types
-    assert EventType.THESIS_RESOLVED.value in types
+    assert EventType.THESIS_RESOLVED.value not in types
     # The leg-1 close fill transitions the strategy OPEN→OPEN (leg 1 closed,
     # leg 2 still open); that reducing fill emits POSITION_REDUCED. The
     # per-leg reducing signal survives the position_direction() migration

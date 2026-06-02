@@ -3,8 +3,9 @@
 A **cash merger** terminates the position: quantity zeroed, status →
 :data:`PositionStatus.CLOSED`, realized P/L accumulated from deal price vs.
 cost basis, deal proceeds credited via :data:`CashCreditReason.CASH_MERGER_PROCEEDS`,
-position closed with :data:`PositionExitMethod.CORPORATE_ACTION_CASH_MERGER`,
-linked thesis (if any) marked :data:`ThesisRecordStatus.RESOLVED`.
+position closed with :data:`PositionExitMethod.CORPORATE_ACTION_CASH_MERGER`. The
+linked thesis (if any) is left ``ACTIVE`` — thesis resolution is owned by the
+analysis pipeline (ALP-131), not the corporate-action handler (ALP-834).
 
 A **stock merger** swaps the position to the acquirer: new ticker
 (``activity.new_ticker``), new quantity + cost basis from
@@ -42,7 +43,6 @@ from alphamind.portfolio_state.records.positions import (
     StrategyLeg,
     StrategyPositionDetails,
 )
-from alphamind.portfolio_state.records.theses import ThesisRecordStatus
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
@@ -50,7 +50,6 @@ from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.positions_codec import (
     row_to_record as position_row_to_record,
 )
-from alphamind.state.tables.theses import ThesisRow
 
 from ..types import AlpacaPositionLookup, CorporateActionActivity
 from ._shared import (
@@ -80,7 +79,8 @@ async def handle_cash_merger(
     accumulates realized P/L (deal proceeds vs. cost basis), credits cash via
     :data:`CashCreditReason.CASH_MERGER_PROCEEDS`, emits ``POSITION_CLOSED``
     with ``exit_method=CORPORATE_ACTION_CASH_MERGER``, cancels the bracket,
-    resolves the linked thesis if any, and writes the dedup ledger row.
+    and writes the dedup ledger row. The linked thesis is left ``ACTIVE`` —
+    resolution is owned by the analysis pipeline (ALP-131), not this handler.
     """
     pos_row = await handle.session.get(PositionRow, activity.position_id)
     if pos_row is None:
@@ -141,7 +141,6 @@ async def handle_cash_merger(
         post_basis=pre_basis,
     )
     await _cancel_bracket_for_corporate_action(handle, position.bracket_id, activity)
-    await _resolve_linked_thesis(handle, position, activity)
     await mark_ca_activity_processed(
         handle,
         activity.alpaca_activity_id,
@@ -197,25 +196,6 @@ def _close_for_cash_merger(
         return pre_qty, entry_cost, realized, dataclasses.replace(details, legs=zeroed_legs)
     msg = f"unsupported instrument_type for cash merger: {type(details).__name__}"
     raise NotImplementedError(msg)
-
-
-async def _resolve_linked_thesis(
-    handle: InvocationHandle,
-    position: PositionRecord,
-    activity: CorporateActionActivity,
-) -> None:
-    """Mark the linked thesis ``RESOLVED`` with the activity's transaction time."""
-    if position.thesis_id is None:
-        return
-    thesis_row = await handle.session.get(ThesisRow, position.thesis_id)
-    if thesis_row is None:
-        msg = (
-            f"position {position.position_id!r} references thesis "
-            f"{position.thesis_id!r}, but thesis row is missing"
-        )
-        raise ValueError(msg)
-    thesis_row.status = ThesisRecordStatus.RESOLVED.value
-    thesis_row.resolution_timestamp = activity.transaction_time.isoformat().replace("+00:00", "Z")
 
 
 # ---------------------------------------------------------------------------
