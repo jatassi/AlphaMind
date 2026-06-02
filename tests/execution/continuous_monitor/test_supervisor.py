@@ -321,31 +321,12 @@ class TestPerTaskBounds:
             mock.patch(_EXIT_PATH, side_effect=exits.append),
             pytest.raises(asyncio.CancelledError),
         ):
-            supervisor._sleep = stopper  # type: ignore[method-assign]
+            supervisor._sleep = stopper
             await supervisor._watchdog_loop()
 
         # Only the fast task (bound 10s) was stale at +20s; the slow task
         # (bound 600s) is still healthy — no shared global timeout.
         assert exits == [1]
-
-    async def test_slow_task_not_tripped_before_its_bound(self) -> None:
-        clock = _FakeClock()
-        supervisor = _supervisor(clock=clock)
-        supervisor._stop_event = asyncio.Event()
-        supervisor.register_watch("breach_loop", 60.0)  # bound 600s
-        supervisor.beat("breach_loop")
-        clock.advance(20.0)  # < 600s
-
-        exits: list[int] = []
-        stopper = _StopAfter(clock, passes=1)
-        with (
-            mock.patch(_EXIT_PATH, side_effect=exits.append),
-            pytest.raises(asyncio.CancelledError),
-        ):
-            supervisor._sleep = stopper  # type: ignore[method-assign]
-            await supervisor._watchdog_loop()
-
-        assert exits == []
 
     async def test_explicit_override_supersedes_cadence_bound(self) -> None:
         """An irregular task's stall_timeout_seconds override sets its bound."""
@@ -363,7 +344,7 @@ class TestPerTaskBounds:
             mock.patch(_EXIT_PATH, side_effect=exits.append),
             pytest.raises(asyncio.CancelledError),
         ):
-            supervisor._sleep = stopper  # type: ignore[method-assign]
+            supervisor._sleep = stopper
             await supervisor._watchdog_loop()
 
         assert exits == []
@@ -392,7 +373,7 @@ class TestWatchedOptOut:
             caplog.at_level("WARNING"),
             pytest.raises(asyncio.CancelledError),
         ):
-            supervisor._sleep = stopper  # type: ignore[method-assign]
+            supervisor._sleep = stopper
             await supervisor._watchdog_loop()
 
         assert exits == []
@@ -416,7 +397,7 @@ class TestStartupGraceWarning:
             caplog.at_level("WARNING"),
             pytest.raises(asyncio.CancelledError),
         ):
-            supervisor._sleep = stopper  # type: ignore[method-assign]
+            supervisor._sleep = stopper
             await supervisor._watchdog_loop()
 
         warnings = [r for r in caplog.records if "forgot_to_beat" in r.getMessage()]

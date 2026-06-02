@@ -101,9 +101,7 @@ def register_borrow_accrual_task(
             borrow_cost_resolver_factory=resolver_factory,
             process_lifetime_id=process_lifetime_id,
             calendar=calendar,
-            loop=lambda: supervisor.supervised_loop(
-                "borrow_accrual", _HEARTBEAT_CADENCE_SECONDS
-            ),
+            loop=lambda: supervisor.supervised_loop("borrow_accrual", _HEARTBEAT_CADENCE_SECONDS),
         )
 
     supervisor.register_task(name="borrow_accrual", coro_fn=_coro)
