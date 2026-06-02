@@ -29,6 +29,7 @@ import pytest
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
+from alphamind.distillation._config_domain import DistillationDomainConfig
 from alphamind.distillation._repository import TickerBaselineRow
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import OutputAudience, OutputBlock, format_block
@@ -49,7 +50,35 @@ from alphamind.persistence.models import (
     SectorClassification,
 )
 
-from .conftest import _build_distillation_config
+from .conftest import _build_distillation_config as _build_shared_distillation_config
+
+# ---------------------------------------------------------------------------
+# Distillation config builder — Q1 calibration
+# ---------------------------------------------------------------------------
+#
+# Q1's anomaly tests are calibrated against ``volume_anomaly_sigma=2.5`` /
+# ``price_move_atr_multiple=1.5`` defaults (distinct from the shared
+# conftest builder's ``2.0`` / ``2.5``). This thin wrapper restores those
+# Q1-specific defaults while delegating the full config literal to the
+# shared builder, so call sites that override ``volume_anomaly_sigma`` keep
+# working unchanged.
+
+
+def _build_distillation_config(
+    *,
+    volume_anomaly_sigma: float = 2.5,
+    price_move_atr_multiple: float = 1.5,
+    volume_baseline_days: int = 20,
+    atr_baseline_days: int = 14,
+) -> DistillationDomainConfig:
+    """Return a Q1-calibrated :class:`DistillationDomainConfig` for tests."""
+    return _build_shared_distillation_config(
+        volume_anomaly_sigma=volume_anomaly_sigma,
+        price_move_atr_multiple=price_move_atr_multiple,
+        volume_baseline_days=volume_baseline_days,
+        atr_baseline_days=atr_baseline_days,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Fixture seeding helpers
