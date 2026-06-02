@@ -63,15 +63,17 @@ watch/merge loop and the GitHub usage-limit fallback live in `docs/agents/ci.md`
 
 ## Subagents
 
-Match the model to the work:
+Pick by how much the task leaves to decide:
 
-- **Opus** — anything needing judgment: design, algorithmic or schema decisions,
-  fixture/test-list reasoning, deciding what to keep vs cut.
-- **Sonnet** — mechanical, well-specified changes (verbatim refactors, renames, dedup,
-  boilerplate).
-- **Grok** (`grok-build`, via its CLI) — mechanical changes, run off the Grok budget instead
-  of the Claude usage budget (shared by mainline dev and live AlphaMind operations); never
-  judgment work. Read `docs/agents/grok-cli.md` before dispatching.
+- **Opus** — the approach itself must be worked out: design, architectural/algorithmic/schema
+  decisions, ambiguous or underspecified specs, non-obvious trade-offs.
+- **Sonnet** — the approach is clear, but correct execution still needs discretion a green
+  test/lint run wouldn't prove on its own: preserving existing behavior, choosing what to keep
+  vs cut within a known pattern, cross-file coherence, edge cases.
+- **Grok** (via its CLI) — a rote, fully-specified change whose correctness is captured
+  entirely by an objective gate (tests + lint), with nothing left to decide: mechanical
+  renames, verbatim refactors, applying a specified transform across files. Read
+  `docs/agents/grok-cli.md` before dispatching.
 
 Always background (async) mode. Put the model in the title: `[Sonnet|Opus|Grok] <Title>`.
 Subagents must commit before reporting done — verify with `git log main..HEAD`.
