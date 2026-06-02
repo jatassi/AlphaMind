@@ -2061,3 +2061,60 @@ def test_strategy_position_with_bracket_assembles_without_crash() -> None:
     assert view.distance_to_target_usd is None
     assert view.distance_to_stop_usd is None
     assert view.risk_reward_at_current is None
+
+
+# ---------------------------------------------------------------------------
+# Phase1→snapshot latency warning: monitor path vs pipeline path (ALP-772)
+# ---------------------------------------------------------------------------
+
+
+def test_phase1_latency_warning_suppressed_on_monitor_path(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """check_phase1_latency=False suppresses the phase1→snapshot warning.
+
+    _PHASE1_AT is 30 min before _NOW (1800s), which exceeds the 300s config
+    threshold — so without the flag the warning would fire.  The monitor passes
+    check_phase1_latency=False to avoid alarm fatigue on normal inter-run gaps.
+    """
+    fixture = _make_fixture()
+    repo = StubPortfolioStateRepository(fixture)
+    provider = StubCurrentPriceProvider({}, _NOW)
+
+    with caplog.at_level(logging.WARNING, logger="alphamind.portfolio_state.assembler"):
+        assemble_snapshot(
+            repository=repo,
+            price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
+            sector_resolver=_null_sector_resolver,
+            config=_make_config(),
+            now=_NOW,
+            check_phase1_latency=False,
+        )
+
+    assert not any("latency exceeded" in r.message for r in caplog.records)
+
+
+def test_phase1_latency_warning_fires_on_pipeline_path(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Default check_phase1_latency=True fires the warning when gap > threshold.
+
+    _PHASE1_AT is 30 min before _NOW (1800s > 300s threshold), so the pipeline
+    path — which uses the default — must emit the warning.
+    """
+    fixture = _make_fixture()
+    repo = StubPortfolioStateRepository(fixture)
+    provider = StubCurrentPriceProvider({}, _NOW)
+
+    with caplog.at_level(logging.WARNING, logger="alphamind.portfolio_state.assembler"):
+        assemble_snapshot(
+            repository=repo,
+            price_provider=provider,
+            option_price_provider=StubOptionPriceProvider({}, _NOW),
+            sector_resolver=_null_sector_resolver,
+            config=_make_config(),
+            now=_NOW,
+        )
+
+    assert any("latency exceeded" in r.message for r in caplog.records)
