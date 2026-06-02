@@ -12,43 +12,23 @@ Reduced in ALP-797 (q7 pure/DB double-altitude reduction).
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
-import pytest
 from sqlalchemy import select
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind.distillation.q7 import compute_intra_sector_correlation
 from alphamind.persistence.models import (
     AssetUniverse,
-    Base,
     DistillationEventHistory,
     OhlcvBars,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
 
 # Window sizes mirror the values in ``config/distillation.yaml``.
 CORRELATION_SHORT_DAYS = 20
 CORRELATION_LONG_DAYS = 60
 NARRATIVE_LAG_CORRELATION_SHIFT_SIGMA = 1.5
 CORRELATION_LOCUS_PAIR_COUNT_THRESHOLD = 3
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    factory = make_session_factory(engine)
-    with factory() as sess:
-        yield sess
 
 
 def _add_ticker(session: Session, ticker: str) -> None:

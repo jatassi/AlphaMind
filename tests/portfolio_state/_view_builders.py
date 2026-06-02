@@ -5,8 +5,16 @@ test_repository.py, test_assembler.py (root files only).
 
 These build PositionView / PortfolioStateSnapshot / rollup views directly
 (for freshness/snapshot tests) or the state objects used in RepositoryFixture
-(for assembler/repository). Different surface from _fixtures.py (which stays
-byte-unchanged) and from consumers/_builders.py (out of scope).
+(for assembler/repository).
+
+ALP-821: this module is now the single source for the low-level record builders
+(_make_cash_ledger, _make_drawdown_state, _make_bracket, _make_pending_order,
+_make_risk_budget, _make_active_risk_parameters). tests/portfolio_state/_fixtures.py
+and tests/portfolio_state/consumers/_builders.py import them from here rather than
+re-declaring the CashLedger(...)/DrawdownState(...) literals, so a new field on
+those records is a single edit. Those two modules keep their own
+_make_open_position/_make_pending_position because each encodes suite-specific
+fixture values its assertions depend on (merging would force assertion changes).
 """
 
 from __future__ import annotations
@@ -114,16 +122,6 @@ _NOW = datetime(2025, 6, 1, 9, 0, 30, tzinfo=UTC)
 # ---------------------------------------------------------------------------
 # Low-level record builders (supporting the rich snapshot builder + validators)
 # ---------------------------------------------------------------------------
-
-
-def _make_fill(at_price: float = 150.0) -> PositionFill:
-    return PositionFill(
-        fill_timestamp=_T0,
-        fill_price=price(at_price),
-        fill_quantity=100.0,
-        slippage=signed_money(0.01),
-        fees=money(1.0),
-    )
 
 
 def _make_open_position(position_id: str = "POS-001", ticker: str = "NVDA") -> PositionView:

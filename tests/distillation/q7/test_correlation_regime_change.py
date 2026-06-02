@@ -10,11 +10,8 @@ Reduced in ALP-797 (q7 pure/DB double-altitude reduction).
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
-import pytest
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import Symbol
@@ -25,25 +22,8 @@ from alphamind.distillation.q7 import (
 )
 from alphamind.persistence.models import (
     AssetUniverse,
-    Base,
     OhlcvBars,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    factory = make_session_factory(engine)
-    with factory() as sess:
-        yield sess
 
 
 def _add_ticker(session: Session, ticker: str) -> None:

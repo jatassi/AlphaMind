@@ -9,13 +9,11 @@ modules (``tests/scheduler/test_phase1_inputs.py`` and
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator
 from datetime import UTC, date, datetime
 from typing import Any
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 import alphamind.state.tables  # noqa: F401  — register InvocationRow on Base
@@ -32,21 +30,6 @@ from alphamind.persistence.models import (
 from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.state.tables.invocations import InvocationRow
 from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    factory = make_session_factory(engine)
-    with factory() as sess:
-        yield sess
 
 
 def _seed_ticker(session: Session, ticker: str) -> None:

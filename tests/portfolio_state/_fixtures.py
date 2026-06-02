@@ -23,7 +23,6 @@ from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
-    RiskZone,
 )
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state import PortfolioStateConfig
@@ -87,6 +86,13 @@ from alphamind.portfolio_state.repository import (
     RepositoryFixture,
 )
 
+from ._view_builders import (
+    _make_cash_ledger as _shared_make_cash_ledger,
+)
+from ._view_builders import (
+    _make_drawdown_state as _shared_make_drawdown_state,
+)
+
 # ---------------------------------------------------------------------------
 # Shared timestamps
 # ---------------------------------------------------------------------------
@@ -119,33 +125,22 @@ def _make_cash_ledger(
     reserved: float = 0.0,
     margin_held: float = 0.0,
 ) -> CashLedger:
-    settled = settled_cash if settled_cash is not None else current_cash
-    return CashLedger(
+    # Thin wrapper over the shared builder (ALP-821): keeps this module's param
+    # names and the e2e default (available == current_cash, all rollup fields 0).
+    return _shared_make_cash_ledger(
         current_cash_usd=current_cash,
-        settled_cash_usd=settled,
+        settled_cash_usd=settled_cash,
         reserved_capital_usd=reserved,
-        available_buying_power_usd=current_cash,
         margin_held_usd=margin_held,
-        unsettled_proceeds=(),
-        cash_pct_of_portfolio=0.0,
-        true_deployable_capital_usd=0.0,
-        regt_excess_trailing_30d_usd=0.0,
-        regt_excess_trailing_90d_usd=0.0,
-        regt_excess_lifetime_usd=0.0,
     )
 
 
 def _make_drawdown_state(current_drawdown_pct: float = 0.0) -> DrawdownState:
-    return DrawdownState(
+    # Thin wrapper over the shared builder (ALP-821): preserves the e2e coupling
+    # of lifetime-max to the requested current drawdown.
+    return _shared_make_drawdown_state(
         current_drawdown_pct=current_drawdown_pct,
-        equity_high_water_mark_usd=100_000.0,
-        drawdown_duration_hours=0.0,
         lifetime_max_drawdown_pct=current_drawdown_pct,
-        intraday_drawdown_pct=0.0,
-        daily_zone=RiskZone.NORMAL,
-        cumulative_zone=RiskZone.NORMAL,
-        cumulative_tier=None,
-        drawdown_by_source_pct={},
     )
 
 

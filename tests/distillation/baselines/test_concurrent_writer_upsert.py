@@ -51,12 +51,11 @@ from alphamind.distillation.baselines import (
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.persistence.models import (
     AssetUniverse,
-    Base,
     DistillationPairLag,
     DistillationTickerBaseline,
     OhlcvBars,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
+from alphamind.persistence.session import make_session_factory
 
 VOLUME_WINDOW_DAYS = 20
 VOLUME_MIN_OBSERVATIONS = 20
@@ -64,21 +63,6 @@ PAIR_LAG_WINDOW_DAYS = 20
 PAIR_LAG_MIN_EVENTS = 10
 PAIR_LAG_MAX_DAYS = 7
 AS_OF = "2026-04-25T00:00:00Z"
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    factory = make_session_factory(engine)
-    with factory() as sess:
-        yield sess
 
 
 def _add_ticker(session: Session, ticker: str) -> None:

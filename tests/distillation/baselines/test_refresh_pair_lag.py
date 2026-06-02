@@ -5,12 +5,10 @@ Cover the per-pair lead-lag refresh entry point.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from typing import Any
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import Symbol
@@ -18,11 +16,9 @@ from alphamind.distillation.baselines import refresh_pair_lag
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.persistence.models import (
     AssetUniverse,
-    Base,
     DistillationPairLag,
     OhlcvBars,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
 
 # Pair-lag scan window — story 07 leaves the per-pair window unspecified;
 # tests use the volume-baseline window and the spec's "10 observed pair
@@ -30,21 +26,6 @@ from alphamind.persistence.session import make_engine, make_session_factory
 PAIR_LAG_WINDOW_DAYS = 20
 PAIR_LAG_MIN_EVENTS = 10
 PAIR_LAG_MAX_DAYS = 7
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    factory = make_session_factory(engine)
-    with factory() as sess:
-        yield sess
 
 
 def _add_ticker(session: Session, ticker: str) -> None:
