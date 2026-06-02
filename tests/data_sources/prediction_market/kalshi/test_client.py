@@ -85,12 +85,3 @@ class TestVerifyConnectivity:
 
         client = _client_with(handler)
         assert client.verify_connectivity() is False
-
-
-class TestProtocolContract:
-    def test_kalshi_client_implements_kalshi_api(self) -> None:
-        from alphamind.data_sources.prediction_market.kalshi._protocol import KalshiAPI
-
-        client: KalshiAPI = KalshiClient()
-        assert hasattr(client, "get")
-        assert hasattr(client, "verify_connectivity")

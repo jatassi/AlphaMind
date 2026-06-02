@@ -48,9 +48,10 @@ def _fake_client(responses: list[list[dict[str, Any]]]) -> FakeBLSAPI:
 
 
 class TestCollectSeries:
-    def test_writes_rows_for_each_observation(
+    def test_collect_series_writes_full_row(
         self, engine: Engine, session_factory: sessionmaker[Session]
     ) -> None:
+        """collect_series() writes rows with all columns correctly populated."""
         client = _fake_client(
             [
                 [
@@ -71,77 +72,22 @@ class TestCollectSeries:
         )
 
         with Session(engine) as sess:
-            rows = sess.query(MacroObservations).filter_by(series_id="LNS14000000").all()
+            rows = (
+                sess.query(MacroObservations)
+                .filter_by(series_id="LNS14000000")
+                .order_by(MacroObservations.observation_date)
+                .all()
+            )
+
         assert len(rows) == 2
         assert rows_written == 2
-
-    def test_observation_date_is_first_of_month(
-        self, engine: Engine, session_factory: sessionmaker[Session]
-    ) -> None:
-        """BLS period 'M01' for year 2024 → observation_date = '2024-01-01'."""
-        client = _fake_client([[make_bls_series("CES0000000001", [("2024", "M03", "156789")])]])
-
-        collect_series(
-            series_ids=["CES0000000001"],
-            since=date(2024, 3, 1),
-            api_key="testkey",
-            session_factory=session_factory,
-            client=client,
-        )
-
-        with Session(engine) as sess:
-            row = sess.query(MacroObservations).filter_by(series_id="CES0000000001").one()
-        assert row.observation_date == "2024-03-01"
-
-    def test_source_is_bls(self, engine: Engine, session_factory: sessionmaker[Session]) -> None:
-        client = _fake_client([[make_bls_series("LNS14000000", [("2024", "M01", "3.7")])]])
-
-        collect_series(
-            series_ids=["LNS14000000"],
-            since=date(2024, 1, 1),
-            api_key="testkey",
-            session_factory=session_factory,
-            client=client,
-        )
-
-        with Session(engine) as sess:
-            row = sess.query(MacroObservations).filter_by(series_id="LNS14000000").one()
+        row = rows[0]
+        assert row.observation_date == "2024-01-01"
         assert row.source == "bls"
-
-    def test_first_write_has_revision_number_zero(
-        self, engine: Engine, session_factory: sessionmaker[Session]
-    ) -> None:
-        client = _fake_client([[make_bls_series("LNS14000000", [("2024", "M01", "3.7")])]])
-
-        collect_series(
-            series_ids=["LNS14000000"],
-            since=date(2024, 1, 1),
-            api_key="testkey",
-            session_factory=session_factory,
-            client=client,
-        )
-
-        with Session(engine) as sess:
-            row = sess.query(MacroObservations).filter_by(series_id="LNS14000000").one()
         assert row.revision_number == 0
-
-    def test_frequency_and_units_come_from_series_registry(
-        self, engine: Engine, session_factory: sessionmaker[Session]
-    ) -> None:
-        client = _fake_client([[make_bls_series("LNS14000000", [("2024", "M01", "3.7")])]])
-
-        collect_series(
-            series_ids=["LNS14000000"],
-            since=date(2024, 1, 1),
-            api_key="testkey",
-            session_factory=session_factory,
-            client=client,
-        )
-
-        with Session(engine) as sess:
-            row = sess.query(MacroObservations).filter_by(series_id="LNS14000000").one()
         assert row.frequency == "monthly"
         assert row.units == "pct"
+        assert row.value == pytest.approx(3.7)
 
 
 # ---------------------------------------------------------------------------

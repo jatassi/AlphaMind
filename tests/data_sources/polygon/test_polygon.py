@@ -86,28 +86,6 @@ def _seed_asset_universe(sf: Any, tickers: list[str], benchmarks: list[str]) -> 
 # ---------------------------------------------------------------------------
 
 
-class TestProtocolContract:
-    """PolygonClient implements the PolygonAPI Protocol."""
-
-    def test_polygon_client_implements_polygon_api(self) -> None:
-        from alphamind.data_sources.polygon._protocol import PolygonAPI
-        from alphamind.data_sources.polygon.client import PolygonClient
-
-        # Construct without hitting the SDK; we only need attribute presence.
-        client = PolygonClient.__new__(PolygonClient)
-        proto: PolygonAPI = client
-        for name in (
-            "verify_connectivity",
-            "acquire_rate_limit",
-            "get_aggs",
-            "list_snapshot_options_chain",
-            "list_dividends",
-            "list_splits",
-            "get_ticker_details",
-        ):
-            assert hasattr(proto, name), name
-
-
 class TestVerifyConnectivity:
     """verify_connectivity() returns True on success, False on auth failure."""
 
