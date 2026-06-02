@@ -170,7 +170,7 @@ class TestUpdateScheduleCache:
             payload=MappingProxyType(
                 {
                     "next_trigger_at": "2026-05-26T09:30:00Z",
-                    "next_trigger_type": "pre_open",
+                    "next_trigger_type": "market_open",
                     "paused": False,
                 }
             ),
@@ -187,7 +187,7 @@ class TestUpdateScheduleCache:
             payload=MappingProxyType(
                 {
                     "next_trigger_at": "2026-05-26T09:30:00Z",
-                    "next_trigger_type": "pre_open",
+                    "next_trigger_type": "market_open",
                     "paused": True,
                 }
             ),
@@ -197,14 +197,15 @@ class TestUpdateScheduleCache:
 
     def test_next_triggers_list_used_when_present(self) -> None:
         triggers = [
-            {"trigger_at": f"2026-05-26T0{i}:00:00Z", "trigger_type": "pre_open"} for i in range(7)
+            {"trigger_at": f"2026-05-26T0{i}:00:00Z", "trigger_type": "market_open"}
+            for i in range(7)
         ]
         event = PipelineEvent(
             event_type=PipelineEventType.NEXT_TRIGGER_CHANGED,
             payload=MappingProxyType(
                 {
                     "next_trigger_at": "2026-05-26T00:00:00Z",
-                    "next_trigger_type": "pre_open",
+                    "next_trigger_type": "market_open",
                     "next_triggers": triggers,
                     "paused": False,
                 }
@@ -253,7 +254,7 @@ class TestLiveViewEndpoint:
                         phase1_completed_at=None,
                         phase2_completed_at=None,
                         trigger_type="scheduled",
-                        trigger_source="pre_open",
+                        trigger_source="market_open",
                         trigger_reason="scheduled",
                         git_sha_at_invocation="abc",
                         active_profile="default",
@@ -386,7 +387,7 @@ class TestScheduleViewEndpoint:
             payload=MappingProxyType(
                 {
                     "next_trigger_at": "2026-05-27T09:30:00Z",
-                    "next_trigger_type": "pre_open",
+                    "next_trigger_type": "market_open",
                     "paused": True,
                 }
             ),

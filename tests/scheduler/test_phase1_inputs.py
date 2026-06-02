@@ -196,7 +196,7 @@ async def _open_phase1_handle(
         active_regime=Regime.normal,
         active_mode=Mode.normal,
         active_overlays=(),
-        firing_trigger=RunType.pre_open,
+        firing_trigger=RunType.market_open,
     )
     invocation_id, _ = await insert_invocation_record(
         session_factory=async_factory,
@@ -204,7 +204,7 @@ async def _open_phase1_handle(
         trigger_type="scheduled",
         trigger_source="cron",
         trigger_reason="test",
-        firing_run_type=RunType.pre_open,
+        firing_run_type=RunType.market_open,
         runtime=runtime,
         archive_root=archive_root,
         config_dir=SHIPPED_CONFIG_DIR,

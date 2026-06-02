@@ -88,7 +88,7 @@ def shipped_runtime() -> RuntimeDimensions:
         active_regime=Regime.normal,
         active_mode=Mode.normal,
         active_overlays=(),
-        firing_trigger=RunType.pre_open,
+        firing_trigger=RunType.market_open,
     )
 
 
@@ -101,7 +101,7 @@ def fixture_config_tree(tmp_path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Happy path: the shipped tree loads cleanly under (medium, normal, (), pre_open).
+# Happy path: the shipped tree loads cleanly under (medium, normal, (), market_open).
 # ---------------------------------------------------------------------------
 
 
@@ -129,13 +129,13 @@ def test_load_full_config_resolves_to_expected_identity_dimensions(
     archive_root: Path,
     shipped_runtime: RuntimeDimensions,
 ) -> None:
-    """The resolved snapshot reflects (medium, normal, (), pre_open).
+    """The resolved snapshot reflects (medium, normal, (), market_open).
 
     ``ResolvedConfig`` carries the *projected* ``ProfileConfig`` /
     ``RegimeConfig`` / ``RunTypeConfig`` rather than the enum identifiers, so
     identity is verified by comparing each composed sub-model to the bundle
     entry the loader's YAML parsing produced. Equivalence implies the resolver
-    routed (medium, normal, pre_open) into the cascade.
+    routed (medium, normal, market_open) into the cascade.
     """
     loaded = load_full_config(
         config_dir=SHIPPED_CONFIG_DIR,
@@ -155,7 +155,7 @@ def test_load_full_config_resolves_to_expected_identity_dimensions(
 
     assert loaded.resolved.profile == profiles[Profile.medium]
     assert loaded.resolved.regime == regimes[Regime.normal]
-    assert loaded.resolved.run_type == run_types[RunType.pre_open]
+    assert loaded.resolved.run_type == run_types[RunType.market_open]
     assert loaded.resolved.active_overlays == ()
     assert loaded.resolved.execution_mode.value == "paper"
 
@@ -174,7 +174,7 @@ def test_load_full_config_enabled_agents_count_is_nine(
         today=TODAY,
         as_of=_AS_OF,
     )
-    # AgentName has nine members; pre_open enables every one of them.
+    # AgentName has nine members; market_open enables every one of them.
     assert len(loaded.resolved.enabled_agents) == 9
 
 

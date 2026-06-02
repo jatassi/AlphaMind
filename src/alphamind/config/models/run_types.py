@@ -59,7 +59,7 @@ class RunType(StrEnum):
     invocation trigger.
     """
 
-    pre_open = "pre_open"
+    market_open = "market_open"
     market_hours_rolling = "market_hours_rolling"
     pre_close = "pre_close"
     off_hours_rolling = "off_hours_rolling"

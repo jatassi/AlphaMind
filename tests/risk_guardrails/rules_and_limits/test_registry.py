@@ -96,7 +96,7 @@ def _resolved_for_profile(profile: Profile) -> ResolvedConfig:
         active_regime=Regime.normal,
         active_mode=Mode.normal,
         active_overlays=(),
-        firing_trigger=RunType.pre_open,
+        firing_trigger=RunType.market_open,
     )
     return compose_config(inputs, runtime)
 

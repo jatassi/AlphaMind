@@ -245,7 +245,7 @@ class TestCliRunOnceFreshStart:
                 "run",
                 "--fresh-start",
                 "--once",
-                "pre_open",
+                "market_open",
                 "--reason",
                 "first-run bootstrap",
                 "--mode",
@@ -278,7 +278,7 @@ class TestCliRunOnceFreshStart:
             argv=[
                 "run",
                 "--once",
-                "pre_open",
+                "market_open",
                 "--reason",
                 "no bootstrap",
             ]
@@ -316,7 +316,7 @@ class TestCliRunOnceFreshStart:
                     "run",
                     "--fresh-start",
                     "--once",
-                    "pre_open",
+                    "market_open",
                     "--reason",
                     "blocked bootstrap",
                 ]

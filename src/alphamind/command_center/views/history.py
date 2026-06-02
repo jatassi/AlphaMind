@@ -75,7 +75,7 @@ class RunRow(BaseModel):
     duration_seconds: float | None
     """Wall-clock seconds from ``start_at`` to ``ended_at``."""
     run_type: str
-    """``trigger_source`` value (e.g. ``pre_open``)."""
+    """``trigger_source`` value (e.g. ``market_open``)."""
     status: str
     """Derived: ``completed`` | ``partial`` | ``failed``."""
     commands_submitted: int

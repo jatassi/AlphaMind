@@ -257,7 +257,7 @@ def test_assets_models_are_frozen() -> None:
 # minute. ``off_hours_rolling`` / ``weekend_saturday`` remain valid run types
 # (enum members + overlay files retained) but are deliberately unscheduled.
 _EXPECTED_TRIGGER_KEYS = {
-    "pre_open",
+    "market_open",
     "market_hours_rolling",
     "pre_close",
     "weekend_sunday",
@@ -272,7 +272,7 @@ def _valid_scheduler_raw() -> dict[str, object]:
         "emergency_poll_interval_seconds": 5,
         "market_calendar_exchange": "XNYS",
         "supervisor_shutdown_timeout_seconds": 10,
-        "triggers": {"pre_open": "0 9 * * mon-fri"},
+        "triggers": {"market_open": "0 9 * * mon-fri"},
     }
 
 
@@ -288,7 +288,7 @@ def test_scheduler_rejects_malformed_cron_in_trigger() -> None:
     from alphamind.config.models import SchedulerConfig
 
     raw = _valid_scheduler_raw()
-    raw["triggers"] = {"pre_open": "not-a-cron"}
+    raw["triggers"] = {"market_open": "not-a-cron"}
     with pytest.raises((ValueError, TypeError)):
         SchedulerConfig.model_validate(raw)
 

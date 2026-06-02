@@ -232,7 +232,7 @@ versions silently mutate `bun.lock` on `--frozen-lockfile`.
 
 The paper-Alpaca account must be at zero positions with starting cash before
 this runs. The bootstrap fetches Alpaca's reported cash, writes the
-`cash_ledger` + `drawdown_state` singletons, and runs one `pre_open`
+`cash_ledger` + `drawdown_state` singletons, and runs one `market_open`
 invocation. The invocation drives the full pipeline (Phase 1 → analysis →
 decision → Phase 2 broker dispatch) — the PM's accepted commands must land
 on Alpaca with real broker order ids, not synthetic `alp-{order_id}`
@@ -242,7 +242,7 @@ placeholders. Refuses to run if either singleton already exists.
 set -a && source <(tr -d '\r' < .env) && set +a && \
     uv run python -m alphamind.scheduler run \
         --fresh-start \
-        --once pre_open \
+        --once market_open \
         --reason "first-run bootstrap"
 ```
 
@@ -308,7 +308,7 @@ options, in preference order:
 
    ```bash
    uv run python -m alphamind.scheduler run \
-       --once pre_open \
+       --once market_open \
        --reason "retry after bootstrap"
    ```
 
@@ -321,7 +321,7 @@ options, in preference order:
    DELETE FROM cash_ledger;
    ```
 
-   Then re-run the `--fresh-start --once pre_open --reason ...` form.
+   Then re-run the `--fresh-start --once market_open --reason ...` form.
 
 ### 2.5 Install the three remaining NSSM services
 
@@ -407,7 +407,7 @@ set -a && source <(tr -d '\r' < .env) && set +a && \
 ```
 
 Where `<run-type>` is one of:
-`pre_open`, `market_hours_rolling`, `pre_close`, `off_hours_rolling`,
+`market_open`, `market_hours_rolling`, `pre_close`, `off_hours_rolling`,
 `weekend_saturday`, `weekend_sunday`, `emergency`.
 
 The process exits when the invocation completes (~60–180 s steady-state in
@@ -460,7 +460,7 @@ passes on the `distillation_ticker_baseline` UNIQUE constraint).
 
 | Run type               | Cron (US/Eastern)          | Fires (ET)                                | Notes                                        |
 |------------------------|----------------------------|-------------------------------------------|----------------------------------------------|
-| `pre_open`             | `35 9 * * mon-fri`         | 09:35 weekdays                            | NYSE-gated; fires after the 09:30 open for fresh live quotes (name kept — now a slight post-open misnomer) |
+| `market_open`             | `35 9 * * mon-fri`         | 09:35 weekdays                            | NYSE-gated; fires just after the 09:30 open for fresh live quotes |
 | `market_hours_rolling` | `0 13 * * mon-fri`         | 13:00 weekdays (single mid-day read)      | NYSE-gated; dedup-gated within 30 min        |
 | `pre_close`            | `0 15 * * mon-fri`         | 15:00 weekdays                            | NYSE-gated; sole owner of the close slot     |
 | `weekend_sunday`       | `0 18 * * sun`             | 18:00 Sunday                              | Unconditional                                |
@@ -468,7 +468,7 @@ passes on the `distillation_ticker_baseline` UNIQUE constraint).
 | `weekend_saturday`     | (unscheduled)              | Manual / emergency only                   | Valid run type; overlay retained, not on cron |
 | `emergency`            | (not scheduled)            | On-demand, breach-cascade-triggered       | Cooldown-gated per `config/breach_behavior.yaml` |
 
-~3 scheduled invocations per trading weekday (`pre_open` + `market_hours_rolling`
+~3 scheduled invocations per trading weekday (`market_open` + `market_hours_rolling`
 + `pre_close`), ~16 per full trading week including the Sunday run. There is no
 longer any same-minute collision for the dedup window to "collapse" — every slot
 is distinct by construction. **Typical steady-state wall-clock per invocation is
@@ -637,7 +637,7 @@ succeeded through Phase 2; a row with `start_at` set but
 (cross-check the SSE stream / `pipeline.log`). Useful columns:
 `trigger_type` (how the invocation was launched — `scheduled`, `manual`,
 or `emergency`), `trigger_source` (the run-type / origin label — for
-scheduled fires `pre_open`, `market_hours_rolling`, `pre_close`,
+scheduled fires `market_open`, `market_hours_rolling`, `pre_close`,
 `weekend_sunday`, `off_hours_rolling`, or `borrow_accrual`; `cli` for a
 manual `--once` run; `operator_console` for a command-center action;
 `emergency_trigger` for a breach cascade),

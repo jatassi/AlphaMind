@@ -440,5 +440,5 @@ class TestAwareDatetimeEnforcement:
         with pytest.raises(ValidationError):
             models.NextTriggerChangedEvent(
                 next_trigger_at=datetime(2026, 5, 26, 12, 0, 0),  # noqa: DTZ001
-                next_trigger_type="pre_open",
+                next_trigger_type="market_open",
             )

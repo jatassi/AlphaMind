@@ -47,7 +47,7 @@ def _baseline_runtime() -> RuntimeDimensions:
         active_regime=Regime.normal,
         active_mode=Mode.normal,
         active_overlays=(),
-        firing_trigger=RunType.pre_open,
+        firing_trigger=RunType.market_open,
     )
 
 
@@ -120,7 +120,7 @@ async def _build(
             trigger_type="scheduled",
             trigger_source="morning-cron",
             trigger_reason="0 9 * * 1-5",
-            firing_run_type=RunType.pre_open,
+            firing_run_type=RunType.market_open,
             runtime=runtime if runtime is not None else _baseline_runtime(),
             pipeline_config=pipeline_config,
             archive_root=archive_root,
@@ -158,7 +158,7 @@ class TestBuildInvocationRecord:
                 active_regime=Regime.normal,
                 active_mode=Mode.normal,
                 active_overlays=(),
-                firing_trigger=RunType.pre_open,
+                firing_trigger=RunType.market_open,
             ),
         )
 
@@ -170,13 +170,13 @@ class TestBuildInvocationRecord:
         archive_root: Path,
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        # Reload config under (medium, halt, (), pre_open) — the cascade
+        # Reload config under (medium, halt, (), market_open) — the cascade
         # composes a different snapshot for halt mode.
         halt_runtime = RuntimeDimensions(
             active_regime=Regime.normal,
             active_mode=Mode.halt,
             active_overlays=(),
-            firing_trigger=RunType.pre_open,
+            firing_trigger=RunType.market_open,
         )
         halt_config = load_full_config(
             config_dir=SHIPPED_CONFIG_DIR,
@@ -207,7 +207,7 @@ class TestBuildInvocationRecord:
             active_regime=Regime.normal,
             active_mode=Mode.normal,
             active_overlays=(Overlay.pre_event, Overlay.stress),
-            firing_trigger=RunType.pre_open,
+            firing_trigger=RunType.market_open,
         )
 
         record = await _build(
@@ -305,7 +305,7 @@ class TestBuildInvocationRecord:
                     trigger_type="scheduled",
                     trigger_source="morning-cron",
                     trigger_reason="0 9 * * 1-5",
-                    firing_run_type=RunType.pre_open,
+                    firing_run_type=RunType.market_open,
                     runtime=_baseline_runtime(),
                     pipeline_config=pipeline_config,
                     archive_root=archive_root,

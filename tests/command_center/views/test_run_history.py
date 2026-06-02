@@ -50,7 +50,7 @@ def _make_row(
     *,
     invocation_id: str,
     start_at: str,
-    trigger_source: str = "pre_open",
+    trigger_source: str = "market_open",
     phase1_completed_at: str | None = None,
     phase2_completed_at: str | None = None,
     command_execution_summary_json: str | None = None,
@@ -116,12 +116,12 @@ async def seeded_db(tmp_path: Path) -> AsyncIterator[Path]:
                 os_release="test-os",
             )
         )
-        # Row 1: completed, pre_open, 5 commands submitted, 0 rejected
+        # Row 1: completed, market_open, 5 commands submitted, 0 rejected
         session.add(
             _make_row(
                 invocation_id="inv-001",
                 start_at="2026-05-01T09:00:00",
-                trigger_source="pre_open",
+                trigger_source="market_open",
                 phase1_completed_at="2026-05-01T09:05:00",
                 phase2_completed_at="2026-05-01T09:10:00",
                 command_execution_summary_json='{"commands_submitted": 5, "commands_rejected": 0}',
@@ -148,12 +148,12 @@ async def seeded_db(tmp_path: Path) -> AsyncIterator[Path]:
                 snapshot_metadata_json='{"abort_reason": "context-overflow"}',
             )
         )
-        # Row 4: completed, pre_open, 3 commands submitted, 2 rejected
+        # Row 4: completed, market_open, 3 commands submitted, 2 rejected
         session.add(
             _make_row(
                 invocation_id="inv-004",
                 start_at="2026-05-04T09:00:00",
-                trigger_source="pre_open",
+                trigger_source="market_open",
                 phase1_completed_at="2026-05-04T09:05:00",
                 phase2_completed_at="2026-05-04T09:11:00",
                 command_execution_summary_json='{"commands_submitted": 3, "commands_rejected": 2}',
@@ -290,7 +290,7 @@ class TestRunHistoryList:
     def test_run_type_column(self, client: TestClient) -> None:
         resp = client.get("/api/views/history/runs")
         items = {i["invocation_id"]: i for i in resp.json()["items"]}
-        assert items["inv-001"]["run_type"] == "pre_open"
+        assert items["inv-001"]["run_type"] == "market_open"
         assert items["inv-002"]["run_type"] == "market_hours_rolling"
 
 
@@ -321,10 +321,10 @@ class TestRunHistoryFilters:
         assert statuses == {"failed", "partial"}
 
     def test_filter_by_run_type(self, client: TestClient) -> None:
-        resp = client.get("/api/views/history/runs?run_type=pre_open")
+        resp = client.get("/api/views/history/runs?run_type=market_open")
         body = resp.json()
         assert body["total"] == 2
-        assert all(i["run_type"] == "pre_open" for i in body["items"])
+        assert all(i["run_type"] == "market_open" for i in body["items"])
 
     def test_filter_date_from(self, client: TestClient) -> None:
         resp = client.get("/api/views/history/runs?date_from=2026-05-04")

@@ -1,7 +1,7 @@
 # scheduler/ — pipeline composition root + APScheduler driver
 
 Orchestration. The deliberative pipeline's entry point (`python -m alphamind.scheduler`).
-APScheduler fires the Tier B cadence (~3 weekday runs — pre-open / mid-day / pre-close —
+APScheduler fires the Tier B cadence (~3 weekday runs — market-open / mid-day / pre-close —
 plus a Sunday run). Key files: `driver.py`, `orchestrator.py`, `invocation.py`,
 `phase1_inputs.py`, `phase2_dispatch.py`, `run_context.py`, `supervisor.py`,
 `emergency.py`, `fresh_start.py`; `debug_e2e/` holds the offline end-to-end harness.

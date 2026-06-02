@@ -161,7 +161,7 @@ Argparse surface:
   `src/alphamind/_kernel/archive_layout.py`).
 - `--db-path PATH` (default `data/alphamind-debug-e2e.db`) — SQLite DB the
   debug-e2e mode targets. Must end with `-debug-e2e.db`.
-- `--run-type {pre_open,market_hours_rolling,pre_close,off_hours_rolling,weekend_saturday,weekend_sunday,emergency}`
+- `--run-type {market_open,market_hours_rolling,pre_close,off_hours_rolling,weekend_saturday,weekend_sunday,emergency}`
   (default `market_hours_rolling`) — firing run type for the manual
   invocation.
 - `--reason TEXT` (default `verify_debug_e2e`) — free-form reason recorded
@@ -266,12 +266,12 @@ subsequent invocation.
 set -a && source <(tr -d '\r' < .env) && set +a && \
     uv run python -m alphamind.scheduler run \
         --fresh-start \
-        --once pre_open \
+        --once market_open \
         --reason "first-run bootstrap"
 ```
 
 The bootstrap commits the two singleton rows in their own transaction;
-the same process then runs one `pre_open` invocation through to Phase 2
+the same process then runs one `market_open` invocation through to Phase 2
 so the operator immediately sees the pipeline complete against the
 freshly-bootstrapped state. After it returns, start the daemon
 normally (no `--fresh-start`).
@@ -312,7 +312,7 @@ options, in order of preference:
    the flag:
    ```bash
    uv run python -m alphamind.scheduler run \
-       --once pre_open \
+       --once market_open \
        --reason "retry after bootstrap"
    ```
 2. **Wipe the singletons and re-bootstrap** (only if the persisted
@@ -323,7 +323,7 @@ options, in order of preference:
    DELETE FROM drawdown_state;
    DELETE FROM cash_ledger;
    ```
-   Then re-run `--fresh-start --once pre_open --reason ...`.
+   Then re-run `--fresh-start --once market_open --reason ...`.
 
 **Verification.** After the command returns, confirm against the DB:
 

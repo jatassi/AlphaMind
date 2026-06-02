@@ -481,7 +481,7 @@ def _price_provider_from_phase1(
 _SCHEMA_RUN_TYPE_BY_FIRING_RUN_TYPE: dict[RunType, _RunType] = {
     RunType.market_hours_rolling: "market_hours_rolling",
     RunType.off_hours_rolling: "off_hours_rolling",
-    RunType.pre_open: "pre_open",
+    RunType.market_open: "market_open",
     RunType.pre_close: "pre_close",
     RunType.weekend_saturday: "weekend_saturday",
     RunType.weekend_sunday: "weekend_sunday",
