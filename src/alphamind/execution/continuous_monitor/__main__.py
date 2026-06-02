@@ -899,6 +899,7 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
         risk_free_rate=0.045,
         breach_response_lookup=breach_response_lookup,
         market_hours=calendar_cache,
+        max_price_age_seconds=portfolio_state_config.snapshot_freshness_max_price_age_seconds,
         on_immediate_breach=on_immediate_breach,
         on_emergency_input=on_emergency_input,
         activity_log_sink=_activity_log_sink,

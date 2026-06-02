@@ -557,14 +557,25 @@ def make_snapshot_provider(
 
 
 def _build_price_provider(
-    underlying_cache: UnderlyingPriceCache, *, as_of: datetime
+    underlying_cache: UnderlyingPriceCache,
+    *,
+    as_of: datetime,
 ) -> StubCurrentPriceProvider:
-    """Project the live underlying-cache into the canonical price-provider shape."""
+    """Project the live underlying-cache into the canonical price-provider shape.
+
+    Carries the quote's real ``as_of`` timestamp (rather than the synthetic
+    current-tick time) so the assembler's ``SnapshotFreshness`` machinery can
+    classify each quote as fresh or stale instead of always seeing
+    ``is_stale=False`` (ALP-770). The ``is_stale`` field is left False here
+    because ``StubCurrentPriceProvider._recompute`` recomputes it on every
+    ``get_quote`` call using the caller-supplied freshness threshold — the
+    constructor value is always overwritten.
+    """
     quotes = {
         ticker: PriceQuote(
             ticker=ticker,
             price_usd=quote.price,
-            as_of_timestamp=as_of,
+            as_of_timestamp=quote.as_of,
             source=PriceSource.INTRADAY_QUOTE,
             is_stale=False,
         )
