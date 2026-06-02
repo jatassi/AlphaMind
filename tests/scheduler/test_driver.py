@@ -20,14 +20,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.run_types import RunType
@@ -39,18 +38,13 @@ from alphamind.config.models.venue import (
     SessionWindow,
     VenueConfig,
 )
-from alphamind.persistence.models import Base
-from alphamind.persistence.session import (
-    make_async_engine,
-    make_async_session_factory,
-    make_engine,
-    make_session_factory,
-)
 from alphamind.state.invocation_context.records import (
     InvocationRecord,
-    ProcessLifetimeRecord,
     invocation_record_to_row,
-    process_lifetime_record_to_row,
+)
+from tests.scheduler.conftest import (
+    SHIPPED_CONFIG_DIR,
+    _make_venue_config,
 )
 
 # ---------------------------------------------------------------------------
@@ -58,8 +52,6 @@ from alphamind.state.invocation_context.records import (
 # ---------------------------------------------------------------------------
 
 _NOW = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
-REPO_ROOT = Path(__file__).parent.parent.parent
-SHIPPED_CONFIG_DIR = REPO_ROOT / "config"
 
 
 def _make_scheduler_config(
@@ -90,23 +82,6 @@ def _make_scheduler_config(
     )
 
 
-def _make_venue_config() -> VenueConfig:
-    creds = AlpacaCredentials(
-        rest_url="https://paper-api.alpaca.markets",
-        ws_url="wss://paper-api.alpaca.markets",
-        api_key_env="ALPACA_PAPER_KEY",
-        api_secret_env="ALPACA_PAPER_SECRET",
-    )
-    return VenueConfig(
-        alpaca=Alpaca(paper=creds, live=creds, rate_limit_per_minute=200),
-        session_hours=SessionHours(
-            regular=SessionWindow(open="09:30", close="16:00"),
-            pre_market=SessionWindow(open="04:00", close="09:30"),
-            after_hours=SessionWindow(open="16:00", close="20:00"),
-        ),
-    )
-
-
 def _make_context(
     *,
     session_factory: async_sessionmaker[AsyncSession],
@@ -124,25 +99,6 @@ def _make_context(
         env_path=tmp_path / ".env",
         venue_config=_make_venue_config(),
         execution_mode=ExecutionMode.paper,
-    )
-
-
-def _make_process_lifetime_record() -> ProcessLifetimeRecord:
-    return ProcessLifetimeRecord(
-        process_lifetime_id="proc-driver-1",
-        process_role="pipeline",
-        process_start_at="2026-05-07T14:30:00Z",
-        process_pid=12345,
-        hostname="alpha-prod-01",
-        git_sha="a" * 40,
-        git_branch="main",
-        git_dirty=False,
-        python_version="3.13.1",
-        pip_freeze_hash="0" * 64,
-        pip_freeze_snapshot_path="/tmp/provenance/process_lifetimes/proc-driver-1/pip_freeze.txt",
-        anthropic_sdk_version="0.40.0",
-        claude_agent_sdk_version="0.1.69",
-        os_release="Linux-6.5.0-generic-x86_64",
     )
 
 
@@ -180,33 +136,6 @@ def _make_invocation_record(
         staleness_flag=None,
         snapshot_metadata_json=None,
     )
-
-
-@pytest.fixture()
-async def async_factory(
-    tmp_path: Path,
-) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    """Yield an async session factory bound to an initialized SQLite DB."""
-    db_path = tmp_path / "alphamind.db"
-
-    # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.state.tables  # noqa: F401
-
-    sync_engine = make_engine(str(db_path))
-    try:
-        Base.metadata.create_all(sync_engine)
-        with make_session_factory(sync_engine)() as sess:
-            sess.add(process_lifetime_record_to_row(_make_process_lifetime_record()))
-            sess.commit()
-    finally:
-        sync_engine.dispose()
-
-    async_engine: AsyncEngine = make_async_engine(str(db_path))
-    factory = make_async_session_factory(async_engine)
-    try:
-        yield factory
-    finally:
-        await async_engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -676,13 +605,6 @@ class TestMainRegistersApschedulerTask:
         monkeypatch.setattr(module, "configure_pipeline_logging", lambda: None)
 
         # Stub the venue loader so we don't hit the filesystem.
-        from alphamind.config.models.venue import (
-            Alpaca,
-            AlpacaCredentials,
-            SessionHours,
-            SessionWindow,
-            VenueConfig,
-        )
 
         creds = AlpacaCredentials(
             rest_url="https://paper-api.alpaca.markets",

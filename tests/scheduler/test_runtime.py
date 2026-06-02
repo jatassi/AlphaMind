@@ -12,24 +12,13 @@ the four-field output shape.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from pathlib import Path
-
-import pytest
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.config.models.modes import Mode
 from alphamind.config.models.overlays import Overlay
 from alphamind.config.models.regimes import Regime
 from alphamind.config.models.run_types import RunType
 from alphamind.config.resolver import RuntimeDimensions
-from alphamind.persistence.models import Base
-from alphamind.persistence.session import (
-    make_async_engine,
-    make_async_session_factory,
-    make_engine,
-    make_session_factory,
-)
 from alphamind.risk_guardrails.breach_behavior.types import HaltState
 from alphamind.risk_guardrails.regime_adaptation.types import OverlayActivationDecision
 from alphamind.scheduler.runtime import (
@@ -40,29 +29,8 @@ from alphamind.scheduler.runtime import (
 )
 from alphamind.state.invocation_context.records import (
     InvocationRecord,
-    ProcessLifetimeRecord,
     invocation_record_to_row,
-    process_lifetime_record_to_row,
 )
-
-
-def _make_process_lifetime_record() -> ProcessLifetimeRecord:
-    return ProcessLifetimeRecord(
-        process_lifetime_id="proc-1",
-        process_role="pipeline",
-        process_start_at="2026-05-07T14:30:00Z",
-        process_pid=12345,
-        hostname="alpha-prod-01",
-        git_sha="a" * 40,
-        git_branch="main",
-        git_dirty=False,
-        python_version="3.13.1",
-        pip_freeze_hash="0" * 64,
-        pip_freeze_snapshot_path="/tmp/provenance/process_lifetimes/proc-1/pip_freeze.txt",
-        anthropic_sdk_version="0.40.0",
-        claude_agent_sdk_version="0.1.69",
-        os_release="Linux-6.5.0-generic-x86_64",
-    )
 
 
 def _make_invocation_record(
@@ -74,7 +42,7 @@ def _make_invocation_record(
 ) -> InvocationRecord:
     return InvocationRecord(
         invocation_id=invocation_id,
-        process_lifetime_id="proc-1",
+        process_lifetime_id="proc-driver-1",
         start_at=start_at,
         phase1_completed_at=None,
         phase2_completed_at=phase2_completed_at,
@@ -100,38 +68,6 @@ def _make_invocation_record(
         staleness_flag=None,
         snapshot_metadata_json=None,
     )
-
-
-@pytest.fixture()
-async def async_factory(
-    tmp_path: Path,
-) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    """Yield an async session factory backed by a fresh on-disk SQLite DB.
-
-    Materializes ``invocations`` and ``process_lifetimes`` (the only tables
-    this story's helper queries against) and seeds the FK parent row so test
-    cases can insert ``invocations`` rows directly.
-    """
-    db_path = tmp_path / "alphamind.db"
-
-    # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.state.tables  # noqa: F401
-
-    sync_engine = make_engine(str(db_path))
-    try:
-        Base.metadata.create_all(sync_engine)
-        with make_session_factory(sync_engine)() as sess:
-            sess.add(process_lifetime_record_to_row(_make_process_lifetime_record()))
-            sess.commit()
-    finally:
-        sync_engine.dispose()
-
-    async_engine: AsyncEngine = make_async_engine(str(db_path))
-    factory = make_async_session_factory(async_engine)
-    try:
-        yield factory
-    finally:
-        await async_engine.dispose()
 
 
 def _inactive(overlay: Overlay) -> OverlayActivationDecision:

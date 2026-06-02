@@ -24,19 +24,12 @@ from typing import Any
 
 import pytest
 import yaml
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.run_types import RunType
 from alphamind.config.models.venue import VenueConfig
 from alphamind.execution.write_paths.phase1 import Phase1Summary
-from alphamind.persistence.models import Base
-from alphamind.persistence.session import (
-    make_async_engine,
-    make_async_session_factory,
-    make_engine,
-    make_session_factory,
-)
 from alphamind.portfolio_state.events.activity_log import (
     EmergencyInvocationRequestedDetail,
     EventGroup,
@@ -49,9 +42,7 @@ from alphamind.scheduler.orchestrator import InvocationSummary
 from alphamind.scheduler.session import PipelineSession, new_session
 from alphamind.state.invocation_context.records import (
     InvocationRecord,
-    ProcessLifetimeRecord,
     invocation_record_to_row,
-    process_lifetime_record_to_row,
 )
 from alphamind.state.tables.activity_log import ActivityLogRow
 
@@ -60,27 +51,8 @@ from alphamind.state.tables.activity_log import ActivityLogRow
 # ---------------------------------------------------------------------------
 
 
-_PROCESS_LIFETIME_ID = "proc-emergency-1"
+_PROCESS_LIFETIME_ID = "proc-driver-1"
 _BOOTSTRAP_INV_ID = "inv-bootstrap-1"
-
-
-def _make_process_lifetime_record() -> ProcessLifetimeRecord:
-    return ProcessLifetimeRecord(
-        process_lifetime_id=_PROCESS_LIFETIME_ID,
-        process_role="pipeline",
-        process_start_at="2026-05-07T14:30:00Z",
-        process_pid=12345,
-        hostname="alpha-prod-01",
-        git_sha="a" * 40,
-        git_branch="main",
-        git_dirty=False,
-        python_version="3.13.1",
-        pip_freeze_hash="0" * 64,
-        pip_freeze_snapshot_path=f"/tmp/provenance/{_PROCESS_LIFETIME_ID}/pip_freeze.txt",
-        anthropic_sdk_version="0.40.0",
-        claude_agent_sdk_version="0.1.69",
-        os_release="Linux-6.5.0-generic-x86_64",
-    )
 
 
 def _make_invocation_record(
@@ -147,49 +119,6 @@ def _make_emergency_activity_log_row(
 
 
 @pytest.fixture()
-async def async_factory(
-    tmp_path: Path,
-) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    """On-disk SQLite database seeded with one process-lifetime + bootstrap invocation row.
-
-    The bootstrap invocation row exists only to satisfy the activity_log FK
-    for test-inserted ``EMERGENCY_INVOCATION_REQUESTED`` rows. It is not the
-    dispatch target — tests monkey-patch ``run_invocation`` so no real
-    invocation is created.
-    """
-    db_path = tmp_path / "alphamind.db"
-
-    import alphamind.state.tables  # noqa: F401
-
-    sync_engine = make_engine(str(db_path))
-    try:
-        Base.metadata.create_all(sync_engine)
-        with make_session_factory(sync_engine)() as sess:
-            sess.add(process_lifetime_record_to_row(_make_process_lifetime_record()))
-            sess.commit()
-            sess.add(
-                invocation_record_to_row(
-                    _make_invocation_record(
-                        invocation_id=_BOOTSTRAP_INV_ID,
-                        start_at="2026-05-07T14:00:00Z",
-                        trigger_type="manual",
-                        phase2_completed_at=None,
-                    )
-                )
-            )
-            sess.commit()
-    finally:
-        sync_engine.dispose()
-
-    async_engine: AsyncEngine = make_async_engine(str(db_path))
-    factory = make_async_session_factory(async_engine)
-    try:
-        yield factory
-    finally:
-        await async_engine.dispose()
-
-
-@pytest.fixture()
 def pipeline_session() -> PipelineSession:
     return new_session(process_lifetime_id=_PROCESS_LIFETIME_ID, mode="paper")
 
@@ -248,7 +177,26 @@ async def _seed_emergency_entry(
     trigger_type: str = "regime_jump",
     trigger_reason: str = "Regime jump: normal -> crisis",
 ) -> None:
+    """Seed the bootstrap invocation (FK target) + an EMERGENCY entry.
+
+    The bootstrap inv + process row (driver ID) are now supplied by the
+    hoisted async_factory; we still ensure the inv row here for tests that
+    call this helper directly on a factory.
+    """
     async with factory() as session:
+        # Ensure bootstrap invocation row (target for activity_log FK).
+        # (process_lifetime row is pre-seeded by async_factory.)
+        session.add(
+            invocation_record_to_row(
+                _make_invocation_record(
+                    invocation_id=_BOOTSTRAP_INV_ID,
+                    start_at="2026-05-07T14:00:00Z",
+                    trigger_type="manual",
+                    phase2_completed_at=None,
+                )
+            )
+        )
+        await session.flush()
         session.add(
             _make_emergency_activity_log_row(
                 entry_at=entry_at,
