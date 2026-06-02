@@ -12,7 +12,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -61,10 +60,6 @@ from alphamind.distillation.orchestrator import DistillationOutputs
 from alphamind.distillation.output import OutputAudience
 from alphamind.distillation.sector_assembly import SectorOutput
 from alphamind.pipeline import analysis as composition
-from alphamind.pipeline.analysis import (
-    AnalysisPipelineResult,
-    run_analysis_pipeline,
-)
 from alphamind.portfolio_state.consumers.synthesizer import (
     SynthesizerExposureSnapshot,
     SynthesizerPositionSummary,
@@ -479,26 +474,3 @@ def patch_runners(
     }
     for stage, target in target_by_stage.items():
         monkeypatch.setattr(composition, target, _make_stub(stage, behaviors[stage], log))
-
-
-def drive_analysis_pipeline(
-    *,
-    agents_config: Any | None = None,
-) -> AnalysisPipelineResult:
-    """Convenience wrapper around ``asyncio.run`` for the analysis pipeline entry point."""
-    import asyncio
-
-    return asyncio.run(
-        run_analysis_pipeline(
-            session=None,  # type: ignore[arg-type]  # stub doesn't touch the session
-            invocation_id=INVOCATION_ID,
-            as_of=AS_OF,
-            last_invocation_time=LAST_INVOCATION_TIME,
-            distillation_config=MagicMock(),
-            ticker_scope=("NVDA", "JPM", "XOM"),
-            universe=frozenset({"NVDA", "JPM", "XOM"}),
-            agents_config=agents_config or build_agents_registry(),
-            sectors_config=build_sectors_registry(),
-            portfolio_reader=StubPortfolioReader(),
-        )
-    )
