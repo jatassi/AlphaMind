@@ -197,8 +197,18 @@ async def run_underlying_stream(  # noqa: PLR0913 — run-forever orchestrator s
     ``stream_poll_interval`` so the watchdog derives a positive stall bound
     (``poll_interval * watchdog_cadence_multiplier``). Without this declaration a
     bare ``beat`` would leave the task watched-but-unbounded.
+
+    Initial-connect trippability (ALP-825 review). ``beat`` is fired once
+    immediately at entry — before ``factory.build`` / ``subscribe_quotes`` — so
+    ``last_beat`` is set and a hang during the very first connect/subscribe
+    becomes trippable. Mirrors the fill consumer, which beats as its first
+    statement. Without this, the first beat would only land on the first poll
+    slice (after connect succeeds), so an initial-connect wedge would leave
+    ``last_beat=None`` and the watchdog could only WARN (startup grace), never
+    ``os._exit``-trip.
     """
     register_watch(stream_poll_interval)
+    beat()
     is_rth: Callable[[], bool] | None = (
         (lambda: is_market_open(datetime.now(UTC))) if is_market_open is not None else None
     )

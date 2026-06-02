@@ -973,6 +973,85 @@ class TestStalenessBeatsWatchdog:
                 supervisor_task.cancel()
                 await asyncio.gather(supervisor_task, return_exceptions=True)
 
+    async def test_initial_connect_hang_trips_watchdog_via_entry_beat(self) -> None:
+        """A hang during the FIRST connect/subscribe (before any quote) trips the watchdog.
+
+        Regression (ALP-825 review). ``run_underlying_stream`` previously deferred
+        its first ``beat`` to the first poll slice — which only runs after
+        ``factory.build`` + ``compute_target_underlyings`` + ``subscribe_quotes``
+        succeed and the staleness-watch sibling spins up. A hang in that initial
+        connect/subscribe therefore left ``last_beat=None`` so the watchdog could
+        only WARN (startup grace), never ``os._exit``-trip — unlike the fill
+        consumer, which beats as its first statement.
+
+        Here the open-positions read hangs forever (modelling a wedged
+        connect/subscribe before the TaskGroup's beat loop starts). With the
+        entry beat in place, ``last_beat`` is set, and once the clock leaps past
+        the stall bound the watchdog trips. Drives the PRODUCTION wiring path.
+        """
+
+        class _HangingReader:
+            """Reader whose open-positions read never returns (wedged connect)."""
+
+            async def get_open_positions(self) -> tuple[PositionRecord, ...]:
+                await asyncio.Event().wait()  # blocks forever; never resolves
+                raise AssertionError("unreachable")  # pragma: no cover
+
+        factory = _FakeFactory()
+        cache = UnderlyingPriceCache()
+        fake_clock = _FakeClock(start=1000.0)
+
+        config = _config(
+            subscription_refresh_seconds=60,
+            max_reconnect_attempts=5,
+            underlying_stream_stale_timeout_seconds=60,
+        )
+        # bound = poll_interval(0.01) * multiplier(2.0) = 0.02s.
+        config = config.model_copy(update={"watchdog_cadence_multiplier": 2.0})
+
+        async def _fast_sleep(_seconds: float) -> None:
+            await asyncio.sleep(0)
+
+        supervisor = MonitorSupervisor(
+            session=_session(),
+            config=config,
+            monotonic=lambda: fake_clock(),
+            sleep=_fast_sleep,
+        )
+        register_underlying_stream_task(
+            supervisor,
+            repository=_HangingReader(),
+            cache=cache,
+            factory=factory,
+            is_market_open=lambda _dt: True,
+            stream_poll_interval=0.01,
+        )
+
+        with patch("os._exit") as mock_exit:
+            supervisor_task = asyncio.create_task(supervisor.run())
+            try:
+                # The entry beat lands before the hanging connect, so last_beat
+                # is set even though no stream ever finished building.
+                await asyncio.wait_for(
+                    _eventually(
+                        lambda: (
+                            supervisor._watch.get("underlying_stream") is not None
+                            and supervisor._watch["underlying_stream"].last_beat is not None
+                        )
+                    ),
+                    timeout=2.0,
+                )
+                # The connect is wedged — no stream ever ran (no poll-slice beat).
+                assert not factory.streams or not factory.streams[0]._handler
+
+                # Leap past the stall bound — no further beats arrive, so it trips.
+                fake_clock.advance(10.0)
+                await asyncio.wait_for(_eventually(lambda: mock_exit.called), timeout=3.0)
+                assert mock_exit.call_args[0][0] == 1
+            finally:
+                supervisor_task.cancel()
+                await asyncio.gather(supervisor_task, return_exceptions=True)
+
 
 # ---------------------------------------------------------------------------
 # Polling helper — drives event-loop tests without sleep-spinning a fixed time
