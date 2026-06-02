@@ -235,7 +235,13 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # fill_stream_stale_timeout_seconds: 900 to config/continuous_monitor.yaml and
     # ContinuousMonitorConfig (the connected-but-silent fill-stream reconnect bound),
     # shifting the resolved-config canonical bytes.
-    expected = "b923c5b03c108d0693affe06dbbdb32e20ecc18bfb77d6299f65c0e451ae6390"
+    # Pin updated 2026-06-02 (shared underlying-price freshness threshold, ALP-827):
+    # ALP-827 added underlying_price_max_age_seconds: 900 to config/continuous_monitor.yaml
+    # and ContinuousMonitorConfig (the single freshness threshold all price consumers
+    # pass to UnderlyingPriceCache.read/read_all), shifting the resolved-config canonical
+    # bytes. NOTE: the orchestrator may re-pin once more at wave-1 integration when this
+    # combines with ALP-826's parallel continuous_monitor config change.
+    expected = "e9ea87b76e24bd059a0b403ec93adcd4c15930722d21087a74c31e48a06be030"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

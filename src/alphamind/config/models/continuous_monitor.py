@@ -175,6 +175,19 @@ class ContinuousMonitorConfig(BaseModel):
         ),
     )
 
+    underlying_price_max_age_seconds: float = Field(
+        default=900.0,
+        gt=0.0,
+        description=(
+            "Single freshness threshold (seconds) every underlying-price consumer "
+            "passes to UnderlyingPriceCache.read/read_all (ALP-827). A quote older "
+            "than this reads STALE and is excluded from stop enforcement; when "
+            "every open-position ticker is STALE/MISSING the cache's global-stale "
+            "detector escalates (the writer-wedged cold-feed case, ALP-770 class). "
+            "Replaces breach_loop's hardcoded 900.0 default (02d reads this)."
+        ),
+    )
+
     @field_validator("borrow_accrual_tick_local_time")
     @classmethod
     def _hh_mm_well_formed(cls, value: str) -> str:
