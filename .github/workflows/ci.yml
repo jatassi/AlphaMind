@@ -4,10 +4,12 @@ name: ci
 # story); pytest runs on Windows (matches production host). Both gate PR merge to
 # main via the repo's documented PR-only policy (see CLAUDE.md "Branch policy").
 #
-# Path filters: changes confined to docs, archives, .claude/ tooling, or the
-# top-level audit HTML do not affect runtime behavior and skip CI. Anything that
-# can change runtime — src, tests, config, prompts, scripts, dependency files,
-# alembic.ini, .importlinter, the workflow itself — runs the full chain.
+# Path filters: changes confined to docs, archives, .claude/ tooling, scripts/
+# (ops/investigation tooling, not production code), or the top-level audit HTML do
+# not affect runtime behavior and skip CI. Anything that can change runtime — src,
+# tests, config, prompts, dependency files, alembic.ini, .importlinter, the workflow
+# itself — runs the full chain. (mypy still type-checks scripts/ on any non-ignored
+# PR, since it walks the whole tree; only a scripts-only PR skips the gate.)
 
 on:
   pull_request:
@@ -18,6 +20,7 @@ on:
       - '.archive/**'
       - '.claude/**'
       - 'audit-*.html'
+      - 'scripts/**'
       - '.gitignore'
       - '.env.example'
   push:
@@ -28,6 +31,7 @@ on:
       - '.archive/**'
       - '.claude/**'
       - 'audit-*.html'
+      - 'scripts/**'
       - '.gitignore'
       - '.env.example'
 
