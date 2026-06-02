@@ -451,11 +451,14 @@ async def _integrate_or_quarantine_fill(
     Two layers keep a single un-integratable fill from wedging the whole batch
     (ALP-761):
 
-    * **Pre-integration gate.** A fill whose target position is in a terminal
-      status (``CANCELLED`` / ``CLOSED``) is an orphan — the per-instrument
-      apply-fill helpers hard-raise on it. Quarantine + alert it up front rather
-      than letting it reach :func:`_apply_fill_to_equity_position`. This is the
-      equity analogue of the strategy path's existing cancel-mid-fill handling.
+    * **Pre-integration gate.** Two checks run before the savepoint mutates
+      anything: (1) a fill whose target position is in a terminal status
+      (``CANCELLED`` / ``CLOSED``) is an orphan — quarantine + alert rather
+      than letting it reach :func:`_apply_fill_to_equity_position`; (2) a fill
+      whose ``fill_quantity`` exceeds the order's ``remaining_quantity`` (beyond
+      ``_QTY_EPSILON``) is an over-fill — quarantine + alert rather than
+      integrating it and double-counting the position (ALP-766). Both arms
+      return ``False`` without entering the savepoint.
 
     * **Defense-in-depth.** Target resolution and the state mutation in
       :func:`_integrate_one_fill` both run under one try; the mutation runs
@@ -488,6 +491,16 @@ async def _integrate_or_quarantine_fill(
                 row,
                 position_id=target.position_id,
                 delta_description=_orphan_quarantine_message(fill, target),
+            )
+            return False
+        order = await _read_order(handle, fill.order_id)
+        if fill.fill_quantity > order.remaining_quantity + _QTY_EPSILON:
+            _quarantine_fill(
+                handle,
+                fill,
+                row,
+                position_id=target.position_id,
+                delta_description=_over_fill_quarantine_message(fill, order),
             )
             return False
         async with handle.session.begin_nested():
@@ -562,6 +575,21 @@ def _orphan_quarantine_message(fill: FillRecord, target: PositionRecord) -> str:
         f"status {target.status.value}; quarantined so the batch completes. The "
         "underlying broker position may still exist and needs separate "
         "reconciliation (ALP-760)."
+    )
+
+
+def _over_fill_quarantine_message(fill: FillRecord, order: OrderRecord) -> str:
+    """Operator-facing alert text for a fill that exceeds the order's remaining quantity.
+
+    Typically a recovery-sweep aggregate (cumulative qty @ avg price) landing on
+    an already-fully-filled order whose genuine per-execution partials have all
+    been integrated (ALP-766).
+    """
+    return (
+        f"Fill {fill.fill_id!r} (order {fill.order_id!r}, qty {fill.fill_quantity} @ "
+        f"{fill.fill_price}) exceeds order remaining quantity "
+        f"{order.remaining_quantity}; quarantined to prevent double-count. Likely "
+        "a recovery-sweep aggregate on a fully-filled order (ALP-766)."
     )
 
 
