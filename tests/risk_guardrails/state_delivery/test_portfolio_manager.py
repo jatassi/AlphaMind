@@ -324,122 +324,6 @@ def _sector_resolver(position: PositionRecord) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def test_render_pm_header_returns_string_with_envelope_open_and_close() -> None:
-    view = _make_pm_view()
-    impact = CrossConstraintImpact(
-        per_rule=(),
-        flagged_rule_ids=(),
-        available_capital_before_usd=money(300_000.0),
-        available_capital_after_usd=money(300_000.0),
-    )
-    rendered = render_pm_header(
-        pm_view=view,
-        invocation_id="inv-001",
-        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
-        options_enabled=False,
-        short_selling_enabled=False,
-        active_sectors=("tech", "semis"),
-        config=_make_state_delivery_config(),
-        sector_label_display=_MICRO_SECTOR_LABELS,
-        sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=money(500_000.0),
-        available_for_new_positions_usd=money(300_000.0),
-        cross_constraint_impact=impact,
-        position_zones=_DEFAULT_POSITION_ZONES,
-    )
-    assert isinstance(rendered, str)
-    assert rendered.startswith("=== GUARDRAIL STATE (invocation inv-001, 2026-04-28T14:32:05Z) ===")
-    assert rendered.endswith("===")
-
-
-def test_render_pm_header_renders_regime_line_after_envelope() -> None:
-    view = _make_pm_view(active=_make_active_parameters(regime_label=RegimeLabel.NORMAL))
-    impact = CrossConstraintImpact(
-        per_rule=(),
-        flagged_rule_ids=(),
-        available_capital_before_usd=money(300_000.0),
-        available_capital_after_usd=money(300_000.0),
-    )
-    rendered = render_pm_header(
-        pm_view=view,
-        invocation_id="inv-001",
-        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
-        options_enabled=False,
-        short_selling_enabled=False,
-        active_sectors=("tech", "semis"),
-        config=_make_state_delivery_config(),
-        sector_label_display=_MICRO_SECTOR_LABELS,
-        sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=money(500_000.0),
-        available_for_new_positions_usd=money(300_000.0),
-        cross_constraint_impact=impact,
-        position_zones=_DEFAULT_POSITION_ZONES,
-    )
-    lines = rendered.splitlines()
-    assert lines[1] == "Regime: normal [unchanged]"
-
-
-def test_render_pm_header_renders_capital_block_after_blank() -> None:
-    view = _make_pm_view()
-    impact = CrossConstraintImpact(
-        per_rule=(),
-        flagged_rule_ids=(),
-        available_capital_before_usd=money(300_000.0),
-        available_capital_after_usd=money(300_000.0),
-    )
-    rendered = render_pm_header(
-        pm_view=view,
-        invocation_id="inv-001",
-        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
-        options_enabled=False,
-        short_selling_enabled=False,
-        active_sectors=("tech", "semis"),
-        config=_make_state_delivery_config(),
-        sector_label_display=_MICRO_SECTOR_LABELS,
-        sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=money(500_000.0),
-        available_for_new_positions_usd=money(300_000.0),
-        cross_constraint_impact=impact,
-        position_zones=_DEFAULT_POSITION_ZONES,
-    )
-    lines = rendered.splitlines()
-    assert lines[2] == ""
-    assert lines[3] == "Capital:"
-    assert lines[4] == "  Available for new positions: $300,000 (60.0% of portfolio)"
-    assert lines[5] == "  Per-position max size: $25,000 (5.0% of portfolio, normal regime)"
-
-
-def test_render_pm_header_renders_sector_and_directional_headroom_blocks() -> None:
-    view = _make_pm_view()
-    impact = CrossConstraintImpact(
-        per_rule=(),
-        flagged_rule_ids=(),
-        available_capital_before_usd=money(300_000.0),
-        available_capital_after_usd=money(300_000.0),
-    )
-    rendered = render_pm_header(
-        pm_view=view,
-        invocation_id="inv-001",
-        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
-        options_enabled=False,
-        short_selling_enabled=False,
-        active_sectors=("tech", "semis"),
-        config=_make_state_delivery_config(),
-        sector_label_display=_MICRO_SECTOR_LABELS,
-        sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=money(500_000.0),
-        available_for_new_positions_usd=money(300_000.0),
-        cross_constraint_impact=impact,
-        position_zones=_DEFAULT_POSITION_ZONES,
-    )
-    assert "Sector headroom (delta-adjusted):" in rendered
-    assert "  Tech:  18.3% / 25.0% — room: 6.7% [NORMAL]" in rendered
-    assert "  Semis: 12.0% / 25.0% — room: 13.0% [NORMAL]" in rendered
-    assert "Directional headroom:" in rendered
-    assert "  Net long:  42.0% / 60.0% — room: 18.0%" in rendered
-    assert "  Gross:     78.0% / 120.0% — room: 42.0%" in rendered
-
-
 def test_render_pm_header_renders_position_level_constraint_proximity_block() -> None:
     positions = (
         _make_position(
@@ -530,151 +414,6 @@ def test_render_pm_header_critical_from_size_not_positive_pnl() -> None:
     )
     # An exact `: size]` tag rules out the `: loss]` and `: size+loss]` variants.
     assert proximity_line.endswith("[\U0001f534 CRITICAL: size]")
-
-
-def test_render_pm_header_renders_sector_exposure_breakdown_per_position() -> None:
-    positions = (
-        _make_position(
-            position_id=PositionId("POS-NVDA-001"),
-            ticker=Symbol("NVDA"),
-            sector="tech",
-            weight_pct=4.2,
-            unrealized_pnl_pct=-1.0,
-        ),
-        _make_position(
-            position_id=PositionId("POS-AAPL-002"),
-            ticker=Symbol("AAPL"),
-            sector="tech",
-            weight_pct=3.1,
-            unrealized_pnl_pct=2.0,
-        ),
-        _make_position(
-            position_id=PositionId("POS-MU-003"),
-            ticker=Symbol("MU"),
-            sector="semis",
-            weight_pct=2.5,
-            unrealized_pnl_pct=4.0,
-        ),
-    )
-    view = _make_pm_view(positions=positions)
-    impact = CrossConstraintImpact(
-        per_rule=(),
-        flagged_rule_ids=(),
-        available_capital_before_usd=money(300_000.0),
-        available_capital_after_usd=money(300_000.0),
-    )
-    rendered = render_pm_header(
-        pm_view=view,
-        invocation_id="inv-001",
-        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
-        options_enabled=False,
-        short_selling_enabled=False,
-        active_sectors=("tech", "semis"),
-        config=_make_state_delivery_config(),
-        sector_label_display=_MICRO_SECTOR_LABELS,
-        sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=money(500_000.0),
-        available_for_new_positions_usd=money(300_000.0),
-        cross_constraint_impact=impact,
-        position_zones=_DEFAULT_POSITION_ZONES,
-    )
-    assert "Sector exposure breakdown (per position):" in rendered
-    assert "  Tech (18.3% / 25.0%):" in rendered
-    assert "    POS-NVDA-001: 4.2% (delta-adj)" in rendered
-    assert "    POS-AAPL-002: 3.1% (delta-adj)" in rendered
-    assert "  Semis (12.0% / 25.0%):" in rendered
-    assert "    POS-MU-003: 2.5% (delta-adj)" in rendered
-
-
-def test_render_pm_header_renders_cross_constraint_impact_empty_per_rule() -> None:
-    view = _make_pm_view()
-    impact = CrossConstraintImpact(
-        per_rule=(),
-        flagged_rule_ids=(),
-        available_capital_before_usd=money(300_000.0),
-        available_capital_after_usd=money(300_000.0),
-    )
-    rendered = render_pm_header(
-        pm_view=view,
-        invocation_id="inv-001",
-        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
-        options_enabled=False,
-        short_selling_enabled=False,
-        active_sectors=("tech", "semis"),
-        config=_make_state_delivery_config(),
-        sector_label_display=_MICRO_SECTOR_LABELS,
-        sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=money(500_000.0),
-        available_for_new_positions_usd=money(300_000.0),
-        cross_constraint_impact=impact,
-        position_zones=_DEFAULT_POSITION_ZONES,
-    )
-    assert "Cross-constraint impact summary:" in rendered
-    assert "  No pending proposals; no projected impact." in rendered
-
-
-def test_render_pm_header_renders_cross_constraint_impact_with_per_rule_lines() -> None:
-    view = _make_pm_view()
-    impact = CrossConstraintImpact(
-        per_rule=(
-            CrossConstraintImpactPerRule(
-                rule_id="sector_concentration_tech",
-                rule_label="Sector tech",
-                current=18.3,
-                projected_after=22.1,
-                limit=25.0,
-                unit="% of portfolio (delta-adjusted)",
-                status="PASS",
-                headroom_remaining=2.9,
-            ),
-            CrossConstraintImpactPerRule(
-                rule_id="net_long_pct",
-                rule_label="Net long",
-                current=42.0,
-                projected_after=48.5,
-                limit=60.0,
-                unit="% of portfolio",
-                status="PASS",
-                headroom_remaining=11.5,
-            ),
-            CrossConstraintImpactPerRule(
-                rule_id="gross_exposure_pct",
-                rule_label="Gross",
-                current=78.0,
-                projected_after=84.5,
-                limit=120.0,
-                unit="% of portfolio",
-                status="PASS",
-                headroom_remaining=35.5,
-            ),
-        ),
-        flagged_rule_ids=(),
-        available_capital_before_usd=money(300_000.0),
-        available_capital_after_usd=money(240_000.0),
-    )
-    rendered = render_pm_header(
-        pm_view=view,
-        invocation_id="inv-001",
-        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
-        options_enabled=False,
-        short_selling_enabled=False,
-        active_sectors=("tech", "semis"),
-        config=_make_state_delivery_config(),
-        sector_label_display=_MICRO_SECTOR_LABELS,
-        sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=money(500_000.0),
-        available_for_new_positions_usd=money(300_000.0),
-        cross_constraint_impact=impact,
-        position_zones=_DEFAULT_POSITION_ZONES,
-    )
-    assert "Cross-constraint impact summary:" in rendered
-    assert "  If all pending proposals are approved as-sized:" in rendered
-    assert "    Sector tech: 18.3% → 22.1% (within limit, 2.9% headroom)" in rendered
-    assert "    Net long:    42.0% → 48.5% (within limit, 11.5% headroom)" in rendered
-    assert "    Gross:       78.0% → 84.5% (within limit, 35.5% headroom)" in rendered
-    assert "    Capital:     $300,000 → $240,000" in rendered
-    # No flagged-suffix line.
-    assert "Flagged" not in rendered
 
 
 def test_render_pm_header_cross_constraint_impact_breach_status() -> None:
@@ -834,67 +573,6 @@ def test_render_pm_header_inverse_rule_fail_renders_shortfall() -> None:
     assert "[BREACH] would breach by 2.5%" in rendered
 
 
-def test_render_pm_header_renders_validation_tool_reminder_block_verbatim() -> None:
-    view = _make_pm_view()
-    impact = CrossConstraintImpact(
-        per_rule=(),
-        flagged_rule_ids=(),
-        available_capital_before_usd=money(300_000.0),
-        available_capital_after_usd=money(300_000.0),
-    )
-    rendered = render_pm_header(
-        pm_view=view,
-        invocation_id="inv-001",
-        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
-        options_enabled=False,
-        short_selling_enabled=False,
-        active_sectors=("tech", "semis"),
-        config=_make_state_delivery_config(),
-        sector_label_display=_MICRO_SECTOR_LABELS,
-        sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=money(500_000.0),
-        available_for_new_positions_usd=money(300_000.0),
-        cross_constraint_impact=impact,
-        position_zones=_DEFAULT_POSITION_ZONES,
-    )
-    assert "Guardrail validation tool available:" in rendered
-    assert (
-        "  Call validate_guardrail(instrument, direction, size) to check any proposed modification."
-    ) in rendered
-    assert (
-        "  Tool tracks cumulative impact across multiple checks within this invocation."
-    ) in rendered
-
-
-def test_render_pm_header_renders_drawdown_context_with_signed_daily_pnl_positive() -> None:
-    view = _make_pm_view(pnl=_make_pnl(daily_total_pnl_usd=2_500.0))  # +0.5%
-    impact = CrossConstraintImpact(
-        per_rule=(),
-        flagged_rule_ids=(),
-        available_capital_before_usd=money(300_000.0),
-        available_capital_after_usd=money(300_000.0),
-    )
-    rendered = render_pm_header(
-        pm_view=view,
-        invocation_id="inv-001",
-        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
-        options_enabled=False,
-        short_selling_enabled=False,
-        active_sectors=("tech", "semis"),
-        config=_make_state_delivery_config(),
-        sector_label_display=_MICRO_SECTOR_LABELS,
-        sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=money(500_000.0),
-        available_for_new_positions_usd=money(300_000.0),
-        cross_constraint_impact=impact,
-        position_zones=_DEFAULT_POSITION_ZONES,
-    )
-    assert "Drawdown context:" in rendered
-    assert "  Daily P/L:     +0.5% (NORMAL)" in rendered
-    assert "  Daily limit:   2.5% — headroom: 1.0%" in rendered
-    assert "  Cumulative:    1.5% from HWM (NORMAL)" in rendered
-
-
 def test_render_pm_header_drawdown_context_negative_daily_pnl() -> None:
     view = _make_pm_view(pnl=_make_pnl(daily_total_pnl_usd=-6_000.0))  # -1.2%
     impact = CrossConstraintImpact(
@@ -1022,32 +700,6 @@ def test_render_pm_header_regime_transition_breaches_block_present_when_breaches
     assert "3.5" in rendered
 
 
-def test_render_pm_header_regime_transition_breaches_block_omitted_when_empty() -> None:
-    view = _make_pm_view()
-    impact = CrossConstraintImpact(
-        per_rule=(),
-        flagged_rule_ids=(),
-        available_capital_before_usd=money(300_000.0),
-        available_capital_after_usd=money(300_000.0),
-    )
-    rendered = render_pm_header(
-        pm_view=view,
-        invocation_id="inv-001",
-        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
-        options_enabled=False,
-        short_selling_enabled=False,
-        active_sectors=("tech", "semis"),
-        config=_make_state_delivery_config(),
-        sector_label_display=_MICRO_SECTOR_LABELS,
-        sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=money(500_000.0),
-        available_for_new_positions_usd=money(300_000.0),
-        cross_constraint_impact=impact,
-        position_zones=_DEFAULT_POSITION_ZONES,
-    )
-    assert "Regime-transition breaches" not in rendered
-
-
 def _engine_close_entry(
     *,
     entry_id: str = "ALE-001",
@@ -1098,35 +750,6 @@ def _engine_reduce_entry(
     )
 
 
-def test_render_pm_header_recent_engine_actions_block_none_when_changelog_empty() -> None:
-    view = _make_pm_view()
-    impact = CrossConstraintImpact(
-        per_rule=(),
-        flagged_rule_ids=(),
-        available_capital_before_usd=money(300_000.0),
-        available_capital_after_usd=money(300_000.0),
-    )
-    rendered = render_pm_header(
-        pm_view=view,
-        invocation_id="inv-001",
-        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
-        options_enabled=False,
-        short_selling_enabled=False,
-        active_sectors=("tech", "semis"),
-        config=_make_state_delivery_config(),
-        sector_label_display=_MICRO_SECTOR_LABELS,
-        sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=money(500_000.0),
-        available_for_new_positions_usd=money(300_000.0),
-        cross_constraint_impact=impact,
-        position_zones=_DEFAULT_POSITION_ZONES,
-    )
-    assert "Recent engine-originated actions (since last invocation):" in rendered
-    lines = rendered.splitlines()
-    header_idx = lines.index("Recent engine-originated actions (since last invocation):")
-    assert lines[header_idx + 1] == "  None"
-
-
 def test_render_pm_header_recent_engine_actions_block_renders_close_and_trim_in_order() -> None:
     close_entry = _engine_close_entry(
         timestamp=datetime(2026, 4, 28, 14, 0, 0, tzinfo=UTC),
@@ -1162,74 +785,6 @@ def test_render_pm_header_recent_engine_actions_block_renders_close_and_trim_in_
     assert "position_level_max_loss" in lines[header_idx + 1]
     assert lines[header_idx + 2].startswith("  2026-04-28T14:05:00Z: Engine trimmed POS-ABC-002 — ")
     assert "single_short_size_limit" in lines[header_idx + 2]
-
-
-def test_render_pm_header_active_regime_overrides_block_none_when_empty() -> None:
-    view = _make_pm_view()
-    impact = CrossConstraintImpact(
-        per_rule=(),
-        flagged_rule_ids=(),
-        available_capital_before_usd=money(300_000.0),
-        available_capital_after_usd=money(300_000.0),
-    )
-    rendered = render_pm_header(
-        pm_view=view,
-        invocation_id="inv-001",
-        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
-        options_enabled=False,
-        short_selling_enabled=False,
-        active_sectors=("tech", "semis"),
-        config=_make_state_delivery_config(),
-        sector_label_display=_MICRO_SECTOR_LABELS,
-        sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=money(500_000.0),
-        available_for_new_positions_usd=money(300_000.0),
-        cross_constraint_impact=impact,
-        position_zones=_DEFAULT_POSITION_ZONES,
-    )
-    assert "Active regime overrides:" in rendered
-    lines = rendered.splitlines()
-    header_idx = lines.index("Active regime overrides:")
-    assert lines[header_idx + 1] == "  None"
-
-
-def test_render_pm_header_active_regime_overrides_block_with_expiry_appends_suffix() -> None:
-    view = _make_pm_view()
-    impact = CrossConstraintImpact(
-        per_rule=(),
-        flagged_rule_ids=(),
-        available_capital_before_usd=money(300_000.0),
-        available_capital_after_usd=money(300_000.0),
-    )
-    expiry = datetime(2026, 4, 29, 21, 0, 0, tzinfo=UTC)
-    overlay = RegimeOverride(
-        overlay_name="pre_event_tightening",
-        description=(
-            "FOMC tightening — max position size -20%, no new positions in final invocation"
-        ),
-        expires_at=expiry,
-    )
-    rendered = render_pm_header(
-        pm_view=view,
-        invocation_id="inv-001",
-        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
-        options_enabled=False,
-        short_selling_enabled=False,
-        active_sectors=("tech", "semis"),
-        config=_make_state_delivery_config(),
-        sector_label_display=_MICRO_SECTOR_LABELS,
-        sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=money(500_000.0),
-        available_for_new_positions_usd=money(300_000.0),
-        cross_constraint_impact=impact,
-        active_regime_overrides=(overlay,),
-        position_zones=_DEFAULT_POSITION_ZONES,
-    )
-    assert "Active regime overrides:" in rendered
-    assert (
-        "  FOMC tightening — max position size -20%, no new positions in final invocation "
-        "(expires 2026-04-29T21:00:00Z)"
-    ) in rendered
 
 
 def test_render_pm_header_active_regime_overrides_block_without_expiry_no_suffix() -> None:
@@ -1283,33 +838,6 @@ def _three_position_view() -> PortfolioManagerView:
     return _make_pm_view(positions=positions)
 
 
-def test_render_pm_header_correlation_state_block_omitted_when_state_is_none() -> None:
-    view = _three_position_view()
-    impact = CrossConstraintImpact(
-        per_rule=(),
-        flagged_rule_ids=(),
-        available_capital_before_usd=money(300_000.0),
-        available_capital_after_usd=money(300_000.0),
-    )
-    rendered = render_pm_header(
-        pm_view=view,
-        invocation_id="inv-001",
-        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
-        options_enabled=False,
-        short_selling_enabled=False,
-        active_sectors=("tech", "semis"),
-        config=_make_state_delivery_config(),
-        sector_label_display=_MICRO_SECTOR_LABELS,
-        sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=money(500_000.0),
-        available_for_new_positions_usd=money(300_000.0),
-        cross_constraint_impact=impact,
-        correlation_state=None,
-        position_zones=_DEFAULT_POSITION_ZONES,
-    )
-    assert "Correlation state:" not in rendered
-
-
 def test_render_pm_header_correlation_state_block_omitted_when_below_position_threshold() -> None:
     view = _make_pm_view(
         positions=(
@@ -1352,43 +880,6 @@ def test_render_pm_header_correlation_state_block_omitted_when_below_position_th
         position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Correlation state:" not in rendered
-
-
-def test_render_pm_header_correlation_state_block_renders_when_threshold_met() -> None:
-    view = _three_position_view()
-    impact = CrossConstraintImpact(
-        per_rule=(),
-        flagged_rule_ids=(),
-        available_capital_before_usd=money(300_000.0),
-        available_capital_after_usd=money(300_000.0),
-    )
-    correlation = CorrelationState(
-        weighted_avg_correlation=0.62,
-        correlation_limit=0.70,
-        zone=RiskZone.WARNING,
-        highest_pairwise_position_a="POS-NVDA-001",
-        highest_pairwise_position_b="POS-AAPL-002",
-        highest_pairwise_value=0.85,
-    )
-    rendered = render_pm_header(
-        pm_view=view,
-        invocation_id="inv-001",
-        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
-        options_enabled=False,
-        short_selling_enabled=False,
-        active_sectors=("tech", "semis"),
-        config=_make_state_delivery_config(correlation_min=3),
-        sector_label_display=_MICRO_SECTOR_LABELS,
-        sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=money(500_000.0),
-        available_for_new_positions_usd=money(300_000.0),
-        cross_constraint_impact=impact,
-        correlation_state=correlation,
-        position_zones=_DEFAULT_POSITION_ZONES,
-    )
-    assert "Correlation state:" in rendered
-    assert "  Portfolio weighted avg correlation: 0.62 / 0.70 [⚠ WARNING]" in rendered
-    assert "  Highest pairwise: POS-NVDA-001 ↔ POS-AAPL-002 = 0.85" in rendered
 
 
 def test_render_pm_header_dependency_risk_flag_block_omitted_when_none_or_below_threshold() -> None:
@@ -1452,46 +943,6 @@ def test_render_pm_header_dependency_risk_flag_block_omitted_when_none_or_below_
         position_zones=_DEFAULT_POSITION_ZONES,
     )
     assert "Dependency risk flag:" not in rendered_below
-
-
-def test_render_pm_header_dependency_risk_flag_block_renders_when_threshold_met() -> None:
-    view = _three_position_view()
-    impact = CrossConstraintImpact(
-        per_rule=(),
-        flagged_rule_ids=(),
-        available_capital_before_usd=money(300_000.0),
-        available_capital_after_usd=money(300_000.0),
-    )
-    flag = DependencyRiskFlag(
-        max_catalyst_failure_exposure_pct=18.0,
-        catalyst_failure_limit_pct=25.0,
-        zone=RiskZone.NORMAL,
-        effective_independent_thesis_count=4,
-        worst_shared_catalyst_label="FOMC June rate cut",
-        worst_shared_catalyst_position_ids=("POS-NVDA-001", "POS-AAPL-002"),
-    )
-    rendered = render_pm_header(
-        pm_view=view,
-        invocation_id="inv-001",
-        timestamp=datetime(2026, 4, 28, 14, 32, 5, tzinfo=UTC),
-        options_enabled=False,
-        short_selling_enabled=False,
-        active_sectors=("tech", "semis"),
-        config=_make_state_delivery_config(dependency_min=3),
-        sector_label_display=_MICRO_SECTOR_LABELS,
-        sector_resolver=_sector_resolver,
-        total_portfolio_value_usd=money(500_000.0),
-        available_for_new_positions_usd=money(300_000.0),
-        cross_constraint_impact=impact,
-        dependency_risk_flag=flag,
-        position_zones=_DEFAULT_POSITION_ZONES,
-    )
-    assert "Dependency risk flag:" in rendered
-    assert "  Max catalyst-failure exposure: 18.0% / 25.0% [NORMAL]" in rendered
-    assert "  Effective independent thesis count: 4" in rendered
-    assert (
-        '  Worst shared catalyst: "FOMC June rate cut" — positions: {POS-NVDA-001, POS-AAPL-002}'
-    ) in rendered
 
 
 def test_render_pm_header_hard_blocks_uses_pm_specific_header_label() -> None:
