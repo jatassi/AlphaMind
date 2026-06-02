@@ -12,7 +12,7 @@ the supervisor calls on the real loop.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
@@ -785,10 +785,17 @@ class TestRunForeverEntryPoint:
         async def _no_op_fetch(_symbols: Iterable[str]) -> dict[str, IVQuote]:
             return {}
 
+        async def _single_iter_loop() -> AsyncIterator[None]:
+            yield
+            await asyncio.sleep(0)
+            # Never yield again — the task will be cancelled from outside.
+            await asyncio.Event().wait()
+
         task = asyncio.create_task(
             run_greeks_refresh(
                 _session(),
                 config,
+                loop=_single_iter_loop,
                 repository=FakeRepository(()),
                 cache=cache,
                 iv_fetch=_no_op_fetch,
@@ -798,7 +805,6 @@ class TestRunForeverEntryPoint:
                 now=lambda: datetime(2026, 5, 11, 14, 30, tzinfo=UTC),
                 market_open=lambda _: True,
                 invocation_id_provider=_const_str("inv-runforever-001"),
-                sleep=asyncio.sleep,
             )
         )
         await asyncio.sleep(0)
@@ -808,45 +814,42 @@ class TestRunForeverEntryPoint:
 
     async def test_loop_drives_refresh_cycles(self) -> None:
         """The loop drives multiple refresh cycles, advancing the per-position
-        anchor on each successful refresh. A short-circuit sleep keeps the test
-        wall-clock-fast."""
+        anchor on each successful refresh."""
         config = _config(interval_minutes=15, inspection_cadence=1)
-        now_holder = [datetime(2026, 5, 11, 14, 0, tzinfo=UTC)]
+        now_val = datetime(2026, 5, 11, 14, 0, tzinfo=UTC)
 
-        def _now() -> datetime:
-            return now_holder[0]
-
-        last = now_holder[0] - timedelta(minutes=20)
+        last = now_val - timedelta(minutes=20)
         position = _options_position(position_id=PositionId("pos-loop-1"), as_of_timestamp=last)
-        cache = await _seeded_cache({"AAPL": 200.0}, _now())
+        # Seed cache fresh relative to now_val.
+        cache = await _seeded_cache({"AAPL": 200.0}, now_val)
         symbol = occ_symbol_for_options(position.details)  # type: ignore[arg-type]
         iv_provider = FakeIVProvider(
-            quotes={symbol: IVQuote(occ_symbol=symbol, iv=0.30, as_of=_now())}
+            quotes={symbol: IVQuote(occ_symbol=symbol, iv=0.30, as_of=now_val)}
         )
         writer = FakeGreeksWriter()
         activity_log = FakeActivityLog()
 
         cycles_done = asyncio.Event()
 
-        async def _instrumented_sleep(_seconds: float) -> None:
-            # Mark first cycle complete, then sleep briefly so the test can stop.
+        async def _one_cycle_loop() -> AsyncIterator[None]:
+            yield
             cycles_done.set()
-            await asyncio.sleep(0)
+            await asyncio.Event().wait()  # stall until cancelled
 
         task = asyncio.create_task(
             run_greeks_refresh(
                 _session(),
                 config,
+                loop=_one_cycle_loop,
                 repository=FakeRepository((position,)),
                 cache=cache,
                 iv_fetch=iv_provider.fetch,
                 writer=writer,
                 activity_log=activity_log.emit,
                 risk_free_rate_provider=_const_float(0.045),
-                now=_now,
+                now=lambda: now_val,
                 market_open=lambda _: True,
                 invocation_id_provider=_const_str("inv-loop-001"),
-                sleep=_instrumented_sleep,
             )
         )
         await cycles_done.wait()
@@ -855,3 +858,470 @@ class TestRunForeverEntryPoint:
             await task
 
         assert len(writer.options_writes) >= 1
+
+
+# ---------------------------------------------------------------------------
+# ALP-830: Freshness-gated spot reads + supervised_loop watchdog binding
+# ---------------------------------------------------------------------------
+
+
+def _config_with_max_age(
+    *,
+    interval_minutes: int = 15,
+    move_threshold_pct: float = 2.0,
+    inspection_cadence: int = 30,
+    max_age: float = 300.0,
+) -> ContinuousMonitorConfig:
+    """Config helper that exposes ``underlying_price_max_age_seconds``."""
+    return ContinuousMonitorConfig(
+        breach_evaluation_cadence_seconds=60,
+        greeks_refresh_interval_minutes=interval_minutes,
+        greeks_refresh_underlying_move_threshold_pct=move_threshold_pct,
+        greeks_refresh_inspection_cadence_seconds=inspection_cadence,
+        underlying_stream_provider="alpaca-iex",
+        max_reconnect_attempts=5,
+        supervisor_shutdown_timeout_seconds=5,
+        underlying_price_max_age_seconds=max_age,
+    )
+
+
+class TestFreshnessGatedMoveTrigger:
+    """AC 1 + AC 3: stale/missing spot silences the move trigger; fresh spot
+    evaluates normally."""
+
+    async def test_stale_spot_does_not_fire_move_trigger(self) -> None:
+        """A position within its scheduled interval whose cached spot is STALE
+        must NOT trigger a recompute via the move trigger.  A frozen price must
+        look like neither a 0% move nor a large move."""
+        config = _config_with_max_age(interval_minutes=15, move_threshold_pct=2.0, max_age=60.0)
+        now = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
+        # Within scheduled interval (1 min < 15 min).
+        last = now - timedelta(minutes=1)
+        position = _options_position(position_id=PositionId("pos-stale-move"), as_of_timestamp=last)
+        symbol = occ_symbol_for_options(position.details)  # type: ignore[arg-type]
+        # Seed the cache with a quote that is STALE at ``now``
+        # (quote.as_of = now - 120s, max_age = 60s → age 120 > 60 → STALE).
+        stale_as_of = now - timedelta(seconds=120)
+        cache = await _seeded_cache({"AAPL": 210.0}, stale_as_of)
+        # Anchor at 200.0; spot 210.0 would be a 5% move — above 2% threshold.
+        states = {
+            "pos-stale-move": LastRefreshState(
+                position_id=PositionId("pos-stale-move"),
+                last_refreshed_at=last,
+                underlying_price_at_last_refresh=200.0,
+            )
+        }
+        iv_provider = FakeIVProvider(
+            quotes={symbol: IVQuote(occ_symbol=symbol, iv=0.30, as_of=now)}
+        )
+        writer = FakeGreeksWriter()
+        activity_log = FakeActivityLog()
+
+        await _run_refresh_cycle(
+            config=config,
+            repository=FakeRepository((position,)),
+            cache=cache,
+            states=states,
+            iv_fetch=iv_provider.fetch,
+            writer=writer,
+            activity_log=activity_log.emit,
+            risk_free_rate=0.045,
+            now=now,
+            invocation_id_provider=_const_str("inv-stale-move"),
+            market_open=True,
+        )
+
+        # Stale spot → move trigger inert → position not due → no write.
+        assert writer.options_writes == []
+        assert iv_provider.calls == []
+
+    async def test_missing_spot_does_not_fire_move_trigger(self) -> None:
+        """A position whose ticker is absent from the cache (MISSING) must not
+        trigger via the move trigger."""
+        config = _config_with_max_age(interval_minutes=15, move_threshold_pct=2.0, max_age=60.0)
+        now = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
+        last = now - timedelta(minutes=1)
+        position = _options_position(
+            position_id=PositionId("pos-missing-move"), as_of_timestamp=last
+        )
+        # Cache has no entry for AAPL.
+        cache = UnderlyingPriceCache()
+        states = {
+            "pos-missing-move": LastRefreshState(
+                position_id=PositionId("pos-missing-move"),
+                last_refreshed_at=last,
+                underlying_price_at_last_refresh=200.0,
+            )
+        }
+        iv_provider = FakeIVProvider()
+        writer = FakeGreeksWriter()
+        activity_log = FakeActivityLog()
+
+        await _run_refresh_cycle(
+            config=config,
+            repository=FakeRepository((position,)),
+            cache=cache,
+            states=states,
+            iv_fetch=iv_provider.fetch,
+            writer=writer,
+            activity_log=activity_log.emit,
+            risk_free_rate=0.045,
+            now=now,
+            invocation_id_provider=_const_str("inv-missing-move"),
+            market_open=True,
+        )
+
+        assert writer.options_writes == []
+        assert iv_provider.calls == []
+
+    async def test_fresh_spot_evaluates_move_trigger_as_before(self) -> None:
+        """AC 3: a position with a FRESH spot evaluates the move trigger
+        exactly as before — a move above threshold within the scheduled interval
+        fires a recompute."""
+        config = _config_with_max_age(interval_minutes=15, move_threshold_pct=2.0, max_age=300.0)
+        now = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
+        # Within scheduled interval; quote is fresh (age 30s < 300s).
+        last = now - timedelta(minutes=1)
+        fresh_as_of = now - timedelta(seconds=30)
+        position = _options_position(position_id=PositionId("pos-fresh-move"), as_of_timestamp=last)
+        symbol = occ_symbol_for_options(position.details)  # type: ignore[arg-type]
+        # Anchor at 200.0; spot 206.0 → 3% move > 2% threshold.
+        cache = await _seeded_cache({"AAPL": 206.0}, fresh_as_of)
+        states = {
+            "pos-fresh-move": LastRefreshState(
+                position_id=PositionId("pos-fresh-move"),
+                last_refreshed_at=last,
+                underlying_price_at_last_refresh=200.0,
+            )
+        }
+        iv_provider = FakeIVProvider(
+            quotes={symbol: IVQuote(occ_symbol=symbol, iv=0.30, as_of=now)}
+        )
+        writer = FakeGreeksWriter()
+        activity_log = FakeActivityLog()
+
+        await _run_refresh_cycle(
+            config=config,
+            repository=FakeRepository((position,)),
+            cache=cache,
+            states=states,
+            iv_fetch=iv_provider.fetch,
+            writer=writer,
+            activity_log=activity_log.emit,
+            risk_free_rate=0.045,
+            now=now,
+            invocation_id_provider=_const_str("inv-fresh-move"),
+            market_open=True,
+        )
+
+        # Fresh spot → move trigger fires → recompute succeeds.
+        assert len(writer.options_writes) == 1
+        _, greeks = writer.options_writes[0]
+        assert greeks.refresh_failed is False
+        assert greeks.iv_used == 0.30
+
+
+class TestFreshnessGatedRecompute:
+    """AC 2: a due position with stale/missing spot preserves prior greeks via
+    refresh_failed=True rather than recomputing against the frozen price."""
+
+    async def test_due_position_stale_spot_preserves_prior_greeks(self) -> None:
+        """Scheduled interval elapsed (position is due) but spot is STALE —
+        must write refresh_failed=True with prior greeks, not a fresh recompute."""
+        config = _config_with_max_age(interval_minutes=15, move_threshold_pct=2.0, max_age=60.0)
+        now = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
+        # 20 minutes since last refresh → scheduled trigger fires.
+        last = now - timedelta(minutes=20)
+        position = _options_position(position_id=PositionId("pos-due-stale"), as_of_timestamp=last)
+        symbol = occ_symbol_for_options(position.details)  # type: ignore[arg-type]
+        # Spot is STALE (quote.as_of is 120s old; max_age 60s).
+        stale_as_of = now - timedelta(seconds=120)
+        cache = await _seeded_cache({"AAPL": 200.0}, stale_as_of)
+        states = {
+            "pos-due-stale": LastRefreshState(
+                position_id=PositionId("pos-due-stale"),
+                last_refreshed_at=last,
+                underlying_price_at_last_refresh=200.0,
+            )
+        }
+        iv_provider = FakeIVProvider(
+            quotes={symbol: IVQuote(occ_symbol=symbol, iv=0.30, as_of=now)}
+        )
+        writer = FakeGreeksWriter()
+        activity_log = FakeActivityLog()
+
+        await _run_refresh_cycle(
+            config=config,
+            repository=FakeRepository((position,)),
+            cache=cache,
+            states=states,
+            iv_fetch=iv_provider.fetch,
+            writer=writer,
+            activity_log=activity_log.emit,
+            risk_free_rate=0.045,
+            now=now,
+            invocation_id_provider=_const_str("inv-due-stale"),
+            market_open=True,
+        )
+
+        # Writer called once — refresh_failed=True, prior greeks preserved.
+        assert len(writer.options_writes) == 1
+        _, greeks = writer.options_writes[0]
+        assert greeks.refresh_failed is True
+        prior = position.details.greeks  # type: ignore[union-attr]
+        assert greeks.delta == prior.delta
+        assert greeks.gamma == prior.gamma
+        assert greeks.theta == prior.theta
+        assert greeks.vega == prior.vega
+        # Activity log entry emitted with stale_spot reason.
+        assert len(activity_log.entries) == 1
+        detail = activity_log.entries[0].detail
+        assert isinstance(detail, GreeksRefreshFailedDetail)
+        assert detail.failure_reason == "stale_spot"
+
+    async def test_due_position_missing_spot_preserves_prior_greeks(self) -> None:
+        """Scheduled interval elapsed but ticker absent from cache (MISSING) —
+        must write refresh_failed=True with prior greeks."""
+        config = _config_with_max_age(interval_minutes=15, move_threshold_pct=2.0, max_age=60.0)
+        now = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
+        last = now - timedelta(minutes=20)
+        position = _options_position(
+            position_id=PositionId("pos-due-missing"), as_of_timestamp=last
+        )
+        # Cache has no AAPL entry.
+        cache = UnderlyingPriceCache()
+        states = {
+            "pos-due-missing": LastRefreshState(
+                position_id=PositionId("pos-due-missing"),
+                last_refreshed_at=last,
+                underlying_price_at_last_refresh=200.0,
+            )
+        }
+        iv_provider = FakeIVProvider()
+        writer = FakeGreeksWriter()
+        activity_log = FakeActivityLog()
+
+        await _run_refresh_cycle(
+            config=config,
+            repository=FakeRepository((position,)),
+            cache=cache,
+            states=states,
+            iv_fetch=iv_provider.fetch,
+            writer=writer,
+            activity_log=activity_log.emit,
+            risk_free_rate=0.045,
+            now=now,
+            invocation_id_provider=_const_str("inv-due-missing"),
+            market_open=True,
+        )
+
+        assert len(writer.options_writes) == 1
+        _, greeks = writer.options_writes[0]
+        assert greeks.refresh_failed is True
+        prior = position.details.greeks  # type: ignore[union-attr]
+        assert greeks.delta == prior.delta
+        assert len(activity_log.entries) == 1
+        detail = activity_log.entries[0].detail
+        assert isinstance(detail, GreeksRefreshFailedDetail)
+        assert detail.failure_reason == "missing_spot"
+
+    async def test_scheduled_trigger_fires_regardless_of_spot_freshness(self) -> None:
+        """AC 4: the scheduled-interval trigger is time-based and unaffected by
+        spot freshness.  A due position with a stale spot must still call the
+        writer (refresh_failed=True path), not silently skip."""
+        config = _config_with_max_age(interval_minutes=15, move_threshold_pct=2.0, max_age=60.0)
+        now = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
+        last = now - timedelta(minutes=20)
+        position = _options_position(
+            position_id=PositionId("pos-sched-stale"), as_of_timestamp=last
+        )
+        stale_as_of = now - timedelta(seconds=120)
+        cache = await _seeded_cache({"AAPL": 200.0}, stale_as_of)
+        states = {
+            "pos-sched-stale": LastRefreshState(
+                position_id=PositionId("pos-sched-stale"),
+                last_refreshed_at=last,
+                underlying_price_at_last_refresh=200.0,
+            )
+        }
+        writer = FakeGreeksWriter()
+        activity_log = FakeActivityLog()
+
+        await _run_refresh_cycle(
+            config=config,
+            repository=FakeRepository((position,)),
+            cache=cache,
+            states=states,
+            iv_fetch=FakeIVProvider(quotes={}).fetch,
+            writer=writer,
+            activity_log=activity_log.emit,
+            risk_free_rate=0.045,
+            now=now,
+            invocation_id_provider=_const_str("inv-sched-stale"),
+            market_open=True,
+        )
+
+        # Scheduled trigger fires; stale-spot path → refresh_failed write.
+        assert len(writer.options_writes) == 1
+        _, greeks = writer.options_writes[0]
+        assert greeks.refresh_failed is True
+
+
+class TestWatchdogBinding:
+    """AC 5: greeks_refresh runs via supervised_loop and a stalled cycle trips
+    the watchdog.  The test drives the *production loop* through the real
+    supervised_loop seam — no manual register_watch calls."""
+
+    async def test_greeks_refresh_bound_at_cadence_via_supervised_loop(self) -> None:
+        """After one loop iteration, the watchdog registry shows greeks_refresh
+        bound at its declared cadence (times the multiplier), and at least one
+        beat was recorded."""
+        from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
+
+        config = _config_with_max_age(inspection_cadence=5)
+        session = _session()
+
+        beat_holder: list[float] = [1000.0]
+
+        def _fake_monotonic() -> float:
+            return beat_holder[0]
+
+        supervisor = MonitorSupervisor(session=session, config=config, monotonic=_fake_monotonic)
+
+        stop_event = asyncio.Event()
+
+        async def _one_shot_sleep(_s: float) -> None:
+            """After the first pacing sleep, signal stop so the loop exits."""
+            stop_event.set()
+            await asyncio.sleep(0)
+
+        # Wire the real supervised_loop — this is what registers the bound + beats.
+        supervisor._sleep = _one_shot_sleep
+
+        task = asyncio.create_task(
+            run_greeks_refresh(
+                session,
+                config,
+                loop=lambda: supervisor.supervised_loop(
+                    "greeks_refresh",
+                    float(config.greeks_refresh_inspection_cadence_seconds),
+                ),
+                repository=FakeRepository(()),
+                cache=UnderlyingPriceCache(),
+                iv_fetch=FakeIVProvider().fetch,
+                writer=FakeGreeksWriter(),
+                activity_log=FakeActivityLog().emit,
+                risk_free_rate_provider=_const_float(0.045),
+                now=lambda: datetime(2026, 5, 11, 14, 30, tzinfo=UTC),
+                market_open=lambda _: True,
+                invocation_id_provider=_const_str("inv-watchdog"),
+            )
+        )
+        await stop_event.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # greeks_refresh must be registered in the watchdog with a positive bound.
+        assert "greeks_refresh" in supervisor._watch
+        entry = supervisor._watch["greeks_refresh"]
+        expected_bound = (
+            config.greeks_refresh_inspection_cadence_seconds * config.watchdog_cadence_multiplier
+        )
+        assert entry.bound_seconds == pytest.approx(expected_bound)
+        assert entry.last_beat is not None
+
+    async def test_stalled_cycle_trips_watchdog(self) -> None:
+        """A stalled greeks_refresh cycle trips the watchdog.
+
+        Drive the production loop via ``supervised_loop`` for one iteration
+        (establishing the beat), then advance virtual time past the bound and run
+        the watchdog loop — it must call os._exit(1).
+        """
+        import unittest.mock as mock
+
+        from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
+
+        config = _config_with_max_age(inspection_cadence=1)
+        session = _session()
+
+        # Controllable clock shared by supervisor and watchdog check.
+        virtual_now = [1000.0]
+
+        def _fake_monotonic() -> float:
+            return virtual_now[0]
+
+        beat_event = asyncio.Event()
+        stall_event = asyncio.Event()
+
+        # Supervisor uses the fake clock for both pacing and watchdog checks.
+        async def _fake_sleep(_s: float) -> None:
+            await asyncio.sleep(0)
+
+        supervisor = MonitorSupervisor(
+            session=session,
+            config=config,
+            sleep=_fake_sleep,
+            monotonic=_fake_monotonic,
+        )
+        supervisor._stop_event = asyncio.Event()
+
+        async def _one_beat_loop() -> AsyncIterator[None]:
+            """Beat once through the real supervised_loop seam, then stall."""
+            supervisor.register_watch(
+                "greeks_refresh",
+                float(config.greeks_refresh_inspection_cadence_seconds),
+            )
+            supervisor.beat("greeks_refresh")
+            beat_event.set()
+            yield
+            await stall_event.wait()  # stall — never advances to next beat
+
+        exited: list[int] = []
+        with mock.patch(
+            "alphamind.execution.continuous_monitor.supervisor.os._exit",
+            side_effect=lambda code: exited.append(code),
+        ):
+            task = asyncio.create_task(
+                run_greeks_refresh(
+                    session,
+                    config,
+                    loop=_one_beat_loop,
+                    repository=FakeRepository(()),
+                    cache=UnderlyingPriceCache(),
+                    iv_fetch=FakeIVProvider().fetch,
+                    writer=FakeGreeksWriter(),
+                    activity_log=FakeActivityLog().emit,
+                    risk_free_rate_provider=_const_float(0.045),
+                    now=lambda: datetime(2026, 5, 11, 14, 30, tzinfo=UTC),
+                    market_open=lambda _: True,
+                    invocation_id_provider=_const_str("inv-stall"),
+                )
+            )
+            await beat_event.wait()
+
+            # Advance virtual time past the watchdog bound.
+            bound = (
+                config.greeks_refresh_inspection_cadence_seconds
+                * config.watchdog_cadence_multiplier
+            )
+            virtual_now[0] = virtual_now[0] + bound + 10.0
+
+            # Run one watchdog check pass via the real _watchdog_loop.
+            # Two `asyncio.sleep(0)` are needed: the first yields to let the
+            # watchdog task start and call its own internal sleep; the second
+            # yields again so the watchdog resumes from that sleep and runs
+            # the stall check (os._exit) synchronously before we cancel.
+            watchdog_task = asyncio.create_task(supervisor._watchdog_loop())
+            await asyncio.sleep(0)  # watchdog starts, enters _fake_sleep
+            await asyncio.sleep(0)  # watchdog resumes from _fake_sleep, runs check
+            watchdog_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await watchdog_task
+
+            assert exited == [1], "watchdog should have tripped os._exit(1)"
+
+            stall_event.set()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task

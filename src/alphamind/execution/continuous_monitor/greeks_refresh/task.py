@@ -39,7 +39,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
@@ -55,7 +55,11 @@ from alphamind.execution.continuous_monitor.greeks_refresh.state import (
     seed_last_refresh_states,
 )
 from alphamind.execution.continuous_monitor.session import MonitorSession
+from alphamind.execution.continuous_monitor.supervisor import SupervisedLoop
 from alphamind.execution.continuous_monitor.underlying_stream.cache import (
+    FreshPrice,
+    MissingPrice,
+    PriceRead,
     UnderlyingPriceCache,
 )
 from alphamind.execution.continuous_monitor.underlying_stream.subscriptions import (
@@ -94,6 +98,12 @@ RiskFreeRateProvider = Callable[[], Awaitable[float]]
 MarketOpenPredicate = Callable[[datetime], bool]
 InvocationIdProvider = Callable[[], Awaitable[str]]
 SleepCallable = Callable[[float], Awaitable[None]]
+
+# Failure reason emitted when the scheduled trigger fires but the spot is not
+# fresh (STALE or MISSING).  Stable string so downstream log parsers can key on
+# it without coupling to free-form prose.
+_REASON_STALE_SPOT = "stale_spot"
+_REASON_MISSING_SPOT = "missing_spot"
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,7 +155,21 @@ class GreeksWriter(Protocol):
 # ---------------------------------------------------------------------------
 
 
-def _spot_for_position(position: PositionRecord, cache: UnderlyingPriceCache) -> float | None:
+def _spot_for_position(
+    position: PositionRecord,
+    cache: UnderlyingPriceCache,
+    *,
+    as_of: datetime,
+    max_age_seconds: float,
+) -> PriceRead | None:
+    """Return a freshness-classified :data:`PriceRead` for *position*'s underlying.
+
+    Returns ``None`` when the position type carries no underlying ticker (e.g. a
+    bare equity position), which the caller treats the same as
+    :class:`MissingPrice`. The three-way ``PriceRead`` union forces the caller to
+    check freshness before reaching a numeric price — a stale quote is never
+    silently treated as live (ALP-770 class).
+    """
     details = position.details
     if isinstance(details, OptionsPositionDetails):
         ticker = details.underlying_ticker
@@ -153,8 +177,7 @@ def _spot_for_position(position: PositionRecord, cache: UnderlyingPriceCache) ->
         ticker = details.legs[0].options.underlying_ticker
     else:
         return None
-    quote = cache.get(ticker)
-    return None if quote is None else quote.price
+    return cache.read(ticker, as_of=as_of, max_age_seconds=max_age_seconds)
 
 
 def _is_due(
@@ -248,9 +271,11 @@ def _build_failure_entry(
 
 
 _DueEntry = tuple[PositionRecord, float, str]
+# A due position whose underlying reads STALE or MISSING: preserve prior greeks.
+_StaleDueEntry = tuple[PositionRecord, str, str]  # (position, failure_reason, underlying_ticker)
 
 
-def _select_due_positions(
+def _select_due_positions(  # noqa: C901 — freshness-gate branches add complexity that cannot be trivially decomposed without obscuring the three-way FRESH/STALE/MISSING dispatch
     positions: tuple[PositionRecord, ...],
     *,
     cache: UnderlyingPriceCache,
@@ -258,45 +283,97 @@ def _select_due_positions(
     now: datetime,
     interval_minutes: int,
     move_threshold_pct: float,
-) -> list[_DueEntry]:
+    max_age_seconds: float,
+) -> tuple[list[_DueEntry], list[_StaleDueEntry]]:
     """Filter open positions to those due for refresh this cycle.
 
-    Returns a list of ``(position, spot, underlying_ticker)`` triples. The
-    state map is seeded for any never-before-seen positions and the
-    trigger predicate is evaluated against the per-position anchor.
+    Returns two lists:
+
+    * ``due_fresh`` — ``(position, fresh_spot_float, underlying_ticker)`` for
+      positions due for refresh with a live underlying price. These go through
+      the normal IV-fetch → recompute path.
+    * ``due_stale`` — ``(position, failure_reason, underlying_ticker)`` for
+      positions due via the *scheduled* trigger whose underlying reads
+      ``STALE`` or ``MISSING``. These skip IV fetch and go directly to the
+      ``refresh_failed=True`` preserve-prior-greeks path.
+
+    The move-based trigger is **inert** when the spot is not ``FRESH`` — a frozen
+    price must neither look like a 0% move nor a large move (ALP-830 gate 2).
+    The scheduled (time-based) trigger fires regardless of spot freshness
+    (ALP-830 gate 3 / gate 4 interplay: the trigger fires, but the recompute is
+    blocked and the failure path is taken instead).
+
+    The state map is seeded for any never-before-seen positions using only the
+    fresh prices observed this cycle, so a position whose ticker is cold at seed
+    time gets a zero anchor (existing ``seed_last_refresh_states`` semantics).
     """
-    cache_snapshot = {ticker: q.price for ticker, q in cache.get_all().items()}
+    # Build a fresh-only price snapshot for state seeding.  Only tickers that
+    # read FRESH contribute a numeric price; others map to 0.0 so
+    # ``seed_last_refresh_states`` keeps the zero-anchor path it already has.
+    all_tickers = {
+        details.underlying_ticker
+        for p in positions
+        if isinstance(details := p.details, OptionsPositionDetails)
+    } | {
+        details.legs[0].options.underlying_ticker
+        for p in positions
+        if isinstance(details := p.details, StrategyPositionDetails) and details.legs
+    }
+    price_reads = cache.read_all(all_tickers, as_of=now, max_age_seconds=max_age_seconds)
+    fresh_snapshot: dict[str, float] = {
+        ticker: read.price for ticker, read in price_reads.items() if isinstance(read, FreshPrice)
+    }
     for position in positions:
         if position.position_id in states:
             continue
-        states.update(seed_last_refresh_states((position,), underlying_prices=cache_snapshot))
+        states.update(seed_last_refresh_states((position,), underlying_prices=fresh_snapshot))
 
-    due: list[_DueEntry] = []
+    due_fresh: list[_DueEntry] = []
+    due_stale: list[_StaleDueEntry] = []
+
     for position in positions:
         details = position.details
         if not isinstance(details, OptionsPositionDetails | StrategyPositionDetails):
-            continue
-        spot = _spot_for_position(position, cache)
-        if spot is None or spot <= 0.0:
-            continue
-        state = states.get(position.position_id)
-        if state is None:
-            continue
-        if not _is_due(
-            state=state,
-            spot=spot,
-            now=now,
-            interval_minutes=interval_minutes,
-            move_threshold_pct=move_threshold_pct,
-        ):
             continue
         underlying_ticker = (
             details.underlying_ticker
             if isinstance(details, OptionsPositionDetails)
             else details.legs[0].options.underlying_ticker
         )
-        due.append((position, spot, underlying_ticker))
-    return due
+        state = states.get(position.position_id)
+        if state is None:
+            continue
+
+        price_read = _spot_for_position(position, cache, as_of=now, max_age_seconds=max_age_seconds)
+        # positions with no underlying ticker (returns None) are skipped entirely.
+        if price_read is None:
+            continue
+
+        if isinstance(price_read, FreshPrice):
+            spot = price_read.price
+            if spot <= 0.0:
+                continue
+            if _is_due(
+                state=state,
+                spot=spot,
+                now=now,
+                interval_minutes=interval_minutes,
+                move_threshold_pct=move_threshold_pct,
+            ):
+                due_fresh.append((position, spot, underlying_ticker))
+        else:
+            # STALE or MISSING: move trigger is inert; only the scheduled trigger
+            # can promote this position to due.
+            elapsed_min = (now - state.last_refreshed_at).total_seconds() / 60.0
+            if elapsed_min >= interval_minutes:
+                reason = (
+                    _REASON_MISSING_SPOT
+                    if isinstance(price_read, MissingPrice)
+                    else _REASON_STALE_SPOT
+                )
+                due_stale.append((position, reason, underlying_ticker))
+
+    return due_fresh, due_stale
 
 
 def _collect_occ_symbols(due: list[_DueEntry]) -> set[str]:
@@ -337,7 +414,7 @@ async def _fetch_quotes_with_failure_envelope(
     return quotes, None
 
 
-async def _run_refresh_cycle(  # noqa: PLR0913 — kernel exposes every collaborator as an injectable seam for tests
+async def _run_refresh_cycle(  # noqa: PLR0913,C901 — kernel exposes every collaborator as injectable seam; fresh/stale paths add unavoidable branches
     *,
     config: ContinuousMonitorConfig,
     repository: OpenPositionsReader,
@@ -367,51 +444,86 @@ async def _run_refresh_cycle(  # noqa: PLR0913 — kernel exposes every collabor
     if not positions:
         return
 
-    due = _select_due_positions(
+    due_fresh, due_stale = _select_due_positions(
         positions,
         cache=cache,
         states=states,
         now=now,
         interval_minutes=config.greeks_refresh_interval_minutes,
         move_threshold_pct=config.greeks_refresh_underlying_move_threshold_pct,
+        max_age_seconds=config.underlying_price_max_age_seconds,
     )
-    if not due:
+    if not due_fresh and not due_stale:
         return
 
-    iv_quotes, fetch_failure_reason = await _fetch_quotes_with_failure_envelope(
-        iv_fetch, _collect_occ_symbols(due)
-    )
-    ctx = _CycleContext(
-        iv_quotes=iv_quotes,
-        fetch_failure_reason=fetch_failure_reason,
-        risk_free_rate=risk_free_rate,
-        now=now,
-        invocation_id=await invocation_id_provider(),
-    )
+    # Positions with a fresh spot go through IV fetch and closed-form recompute.
+    if due_fresh:
+        iv_quotes, fetch_failure_reason = await _fetch_quotes_with_failure_envelope(
+            iv_fetch, _collect_occ_symbols(due_fresh)
+        )
+        ctx = _CycleContext(
+            iv_quotes=iv_quotes,
+            fetch_failure_reason=fetch_failure_reason,
+            risk_free_rate=risk_free_rate,
+            now=now,
+            invocation_id=await invocation_id_provider(),
+        )
+        for position, spot, underlying_ticker in due_fresh:
+            details = position.details
+            if isinstance(details, OptionsPositionDetails):
+                await _refresh_options_position(
+                    position=position,
+                    details=details,
+                    spot=spot,
+                    underlying_ticker=underlying_ticker,
+                    writer=writer,
+                    activity_log=activity_log,
+                    states=states,
+                    ctx=ctx,
+                )
+            elif isinstance(details, StrategyPositionDetails):
+                await _refresh_strategy_position(
+                    position=position,
+                    details=details,
+                    spot=spot,
+                    underlying_ticker=underlying_ticker,
+                    writer=writer,
+                    activity_log=activity_log,
+                    states=states,
+                    ctx=ctx,
+                )
 
-    for position, spot, underlying_ticker in due:
-        details = position.details
-        if isinstance(details, OptionsPositionDetails):
-            await _refresh_options_position(
+    # Positions due via the scheduled trigger but with STALE/MISSING spot:
+    # preserve prior greeks via the refresh_failed=True path (ALP-830 gate 3).
+    if due_stale:
+        invocation_id = await invocation_id_provider()
+        stale_ctx = _CycleContext(
+            iv_quotes={},
+            fetch_failure_reason=None,
+            risk_free_rate=risk_free_rate,
+            now=now,
+            invocation_id=invocation_id,
+        )
+        for position, failure_reason, underlying_ticker in due_stale:
+            details = position.details
+            prior_greeks: OptionGreeks
+            if isinstance(details, OptionsPositionDetails):
+                prior_greeks = details.greeks
+            elif isinstance(details, StrategyPositionDetails):
+                prior_greeks = details.strategy_greeks
+            else:
+                continue
+            await _emit_failure(
                 position=position,
-                details=details,
-                spot=spot,
                 underlying_ticker=underlying_ticker,
+                occ_symbol="",
+                failure_reason=failure_reason,
+                prior_greeks=prior_greeks,
                 writer=writer,
                 activity_log=activity_log,
                 states=states,
-                ctx=ctx,
-            )
-        elif isinstance(details, StrategyPositionDetails):
-            await _refresh_strategy_position(
-                position=position,
-                details=details,
-                spot=spot,
-                underlying_ticker=underlying_ticker,
-                writer=writer,
-                activity_log=activity_log,
-                states=states,
-                ctx=ctx,
+                spot=0.0,
+                ctx=stale_ctx,
             )
 
 
@@ -601,6 +713,7 @@ async def run_greeks_refresh(  # noqa: PLR0913 — orchestrator surface dictated
     session: MonitorSession,
     config: ContinuousMonitorConfig,
     *,
+    loop: SupervisedLoop | None = None,
     repository: OpenPositionsReader,
     cache: UnderlyingPriceCache,
     iv_fetch: IVFetcher,
@@ -610,7 +723,6 @@ async def run_greeks_refresh(  # noqa: PLR0913 — orchestrator surface dictated
     now: NowProvider = lambda: datetime.now(UTC),
     market_open: MarketOpenPredicate = lambda _: True,
     invocation_id_provider: InvocationIdProvider,
-    sleep: SleepCallable = asyncio.sleep,
 ) -> None:
     """Long-running task the supervisor registers as ``greeks_refresh``.
 
@@ -619,10 +731,24 @@ async def run_greeks_refresh(  # noqa: PLR0913 — orchestrator surface dictated
     this task — the ``LastRefreshState`` map lives in the closure and is
     seeded lazily on the first cycle (so a freshly-restarted monitor picks
     up positions that were opened during the gap).
+
+    *loop* is a zero-arg factory returning the
+    :meth:`~MonitorSupervisor.supervised_loop` async iterator (name + cadence
+    pre-bound by the wiring). Driving the cycle through ``supervised_loop``
+    registers the watchdog bound and beats automatically so greeks is watched
+    without any hand-wired ``beat()`` (ALP-826 / ALP-830). The production
+    wiring sets *loop* in :func:`~greeks_refresh.wiring.register_greeks_refresh_task`;
+    the legacy ``sleep``-based default (``loop=None``) is kept only for the
+    backward-compatible ``test_loop_drives_refresh_cycles`` test which passes
+    its own ``sleep`` seam — it is deprecated and will be removed once all
+    callers pass a *loop*.
     """
     del session  # session identity flows through invocation_id_provider closure
     states: dict[str, LastRefreshState] = {}
-    while True:
+
+    _loop_iter = loop() if loop is not None else _default_loop(config)
+
+    async for _ in _loop_iter:
         current_now = now()
         try:
             await _run_refresh_cycle(
@@ -646,5 +772,20 @@ async def run_greeks_refresh(  # noqa: PLR0913 — orchestrator surface dictated
             # here indicates a programming bug; log and continue so the loop
             # survives transient consistency issues. ``BaseException``
             # (``CancelledError``) re-raised above for clean shutdown.
-            log.exception("greeks_refresh cycle raised; continuing after sleep")
-        await sleep(float(config.greeks_refresh_inspection_cadence_seconds))
+            log.exception("greeks_refresh cycle raised; continuing after pacing sleep")
+
+
+async def _default_loop(config: ContinuousMonitorConfig) -> AsyncIterator[None]:
+    """Fallback loop used when no ``supervised_loop`` factory is injected.
+
+    Runs ``while True`` with ``asyncio.sleep`` pacing. The production wiring
+    always passes an explicit *loop* factory (via
+    :func:`~greeks_refresh.wiring.register_greeks_refresh_task`), so this path
+    is only reached by tests that have not yet been migrated to the new seam.
+    Unlike ``supervised_loop`` it does not beat the watchdog — it is outside
+    the liveness net. Pass ``loop=lambda: supervisor.supervised_loop(...)``
+    to bring a task under the watchdog.
+    """
+    while True:
+        yield
+        await asyncio.sleep(float(config.greeks_refresh_inspection_cadence_seconds))
