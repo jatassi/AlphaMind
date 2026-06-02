@@ -227,7 +227,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # it), so this is the canonical digest for the current config tree across all
     # platforms. ALP-769 had xfail'd this test to unblock the CI fallback merge;
     # that marker is now removed.
-    expected = "d066aae7f3cf1d469b1dcc4f4b63a45cecd0d1fe1c7cc449f28adaab8747b8e9"
+    # Pin updated 2026-06-02 (decision-layer budgets +50% + pre_open 09:35, ALP-820):
+    # config/agents.yaml raised analyst/strategist/portfolio_manager latency/context/
+    # output budgets 50% (ALP-820 timeout mitigation) and config/scheduler.yaml moved
+    # pre_open 09:00 -> 09:35 ET, both shifting the resolved-config canonical bytes.
+    expected = "028f49dec580d022ecc4976f79420cf8734457764816a31bdf61815c9ed7a069"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."
