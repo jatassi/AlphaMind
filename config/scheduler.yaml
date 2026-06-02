@@ -34,5 +34,5 @@ triggers:
   # `market_hours_rolling` is now a single mid-day fire (a slight misnomer the
   # name keeps to avoid churning the enum / wire-schema / DB CHECK vocab).
   market_hours_rolling: "0 13 * * mon-fri"    # 13:00 ET — single mid-day opportunity / thesis read
-  pre_close:            "30 15 * * mon-fri"   # 15:30 ET — EOD risk reduction; SOLE owner of the close slot
+  pre_close:            "0 15 * * mon-fri"    # 15:00 ET — EOD risk reduction; SOLE owner of the close slot
   weekend_sunday:       "0 18 * * sun"        # 18:00 ET Sun — pre-week positioning
