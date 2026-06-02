@@ -26,6 +26,7 @@ import argparse
 import asyncio
 import logging
 import sys
+import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
 from functools import partial
@@ -195,11 +196,23 @@ def _default_archive_root() -> Path:
 
 _MAIN_CONFIG_PATH = _CONFIG_DIR / "main.yaml"
 
-# ALP-530 — refresh cadence for the shared realized-vol map. The distillation
-# producer runs at invocation cadence (typically daily / on-schedule); the
-# monitor lives across invocations, so a 24h refresh keeps the long-lived
-# process from holding a multi-day-stale Mapping.
+# ALP-530 — functional refresh cadence for the shared realized-vol map. The
+# distillation producer runs at invocation cadence (typically daily /
+# on-schedule); the monitor lives across invocations, so a 24h refresh keeps the
+# long-lived process from holding a multi-day-stale Mapping.
 _REALIZED_VOL_REFRESH_INTERVAL_SECONDS: float = 24 * 60 * 60
+
+# ALP-825 review — short heartbeat cadence for the realized-vol refresh loop.
+# Mirrors ``borrow_accrual._HEARTBEAT_CADENCE_SECONDS``: the refresh fires only
+# once per ``_REALIZED_VOL_REFRESH_INTERVAL_SECONDS`` (24h), but the supervised
+# loop must iterate far more often than that so the stall watchdog sees a steady
+# heartbeat — pacing the loop on the 24h functional interval would yield a stall
+# bound of 24h * watchdog_cadence_multiplier (~240h), so a mid-refresh wedge
+# would go undetected for ~10 days. The loop wakes on this short cadence, beats,
+# and checks the 24h wall-clock-due condition inside the body. 60s is well under
+# any plausible watchdog bound yet coarse enough that minute-granularity on the
+# daily refresh is immaterial.
+_REALIZED_VOL_HEARTBEAT_CADENCE_SECONDS: float = 60.0
 
 
 class _EmptyMapAlertOnce:
@@ -264,26 +277,43 @@ def _register_realized_vol_refresh_task(
     tickers_provider: Callable[[], Sequence[str] | None],
     empty_map_alert: _EmptyMapAlertOnce,
     interval_seconds: float = _REALIZED_VOL_REFRESH_INTERVAL_SECONDS,
+    heartbeat_cadence_seconds: float = _REALIZED_VOL_HEARTBEAT_CADENCE_SECONDS,
+    now: Callable[[], float] = time.monotonic,
 ) -> None:
     """Register the 24h shared realized-vol map refresher (ALP-530).
 
-    The task sleeps ``interval_seconds`` between refreshes; each iteration
-    re-fetches the per-underlying scalars and mutates ``shared_map`` in
-    place so the harness and breach-loop both observe the fresh values.
-    ``tickers_provider`` is invoked per refresh so the monitor's
-    open-position set can change over the day without re-registering.
+    The functional refresh fires once per ``interval_seconds`` (24h); each
+    refresh re-fetches the per-underlying scalars and mutates ``shared_map``
+    in place so the harness and breach-loop both observe the fresh values.
+    ``tickers_provider`` is invoked per refresh so the monitor's open-position
+    set can change over the day without re-registering.
+
+    Watchdog liveness (ALP-825 review). The loop drives the supervisor's
+    ``supervised_loop`` seam on a SHORT ``heartbeat_cadence_seconds`` cadence
+    (mirroring ``borrow_accrual``) rather than the 24h functional interval, so
+    the stall bound is ``heartbeat_cadence_seconds * watchdog_cadence_multiplier``
+    instead of ~240h — a mid-refresh wedge is detected within minutes, not ~10
+    days. Each iteration beats the watchdog (via the seam) and checks whether the
+    24h refresh is due against ``now``; the refresh runs only when
+    ``now() - last_refresh >= interval_seconds``, so the functional cadence is
+    preserved.
 
     ``empty_map_alert`` is shared with the startup refresh so whichever
     refresh succeeds first fires the one-shot ERROR log if the map is empty.
+    ``now`` is a monotonic clock (one of the four sanctioned mock boundaries)
+    so the daily-due condition is testable without real waiting.
     """
 
     async def _refresh_task(_session: MonitorSession, _config: ContinuousMonitorConfig) -> None:
-        # Initial refresh already happened at startup; this task drives the
-        # subsequent daily cadence through the supervisor's supervised_loop seam
-        # (ALP-826) — the loop beats the stall watchdog at the top of each
-        # iteration and paces at ``interval_seconds``, so the task is
-        # liveness-watched with no hand-wired beat() and no trailing sleep.
-        async for _ in supervisor.supervised_loop("realized_vol_refresh", interval_seconds):
+        # The startup refresh in ``_run_daemon`` already populated the map; the
+        # first scheduled in-loop refresh is one ``interval_seconds`` later.
+        last_refresh = now()
+        async for _ in supervisor.supervised_loop(
+            "realized_vol_refresh", heartbeat_cadence_seconds
+        ):
+            if now() - last_refresh < interval_seconds:
+                continue
+            last_refresh = now()
             try:
                 tickers = tickers_provider()
                 count = await refresh_realized_vol_map_in_place(
