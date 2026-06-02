@@ -10,18 +10,10 @@ import pytest
 
 from alphamind._kernel.ids import (
     PositionId,
-    Symbol,
     ThesisId,
 )
-from alphamind._kernel.money import money, price, signed_money
-from alphamind._kernel.regime import (
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskZone,
-)
-from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind._kernel.money import signed_money
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
-from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.aggregates.thesis_quality import (
     AlphaBetaDecomposition,
     AttributionDimension,
@@ -43,14 +35,6 @@ from alphamind.portfolio_state.consumers.portfolio_manager import (
 from alphamind.portfolio_state.consumers.portfolio_manager_thesis_mcp import (
     build_get_thesis_components_mcp_server,
 )
-from alphamind.portfolio_state.records.cash import CashLedger
-from alphamind.portfolio_state.records.positions import (
-    Direction,
-    EquityPositionDetails,
-    PositionFill,
-    PositionRecord,
-    PositionStatus,
-)
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
     ThesisComponent,
@@ -63,7 +47,12 @@ from alphamind.portfolio_state.snapshot import (
     PortfolioPnL,
     PortfolioStateSnapshot,
 )
-from alphamind.portfolio_state.views.positions import PositionView
+from tests.portfolio_state.consumers._builders import (
+    _make_active_risk_params,
+    _make_cash_ledger,
+    _make_drawdown_state,
+    _make_open_position,
+)
 
 # ---------------------------------------------------------------------------
 # Shared timestamps / IDs
@@ -104,51 +93,6 @@ async def _invoke_mcp_tool(server: Any, tool_name: str, args: dict[str, Any]) ->
 # ---------------------------------------------------------------------------
 # Fixture builders (minimal — only what the MCP tests need)
 # ---------------------------------------------------------------------------
-
-
-def _make_fill() -> PositionFill:
-    return PositionFill(
-        fill_timestamp=_T0,
-        fill_price=price(150.0),
-        fill_quantity=100.0,
-        slippage=signed_money(0.01),
-        fees=money(1.0),
-    )
-
-
-def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> PositionView:
-    equity = EquityPositionDetails(
-        ticker=Symbol(ticker),
-        share_count=100.0,
-        average_cost_basis_per_share=150.0,
-    )
-    record = PositionRecord(
-        position_id=PositionId(pos_id),
-        thesis_id=None,
-        bracket_id=None,
-        status=PositionStatus.OPEN,
-        direction=Direction.LONG,
-        entry_timestamp=_T0,
-        details=equity,
-        execution_history=(_make_fill(),),
-        realized_pnl_to_date_usd=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
-    )
-    return PositionView(
-        record=record,
-        current_market_value_usd=signed_money(15500.0),
-        unrealized_pnl_usd=signed_money(500.0),
-        unrealized_pnl_pct=3.33,
-        position_weight_pct=10.0,
-        position_age_hours=4.0,
-        notional_exposure_usd=money(15000.0),
-        delta_adjusted_exposure_usd=signed_money(15000.0),
-        distance_to_target_usd=None,
-        distance_to_stop_usd=None,
-        risk_reward_at_current=None,
-    )
 
 
 def _make_thesis_component(
@@ -196,36 +140,6 @@ def _make_thesis(
     )
 
 
-def _make_drawdown_state() -> DrawdownState:
-    return DrawdownState(
-        current_drawdown_pct=2.0,
-        equity_high_water_mark_usd=110000.0,
-        drawdown_duration_hours=8.0,
-        lifetime_max_drawdown_pct=5.0,
-        intraday_drawdown_pct=0.5,
-        daily_zone=RiskZone.NORMAL,
-        cumulative_zone=RiskZone.NORMAL,
-        cumulative_tier=None,
-        drawdown_by_source_pct={},
-    )
-
-
-def _make_cash_ledger() -> CashLedger:
-    return CashLedger(
-        current_cash_usd=50000.0,
-        settled_cash_usd=48000.0,
-        reserved_capital_usd=2000.0,
-        available_buying_power_usd=46000.0,
-        margin_held_usd=0.0,
-        unsettled_proceeds=(),
-        cash_pct_of_portfolio=50.0,
-        true_deployable_capital_usd=44000.0,
-        regt_excess_trailing_30d_usd=1000.0,
-        regt_excess_trailing_90d_usd=3000.0,
-        regt_excess_lifetime_usd=10000.0,
-    )
-
-
 def _make_pnl() -> PortfolioPnL:
     return PortfolioPnL(
         total_unrealized_pnl_usd=signed_money(500.0),
@@ -252,17 +166,6 @@ def _make_directional() -> DirectionalExposure:
         total_short_delta_adjusted_usd=signed_money(0.0),
         net_directional_pct_of_portfolio=0.0,
         gross_pct_of_portfolio=0.0,
-    )
-
-
-def _make_active_risk_params() -> ActiveRiskParameterSet:
-    return ActiveRiskParameterSet(
-        regime_label=RegimeLabel.NORMAL,
-        transition_state=RegimeTransitionState.STABLE,
-        transition_invocations_remaining=0,
-        parameter_change_flag=False,
-        entries=(),
-        active_overlays=(),
     )
 
 
