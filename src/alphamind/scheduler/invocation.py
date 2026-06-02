@@ -136,7 +136,8 @@ async def _fetch_process_git_sha(session: AsyncSession, process_lifetime_id: str
 
     try:
         head_sha = _git_rev_parse_head()
-    except Exception:
+    except (subprocess.CalledProcessError, OSError) as exc:
+        _logger.debug("git rev-parse HEAD unavailable; skipping divergence check: %s", exc)
         return process_sha
 
     if head_sha != process_sha:
@@ -284,9 +285,10 @@ def _data_source_provider_names() -> tuple[str, ...]:
 def _git_rev_parse_head() -> str:
     """Return the 40-character SHA of ``HEAD`` via ``git rev-parse``.
 
-    A non-zero exit raises :class:`subprocess.CalledProcessError`; the spec
-    requires the error to propagate to the caller so the invocation can be
-    aborted before the row is composed.
+    Used only for the best-effort divergence check in
+    :func:`_fetch_process_git_sha`. A non-zero exit raises
+    :class:`subprocess.CalledProcessError`; the caller catches that
+    (and :class:`OSError` for a missing git binary) and skips the check.
     """
     completed = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -324,7 +326,8 @@ async def insert_invocation_record(  # noqa: PLR0913 — composition surface thr
     Steps in order:
 
     1. Mint ``invocation_id`` via :func:`_mint_invocation_id`.
-    2. Open a short read-only session for the freshness query.
+    2. Open a short session to read the process-launch SHA and collection-run
+       freshness timestamps.
     3. Call :func:`load_full_config` to validate, compose, and persist the
        resolved configuration snapshot under
        ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/resolved_config.json``

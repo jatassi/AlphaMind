@@ -343,6 +343,29 @@ class TestBuildInvocationRecord:
 
         assert any("differs from process-launch SHA" in msg for msg in caplog.messages)
 
+    async def test_missing_process_lifetime_id_raises_value_error(
+        self,
+        pipeline_config: PipelineConfig,
+        archive_root: Path,
+        async_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """build_invocation_record raises ValueError when the process_lifetime_id row is absent."""
+        async with async_factory() as session:
+            with pytest.raises(ValueError, match="not found in process_lifetimes"):
+                await build_invocation_record(
+                    session=session,
+                    process_lifetime_id="nonexistent-plt-id",
+                    trigger_type="scheduled",
+                    trigger_source="morning-cron",
+                    trigger_reason="0 9 * * 1-5",
+                    firing_run_type=RunType.pre_open,
+                    runtime=_baseline_runtime(),
+                    pipeline_config=pipeline_config,
+                    archive_root=archive_root,
+                    invocation_id="inv-build-test",
+                    now=datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC),
+                )
+
     async def test_data_source_freshness_json_populated_from_session(
         self,
         pipeline_config: PipelineConfig,
