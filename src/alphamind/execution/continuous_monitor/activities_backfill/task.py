@@ -160,6 +160,7 @@ async def _run_sweep(
         enrichment_callable=enrichment_callable,
         process_lifetime_id=process_lifetime_id,
         escalation_ttl_seconds=escalation_ttl_seconds,
+        now=now,
     )
 
 
