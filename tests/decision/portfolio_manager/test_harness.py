@@ -523,12 +523,14 @@ def _state_persistence_config() -> StatePersistenceConfig:
 
 
 # ---------------------------------------------------------------------------
-# 1. Tracer-bullet: happy path returns HarnessSuccess
+# Shared invocation fixture — standard happy-path call with _MINIMAL_PAYLOAD.
+# Tests 1 (happy path) and 7 (diagnostic archive) share one invoke_pm call via
+# this fixture so the invocation is not duplicated.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_happy_path_with_stub_sdk(
+@pytest.fixture()
+async def pm_happy_invocation(
     agent_config: BaseAgentConfig,
     archive_root: Path,
     validation_state: ValidationToolState,
@@ -540,15 +542,19 @@ async def test_happy_path_with_stub_sdk(
     active_sectors: frozenset[str],
     library_config: LibraryConfig,
     library_market: MarketInputs,
-) -> None:
-    """invoke_pm returns HarnessSuccess on a valid SDK response."""
-    stub = _make_stub_query([_make_sdk_response(_MINIMAL_PAYLOAD)])
+) -> tuple[HarnessSuccess, Path]:
+    """Run a standard happy-path invoke_pm and return ``(result, archive_root)``.
 
+    Tests that only assert on the returned value or the diagnostic files written
+    by a clean invocation share this fixture rather than independently calling
+    invoke_pm with identical setup.
+    """
+    stub = _make_stub_query([_make_sdk_response(_MINIMAL_PAYLOAD)])
     result = await invoke_pm(
         **_invoke_kwargs(
             agent_config=agent_config,
             user_message="Produce PM output.",
-            invocation_id=InvocationId("inv-test-001"),
+            invocation_id=InvocationId("inv-shared-001"),
             validation_state=validation_state,
             submit_envelope_state=submit_envelope_state,
             retrieval_store=retrieval_store,
@@ -563,6 +569,20 @@ async def test_happy_path_with_stub_sdk(
             sdk_query_fn=stub,
         )
     )
+    return result, archive_root
+
+
+# ---------------------------------------------------------------------------
+# 1. Tracer-bullet: happy path returns HarnessSuccess
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_happy_path_with_stub_sdk(
+    pm_happy_invocation: tuple[HarnessSuccess, Path],
+) -> None:
+    """invoke_pm returns HarnessSuccess on a valid SDK response."""
+    result, _archive_root = pm_happy_invocation
 
     assert isinstance(result, HarnessSuccess)
     assert isinstance(result.output, PMCompletionRecord)
@@ -863,44 +883,14 @@ async def test_sdk_exception_raises_sdk_failure(
 
 @pytest.mark.asyncio
 async def test_diagnostic_archive_written(
+    pm_happy_invocation: tuple[HarnessSuccess, Path],
     agent_config: BaseAgentConfig,
-    archive_root: Path,
-    validation_state: ValidationToolState,
-    submit_envelope_state: SubmitEnvelopeState,
-    retrieval_store: RetrievalStore,
-    thesis_component_reader: PortfolioManagerThesisComponentReader,
-    pre_processor_bundle: ProposalPreProcessorBundle,
-    pm_view: PortfolioManagerView,
-    active_sectors: frozenset[str],
-    library_config: LibraryConfig,
-    library_market: MarketInputs,
 ) -> None:
     """Diagnostic files are written under
     archive_root/invocations/<id>/decision/portfolio_manager/, including the
     PM-only submission_log.json alongside the standard six files."""
-    stub = _make_stub_query([_make_sdk_response(_MINIMAL_PAYLOAD)])
-
-    await invoke_pm(
-        **_invoke_kwargs(
-            agent_config=agent_config,
-            user_message="Produce PM output.",
-            invocation_id=InvocationId("inv-diag-001"),
-            validation_state=validation_state,
-            submit_envelope_state=submit_envelope_state,
-            retrieval_store=retrieval_store,
-            thesis_component_reader=thesis_component_reader,
-            pre_processor_bundle=pre_processor_bundle,
-            pm_view=pm_view,
-            active_sectors=active_sectors,
-            library_config=library_config,
-            library_market=library_market,
-            archive_root=archive_root,
-            as_of=_AS_OF,
-            sdk_query_fn=stub,
-        )
-    )
-
-    diag_dir = archive_root / "2026-04-28" / "inv-diag-001" / "decision" / "portfolio_manager"
+    _result, archive_root = pm_happy_invocation
+    diag_dir = archive_root / "2026-04-28" / "inv-shared-001" / "decision" / "portfolio_manager"
     assert (diag_dir / "prompt.md").exists()
     assert (diag_dir / "user_message.md").exists()
     assert (diag_dir / "response_initial.md").exists()
@@ -923,7 +913,7 @@ async def test_diagnostic_archive_written(
     assert failed_log == []
 
     meta = json.loads((diag_dir / "metadata.json").read_text())
-    assert meta["invocation_id"] == "inv-diag-001"
+    assert meta["invocation_id"] == "inv-shared-001"
     assert meta["model"] == agent_config.model.value
     assert meta["retry_count"] == 0
     assert meta["success"] is True
