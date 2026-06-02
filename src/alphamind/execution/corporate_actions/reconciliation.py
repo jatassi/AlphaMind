@@ -498,6 +498,10 @@ async def _reconcile_cash(
 ) -> int:
     """Emit one alert and auto-correct ``current_cash_usd`` on drift.
 
+    Also corrects ``settled_cash_usd`` to the same Alpaca value (ALP-778).
+    No T+2 settlement lag is modelled in paper trading, so settled tracks
+    reconciled current.
+
     ``buying_power`` reconciliation is intentionally skipped at this layer:
     AlphaMind's ``cash_ledger.reserved_capital_usd`` tracks per-order capital
     reservations made by Phase 2 submissions, which has no clean mapping to
@@ -528,6 +532,8 @@ async def _reconcile_cash(
     # ``Money = NewType("Money", Decimal)`` — at runtime the value is
     # already a Decimal, assign directly into the ``DecimalText`` column.
     cash_row.current_cash_usd = alpaca_account.cash
+    # ALP-778: settled tracks current (no T+2 lag modelled in paper trading).
+    cash_row.settled_cash_usd = alpaca_account.cash
     await _emit_correction(
         handle,
         position_id=None,

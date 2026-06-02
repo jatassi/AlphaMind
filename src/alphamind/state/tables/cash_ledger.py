@@ -48,6 +48,7 @@ class CashLedgerRow(Base):
     current_cash_usd: Mapped[Decimal] = mapped_column(DecimalText, nullable=False)
     settled_cash_usd: Mapped[Decimal] = mapped_column(DecimalText, nullable=False)
     reserved_capital_usd: Mapped[Decimal] = mapped_column(DecimalText, nullable=False)
+    # Static-persisted / seed-only; assembler recomputes at read time. Dashboard only.
     available_buying_power_usd: Mapped[Decimal] = mapped_column(DecimalText, nullable=False)
     margin_held_usd: Mapped[Decimal] = mapped_column(DecimalText, nullable=False)
     unsettled_proceeds_json: Mapped[str] = mapped_column(Text, nullable=False)

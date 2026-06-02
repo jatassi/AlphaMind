@@ -1802,3 +1802,49 @@ async def test_reconcile_pending_local_no_equity_evidence_left_untouched(
             .all()
         )
         assert corrections == []
+
+
+async def test_reconcile_corrects_settled_cash_alongside_current_cash(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-778 — when cash drift triggers a current_cash_usd correction,
+    settled_cash_usd must be updated to the same Alpaca value.
+
+    Prior to the fix, _reconcile_cash only wrote current_cash_usd, leaving
+    settled_cash_usd frozen at the seed value and overstating deployable
+    capital for position sizing.
+    """
+    from alphamind.execution.corporate_actions.reconciliation import reconcile
+    from alphamind.state.tables.cash_ledger import (
+        CASH_LEDGER_SINGLETON_ID,
+        CashLedgerRow,
+    )
+
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_position_cluster(
+        factory,
+        make_open_equity_position(share_count=10.0),
+        make_pending_entry_order(),
+        make_active_thesis(),
+        make_active_bracket(),
+    )
+    # Seed with both current and settled at 100_000 (normal post-seed state).
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    # Alpaca reports a lower balance — simulates fills the pipeline processed
+    # before this reconciliation run, leaving settled stale at 100_000.
+    ctx, handle = await open_handle(factory)
+    await reconcile(
+        handle,
+        alpaca_positions=(_equity_position_snapshot(symbol="AAPL", qty=10.0),),
+        alpaca_account=_trade_account(cash=93_251.67),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash_row is not None
+        assert float(cash_row.current_cash_usd) == pytest.approx(93_251.67)
+        # ALP-778: settled must track current after reconciliation correction.
+        assert float(cash_row.settled_cash_usd) == pytest.approx(93_251.67)
