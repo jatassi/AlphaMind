@@ -90,6 +90,8 @@ from alphamind.execution.write_paths.phase1 import (
     Phase1Summary,
     process_unprocessed_fills,
 )
+from alphamind.persistence.retry import run_with_sqlite_busy_retry
+from alphamind.persistence.session import begin_write_immediate
 from alphamind.pipeline.analysis import run_analysis_pipeline
 from alphamind.pipeline.decision import run_decision_pipeline
 from alphamind.portfolio_state import load_portfolio_state_config
@@ -670,20 +672,21 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     # Step 3 — Phase 1 transaction.
     _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="collect")
     progress.phase_start("phase1")
-    async with session_factory() as session:
-        phase1_handle = InvocationHandle(session=session, invocation_id=invocation_id)
-        await emit_baseline_config_change_entry(
-            handle=phase1_handle,
-            config_dir=config_dir,
-            now=now,
-        )
-        # Story ALP-501 — ``context.debug_e2e`` is the SOLE signal the
-        # orchestrator is in debug-e2e mode (P3 — no parallel boolean
-        # flag). The helpers resolve to ``None`` on the production path
-        # so ``gather_phase1_inputs`` falls through to its inline
-        # Alpaca-backed defaults.
+    # ALP-824 — Phase-1 and the continuous monitor are two writers on one WAL DB.
+    # Gather inputs FIRST in a read-only (deferred) session so no write lock is
+    # held across the Alpaca network fetch; then run the write unit under an
+    # up-front ``BEGIN IMMEDIATE`` (write lock taken eagerly, so ``busy_timeout``
+    # governs contention with the monitor) wrapped in a bounded retry. A transient
+    # cross-writer collision then makes Phase-1 wait/retry rather than aborting the
+    # whole invocation on an immediate ``SQLITE_BUSY_SNAPSHOT``.
+    #
+    # Story ALP-501 — ``context.debug_e2e`` is the SOLE signal the orchestrator is
+    # in debug-e2e mode (P3 — no parallel boolean flag). The helpers resolve to
+    # ``None`` on the production path so ``gather_phase1_inputs`` falls through to
+    # its inline Alpaca-backed defaults.
+    async with session_factory() as read_session:
         phase1_inputs = await gather_phase1_inputs(
-            handle=phase1_handle,
+            handle=InvocationHandle(session=read_session, invocation_id=invocation_id),
             venue_config=venue_config,
             execution_mode=execution_mode,
             as_of=now,
@@ -692,27 +695,45 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
             ca_queries_factory=_ca_queries_factory_from_debug_e2e(context),
             quote_source_factory=_quote_source_factory_from_debug_e2e(context),
         )
-        # ALP-717 — SHORT-equity entry fills consult the borrow-cost resolver
-        # to stamp borrow_rate_pct on the OPEN position. The resolver is also
-        # reused by the decision pipeline below; build it once before Phase 1
-        # so the same per-ticker latest-fee mapping serves both.
-        with context.sync_session_factory() as borrow_session:
-            borrow_cost_resolver = build_borrow_cost_resolver(borrow_session)
-        phase1_summary = await process_unprocessed_fills(
-            phase1_handle,
-            phase1_inputs.ca_activities,
-            phase1_inputs.alpaca_positions,
-            phase1_inputs.alpaca_account,
-            market_inputs=phase1_inputs.market_inputs,
-            config=state_persistence_config,
-            borrow_cost_resolver=borrow_cost_resolver,
-        )
-        await _update_row_phase1(
-            phase1_handle,
-            phase1_summary=phase1_summary,
-            staleness_flag=phase1_inputs.staleness_flag,
-        )
-        await session.commit()
+
+    # ALP-717 — SHORT-equity entry fills consult the borrow-cost resolver to stamp
+    # borrow_rate_pct on the OPEN position. The resolver is also reused by the
+    # decision pipeline below; build it once (pure for the rest of the invocation)
+    # from a sync read session, outside the async write lock.
+    with context.sync_session_factory() as borrow_session:
+        borrow_cost_resolver = build_borrow_cost_resolver(borrow_session)
+
+    async def _run_phase1_write_unit() -> Phase1Summary:
+        # Fresh session per attempt so the identity map is clean on retry;
+        # ``begin_write_immediate`` takes the SQLite write lock before the first
+        # read/write, and rollback on failure leaves the fills ``unprocessed`` so
+        # re-running the unit is idempotent.
+        async with session_factory() as write_session:
+            await begin_write_immediate(write_session)
+            write_handle = InvocationHandle(session=write_session, invocation_id=invocation_id)
+            await emit_baseline_config_change_entry(
+                handle=write_handle,
+                config_dir=config_dir,
+                now=now,
+            )
+            summary = await process_unprocessed_fills(
+                write_handle,
+                phase1_inputs.ca_activities,
+                phase1_inputs.alpaca_positions,
+                phase1_inputs.alpaca_account,
+                market_inputs=phase1_inputs.market_inputs,
+                config=state_persistence_config,
+                borrow_cost_resolver=borrow_cost_resolver,
+            )
+            await _update_row_phase1(
+                write_handle,
+                phase1_summary=summary,
+                staleness_flag=phase1_inputs.staleness_flag,
+            )
+            await write_session.commit()
+            return summary
+
+    phase1_summary = await run_with_sqlite_busy_retry(_run_phase1_write_unit)
     progress.phase_done("phase1", fills_processed=phase1_summary.fills_processed)
 
     # Step 4 — Between-phase snapshot read.

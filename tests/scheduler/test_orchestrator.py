@@ -261,6 +261,7 @@ def _patch_no_op_pipeline(
     analysis_result: Any | None = None,
     decision_result: Any | None = None,
     phase1_raises: Exception | None = None,
+    phase1_transient_failures: int = 0,
     decision_raises: Exception | None = None,
     captured: dict[str, Any] | None = None,
     staleness_flag: bool = False,
@@ -270,10 +271,16 @@ def _patch_no_op_pipeline(
     Captures keyword arguments via the ``captured`` dict so tests can assert on
     threading invariants (e.g., ``mode='halt'`` arriving at the decision
     pipeline). The stubs return the canonical empty fixture for each stage.
+
+    ``phase1_transient_failures`` (ALP-824) makes the Phase-1 stub raise a
+    transient ``database is locked`` ``OperationalError`` on its first N calls
+    before succeeding, exercising the orchestrator's ``run_with_sqlite_busy_retry``
+    wrapper around the write unit.
     """
     from alphamind.scheduler import orchestrator as module
 
     captured = captured if captured is not None else {}
+    phase1_calls = {"n": 0}
 
     async def _gather_stub(**kw: Any) -> Any:
         captured["gather"] = kw
@@ -281,6 +288,13 @@ def _patch_no_op_pipeline(
 
     async def _process_stub(*args: Any, **kw: Any) -> Phase1Summary:
         captured["phase1"] = {"args": args, "kwargs": kw}
+        phase1_calls["n"] += 1
+        if phase1_calls["n"] <= phase1_transient_failures:
+            from sqlalchemy.exc import OperationalError
+
+            raise OperationalError(
+                "INSERT INTO activity_log ...", {}, Exception("database is locked")
+            )
         if phase1_raises is not None:
             raise phase1_raises
         # Production ``process_unprocessed_fills`` stamps ``phase1_completed_at``
@@ -324,6 +338,95 @@ def _patch_no_op_pipeline(
     monkeypatch.setattr(module, "run_decision_pipeline", _decision_stub)
     monkeypatch.setattr(module, "dispatch_phase2", _dispatch_stub)
     monkeypatch.setattr(module, "_resolve_regime_adaptation_for_invocation", _regime_stub)
+
+
+class TestPhase1WriteLockResilience:
+    """ALP-824 — Phase-1 gathers inputs before taking the SQLite write lock, and a
+    transient cross-writer collision retries the write unit instead of aborting."""
+
+    async def test_write_lock_taken_after_inputs_gathered(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``gather_phase1_inputs`` runs (in a read session) before
+        ``begin_write_immediate`` and in a *different* session — so no write lock is
+        held across the Alpaca fetch (AC: write lock taken only after gather)."""
+        from alphamind.persistence.session import begin_write_immediate as real_begin
+        from alphamind.scheduler import orchestrator as module
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        captured: dict[str, Any] = {}
+        _patch_no_op_pipeline(monkeypatch, captured=captured)
+
+        # ``gather`` populates ``captured["gather"]``; assert it is already present
+        # when the IMMEDIATE write lock is taken, so the lock is acquired *after*
+        # the gather (and never held across the Alpaca fetch).
+        observed: dict[str, bool] = {}
+
+        async def _begin_recorder(session: AsyncSession) -> None:
+            observed["gather_ran_before_begin"] = "gather" in captured
+            await real_begin(session)
+
+        monkeypatch.setattr(module, "begin_write_immediate", _begin_recorder)
+
+        await run_invocation(
+            context=_make_context(
+                session_factory=async_factory, env_path=env_path, archive_root=archive_root
+            ),
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        assert observed["gather_ran_before_begin"] is True
+        # The read (gather) session and the write-unit session are distinct objects,
+        # so the IMMEDIATE write lock is never held while gather does its fetch.
+        read_session = captured["gather"]["handle"].session
+        write_session = captured["phase1"]["args"][0].session
+        assert read_session is not write_session
+
+    async def test_transient_lock_during_write_unit_retries_to_completion(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A transient ``database is locked`` on the first write attempt retries; the
+        invocation completes with fills processed and ``phase1_completed_at`` stamped."""
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        phase1 = Phase1Summary(
+            fills_processed=2,
+            fills_quarantined=0,
+            ca_activities_processed=0,
+            reconciliation_alerts=0,
+        )
+        _patch_no_op_pipeline(monkeypatch, phase1_transient_failures=1, phase1_summary=phase1)
+
+        await run_invocation(
+            context=_make_context(
+                session_factory=async_factory, env_path=env_path, archive_root=archive_root
+            ),
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        async with async_factory() as session:
+            row = (await session.execute(select(InvocationRow))).scalar_one()
+        assert row.phase1_completed_at is not None
+        assert row.phase2_completed_at is not None
+        assert row.fill_collection_summary_json is not None
+        payload = json.loads(row.fill_collection_summary_json)
+        assert payload["fills_processed"] == 2
 
 
 class TestRunInvocationHappyPath:
