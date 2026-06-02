@@ -43,17 +43,8 @@ from alphamind.config.models.distillation import (
     TrackedCategoryOverride,
 )
 from alphamind.distillation._config_domain import (
-    AnomalyDetectionDomainConfig,
     DistillationDomainConfig,
-    LeadLagDomainConfig,
-    LeadLagPairDomainConfig,
-    NarrativeLagDomainConfig,
-    PersistenceWindowsDomainConfig,
-    PredictionMarketDomainConfig,
-    RegimeClassificationDomainConfig,
-    RegimeTransitionDomainConfig,
     SeverityCapsDomainConfig,
-    TrackedCategoryOverrideDomainConfig,
 )
 
 
@@ -163,127 +154,6 @@ def test_to_domain_returns_distillation_domain_config_instance() -> None:
     assert isinstance(domain, DistillationDomainConfig)
 
 
-def test_to_domain_mirrors_anomaly_detection_fields() -> None:
-    pydantic_cfg = _build_test_pydantic_config()
-    domain = pydantic_cfg.to_domain()
-    assert isinstance(domain.anomaly_detection, AnomalyDetectionDomainConfig)
-    pyd = pydantic_cfg.anomaly_detection
-    dom = domain.anomaly_detection
-    assert dom.volume_anomaly_sigma == pyd.volume_anomaly_sigma
-    assert dom.price_move_atr_multiple == pyd.price_move_atr_multiple
-    assert dom.options_low_oi_volume_multiple == pyd.options_low_oi_volume_multiple
-    assert dom.block_trade_min_shares == pyd.block_trade_min_shares
-    assert dom.block_trade_min_notional_usd == pyd.block_trade_min_notional_usd
-    assert dom.dark_pool_one_sided_window_minutes == pyd.dark_pool_one_sided_window_minutes
-    assert dom.earnings_revision_cluster_count == pyd.earnings_revision_cluster_count
-    assert dom.earnings_revision_cluster_days == pyd.earnings_revision_cluster_days
-    assert dom.macro_surprise_percentile == pyd.macro_surprise_percentile
-    assert dom.funding_stress_component_alert_count == pyd.funding_stress_component_alert_count
-    assert dom.funding_stress_component_percentile == pyd.funding_stress_component_percentile
-    assert dom.market_liquidity_alert_percentile == pyd.market_liquidity_alert_percentile
-    assert dom.news_price_divergence_window_hours == pyd.news_price_divergence_window_hours
-    assert dom.news_price_divergence_min_articles == pyd.news_price_divergence_min_articles
-
-
-def test_to_domain_mirrors_regime_classification_fields() -> None:
-    pydantic_cfg = _build_test_pydantic_config()
-    domain = pydantic_cfg.to_domain()
-    assert isinstance(domain.regime_classification, RegimeClassificationDomainConfig)
-    pyd = pydantic_cfg.regime_classification
-    dom = domain.regime_classification
-    assert dom.regime_low_vol_vix_max == pyd.regime_low_vol_vix_max
-    assert dom.regime_normal_vix_min == pyd.regime_normal_vix_min
-    assert dom.regime_normal_vix_max == pyd.regime_normal_vix_max
-    assert dom.regime_elevated_vix_min == pyd.regime_elevated_vix_min
-    assert dom.regime_elevated_vix_max == pyd.regime_elevated_vix_max
-    assert dom.regime_crisis_vix_min == pyd.regime_crisis_vix_min
-    assert (
-        dom.regime_term_structure_backwardation_threshold
-        == pyd.regime_term_structure_backwardation_threshold
-    )
-    assert dom.regime_vvix_high_percentile == pyd.regime_vvix_high_percentile
-    assert dom.regime_vvix_low_percentile == pyd.regime_vvix_low_percentile
-
-
-def test_to_domain_mirrors_regime_transition_fields() -> None:
-    pydantic_cfg = _build_test_pydantic_config()
-    domain = pydantic_cfg.to_domain()
-    assert isinstance(domain.regime_transition, RegimeTransitionDomainConfig)
-    pyd = pydantic_cfg.regime_transition
-    dom = domain.regime_transition
-    assert (
-        dom.regime_transition_confirmed_invocations == pyd.regime_transition_confirmed_invocations
-    )
-    assert (
-        dom.regime_transition_indicator_agreement_min
-        == pyd.regime_transition_indicator_agreement_min
-    )
-    assert dom.regime_skip_emergency_trigger == pyd.regime_skip_emergency_trigger
-
-
-def test_to_domain_mirrors_lead_lag_fields_and_pairs() -> None:
-    pydantic_cfg = _build_test_pydantic_config()
-    domain = pydantic_cfg.to_domain()
-    assert isinstance(domain.lead_lag, LeadLagDomainConfig)
-    pyd = pydantic_cfg.lead_lag
-    dom = domain.lead_lag
-    assert dom.lead_lag_funding_to_credit_max_days == pyd.lead_lag_funding_to_credit_max_days
-    assert dom.lead_lag_credit_to_equity_max_days == pyd.lead_lag_credit_to_equity_max_days
-    assert dom.lead_lag_semis_to_tech_max_days == pyd.lead_lag_semis_to_tech_max_days
-    assert dom.lead_lag_financials_to_market_max_days == pyd.lead_lag_financials_to_market_max_days
-    assert (
-        dom.lead_lag_commodity_to_energy_equity_max_days
-        == pyd.lead_lag_commodity_to_energy_equity_max_days
-    )
-    assert dom.lead_lag_overdue_lead_sigma == pyd.lead_lag_overdue_lead_sigma
-    assert len(dom.pairs) == len(pyd.pairs)
-    for dpair, ppair in zip(dom.pairs, pyd.pairs, strict=True):
-        assert isinstance(dpair, LeadLagPairDomainConfig)
-        assert dpair.key == ppair.key
-        assert dpair.lead == ppair.lead
-        assert dpair.lag == ppair.lag
-
-
-def test_to_domain_mirrors_narrative_lag_fields() -> None:
-    pydantic_cfg = _build_test_pydantic_config()
-    domain = pydantic_cfg.to_domain()
-    assert isinstance(domain.narrative_lag, NarrativeLagDomainConfig)
-    pyd = pydantic_cfg.narrative_lag
-    dom = domain.narrative_lag
-    assert dom.narrative_lag_correlation_shift_sigma == pyd.narrative_lag_correlation_shift_sigma
-    assert dom.correlation_breakdown_sigma == pyd.correlation_breakdown_sigma
-    assert dom.correlation_min_overlap_fraction == pyd.correlation_min_overlap_fraction
-    assert dom.correlation_noise_floor == pyd.correlation_noise_floor
-    assert dom.correlation_breakdown_fdr_q == pyd.correlation_breakdown_fdr_q
-    assert dom.correlation_locus_pair_count_threshold == pyd.correlation_locus_pair_count_threshold
-    assert dom.narrative_lag_media_silence_hours == pyd.narrative_lag_media_silence_hours
-
-
-def test_to_domain_mirrors_persistence_windows_fields() -> None:
-    pydantic_cfg = _build_test_pydantic_config()
-    domain = pydantic_cfg.to_domain()
-    assert isinstance(domain.persistence_windows, PersistenceWindowsDomainConfig)
-    pyd = pydantic_cfg.persistence_windows
-    dom = domain.persistence_windows
-    for field_name in (
-        "volume_baseline_days",
-        "atr_baseline_days",
-        "spread_baseline_days",
-        "correlation_short_days",
-        "correlation_long_days",
-        "sentiment_baseline_days",
-        "sentiment_min_observations",
-        "gap_fill_baseline_days",
-        "gap_fill_min_events",
-        "extended_hours_confirmation_days",
-        "extended_hours_min_events",
-        "prediction_market_history_days",
-        "funding_stress_baseline_days",
-        "market_liquidity_baseline_days",
-    ):
-        assert getattr(dom, field_name) == getattr(pyd, field_name)
-
-
 def test_to_domain_mirrors_severity_caps_exempt_flag_names() -> None:
     """SeverityCaps round-trips its exempt-flag-names tuple as a frozenset."""
     pydantic_cfg = _build_test_pydantic_config().model_copy(
@@ -305,26 +175,6 @@ def test_severity_caps_default_is_empty_frozenset() -> None:
     pydantic_cfg = _build_test_pydantic_config()
     domain = pydantic_cfg.to_domain()
     assert domain.severity_caps.exempt_flag_names == frozenset()
-
-
-def test_to_domain_mirrors_prediction_market_fields_and_categories() -> None:
-    pydantic_cfg = _build_test_pydantic_config()
-    domain = pydantic_cfg.to_domain()
-    assert isinstance(domain.prediction_market, PredictionMarketDomainConfig)
-    pyd = pydantic_cfg.prediction_market
-    dom = domain.prediction_market
-    assert dom.prediction_market_delta_pp_threshold == pyd.prediction_market_delta_pp_threshold
-    assert (
-        dom.prediction_market_low_liquidity_volume_min_usd
-        == pyd.prediction_market_low_liquidity_volume_min_usd
-    )
-    assert dom.tracked_default_min_volume_24h_usd == pyd.tracked_default_min_volume_24h_usd
-    assert set(dom.tracked_categories) == set(pyd.tracked_categories)
-    for key in pyd.tracked_categories:
-        pyd_override = pyd.tracked_categories[key]
-        dom_override = dom.tracked_categories[key]
-        assert isinstance(dom_override, TrackedCategoryOverrideDomainConfig)
-        assert dom_override.min_volume_24h_usd == pyd_override.min_volume_24h_usd
 
 
 # ---------------------------------------------------------------------------

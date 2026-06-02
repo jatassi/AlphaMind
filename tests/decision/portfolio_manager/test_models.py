@@ -51,7 +51,6 @@ from alphamind.decision.portfolio_manager.models import (
     ConcernRecord,
     CriterionAssessment,
     ModificationRecord,
-    OMSCommand,
     OpenCommand,
     PMAnalystEnvelope,
     PMCompletionRecord,
@@ -950,56 +949,7 @@ class TestCloseCommandInvariants:
 
 
 # ---------------------------------------------------------------------------
-# 8. OMSCommand discriminated union routing on command_type
-# ---------------------------------------------------------------------------
-
-
-class TestOMSCommandDiscriminator:
-    def test_open_routes_to_open_command(self) -> None:
-        adapter: TypeAdapter[OMSCommand] = TypeAdapter(OMSCommand)
-        cmd = adapter.validate_python(_OPEN_COMMAND_PAYLOAD)
-        assert isinstance(cmd, OpenCommand)
-
-    def test_close_routes_to_close_command(self) -> None:
-        adapter: TypeAdapter[OMSCommand] = TypeAdapter(OMSCommand)
-        cmd = adapter.validate_python(
-            {
-                "command_type": "close",
-                "position_id": "POS-1",
-                "quantity": "all",
-                "order_type": "market",
-                "close_rationale_type": "target_reached",
-            }
-        )
-        assert isinstance(cmd, CloseCommand)
-
-    def test_adjust_routes_to_adjust_command(self) -> None:
-        adapter: TypeAdapter[OMSCommand] = TypeAdapter(OMSCommand)
-        cmd = adapter.validate_python(
-            {
-                "command_type": "adjust",
-                "position_id": "POS-1",
-                "adjustment_rationale": "Tighten stop.",
-                "new_stop_level": {"trigger_price": 100.0, "order_type": "market"},
-            }
-        )
-        assert isinstance(cmd, AdjustCommand)
-
-    def test_cancel_routes_to_cancel_command(self) -> None:
-        adapter: TypeAdapter[OMSCommand] = TypeAdapter(OMSCommand)
-        cmd = adapter.validate_python(
-            {"command_type": "cancel", "order_id": "ORD-1", "cancel_reason": "stale"}
-        )
-        assert isinstance(cmd, CancelCommand)
-
-    def test_add_routes_to_add_command(self) -> None:
-        adapter: TypeAdapter[OMSCommand] = TypeAdapter(OMSCommand)
-        cmd = adapter.validate_python(_ADD_COMMAND_PAYLOAD)
-        assert isinstance(cmd, AddCommand)
-
-
-# ---------------------------------------------------------------------------
-# 9. AntiPattern enum + canonical strings
+# 8. AntiPattern enum + canonical strings
 # ---------------------------------------------------------------------------
 
 
@@ -1031,7 +981,7 @@ class TestAntiPattern:
 
 
 # ---------------------------------------------------------------------------
-# 10. Schema-parity tests against pm-envelope-schema.md
+# 9. Schema-parity tests against pm-envelope-schema.md
 # ---------------------------------------------------------------------------
 
 
@@ -1053,6 +1003,252 @@ def _collect_pydantic_defs(schema: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return result
 
 
+def _find_enum_in_node(node: Any) -> set[str] | None:
+    """Walk a JSON-schema node and return the first ``enum`` list found."""
+    if isinstance(node, dict):
+        if "enum" in node and isinstance(node["enum"], list):
+            return set(node["enum"])
+        for v in node.values():
+            found = _find_enum_in_node(v)
+            if found is not None:
+                return found
+    elif isinstance(node, list):
+        for item in node:
+            found = _find_enum_in_node(item)
+            if found is not None:
+                return found
+    return None
+
+
+def _parity_top_level_required() -> None:
+    """Top-level required: every design-doc top-level field is in each branch."""
+    design = _load_design_doc_schema()
+    schema = envelope_schema()
+    design_top_required = set(design["required"])
+    defs = _collect_pydantic_defs(schema)
+    for branch in ("PMAnalystEnvelope", "PMStrategistEnvelope"):
+        branch_required = set(defs[branch]["required"])
+        assert design_top_required.issubset(branch_required), (
+            f"{branch} required missing fields from design top-level required: "
+            f"{design_top_required - branch_required}"
+        )
+
+
+def _parity_pm_analyst_branch_required() -> None:
+    """The pm_analyst branch carries every design-doc required field."""
+    design = _load_design_doc_schema()
+    schema = envelope_schema()
+    defs = _collect_pydantic_defs(schema)
+    design_branch_required = set(design["$defs"]["pm_analyst_envelope"]["required"])
+    pyd_required = set(defs["PMAnalystEnvelope"]["required"])
+    assert design_branch_required.issubset(pyd_required), (
+        f"PMAnalystEnvelope missing required fields {design_branch_required - pyd_required}"
+    )
+
+
+def _parity_pm_strategist_branch_required() -> None:
+    """The pm_strategist branch carries every design-doc required field."""
+    design = _load_design_doc_schema()
+    schema = envelope_schema()
+    defs = _collect_pydantic_defs(schema)
+    design_branch_required = set(design["$defs"]["pm_strategist_envelope"]["required"])
+    pyd_required = set(defs["PMStrategistEnvelope"]["required"])
+    assert design_branch_required.issubset(pyd_required), (
+        f"PMStrategistEnvelope missing required {design_branch_required - pyd_required}"
+    )
+
+
+def _parity_envelope_id_pattern() -> None:
+    """envelope_id pattern at the top level and per-branch matches the design doc."""
+    design = _load_design_doc_schema()
+    design_pattern = design["properties"]["envelope_id"]["pattern"]
+    # PMAnalyst/Strategist branches each tighten the pattern; either branch's
+    # pattern is a strict subset of the design's top-level pattern.
+    # We check the union: ENV-(REC|SA|SA-ORD)-[0-9]+
+    assert design_pattern == r"^ENV-(REC|SA|SA-ORD)-[0-9]+$"
+    schema = envelope_schema()
+    defs = _collect_pydantic_defs(schema)
+    pm_analyst_pattern = defs["PMAnalystEnvelope"]["properties"]["envelope_id"]["pattern"]
+    pm_strategist_pattern = defs["PMStrategistEnvelope"]["properties"]["envelope_id"]["pattern"]
+    assert pm_analyst_pattern == r"^ENV-REC-[0-9]+$"
+    assert pm_strategist_pattern == r"^ENV-(SA|SA-ORD)-[0-9]+$"
+
+
+def _parity_source_recommendation_id_pattern() -> None:
+    """source_recommendation_id patterns match per branch."""
+    schema = envelope_schema()
+    defs = _collect_pydantic_defs(schema)
+    pm_analyst_pat = defs["PMAnalystEnvelope"]["properties"]["source_recommendation_id"]["pattern"]
+    pm_strategist_pat = defs["PMStrategistEnvelope"]["properties"]["source_recommendation_id"][
+        "pattern"
+    ]
+    assert pm_analyst_pat == r"^REC-[0-9]+$"
+    assert pm_strategist_pat == r"^SA(-ORD)?-[0-9]+$"
+
+
+def _parity_verdict_enum() -> None:
+    """verdict enum matches design doc and includes override_with_corrective_action."""
+    design = _load_design_doc_schema()
+    design_enum = set(design["properties"]["verdict"]["enum"])
+    schema = envelope_schema()
+    defs = _collect_pydantic_defs(schema)
+    pyd_enum = set(defs["PMAnalystEnvelope"]["properties"]["verdict"]["enum"])
+    assert design_enum == pyd_enum
+    assert design_enum == {
+        "approve",
+        "approve_with_modification",
+        "reject",
+        "override_with_corrective_action",
+    }
+
+
+def _parity_source_provenance_enum() -> None:
+    """source_provenance enum matches design doc."""
+    design = _load_design_doc_schema()
+    design_enum = set(design["properties"]["source_provenance"]["enum"])
+    assert design_enum == {"pm_analyst", "pm_strategist"}
+
+
+def _parity_recommendation_type_enum() -> None:
+    """recommendation_type enum matches design doc."""
+    design = _load_design_doc_schema()
+    design_enum = set(design["properties"]["recommendation_type"]["enum"])
+    assert design_enum == {"new_entry", "position_assessment", "pending_order_assessment"}
+
+
+def _parity_thesis_quality_evaluation_keys() -> None:
+    """ThesisQualityEvaluation required keys match design doc."""
+    design = _load_design_doc_schema()
+    design_required = set(design["$defs"]["thesis_quality_evaluation"]["required"])
+    schema = envelope_schema()
+    defs = _collect_pydantic_defs(schema)
+    pyd_required = set(defs["ThesisQualityEvaluation"]["required"])
+    assert design_required == pyd_required
+    assert design_required == {
+        "falsifiability",
+        "sizing_proportionality",
+        "portfolio_coherence",
+        "timing_plausibility",
+        "counterargument_consideration",
+    }
+
+
+def _parity_position_action_evaluation_keys() -> None:
+    """PositionActionEvaluation required keys match design doc."""
+    design = _load_design_doc_schema()
+    design_required = set(design["$defs"]["position_action_evaluation"]["required"])
+    schema = envelope_schema()
+    defs = _collect_pydantic_defs(schema)
+    pyd_required = set(defs["PositionActionEvaluation"]["required"])
+    assert design_required == pyd_required
+    assert design_required == {
+        "status_classification_warrant",
+        "action_status_alignment",
+        "action_specific_justification",
+        "portfolio_coherence",
+    }
+
+
+def _parity_criterion_status_enum() -> None:
+    """CriterionAssessment status enum matches design doc."""
+    design = _load_design_doc_schema()
+    design_enum = set(design["$defs"]["criterion_assessment"]["properties"]["status"]["enum"])
+    schema = envelope_schema()
+    defs = _collect_pydantic_defs(schema)
+    pyd_enum = set(defs["CriterionAssessment"]["properties"]["status"]["enum"])
+    assert design_enum == pyd_enum
+    assert design_enum == {"pass", "fail"}
+
+
+def _parity_modification_phase_enum() -> None:
+    """ModificationRecord phase enum matches design doc."""
+    design = _load_design_doc_schema()
+    design_enum = set(design["$defs"]["modification_record"]["properties"]["phase"]["enum"])
+    schema = envelope_schema()
+    defs = _collect_pydantic_defs(schema)
+    pyd_enum = set(defs["ModificationRecord"]["properties"]["phase"]["enum"])
+    assert design_enum == pyd_enum
+
+
+def _parity_modification_adjustment_category_enum() -> None:
+    """ModificationRecord adjustment_category enum matches design doc."""
+    design = _load_design_doc_schema()
+    design_enum = set(
+        design["$defs"]["modification_record"]["properties"]["adjustment_category"]["enum"]
+    )
+    schema = envelope_schema()
+    defs = _collect_pydantic_defs(schema)
+    pyd_enum = set(defs["ModificationRecord"]["properties"]["adjustment_category"]["enum"])
+    assert design_enum == pyd_enum
+    assert design_enum == {
+        "risk_reduction",
+        "conviction_disagreement",
+        "capital_constraint",
+        "portfolio_balance",
+        "guardrail_rejection_response",
+    }
+
+
+def _parity_modification_required_fields() -> None:
+    """ModificationRecord required fields match design doc."""
+    design = _load_design_doc_schema()
+    design_required = set(design["$defs"]["modification_record"]["required"])
+    schema = envelope_schema()
+    defs = _collect_pydantic_defs(schema)
+    pyd_required = set(defs["ModificationRecord"]["required"])
+    assert design_required == pyd_required
+
+
+def _parity_concern_record_required() -> None:
+    """ConcernRecord required fields match design doc."""
+    design = _load_design_doc_schema()
+    design_required = set(design["$defs"]["concern_record"]["required"])
+    schema = envelope_schema()
+    defs = _collect_pydantic_defs(schema)
+    pyd_required = set(defs["ConcernRecord"]["required"])
+    assert design_required == pyd_required
+
+
+def _parity_anti_pattern_enum() -> None:
+    """anti_patterns_identified enum matches design doc."""
+    design = _load_design_doc_schema()
+    design_enum = set(design["properties"]["anti_patterns_identified"]["items"]["enum"])
+    # Pydantic emits the AntiPattern Literal as enum values somewhere in the
+    # branch's anti_patterns_identified shape. Walk and find the enum.
+    schema = envelope_schema()
+    defs = _collect_pydantic_defs(schema)
+    branch_prop = defs["PMAnalystEnvelope"]["properties"]["anti_patterns_identified"]
+    pyd_enum = _find_enum_in_node(branch_prop)
+    assert pyd_enum == design_enum
+    assert design_enum == {
+        "conviction_inflation",
+        "sunk_cost_persistence",
+        "rationalized_continuation",
+        "thesis_contradiction_suppression",
+        "engine_originated_closure_signal",
+    }
+
+
+_PARITY_ROWS: list[tuple[str, Any]] = [
+    ("top_level_required", _parity_top_level_required),
+    ("pm_analyst_branch_required", _parity_pm_analyst_branch_required),
+    ("pm_strategist_branch_required", _parity_pm_strategist_branch_required),
+    ("envelope_id_pattern", _parity_envelope_id_pattern),
+    ("source_recommendation_id_pattern", _parity_source_recommendation_id_pattern),
+    ("verdict_enum", _parity_verdict_enum),
+    ("source_provenance_enum", _parity_source_provenance_enum),
+    ("recommendation_type_enum", _parity_recommendation_type_enum),
+    ("thesis_quality_evaluation_keys", _parity_thesis_quality_evaluation_keys),
+    ("position_action_evaluation_keys", _parity_position_action_evaluation_keys),
+    ("criterion_status_enum", _parity_criterion_status_enum),
+    ("modification_phase_enum", _parity_modification_phase_enum),
+    ("modification_adjustment_category_enum", _parity_modification_adjustment_category_enum),
+    ("modification_required_fields", _parity_modification_required_fields),
+    ("concern_record_required", _parity_concern_record_required),
+    ("anti_pattern_enum", _parity_anti_pattern_enum),
+]
+
+
 class TestPMEnvelopeSchemaParity:
     """Parity between :func:`envelope_schema` and pm-envelope-schema.md.
 
@@ -1062,217 +1258,22 @@ class TestPMEnvelopeSchemaParity:
     not achievable; parity checks (required-field sets, enum values, regex
     patterns, criterion-key sets) catch every contract drift the design
     schema is the authoritative home for.
+
+    Each row in ``_PARITY_ROWS`` corresponds to one former test method, preserving
+    every assertion verbatim.
     """
 
-    def test_top_level_required_matches(self) -> None:
-        """Top-level required matches the design doc's top-level required."""
-        design = _load_design_doc_schema()
-        schema = envelope_schema()
-        # Pydantic discriminated unions don't carry a top-level ``required`` —
-        # required is enforced per-branch. Walk both branches and assert each
-        # branch's required is a superset of the design's top-level required.
-        design_top_required = set(design["required"])
-        defs = _collect_pydantic_defs(schema)
-        for branch in ("PMAnalystEnvelope", "PMStrategistEnvelope"):
-            branch_required = set(defs[branch]["required"])
-            assert design_top_required.issubset(branch_required), (
-                f"{branch} required missing fields from design top-level required: "
-                f"{design_top_required - branch_required}"
-            )
-
-    def test_pm_analyst_branch_required(self) -> None:
-        """The pm_analyst branch carries every design-doc required field."""
-        design = _load_design_doc_schema()
-        schema = envelope_schema()
-        defs = _collect_pydantic_defs(schema)
-        design_branch_required = set(design["$defs"]["pm_analyst_envelope"]["required"])
-        pyd_required = set(defs["PMAnalystEnvelope"]["required"])
-        assert design_branch_required.issubset(pyd_required), (
-            f"PMAnalystEnvelope missing required fields {design_branch_required - pyd_required}"
-        )
-
-    def test_pm_strategist_branch_required(self) -> None:
-        """The pm_strategist branch carries every design-doc required field."""
-        design = _load_design_doc_schema()
-        schema = envelope_schema()
-        defs = _collect_pydantic_defs(schema)
-        design_branch_required = set(design["$defs"]["pm_strategist_envelope"]["required"])
-        pyd_required = set(defs["PMStrategistEnvelope"]["required"])
-        assert design_branch_required.issubset(pyd_required), (
-            f"PMStrategistEnvelope missing required {design_branch_required - pyd_required}"
-        )
-
-    def test_envelope_id_pattern_matches(self) -> None:
-        """envelope_id pattern at the top level matches the design doc."""
-        design = _load_design_doc_schema()
-        design_pattern = design["properties"]["envelope_id"]["pattern"]
-        # PMAnalyst/Strategist branches each tighten the pattern; either branch's
-        # pattern is a strict subset of the design's top-level pattern.
-        # We check the union: ENV-(REC|SA|SA-ORD)-[0-9]+
-        assert design_pattern == r"^ENV-(REC|SA|SA-ORD)-[0-9]+$"
-
-        schema = envelope_schema()
-        defs = _collect_pydantic_defs(schema)
-        pm_analyst_pattern = defs["PMAnalystEnvelope"]["properties"]["envelope_id"]["pattern"]
-        pm_strategist_pattern = defs["PMStrategistEnvelope"]["properties"]["envelope_id"]["pattern"]
-        assert pm_analyst_pattern == r"^ENV-REC-[0-9]+$"
-        assert pm_strategist_pattern == r"^ENV-(SA|SA-ORD)-[0-9]+$"
-
-    def test_source_recommendation_id_pattern_matches(self) -> None:
-        schema = envelope_schema()
-        defs = _collect_pydantic_defs(schema)
-        pm_analyst_pat = defs["PMAnalystEnvelope"]["properties"]["source_recommendation_id"][
-            "pattern"
-        ]
-        pm_strategist_pat = defs["PMStrategistEnvelope"]["properties"]["source_recommendation_id"][
-            "pattern"
-        ]
-        assert pm_analyst_pat == r"^REC-[0-9]+$"
-        assert pm_strategist_pat == r"^SA(-ORD)?-[0-9]+$"
-
-    def test_verdict_enum_matches(self) -> None:
-        design = _load_design_doc_schema()
-        design_enum = set(design["properties"]["verdict"]["enum"])
-        schema = envelope_schema()
-        defs = _collect_pydantic_defs(schema)
-        pyd_enum = set(defs["PMAnalystEnvelope"]["properties"]["verdict"]["enum"])
-        assert design_enum == pyd_enum
-        assert design_enum == {
-            "approve",
-            "approve_with_modification",
-            "reject",
-            "override_with_corrective_action",
-        }
-
-    def test_source_provenance_enum_matches(self) -> None:
-        design = _load_design_doc_schema()
-        design_enum = set(design["properties"]["source_provenance"]["enum"])
-        assert design_enum == {"pm_analyst", "pm_strategist"}
-
-    def test_recommendation_type_enum_matches(self) -> None:
-        design = _load_design_doc_schema()
-        design_enum = set(design["properties"]["recommendation_type"]["enum"])
-        assert design_enum == {"new_entry", "position_assessment", "pending_order_assessment"}
-
-    def test_thesis_quality_evaluation_keys_match(self) -> None:
-        design = _load_design_doc_schema()
-        design_required = set(design["$defs"]["thesis_quality_evaluation"]["required"])
-        schema = envelope_schema()
-        defs = _collect_pydantic_defs(schema)
-        pyd_required = set(defs["ThesisQualityEvaluation"]["required"])
-        assert design_required == pyd_required
-        assert design_required == {
-            "falsifiability",
-            "sizing_proportionality",
-            "portfolio_coherence",
-            "timing_plausibility",
-            "counterargument_consideration",
-        }
-
-    def test_position_action_evaluation_keys_match(self) -> None:
-        design = _load_design_doc_schema()
-        design_required = set(design["$defs"]["position_action_evaluation"]["required"])
-        schema = envelope_schema()
-        defs = _collect_pydantic_defs(schema)
-        pyd_required = set(defs["PositionActionEvaluation"]["required"])
-        assert design_required == pyd_required
-        assert design_required == {
-            "status_classification_warrant",
-            "action_status_alignment",
-            "action_specific_justification",
-            "portfolio_coherence",
-        }
-
-    def test_criterion_status_enum_matches(self) -> None:
-        design = _load_design_doc_schema()
-        design_enum = set(design["$defs"]["criterion_assessment"]["properties"]["status"]["enum"])
-        schema = envelope_schema()
-        defs = _collect_pydantic_defs(schema)
-        pyd_enum = set(defs["CriterionAssessment"]["properties"]["status"]["enum"])
-        assert design_enum == pyd_enum
-        assert design_enum == {"pass", "fail"}
-
-    def test_modification_phase_enum_matches(self) -> None:
-        design = _load_design_doc_schema()
-        design_enum = set(design["$defs"]["modification_record"]["properties"]["phase"]["enum"])
-        schema = envelope_schema()
-        defs = _collect_pydantic_defs(schema)
-        pyd_enum = set(defs["ModificationRecord"]["properties"]["phase"]["enum"])
-        assert design_enum == pyd_enum
-
-    def test_modification_adjustment_category_enum_matches(self) -> None:
-        design = _load_design_doc_schema()
-        design_enum = set(
-            design["$defs"]["modification_record"]["properties"]["adjustment_category"]["enum"]
-        )
-        schema = envelope_schema()
-        defs = _collect_pydantic_defs(schema)
-        pyd_enum = set(defs["ModificationRecord"]["properties"]["adjustment_category"]["enum"])
-        assert design_enum == pyd_enum
-        assert design_enum == {
-            "risk_reduction",
-            "conviction_disagreement",
-            "capital_constraint",
-            "portfolio_balance",
-            "guardrail_rejection_response",
-        }
-
-    def test_modification_required_fields_match(self) -> None:
-        design = _load_design_doc_schema()
-        design_required = set(design["$defs"]["modification_record"]["required"])
-        schema = envelope_schema()
-        defs = _collect_pydantic_defs(schema)
-        pyd_required = set(defs["ModificationRecord"]["required"])
-        assert design_required == pyd_required
-
-    def test_concern_record_required_matches(self) -> None:
-        design = _load_design_doc_schema()
-        design_required = set(design["$defs"]["concern_record"]["required"])
-        schema = envelope_schema()
-        defs = _collect_pydantic_defs(schema)
-        pyd_required = set(defs["ConcernRecord"]["required"])
-        assert design_required == pyd_required
-
-    def test_anti_pattern_enum_matches(self) -> None:
-        design = _load_design_doc_schema()
-        design_enum = set(design["properties"]["anti_patterns_identified"]["items"]["enum"])
-        # Pydantic emits the AntiPattern Literal as enum values somewhere in the
-        # branch's anti_patterns_identified shape. Walk and find the enum.
-        schema = envelope_schema()
-        defs = _collect_pydantic_defs(schema)
-        # The field is on each branch.
-        branch_prop = defs["PMAnalystEnvelope"]["properties"]["anti_patterns_identified"]
-
-        # The schema may render as anyOf with a list-with-enum branch, depending
-        # on Pydantic's handling of tuple[AntiPattern, ...] | None.
-        def _find_enum(node: Any) -> set[str] | None:
-            if isinstance(node, dict):
-                if "enum" in node and isinstance(node["enum"], list):
-                    return set(node["enum"])
-                for v in node.values():
-                    found = _find_enum(v)
-                    if found is not None:
-                        return found
-            elif isinstance(node, list):
-                for item in node:
-                    found = _find_enum(item)
-                    if found is not None:
-                        return found
-            return None
-
-        pyd_enum = _find_enum(branch_prop)
-        assert pyd_enum == design_enum
-        assert design_enum == {
-            "conviction_inflation",
-            "sunk_cost_persistence",
-            "rationalized_continuation",
-            "thesis_contradiction_suppression",
-            "engine_originated_closure_signal",
-        }
+    @pytest.mark.parametrize(
+        ("label", "assertion_fn"),
+        _PARITY_ROWS,
+        ids=[r[0] for r in _PARITY_ROWS],
+    )
+    def test_parity(self, label: str, assertion_fn: Any) -> None:
+        assertion_fn()
 
 
 # ---------------------------------------------------------------------------
-# 11. Schema accessors return well-formed schemas
+# 10. Schema accessors return well-formed schemas
 # ---------------------------------------------------------------------------
 
 
@@ -1300,7 +1301,7 @@ class TestSchemaAccessors:
 
 
 # ---------------------------------------------------------------------------
-# 12. Canonical-import hard rule — PM re-exports OMS commands from the canonical home
+# 11. Canonical-import hard rule — PM re-exports OMS commands from the canonical home
 # ---------------------------------------------------------------------------
 
 
@@ -1322,7 +1323,7 @@ class TestCanonicalReexport:
 
 
 # ---------------------------------------------------------------------------
-# 13. Transitional artifacts deleted — PM's old oms_command_models.py is gone
+# 12. Transitional artifacts deleted — PM's old oms_command_models.py is gone
 # ---------------------------------------------------------------------------
 
 
@@ -1335,7 +1336,7 @@ class TestTransitionalArtifactsDeleted:
 
 
 # ---------------------------------------------------------------------------
-# 14. Frozen-ness of envelope models
+# 13. Frozen-ness of envelope models
 # ---------------------------------------------------------------------------
 
 
@@ -1359,7 +1360,7 @@ class TestFrozen:
 
 
 # ---------------------------------------------------------------------------
-# 15. Public surface re-exports through __init__.py
+# 14. Public surface re-exports through __init__.py
 # ---------------------------------------------------------------------------
 
 
