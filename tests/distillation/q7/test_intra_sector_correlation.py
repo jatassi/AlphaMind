@@ -1,9 +1,12 @@
 """Tests for ``q7_cross_asset.compute_intra_sector_correlation`` — story 08d.
 
-Cover intra-sector pairwise correlation matrices at the short and long
-windows, plus the divergence detection that fires when the short-window
-correlation deviates from the long-window baseline by the configured sigma
-multiple.
+DB-backed tests. One named pin (per ALP-797 preserve-list) plus the
+persistence smoke (event written to ``distillation_event_history``), which
+has no pure-compute twin.  The fire-path divergence-flag and the perfect-
+correlation payload are fully pinned by
+``test_compute.py::TestIntraSectorCorrelationCompute``.
+
+Reduced in ALP-797 (q7 pure/DB double-altitude reduction).
 """
 
 from __future__ import annotations
@@ -17,9 +20,6 @@ from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from alphamind._kernel.ids import Symbol
-from alphamind.distillation.calibration import CalibrationState
-from alphamind.distillation.output import OutputAudience
 from alphamind.distillation.q7 import compute_intra_sector_correlation
 from alphamind.persistence.models import (
     AssetUniverse,
@@ -94,89 +94,6 @@ def _add_close(session: Session, *, ticker: str, period_start: str, close: float
     )
 
 
-def _seed_synthetic_log_returns(
-    session: Session,
-    *,
-    ticker: str,
-    log_returns: list[float],
-    start_close: float = 100.0,
-    start_day: int = 1,
-) -> None:
-    """Walk a price series from ``start_close`` driven by ``log_returns``.
-
-    Inserts ``len(log_returns) + 1`` daily bars starting at day ``start_day``
-    in April 2026.
-    """
-    close = start_close
-    _add_close(
-        session,
-        ticker=ticker,
-        period_start=f"2026-04-{start_day:02d}T00:00:00Z",
-        close=close,
-    )
-    for i, lr in enumerate(log_returns, start=1):
-        close = close * math.exp(lr)
-        _add_close(
-            session,
-            ticker=ticker,
-            period_start=f"2026-04-{start_day + i:02d}T00:00:00Z",
-            close=close,
-        )
-
-
-# ---------------------------------------------------------------------------
-# Happy path — perfectly correlated tickers produce ~1.0 correlations
-# ---------------------------------------------------------------------------
-
-
-class TestIntraSectorCorrelationHappyPath:
-    def test_two_tickers_with_identical_returns_yield_full_correlation(
-        self, session: Session
-    ) -> None:
-        # Two tickers with identical day-by-day log returns → perfect
-        # correlation. Use 4 days = 3 returns, well below the 20-day short
-        # window — the helper should still compute correlation over the
-        # available observations and tag bootstrap.
-        _add_ticker(session, "AAPL")
-        _add_ticker(session, "MSFT")
-        log_returns = [0.01, -0.02, 0.015]
-        _seed_synthetic_log_returns(session, ticker=Symbol("AAPL"), log_returns=log_returns)
-        _seed_synthetic_log_returns(session, ticker=Symbol("MSFT"), log_returns=log_returns)
-        session.commit()
-
-        as_of = datetime(2026, 4, 4, tzinfo=UTC)
-        blocks = compute_intra_sector_correlation(
-            session,
-            sector="tech",
-            sector_tickers=("AAPL", "MSFT"),
-            as_of=as_of,
-            short_window_days=CORRELATION_SHORT_DAYS,
-            long_window_days=CORRELATION_LONG_DAYS,
-            divergence_sigma=NARRATIVE_LAG_CORRELATION_SHIFT_SIGMA,
-            correlation_locus_pair_count_threshold=CORRELATION_LOCUS_PAIR_COUNT_THRESHOLD,
-        )
-
-        # One correlation block per sector.
-        assert len(blocks) == 1
-        block = blocks[0]
-        assert block.block_id == "q7.intra_sector_correlation.tech"
-        assert OutputAudience.CORRELATION_REGIME_BRIEF in block.audience
-
-        # Short-window correlation matrix between AAPL and MSFT should be ~1.
-        short_matrix = block.payload["short_window"]["correlation_matrix"]
-        assert short_matrix["AAPL"]["MSFT"] == pytest.approx(1.0, abs=1e-9)
-        assert short_matrix["MSFT"]["AAPL"] == pytest.approx(1.0, abs=1e-9)
-        # Diagonal is exactly 1.
-        assert short_matrix["AAPL"]["AAPL"] == pytest.approx(1.0, abs=1e-9)
-        # Calibration: only 3 returns observed → bootstrap.
-        assert block.calibration_state is CalibrationState.ACCUMULATING
-
-
-# ---------------------------------------------------------------------------
-# Divergence detection — fires at 1.5sigma, suppressed below
-# ---------------------------------------------------------------------------
-
-
 def _build_close_series(returns: list[float], start_close: float = 100.0) -> list[float]:
     """Cumulative-product close series from a list of log returns."""
     closes = [start_close]
@@ -222,66 +139,10 @@ class TestIntraSectorCorrelationDivergence:
             closes = _build_close_series(rets)
             _insert_close_series(session, ticker=ticker, closes=closes, start_day=start_day)
 
-    def test_divergence_flag_fires_when_short_breaks_long_baseline(self, session: Session) -> None:
-        # Construct a 60-day return history where:
-        #   - In the LONG window (60 days back), all three tickers are highly
-        #     correlated (small noise around the same path) → long-window
-        #     pairwise correlations ~ 1.0 with a tiny stdev across pairs.
-        #   - In the SHORT window (last 20 days), pair (A, B) suddenly
-        #     decorrelates (B flips signs) while (A, C) and (B, C) stay
-        #     correlated → AB short correlation ~ -1, deviation ~ 2.0,
-        #     well above 1.5 * (long-window distribution stdev).
-        long_returns = [0.01, -0.005, 0.008, -0.012, 0.006] * 8  # 40 days
-        # base_a serves as the baseline path for long window.
-        a_long = list(long_returns)
-        b_long = [r + 0.0001 * (i % 3) for i, r in enumerate(long_returns)]
-        c_long = [r + 0.00005 * (i % 5) for i, r in enumerate(long_returns)]
-
-        # Short window: a continues with similar pattern; b flips sign; c
-        # tracks a. 20 short returns.
-        short_a = [0.01, -0.02, 0.015, 0.005, -0.01,
-                   0.012, -0.018, 0.02, -0.005, 0.008,
-                   -0.015, 0.01, -0.005, 0.012, -0.008,
-                   0.005, -0.012, 0.018, -0.01, 0.005]  # fmt: skip
-        short_b = [-x for x in short_a]
-        short_c = list(short_a)
-
-        a_returns = a_long + short_a
-        b_returns = b_long + short_b
-        c_returns = c_long + short_c
-        # Total: 60 returns → 61 daily bars.
-
-        # Anchor the series so the most recent bar is at as_of.
-        as_of = datetime(2026, 4, 30, tzinfo=UTC)
-        start_day = as_of - timedelta(days=len(a_returns))
-        self._seed_three_tickers(
-            session,
-            a_returns=a_returns,
-            b_returns=b_returns,
-            c_returns=c_returns,
-            start_day=start_day,
-        )
-        session.commit()
-
-        blocks = compute_intra_sector_correlation(
-            session,
-            sector="tech",
-            sector_tickers=("A", "B", "C"),
-            as_of=as_of,
-            short_window_days=20,
-            long_window_days=60,
-            divergence_sigma=NARRATIVE_LAG_CORRELATION_SHIFT_SIGMA,
-            correlation_locus_pair_count_threshold=CORRELATION_LOCUS_PAIR_COUNT_THRESHOLD,
-        )
-
-        block = blocks[0]
-        names = [flag.name for flag in block.anomaly_flags]
-        # The (A, B) pair correlation diverged sharply; expect a flag.
-        assert any("A:B" in name for name in names), f"expected an A:B divergence flag; got {names}"
-
     def test_divergence_event_persisted_in_event_history(self, session: Session) -> None:
         # When a divergence fires, an event row of kind ``correlation_divergence``
         # is appended to ``distillation_event_history`` for the lead ticker.
+        # This side-effect has no pure-compute twin — it exercises the DB shim.
         long_returns = [0.01, -0.005, 0.008, -0.012, 0.006] * 8
         a_long = list(long_returns)
         b_long = [r + 0.0001 * (i % 3) for i, r in enumerate(long_returns)]
@@ -338,6 +199,8 @@ class TestIntraSectorCorrelationDivergence:
         # All three tickers track the same return path across both windows;
         # short and long correlations are both ~ 1 → zero deviation → no
         # flag fires.
+        # PRESERVE PIN (ALP-797): suppression branch has no DB twin in pure
+        # tests; this is the only DB-level coverage for the suppression path.
         long_returns = [0.01, -0.005, 0.008, -0.012, 0.006] * 8  # 40
         short_returns = [0.01, -0.02, 0.015, 0.005, -0.01,
                          0.012, -0.018, 0.02, -0.005, 0.008,

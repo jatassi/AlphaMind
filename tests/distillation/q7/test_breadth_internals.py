@@ -1,7 +1,10 @@
 """Tests for ``q7_cross_asset.compute_breadth_internals`` — story 08d.
 
-Cover the percentage of universe names above EMA, advance/decline within
-sectors, and equal-weight vs. cap-weight performance comparison.
+DB-backed smoke: confirm the loader/shim wires the DB entry point to the
+pure compute core.  The compute logic itself is fully pinned by
+``test_compute.py::TestBreadthInternalsCompute``.
+
+Reduced in ALP-797 (q7 pure/DB double-altitude reduction).
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import Symbol
-from alphamind.distillation.output import OutputAudience
+from alphamind.distillation.output import OutputAudience, OutputBlock
 from alphamind.distillation.q7 import compute_breadth_internals
 from alphamind.persistence.models import (
     AssetUniverse,
@@ -108,114 +111,25 @@ def _seed_path(
 
 
 # ---------------------------------------------------------------------------
-# Percentage above EMA
+# Loader/persistence smoke
 # ---------------------------------------------------------------------------
 
 
-class TestBreadthPctAboveEMA:
-    def test_pct_above_20day_ema_aggregates_correctly(self, session: Session) -> None:
-        # Three tickers in the universe.
-        # AAPL: rising path → finishes above 20-day EMA.
-        # MSFT: also rising → finishes above 20-day EMA.
-        # GOOG: declining path → finishes below 20-day EMA.
+class TestBreadthInternalsSmoke:
+    def test_db_entry_point_returns_block_with_expected_payload_keys(
+        self, session: Session
+    ) -> None:
+        """DB shim loads OHLCV rows and wires into the pure compute core."""
         as_of = datetime(2026, 4, 30, tzinfo=UTC)
         start_day = as_of - timedelta(days=20)
-
         rising = [100.0 * (1.0 + 0.01 * i) for i in range(21)]
-        falling = [120.0 * (1.0 - 0.01 * i) for i in range(21)]
 
         _add_ticker(session, "AAPL", sector="tech")
         _add_ticker(session, "MSFT", sector="tech")
-        _add_ticker(session, "GOOG", sector="tech")
+        _add_ticker(session, "SPY", sector="tech")
         _seed_path(session, ticker=Symbol("AAPL"), closes=rising, start_day=start_day)
         _seed_path(session, ticker=Symbol("MSFT"), closes=rising, start_day=start_day)
-        _seed_path(session, ticker=Symbol("GOOG"), closes=falling, start_day=start_day)
-        # Add SPY for cap-weight reference.
-        _add_ticker(session, "SPY", sector="tech")
         _seed_path(session, ticker=Symbol("SPY"), closes=rising, start_day=start_day)
-        session.commit()
-
-        blocks = compute_breadth_internals(
-            session,
-            universe_tickers=("AAPL", "MSFT", "GOOG"),
-            sector_members={"tech": ("AAPL", "MSFT", "GOOG")},
-            as_of=as_of,
-        )
-
-        assert len(blocks) == 1
-        block = blocks[0]
-        assert block.block_id == "q7.breadth_internals"
-        # Breadth and intermarket carry UNIVERSAL_BROADCAST per the story.
-        assert OutputAudience.CORRELATION_REGIME_BRIEF in block.audience
-        assert OutputAudience.UNIVERSAL_BROADCAST in block.audience
-
-        # 2 of 3 tickers are above 20-day EMA → ~66.7%.
-        pct_above = block.payload["pct_above_20d_ema"]
-        assert 0.6 < pct_above < 0.7
-
-    def test_advance_decline_per_sector_counts_correctly(self, session: Session) -> None:
-        # Two sectors: tech (3 tickers) and financials (2 tickers).
-        # Today: AAPL up, MSFT up, GOOG down → tech 2 up, 1 down.
-        #        JPM up, BAC down → financials 1 up, 1 down.
-        as_of = datetime(2026, 4, 30, tzinfo=UTC)
-        prev_day = as_of - timedelta(days=1)
-
-        _add_ticker(session, "AAPL", sector="tech")
-        _add_ticker(session, "MSFT", sector="tech")
-        _add_ticker(session, "GOOG", sector="tech")
-        _add_ticker(session, "JPM", sector="financials")
-        _add_ticker(session, "BAC", sector="financials")
-        _add_ticker(session, "SPY", sector="tech")
-
-        prev_iso = prev_day.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        as_of_iso = as_of.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        # Previous closes.
-        for ticker in ("AAPL", "MSFT", "GOOG", "JPM", "BAC", "SPY"):
-            _add_close(session, ticker=ticker, period_start=prev_iso, close=100.0)
-        # Today's closes — direction varies.
-        _add_close(session, ticker=Symbol("AAPL"), period_start=as_of_iso, close=101.0)
-        _add_close(session, ticker=Symbol("MSFT"), period_start=as_of_iso, close=102.0)
-        _add_close(session, ticker=Symbol("GOOG"), period_start=as_of_iso, close=99.0)
-        _add_close(session, ticker=Symbol("JPM"), period_start=as_of_iso, close=101.0)
-        _add_close(session, ticker=Symbol("BAC"), period_start=as_of_iso, close=98.0)
-        _add_close(session, ticker=Symbol("SPY"), period_start=as_of_iso, close=101.0)
-        session.commit()
-
-        blocks = compute_breadth_internals(
-            session,
-            universe_tickers=("AAPL", "MSFT", "GOOG", "JPM", "BAC"),
-            sector_members={
-                "tech": ("AAPL", "MSFT", "GOOG"),
-                "financials": ("JPM", "BAC"),
-            },
-            as_of=as_of,
-        )
-
-        block = blocks[0]
-        ad = block.payload["advance_decline_per_sector"]
-        # Sorted by sector key for deterministic rendering.
-        assert ad["financials"] == {"advances": 1, "declines": 1}
-        assert ad["tech"] == {"advances": 2, "declines": 1}
-
-    def test_equal_vs_cap_weight_compares_today(self, session: Session) -> None:
-        # Equal-weight: simple mean of universe daily returns.
-        # Cap-weight: SPY daily return.
-        as_of = datetime(2026, 4, 30, tzinfo=UTC)
-        prev_day = as_of - timedelta(days=1)
-
-        _add_ticker(session, "AAPL", sector="tech")
-        _add_ticker(session, "MSFT", sector="tech")
-        _add_ticker(session, "SPY", sector="tech")
-
-        prev_iso = prev_day.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        as_of_iso = as_of.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        for ticker in ("AAPL", "MSFT", "SPY"):
-            _add_close(session, ticker=ticker, period_start=prev_iso, close=100.0)
-        # AAPL +2%, MSFT +4% → equal-weight return = (0.02 + 0.04) / 2 = 0.03.
-        _add_close(session, ticker=Symbol("AAPL"), period_start=as_of_iso, close=102.0)
-        _add_close(session, ticker=Symbol("MSFT"), period_start=as_of_iso, close=104.0)
-        # SPY +1% → cap-weight proxy = 0.01.
-        _add_close(session, ticker=Symbol("SPY"), period_start=as_of_iso, close=101.0)
         session.commit()
 
         blocks = compute_breadth_internals(
@@ -225,8 +139,11 @@ class TestBreadthPctAboveEMA:
             as_of=as_of,
         )
 
+        assert len(blocks) == 1
         block = blocks[0]
-        eq_vs_cap = block.payload["equal_vs_cap_weight"]
-        assert eq_vs_cap["equal_weight_return"] == pytest.approx(0.03, abs=1e-9)
-        assert eq_vs_cap["cap_weight_return"] == pytest.approx(0.01, abs=1e-9)
-        assert eq_vs_cap["spread"] == pytest.approx(0.02, abs=1e-9)
+        assert isinstance(block, OutputBlock)
+        assert block.block_id == "q7.breadth_internals"
+        assert OutputAudience.CORRELATION_REGIME_BRIEF in block.audience
+        assert OutputAudience.UNIVERSAL_BROADCAST in block.audience
+        for key in ("pct_above_20d_ema", "advance_decline_per_sector", "equal_vs_cap_weight"):
+            assert key in block.payload

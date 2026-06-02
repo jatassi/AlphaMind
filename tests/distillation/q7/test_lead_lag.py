@@ -1,9 +1,11 @@
 """Tests for ``q7_cross_asset.compute_lead_lag`` — story 08d.
 
-Cover the lead-lag overdue flag and the lead-lag regime-shift / inversion
-detection. The function reads the persisted lead-lag estimate from
-``distillation_pair_lag`` (story 03 / 07) and inspects recent lead vs. lag
-returns from ``ohlcv_bars``.
+DB-backed smoke: confirm the loader/shim reads the persisted pair-lag row
+from ``distillation_pair_lag`` and wires OHLCV history into the pure
+compute core.  The overdue-lag and inversion logic is fully pinned by
+``test_compute.py::TestLeadLagCompute``.
+
+Reduced in ALP-797 (q7 pure/DB double-altitude reduction).
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import Symbol
 from alphamind.distillation.calibration import CalibrationState
-from alphamind.distillation.output import OutputAudience
+from alphamind.distillation.output import OutputAudience, OutputBlock
 from alphamind.distillation.q7 import (
     LeadLagPair,
     compute_lead_lag,
@@ -127,68 +129,24 @@ def _add_pair_lag_row(
 
 
 # ---------------------------------------------------------------------------
-# Overdue flag — fires when lead has moved >=1.5sigma but lag hasn't tracked
+# Loader/persistence smoke
 # ---------------------------------------------------------------------------
 
 
-class TestLeadLagOverdueFlag:
-    def test_overdue_flag_fires_when_lead_moved_but_lag_did_not(self, session: Session) -> None:
-        # SMH (lead) moves +5% over the most recent day; QQQ (lag) is flat.
-        # The pair's ``_max_days`` is 2; the lead's z-score against its
-        # trailing returns is well above 1.5 → overdue flag fires.
-        as_of = datetime(2026, 4, 30, tzinfo=UTC)
-        start_day = as_of - timedelta(days=21)
-        # 20 days of small-volatility returns plus a final spike for SMH only.
-        smh_returns = [0.001] * 19 + [0.05]  # last day +5%
-        qqq_returns = [0.001] * 20  # flat throughout
-        smh_closes = [100.0]
-        qqq_closes = [200.0]
-        for r in smh_returns:
-            smh_closes.append(smh_closes[-1] * (1.0 + r))
-        for r in qqq_returns:
-            qqq_closes.append(qqq_closes[-1] * (1.0 + r))
-        _seed_path(session, ticker=Symbol("SMH"), closes=smh_closes, start_day=start_day)
-        _seed_path(session, ticker=Symbol("QQQ"), closes=qqq_closes, start_day=start_day)
-        _add_pair_lag_row(
-            session,
-            lead="SMH",
-            lag="QQQ",
-            as_of=as_of,
-            estimate_days=1.0,
-            n_pair_events=30,
-        )
-        session.commit()
+class TestLeadLagSmoke:
+    def test_db_entry_point_loads_persisted_pair_row_and_returns_block(
+        self, session: Session
+    ) -> None:
+        """DB shim reads the persisted pair-lag row and OHLCV history.
 
-        blocks = compute_lead_lag(
-            session,
-            pairs=(
-                LeadLagPair(
-                    pair_key="semis_to_tech",
-                    lead_ticker="SMH",
-                    lag_ticker="QQQ",
-                    max_days=2,
-                ),
-            ),
-            as_of=as_of,
-            overdue_lead_sigma=1.5,
-        )
-
-        # One block per pair.
-        assert len(blocks) == 1
-        block = blocks[0]
-        assert block.block_id == "q7.lead_lag.semis_to_tech"
-        assert OutputAudience.CORRELATION_REGIME_BRIEF in block.audience
-        names = [flag.name for flag in block.anomaly_flags]
-        assert any("overdue_lag_flag" in name for name in names), (
-            f"expected overdue_lag_flag, got {names}"
-        )
-
-    def test_overdue_flag_suppressed_when_lag_tracked(self, session: Session) -> None:
-        # SMH up 5%, QQQ also up 5% on the next day → lag tracked; no flag.
+        Uniquely exercises the DB loading path: the persisted estimate is
+        read from ``distillation_pair_lag`` rather than computed inline.
+        The flag-firing logic is pinned by the pure compute tests.
+        """
         as_of = datetime(2026, 4, 30, tzinfo=UTC)
         start_day = as_of - timedelta(days=21)
         smh_returns = [0.001] * 19 + [0.05]
-        qqq_returns = [0.001] * 19 + [0.05]  # also up 5% — lag tracked
+        qqq_returns = [0.001] * 20
         smh_closes = [100.0]
         qqq_closes = [200.0]
         for r in smh_returns:
@@ -221,55 +179,18 @@ class TestLeadLagOverdueFlag:
             overdue_lead_sigma=1.5,
         )
 
+        assert len(blocks) == 1
         block = blocks[0]
+        assert isinstance(block, OutputBlock)
+        assert block.block_id == "q7.lead_lag.semis_to_tech"
+        assert OutputAudience.CORRELATION_REGIME_BRIEF in block.audience
+        # Persisted estimate threads through the payload.
+        pair_payload = block.payload["pair_lag"]["semis_to_tech"]
+        assert pair_payload["lead_lag_days_estimate"] == pytest.approx(1.0)
+        assert pair_payload["n_pair_events"] == 30
+        assert block.calibration_state is CalibrationState.CALIBRATED
+        # Lead moved; overdue flag fires (confirms the DB path invoked compute correctly).
         names = [flag.name for flag in block.anomaly_flags]
-        assert not any("overdue_lag_flag" in name for name in names), (
-            f"unexpected overdue_lag_flag (lag tracked): {names}"
-        )
-
-    def test_inversion_flag_fires_when_lag_moves_first(self, session: Session) -> None:
-        # The "lag" asset (QQQ) makes a large move first; the "lead" (SMH)
-        # follows. This is the regime-shift / inversion case.
-        as_of = datetime(2026, 4, 30, tzinfo=UTC)
-        start_day = as_of - timedelta(days=21)
-        # Day 19 (penultimate): QQQ moves +5%; SMH is flat.
-        # Day 20 (final): SMH moves +5%; QQQ flat.
-        smh_returns = [0.001] * 18 + [0.001, 0.05]
-        qqq_returns = [0.001] * 18 + [0.05, 0.001]
-        smh_closes = [100.0]
-        qqq_closes = [200.0]
-        for r in smh_returns:
-            smh_closes.append(smh_closes[-1] * (1.0 + r))
-        for r in qqq_returns:
-            qqq_closes.append(qqq_closes[-1] * (1.0 + r))
-        _seed_path(session, ticker=Symbol("SMH"), closes=smh_closes, start_day=start_day)
-        _seed_path(session, ticker=Symbol("QQQ"), closes=qqq_closes, start_day=start_day)
-        _add_pair_lag_row(
-            session,
-            lead="SMH",
-            lag="QQQ",
-            as_of=as_of,
-            estimate_days=1.0,
-            n_pair_events=30,
-        )
-        session.commit()
-
-        blocks = compute_lead_lag(
-            session,
-            pairs=(
-                LeadLagPair(
-                    pair_key="semis_to_tech",
-                    lead_ticker="SMH",
-                    lag_ticker="QQQ",
-                    max_days=2,
-                ),
-            ),
-            as_of=as_of,
-            overdue_lead_sigma=1.5,
-        )
-
-        block = blocks[0]
-        names = [flag.name for flag in block.anomaly_flags]
-        assert any("inversion_flag" in name for name in names), (
-            f"expected inversion_flag, got {names}"
+        assert any("overdue_lag_flag" in name for name in names), (
+            f"expected overdue_lag_flag from DB path, got {names}"
         )
