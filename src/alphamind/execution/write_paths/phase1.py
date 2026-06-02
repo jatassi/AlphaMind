@@ -15,6 +15,7 @@ unprocessed for the next invocation.
 from __future__ import annotations
 
 import dataclasses
+import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -133,6 +134,8 @@ from alphamind.state.tables.positions_codec import (
     row_to_record as position_row_to_record,
 )
 from alphamind.state.tables.theses import ThesisRow
+
+log = logging.getLogger(__name__)
 
 # Tolerance for "remaining quantity zero" comparisons after float arithmetic.
 _QTY_EPSILON = 1e-9
@@ -446,7 +449,7 @@ async def _integrate_or_quarantine_fill(
     row: FillRecordRow,
     *,
     market_inputs: MarketInputs | None,
-    regt_config: RegTMarginAttributionConfig,
+    regt_config: RegTMarginAttributionConfig | None,
     borrow_cost_resolver: Callable[[str], float | None] | None,
 ) -> bool:
     """Integrate one fill, or quarantine it; return ``True`` iff it integrated.
@@ -531,12 +534,13 @@ async def _integrate_or_quarantine_fill(
         return False
 
     if market_inputs is not None:
+        _config = regt_config if regt_config is not None else load_regt_margin_attribution_config()
         post_positions = await _read_all_positions(handle)
         attribution = compute_attribution(
             pre_fill_positions=pre_positions,
             post_fill_positions=post_positions,
             market_inputs=market_inputs,
-            config=regt_config,
+            config=_config,
         )
         row.regt_attribution_json = attribution.model_dump_json()
     _mark_processed(row, handle.invocation_id)
@@ -2247,9 +2251,9 @@ def _build_recovery_invocation_row(
         start_at=iso,
         phase1_completed_at=None,
         phase2_completed_at=None,
-        trigger_type="manual",
+        trigger_type="scheduled",
         trigger_source="continuous_monitor",
-        trigger_reason="fill_stream_recovery — fast-fill convergence (ALP-767)",
+        trigger_reason="fill_stream_recovery - fast-fill convergence (ALP-767)",
         git_sha_at_invocation="",
         active_profile="",
         active_regime="",
@@ -2283,11 +2287,18 @@ async def integrate_recovered_fills(
     Skips Reg T attribution (``regt_attribution_json`` stays NULL, the same
     as quarantined fills), CA activities, and reconciliation — those remain
     the scheduled pipeline's responsibility. The resulting invocation row is
-    tagged ``trigger_source="fill_stream_recovery"`` for operator visibility.
+    tagged ``trigger_source="continuous_monitor"`` (same vocabulary as the
+    borrow-accrual tick and other monitor-originated invocations).
+
+    SHORT equity ENTRY fills are skipped when ``borrow_cost_resolver`` is
+    ``None``: ``_apply_entry_fill`` raises for those, the broad
+    ``except Exception`` handler would permanently quarantine them, and
+    QUARANTINED rows are invisible to the scheduled Phase-1's
+    ``_read_unprocessed_fill_rows``. Skipping here leaves them UNPROCESSED
+    so the scheduled pipeline (which always has a resolver) can integrate them.
     """
     now = datetime.now(UTC)
     invocation_id = mint_invocation_id(now)
-    regt_config = load_regt_margin_attribution_config()
 
     async with session_factory() as db:
         db.add(
@@ -2309,12 +2320,23 @@ async def integrate_recovered_fills(
         valid_fills, _ = _quarantine_invalid(handle, fills, rows_by_fill_id)
 
         for fill in valid_fills:
+            if borrow_cost_resolver is None:
+                _order = await _read_order(handle, fill.order_id)
+                if _order.role == OrderRole.ENTRY:
+                    _, _pos = await _read_position_for_order(handle, _order)
+                    if _pos.direction == Direction.SHORT:
+                        log.info(
+                            "recovery skip: SHORT entry fill %s deferred to scheduled Phase-1"
+                            " (no borrow_cost_resolver)",
+                            fill.fill_id,
+                        )
+                        continue
             processed = await _integrate_or_quarantine_fill(
                 handle,
                 fill,
                 rows_by_fill_id[fill.fill_id],
                 market_inputs=None,
-                regt_config=regt_config,
+                regt_config=None,
                 borrow_cost_resolver=borrow_cost_resolver,
             )
             if processed:
