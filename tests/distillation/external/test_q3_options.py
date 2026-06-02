@@ -21,12 +21,10 @@ config in production.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import Symbol
@@ -34,12 +32,10 @@ from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import OutputAudience
 from alphamind.persistence.models import (
     AssetUniverse,
-    Base,
     OptionsContracts,
     OptionsContractSnapshots,
     SectorClassification,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
 
 # Mirror the values that ``config/distillation.yaml`` carries. Per the
 # no-magic-numbers audit, distillation source code may not embed these
@@ -52,26 +48,6 @@ SECTOR_SWEEP_MIN_NAMES = 3
 ETF_IV_DIVERGENCE_SIGMA = 1.0
 ATM_IV_HISTORY_DAYS = 252
 ATM_IV_MIN_OBSERVATIONS = 60
-
-
-# ---------------------------------------------------------------------------
-# In-memory SQLite scaffolding (mirrors the existing baselines tests)
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    factory = make_session_factory(engine)
-    with factory() as sess:
-        yield sess
 
 
 def _add_ticker(

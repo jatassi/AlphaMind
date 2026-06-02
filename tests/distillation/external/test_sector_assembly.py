@@ -9,11 +9,9 @@ framing so the invocation archive diffs cleanly.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind.distillation.calibration import CalibrationState
@@ -29,8 +27,7 @@ from alphamind.distillation.sector_assembly import (
     assemble_sector_output,
     load_sector_roster,
 )
-from alphamind.persistence.models import AssetUniverse, Base, SectorClassification
-from alphamind.persistence.session import make_engine, make_session_factory
+from alphamind.persistence.models import AssetUniverse, SectorClassification
 
 # ---------------------------------------------------------------------------
 # Roster fixtures — pre-computed in the test (mirrors the orchestrator's
@@ -40,25 +37,6 @@ from alphamind.persistence.session import make_engine, make_session_factory
 TECH_SEMIS_ROSTER: tuple[str, ...] = ("AAPL", "NVDA")
 FINANCIALS_ROSTER: tuple[str, ...] = ("BAC", "JPM")
 ENERGY_ROSTER: tuple[str, ...] = ("CVX", "XOM")
-
-# ---------------------------------------------------------------------------
-# In-memory SQLite scaffolding
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    factory = make_session_factory(engine)
-    with factory() as sess:
-        yield sess
 
 
 def _add_ticker(session: Session, ticker: str) -> None:

@@ -9,10 +9,6 @@ price action, and ``priced_in`` / ``hidden_problem`` flag emission per
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-
-import pytest
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import Symbol
@@ -23,34 +19,17 @@ from alphamind.distillation.qualitative_derived import (
 )
 from alphamind.persistence.models import (
     AssetUniverse,
-    Base,
     NewsArticles,
     NewsArticleTickers,
     OhlcvBars,
     SectorClassification,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
 
 # Mirror config/distillation.yaml; tests scope to scenarios where the
 # orchestrator (story 12) has resolved them, so the test file is the right
 # place to anchor the fixtures.
 NEWS_PRICE_WINDOW_HOURS = 12
 NEWS_PRICE_MIN_ARTICLES = 5
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    factory = make_session_factory(engine)
-    with factory() as sess:
-        yield sess
 
 
 def _add_ticker(session: Session, ticker: str, sector: str = "tech") -> None:

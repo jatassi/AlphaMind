@@ -13,11 +13,9 @@ test layout in ``test_q6_macro.py``.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind.distillation.calibration import CalibrationState
@@ -39,8 +37,6 @@ from alphamind.distillation.regime import (
     detect_regime_skip_emergency,
     refresh_regime_state,
 )
-from alphamind.persistence.models import Base
-from alphamind.persistence.session import make_engine, make_session_factory
 
 # ---------------------------------------------------------------------------
 # Shared fixtures and constants
@@ -60,22 +56,6 @@ VVIX_HIGH_PERCENTILE = 80.0
 VVIX_LOW_PERCENTILE = 30.0
 TRANSITION_CONFIRMED_INVOCATIONS = 2
 TRANSITION_INDICATOR_AGREEMENT_MIN = 3
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    """Per-test in-memory SQLite engine with the full distillation schema."""
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    factory = make_session_factory(engine)
-    with factory() as sess:
-        yield sess
 
 
 AS_OF = "2026-04-25T14:30:00Z"

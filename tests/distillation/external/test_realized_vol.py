@@ -8,11 +8,9 @@ even when SPY data was present.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind.distillation.calibration import CalibrationState
@@ -26,28 +24,11 @@ from alphamind.distillation.orchestrator import (
 )
 from alphamind.persistence.models import (
     AssetUniverse,
-    Base,
     MacroObservations,
     OhlcvBars,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
 
 AS_OF = datetime(2026, 5, 16, 17, 0, tzinfo=UTC)
-
-
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
-    eng = make_engine(":memory:")
-    Base.metadata.create_all(eng)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture()
-def session(engine: Engine) -> Iterator[Session]:
-    sf = make_session_factory(engine)
-    with sf() as sess:
-        yield sess
 
 
 def _add_spy_universe_row(session: Session) -> None:
