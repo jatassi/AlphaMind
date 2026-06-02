@@ -24,9 +24,91 @@ Concurrency model — single-writer, multiple-readers, asyncio-only:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
+from typing import Literal
+
+
+class PriceFreshness(StrEnum):
+    """Discriminator for a :data:`PriceRead`.
+
+    Aligns with the ``portfolio_state/freshness.py`` vocabulary
+    (``position_ids_priced_fresh`` / ``position_ids_priced_stale`` /
+    ``position_ids_unknown_ticker``): ``FRESH`` ↔ priced-fresh, ``STALE`` ↔
+    priced-stale. ``MISSING`` is the cache's precise truth for a ticker that was
+    never written (the assembler's ``unknown_ticker`` analog) — kept under the
+    cache's own name because absence-from-cache, not a bad symbol, is what it
+    means here.
+    """
+
+    FRESH = "fresh"
+    STALE = "stale"
+    MISSING = "missing"
+
+
+@dataclass(frozen=True, slots=True)
+class FreshPrice:
+    """A live read: the quote's ``as_of`` is within ``max_age_seconds``.
+
+    The only variant that exposes an actionable ``price``. A safety-critical
+    consumer reaches a usable price *only* by narrowing the :data:`PriceRead`
+    union to this type, so "stale price treated as live" (ALP-770) is a type
+    error rather than a silent runtime read.
+    """
+
+    price: float
+    as_of: datetime
+    freshness: Literal[PriceFreshness.FRESH] = PriceFreshness.FRESH
+
+
+@dataclass(frozen=True, slots=True)
+class StalePrice:
+    """A read whose quote is older than ``max_age_seconds``.
+
+    Carries the last-observed price as ``last_price`` (deliberately *not*
+    ``price``) plus the positive ``age_seconds`` for diagnostics/logging. The
+    asymmetric attribute name is the forcing function: a consumer cannot read
+    ``.price`` off a stale result through the same attribute a fresh read uses.
+    """
+
+    last_price: float
+    as_of: datetime
+    age_seconds: float
+    freshness: Literal[PriceFreshness.STALE] = PriceFreshness.STALE
+
+
+@dataclass(frozen=True, slots=True)
+class MissingPrice:
+    """A read for a ticker the cache has never observed. Exposes no price."""
+
+    freshness: Literal[PriceFreshness.MISSING] = PriceFreshness.MISSING
+
+
+# Discriminated union a price consumer pattern-matches on. Only ``FreshPrice``
+# yields a usable ``price`` — see each variant's docstring.
+PriceRead = FreshPrice | StalePrice | MissingPrice
+
+
+@dataclass(frozen=True, slots=True)
+class GlobalStalenessSignal:
+    """Cache-boundary signal: the whole underlying feed is cold (ALP-825 Defect B).
+
+    Mirrors :class:`BreachLoopHealthSignal`'s value-object shape — a pure record
+    the single emitter (wired in 02d through ``breach_loop``'s health channel)
+    carries; no behavior here. Emitted iff *every* expected ticker reads
+    ``STALE`` or ``MISSING`` at ``as_of`` — the writer-wedged case where the
+    monitor would otherwise enforce stops against frozen prices. ``stale_tickers``
+    /``missing_tickers`` partition ``expected_tickers`` (their union equals it)
+    so the operator surface can name what is cold.
+    """
+
+    as_of: datetime
+    max_age_seconds: float
+    expected_tickers: frozenset[str]
+    stale_tickers: frozenset[str]
+    missing_tickers: frozenset[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +149,75 @@ class UnderlyingPriceCache:
     def get(self, ticker: str) -> UnderlyingQuote | None:
         """Return the latest quote for *ticker* or ``None`` if not yet seen."""
         return self._quotes.get(ticker)
+
+    def read(self, ticker: str, *, as_of: datetime, max_age_seconds: float) -> PriceRead:
+        """Return a freshness-classified read of *ticker* against ``as_of``.
+
+        The enforcement-path read: ``FreshPrice`` when the quote's ``as_of`` is
+        within ``max_age_seconds`` of *as_of*, ``StalePrice`` (with the age)
+        when older, ``MissingPrice`` when the ticker has never been observed.
+        Lock-free, like ``get``.
+        """
+        quote = self._quotes.get(ticker)
+        if quote is None:
+            return MissingPrice()
+        age_seconds = (as_of - quote.as_of).total_seconds()
+        if age_seconds > max_age_seconds:
+            return StalePrice(last_price=quote.price, as_of=quote.as_of, age_seconds=age_seconds)
+        return FreshPrice(price=quote.price, as_of=quote.as_of)
+
+    def read_all(
+        self,
+        tickers: Iterable[str],
+        *,
+        as_of: datetime,
+        max_age_seconds: float,
+    ) -> Mapping[str, PriceRead]:
+        """Return one :data:`PriceRead` per requested ticker, keyed by ticker.
+
+        The ``breach_loop`` open-set iteration shape: every ticker in *tickers*
+        gets a classified read, and any requested ticker absent from the cache
+        is ``MissingPrice`` — so a consumer iterating the open-position set sees
+        every position, never a silent gap.
+        """
+        return {
+            ticker: self.read(ticker, as_of=as_of, max_age_seconds=max_age_seconds)
+            for ticker in tickers
+        }
+
+    def global_staleness(
+        self,
+        *,
+        as_of: datetime,
+        max_age_seconds: float,
+        expected_tickers: Iterable[str],
+    ) -> GlobalStalenessSignal | None:
+        """Detect the writer-wedged cold-feed case at the cache boundary.
+
+        Returns a :class:`GlobalStalenessSignal` iff *every* ticker in
+        *expected_tickers* reads ``STALE`` or ``MISSING`` at *as_of* — i.e. the
+        whole underlying feed is cold and the monitor would otherwise enforce
+        stops against frozen prices (ALP-770 class). Returns ``None`` when at
+        least one expected ticker reads ``FRESH`` (the feed is partly live, not
+        wedged) and when *expected_tickers* is empty (no positions → nothing to
+        escalate). This story provides the detector; 02d wires the single
+        emitter through ``breach_loop``'s health channel.
+        """
+        expected = frozenset(expected_tickers)
+        if not expected:
+            return None
+        reads = self.read_all(expected, as_of=as_of, max_age_seconds=max_age_seconds)
+        if any(isinstance(read, FreshPrice) for read in reads.values()):
+            return None
+        stale = frozenset(t for t, read in reads.items() if isinstance(read, StalePrice))
+        missing = frozenset(t for t, read in reads.items() if isinstance(read, MissingPrice))
+        return GlobalStalenessSignal(
+            as_of=as_of,
+            max_age_seconds=max_age_seconds,
+            expected_tickers=expected,
+            stale_tickers=stale,
+            missing_tickers=missing,
+        )
 
     def get_all(self) -> Mapping[str, UnderlyingQuote]:
         """Return a snapshot of every ticker → quote pair currently in the cache.

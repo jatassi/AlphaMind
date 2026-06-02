@@ -236,14 +236,14 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # fill_stream_stale_timeout_seconds: 900 to config/continuous_monitor.yaml and
     # ContinuousMonitorConfig (the connected-but-silent fill-stream reconnect bound),
     # shifting the resolved-config canonical bytes.
-    # Pin updated 2026-06-02 (per-cadence stall watchdog, ALP-826): ALP-826 replaced the
-    # global stall-timeout knob with watchdog_cadence_multiplier: 10.0 in
-    # config/continuous_monitor.yaml and ContinuousMonitorConfig (each watched task is now
-    # bounded by cadence_seconds * multiplier instead of one global timeout), shifting the
-    # resolved-config canonical bytes. NOTE: the orchestrator may re-pin once more at
-    # integration when this wave-1 change combines with ALP-827's
-    # underlying_price_max_age_seconds.
-    expected = "43522a65736110bde66ee179bdf83335741f431a66927ce8fb4186e2cb47ca9f"
+    # Pin updated 2026-06-02 (ALP-825 wave-1 integration — combines ALP-826 + ALP-827):
+    # ALP-826 replaced the global watchdog_stall_timeout_seconds knob with
+    # watchdog_cadence_multiplier: 10.0 (each watched task is now bounded by
+    # cadence_seconds * multiplier), and ALP-827 added underlying_price_max_age_seconds: 900
+    # (the single freshness threshold all price consumers pass to
+    # UnderlyingPriceCache.read/read_all) — both in config/continuous_monitor.yaml and
+    # ContinuousMonitorConfig. This is the re-pin for the combined wave-1 config tree.
+    expected = "acf46cd3029ca17dfd80d2ef9355f111bb472848f56ed6b7c0f747d3979ef1b8"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

@@ -130,3 +130,12 @@ watchdog_cadence_multiplier: 10.0
 # matches fill_backfill_interval_seconds. Off-hours the check is disengaged
 # (fills are legitimately sparse) — only the watchdog guards a hung consumer.
 fill_stream_stale_timeout_seconds: 900
+
+# Single underlying-price freshness threshold (seconds) every price consumer
+# passes to UnderlyingPriceCache.read/read_all (ALP-827). A quote older than
+# this reads STALE and is excluded from stop enforcement (the ALP-770 gate);
+# when every open-position ticker reads STALE/MISSING the cache's global-stale
+# detector escalates the writer-wedged cold-feed case. 900s (15 min) preserves
+# breach_loop's prior hardcoded default while consolidating it to one knob the
+# bracket-stop and greeks-refresh consumers share (02b/02c/02d).
+underlying_price_max_age_seconds: 900

@@ -106,3 +106,25 @@ class TestContinuousMonitorConfigBorrowAccrualKnob:
         marker = f"Time {invalid!r} must match HH:MM in 24-hour clock"
         assert marker in str(monitor_err.value)
         assert marker in str(window_err.value)
+
+
+class TestUnderlyingPriceMaxAgeSecondsKnob:
+    """ALP-827: the shared underlying-price freshness threshold all price consumers pass."""
+
+    def test_yaml_contains_underlying_price_max_age_seconds(self) -> None:
+        data = _load_yaml()
+        assert "underlying_price_max_age_seconds" in data
+
+    def test_yaml_value_loads_onto_config(self) -> None:
+        from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
+
+        data = _load_yaml()
+        config = ContinuousMonitorConfig.model_validate(data)
+        assert config.underlying_price_max_age_seconds == data["underlying_price_max_age_seconds"]
+
+    def test_rejects_non_positive(self) -> None:
+        from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
+
+        payload = {**_base_payload(), "underlying_price_max_age_seconds": 0.0}
+        with pytest.raises(ValidationError):
+            ContinuousMonitorConfig.model_validate(payload)
