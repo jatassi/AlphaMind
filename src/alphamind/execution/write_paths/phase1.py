@@ -15,6 +15,7 @@ unprocessed for the next invocation.
 from __future__ import annotations
 
 import dataclasses
+import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind._kernel.money import money, signed_money
 from alphamind.execution.broker_adapter.queries import (
@@ -100,6 +102,7 @@ from alphamind.state.invocation_context.context import (
     InvocationHandle,
     stamp_phase_completion,
 )
+from alphamind.state.invocation_id import mint_invocation_id
 from alphamind.state.records import (
     FillProcessingStatus,
     FillRecord,
@@ -118,6 +121,7 @@ from alphamind.state.tables.fill_records import FillRecordRow
 from alphamind.state.tables.fill_records_codec import (
     row_to_record as fill_row_to_record,
 )
+from alphamind.state.tables.invocations import InvocationRow
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.orders_codec import (
     row_to_record as order_row_to_record,
@@ -130,6 +134,8 @@ from alphamind.state.tables.positions_codec import (
     row_to_record as position_row_to_record,
 )
 from alphamind.state.tables.theses import ThesisRow
+
+log = logging.getLogger(__name__)
 
 # Tolerance for "remaining quantity zero" comparisons after float arithmetic.
 _QTY_EPSILON = 1e-9
@@ -442,8 +448,8 @@ async def _integrate_or_quarantine_fill(
     fill: FillRecord,
     row: FillRecordRow,
     *,
-    market_inputs: MarketInputs,
-    regt_config: RegTMarginAttributionConfig,
+    market_inputs: MarketInputs | None,
+    regt_config: RegTMarginAttributionConfig | None,
     borrow_cost_resolver: Callable[[str], float | None] | None,
 ) -> bool:
     """Integrate one fill, or quarantine it; return ``True`` iff it integrated.
@@ -481,7 +487,9 @@ async def _integrate_or_quarantine_fill(
       therefore retains ``regt_attribution_json IS NULL`` (parent decision (H)).
     """
     target: PositionRecord | None = None
-    pre_positions = await _read_all_positions(handle)
+    pre_positions: tuple[PositionRecord, ...] = ()
+    if market_inputs is not None:
+        pre_positions = await _read_all_positions(handle)
     try:
         target = await _resolve_target_position(handle, fill)
         if target.status in _NON_INTEGRATABLE_STATUSES:
@@ -525,14 +533,16 @@ async def _integrate_or_quarantine_fill(
         )
         return False
 
-    post_positions = await _read_all_positions(handle)
-    attribution = compute_attribution(
-        pre_fill_positions=pre_positions,
-        post_fill_positions=post_positions,
-        market_inputs=market_inputs,
-        config=regt_config,
-    )
-    row.regt_attribution_json = attribution.model_dump_json()
+    if market_inputs is not None:
+        _config = regt_config if regt_config is not None else load_regt_margin_attribution_config()
+        post_positions = await _read_all_positions(handle)
+        attribution = compute_attribution(
+            pre_fill_positions=pre_positions,
+            post_fill_positions=post_positions,
+            market_inputs=market_inputs,
+            config=_config,
+        )
+        row.regt_attribution_json = attribution.model_dump_json()
     _mark_processed(row, handle.invocation_id)
     return True
 
@@ -2216,9 +2226,132 @@ async def _integrate_one_ca_activity(
     await integrate_ca_activity(handle, activity, alpaca_position_lookup=alpaca_position_lookup)
 
 
+# ---------------------------------------------------------------------------
+# Fast-fill recovery integration (ALP-767)
+# ---------------------------------------------------------------------------
+
+
+def _build_recovery_invocation_row(
+    *,
+    invocation_id: str,
+    process_lifetime_id: str,
+    now: datetime,
+) -> InvocationRow:
+    """Minimal InvocationRow for a fill-recovery Phase-1 pass (ALP-767).
+
+    Mirrors the borrow-accrual tick pattern: only the execution-scaffolding
+    columns are populated; snapshot / composition columns get inert sentinels
+    (``""`` or ``"{}"``) because this pass does not run an agent pipeline and
+    has no resolved-config snapshot to reference.
+    """
+    iso = now.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return InvocationRow(
+        invocation_id=invocation_id,
+        process_lifetime_id=process_lifetime_id,
+        start_at=iso,
+        phase1_completed_at=None,
+        phase2_completed_at=None,
+        trigger_type="scheduled",
+        trigger_source="continuous_monitor",
+        trigger_reason="fill_stream_recovery - fast-fill convergence (ALP-767)",
+        git_sha_at_invocation="",
+        active_profile="",
+        active_regime="",
+        active_mode="normal",
+        active_overlays_json="[]",
+        resolved_config_hash="",
+        resolved_config_snapshot_path="",
+        feature_flags_snapshot_json="{}",
+        data_calibration_state_snapshot_path="",
+        data_source_freshness_json="{}",
+        fill_collection_summary_json=None,
+        command_execution_summary_json=None,
+        staleness_flag=None,
+        snapshot_metadata_json=None,
+    )
+
+
+async def integrate_recovered_fills(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    process_lifetime_id: str,
+    borrow_cost_resolver: Callable[[str], float | None] | None = None,
+) -> int:
+    """Integrate all unprocessed fills immediately after fill recovery (ALP-767).
+
+    Called by the fill-stream consumer's drain right after persisting a
+    recovered fill so the PENDING→OPEN transition and ``_activate_bracket``
+    run within seconds rather than waiting for the next scheduled pipeline
+    run.
+
+    Skips Reg T attribution (``regt_attribution_json`` stays NULL, the same
+    as quarantined fills), CA activities, and reconciliation — those remain
+    the scheduled pipeline's responsibility. The resulting invocation row is
+    tagged ``trigger_source="continuous_monitor"`` (same vocabulary as the
+    borrow-accrual tick and other monitor-originated invocations).
+
+    SHORT equity ENTRY fills are skipped when ``borrow_cost_resolver`` is
+    ``None``: ``_apply_entry_fill`` raises for those, the broad
+    ``except Exception`` handler would permanently quarantine them, and
+    QUARANTINED rows are invisible to the scheduled Phase-1's
+    ``_read_unprocessed_fill_rows``. Skipping here leaves them UNPROCESSED
+    so the scheduled pipeline (which always has a resolver) can integrate them.
+    """
+    now = datetime.now(UTC)
+    invocation_id = mint_invocation_id(now)
+
+    async with session_factory() as db:
+        db.add(
+            _build_recovery_invocation_row(
+                invocation_id=invocation_id,
+                process_lifetime_id=process_lifetime_id,
+                now=now,
+            )
+        )
+        await db.commit()
+
+    fills_processed = 0
+    async with session_factory() as session:
+        handle = InvocationHandle(session=session, invocation_id=invocation_id)
+        fill_rows = await _read_unprocessed_fill_rows(handle)
+        fills = tuple(fill_row_to_record(row) for row in fill_rows)
+        rows_by_fill_id = {row.fill_id: row for row in fill_rows}
+
+        valid_fills, _ = _quarantine_invalid(handle, fills, rows_by_fill_id)
+
+        for fill in valid_fills:
+            if borrow_cost_resolver is None:
+                _order = await _read_order(handle, fill.order_id)
+                if _order.role == OrderRole.ENTRY:
+                    _, _pos = await _read_position_for_order(handle, _order)
+                    if _pos.direction == Direction.SHORT:
+                        log.info(
+                            "recovery skip: SHORT entry fill %s deferred to scheduled Phase-1"
+                            " (no borrow_cost_resolver)",
+                            fill.fill_id,
+                        )
+                        continue
+            processed = await _integrate_or_quarantine_fill(
+                handle,
+                fill,
+                rows_by_fill_id[fill.fill_id],
+                market_inputs=None,
+                regt_config=None,
+                borrow_cost_resolver=borrow_cost_resolver,
+            )
+            if processed:
+                fills_processed += 1
+
+        await stamp_phase_completion(handle, column="phase1_completed_at")
+        await session.commit()
+
+    return fills_processed
+
+
 __all__ = [
     "CorporateActionActivity",
     "Phase1Summary",
     "StateInconsistencyError",
+    "integrate_recovered_fills",
     "process_unprocessed_fills",
 ]

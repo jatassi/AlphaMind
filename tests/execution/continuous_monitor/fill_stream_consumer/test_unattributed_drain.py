@@ -19,7 +19,7 @@ These are sociable tests against a real in-process SQLite session and a fake
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -408,3 +408,440 @@ class TestQuarantineWriteFailureDoesNotCrash:
         assert "failed to quarantine" in errors[0].getMessage()
         # The write failed, so nothing landed — but the consumer survived.
         assert await _read_fill_records(session_factory) == []
+
+
+# ---------------------------------------------------------------------------
+# ALP-767 — drain triggers immediate Phase-1 integration
+# ---------------------------------------------------------------------------
+
+
+_PLT_ID = "plt-767-test"
+_ENTRY_ORDER_ID = "ORD-767-ENTRY"
+_POSITION_ID = "POS-767"
+_BRACKET_ID = "BRK-767"
+_THESIS_ID = "THX-767"
+_LEG_ID = "BRK-767-leg-stop"
+_LEG_ORDER_ID = "ORD-767-leg-stop"
+_NOW_767 = datetime(2026, 6, 2, 14, 0, 0, tzinfo=UTC)
+
+
+async def _seed_phase1_substrate_for_767(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    alpaca_order_id: str,
+) -> None:
+    """Seed all rows Phase-1 needs: process_lifetime, position, order, thesis,
+    bracket (with one PENDING_ACTIVATION leg), cash_ledger, drawdown_state.
+
+    The entry order is PENDING with remaining_quantity=10 so a single-fill of
+    qty=10 transitions it to FILLED and the position PENDING→OPEN.
+    """
+    from alphamind._kernel.ids import AlpacaOrderId, Symbol
+    from alphamind._kernel.regime import RiskZone
+    from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+    from alphamind.portfolio_state.records.cash import CashLedger
+    from alphamind.portfolio_state.records.orders import (
+        BracketLeg,
+        BracketLegEnforcement,
+        BracketLegStatus,
+        BracketLegType,
+        BracketRecord,
+        BracketStatus,
+        EquityInstrumentSpec,
+        OrderClass,
+        OrderDirection,
+        OrderDuration,
+        OrderRecord,
+        OrderRole,
+        OrderStatus,
+        OrderType,
+        PriceParameters,
+        PriceTrigger,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        Direction,
+        EquityPositionDetails,
+        PositionRecord,
+        PositionStatus,
+    )
+    from alphamind.portfolio_state.records.theses import (
+        KeyAssumption,
+        ThesisComponent,
+        ThesisComponentType,
+        ThesisRecord,
+        ThesisRecordStatus,
+    )
+    from alphamind.state.invocation_context.records import (
+        ProcessLifetimeRecord,
+        process_lifetime_record_to_row,
+    )
+    from alphamind.state.tables.brackets_codec import record_to_rows as bracket_to_rows
+    from alphamind.state.tables.cash_ledger_codec import cash_ledger_record_to_row
+    from alphamind.state.tables.drawdown_state_codec import drawdown_state_record_to_row
+    from alphamind.state.tables.orders_codec import record_to_row as order_to_row
+    from alphamind.state.tables.positions_codec import record_to_row as position_to_row
+    from alphamind.state.tables.theses_codec import record_to_rows as thesis_to_rows
+    from tests.state._fk_substrate import stub_order_row
+
+    iso = _NOW_767.isoformat().replace("+00:00", "Z")
+
+    plt_row = process_lifetime_record_to_row(
+        ProcessLifetimeRecord(
+            process_lifetime_id=_PLT_ID,
+            process_role="monitor",
+            process_start_at=iso,
+            process_pid=99999,
+            hostname="test-host",
+            git_sha="a" * 40,
+            git_branch="main",
+            git_dirty=False,
+            python_version="3.13.0",
+            pip_freeze_hash="0" * 64,
+            pip_freeze_snapshot_path="",
+            anthropic_sdk_version="0.40.0",
+            claude_agent_sdk_version="0.1.69",
+            os_release="Linux-6.5.0",
+        )
+    )
+
+    from alphamind._kernel.ids import BracketId, OrderId, PositionId, ThesisId
+
+    order = OrderRecord(
+        order_id=OrderId(_ENTRY_ORDER_ID),
+        position_id=PositionId(_POSITION_ID),
+        bracket_id=BracketId(_BRACKET_ID),
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.SIMPLE,
+        price_parameters=PriceParameters(),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=AlpacaOrderId(alpaca_order_id),
+        alpaca_order_id_chain=(AlpacaOrderId(alpaca_order_id),),
+        submission_timestamp=_NOW_767,
+        last_update_timestamp=_NOW_767,
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=ThesisId(_THESIS_ID),
+        originating_pm_command_id=None,
+        age_hours=0.0,
+    )
+    position = PositionRecord(
+        position_id=PositionId(_POSITION_ID),
+        thesis_id=ThesisId(_THESIS_ID),
+        bracket_id=BracketId(_BRACKET_ID),
+        status=PositionStatus.PENDING,
+        direction=Direction.LONG,
+        details=EquityPositionDetails(
+            ticker=Symbol("AAPL"),
+            share_count=0.0,
+            average_cost_basis_per_share=0.0,
+            borrow_rate_pct=None,
+            accrued_borrow_cost_usd=None,
+            locate_status=None,
+            margin_held_usd=None,
+        ),
+        entry_timestamp=None,
+        execution_history=(),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    thesis_component = tuple(
+        ThesisComponent(
+            component_id=f"{_THESIS_ID}-{ct.value.lower()}",
+            thesis_id=ThesisId(_THESIS_ID),
+            component_type=ct,
+            linked_bracket_leg_type=None,
+            linked_bracket_leg_id=None,
+            instrument_reference="AAPL",
+            narrative=f"{ct.value} rationale",
+            key_assumptions=(KeyAssumption(text="Earnings beat", outcome=None),),
+            generation_timestamp=_NOW_767,
+            resolution_outcome=None,
+            resolution_notes=None,
+        )
+        for ct in (
+            ThesisComponentType.ENTRY_RATIONALE,
+            ThesisComponentType.TARGET_RATIONALE,
+            ThesisComponentType.INVALIDATION_RATIONALE,
+        )
+    )
+    thesis = ThesisRecord(
+        thesis_id=ThesisId(_THESIS_ID),
+        position_id=PositionId(_POSITION_ID),
+        summary="AAPL entry",
+        key_catalyst="momentum",
+        position_size_rationale="5%",
+        components=thesis_component,
+        status=ThesisRecordStatus.ACTIVE,
+        generation_timestamp=_NOW_767,
+        time_expectation_hours=24.0,
+        age_hours=0.0,
+        expected_resolution_at=_NOW_767 + timedelta(hours=24),
+        resolution_timestamp=None,
+        resolution_category=None,
+        resolution_pnl_usd=None,
+        entry_fill_gap_usd=None,
+    )
+    leg = BracketLeg(
+        leg_id=_LEG_ID,
+        leg_type=BracketLegType.PRICE_STOP,
+        order_id=OrderId(_LEG_ORDER_ID),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.PENDING_ACTIVATION,
+    )
+    bracket = BracketRecord(
+        bracket_id=BracketId(_BRACKET_ID),
+        position_id=PositionId(_POSITION_ID),
+        status=BracketStatus.PENDING_ENTRY,
+        entry_order_id=OrderId(_ENTRY_ORDER_ID),
+        protective_legs=(leg,),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
+        entry_window_deadline=None,
+    )
+    cash = CashLedger(
+        current_cash_usd=100_000.0,
+        settled_cash_usd=100_000.0,
+        reserved_capital_usd=0.0,
+        available_buying_power_usd=100_000.0,
+        margin_held_usd=0.0,
+        unsettled_proceeds=(),
+        cash_pct_of_portfolio=0.0,
+        true_deployable_capital_usd=0.0,
+        regt_excess_trailing_30d_usd=0.0,
+        regt_excess_trailing_90d_usd=0.0,
+        regt_excess_lifetime_usd=0.0,
+    )
+    drawdown = DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=100_000.0,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
+    )
+
+    bracket_row, leg_rows = bracket_to_rows(bracket)
+    thesis_row, component_rows = thesis_to_rows(thesis)
+
+    async with session_factory() as sess:
+        sess.add(plt_row)
+        sess.add(position_to_row(position))
+        sess.add(thesis_row)
+        for crow in component_rows:
+            sess.add(crow)
+        sess.add(order_to_row(order))
+        sess.add(stub_order_row(_LEG_ORDER_ID, _BRACKET_ID))
+        sess.add(bracket_row)
+        await sess.flush()
+        for lrow in leg_rows:
+            sess.add(lrow)
+        sess.add(cash_ledger_record_to_row(cash, last_updated_at=_NOW_767))
+        sess.add(drawdown_state_record_to_row(drawdown, last_updated_at=_NOW_767))
+        await sess.commit()
+
+
+class TestPhase1IntegrationOnDrain:
+    """ALP-767 — drain immediately converges local state via Phase-1 integration.
+
+    Verifies that supplying ``process_lifetime_id`` to
+    :func:`drain_unattributed_fills` triggers Phase-1 fill integration right
+    after a fill is recovered, flipping the position from PENDING→OPEN and
+    activating bracket legs within the same drain cycle rather than waiting for
+    the next scheduled pipeline run.
+    """
+
+    @pytest.fixture()
+    async def substrate_factory(
+        self,
+        tmp_path: Path,
+    ) -> AsyncIterator[tuple[async_sessionmaker[AsyncSession], str]]:
+        """Yield ``(factory, alpaca_order_id)`` over a fresh DB with the
+        full Phase-1 substrate seeded (position/order/bracket/leg/cash/drawdown)."""
+        db_path = tmp_path / "alphamind_767.db"
+        import alphamind.state.tables  # noqa: F401
+        from alphamind.persistence.models import Base
+        from alphamind.persistence.session import (
+            make_async_engine,
+            make_async_session_factory,
+            make_engine,
+        )
+
+        sync_engine = make_engine(str(db_path))
+        Base.metadata.create_all(sync_engine)
+        sync_engine.dispose()
+
+        async_engine = make_async_engine(str(db_path))
+        factory = make_async_session_factory(async_engine)
+        alpaca_uuid = str(uuid4())
+        await _seed_phase1_substrate_for_767(factory, alpaca_order_id=alpaca_uuid)
+        try:
+            yield factory, alpaca_uuid
+        finally:
+            await async_engine.dispose()
+
+    async def test_drain_with_process_lifetime_id_opens_position_and_activates_bracket(
+        self,
+        substrate_factory: tuple[async_sessionmaker[AsyncSession], str],
+    ) -> None:
+        """ALP-767: integrate_recovered_fills transitions position PENDING→OPEN
+        and flips the bracket leg PENDING_ACTIVATION→ACTIVE in one cycle."""
+        from alphamind._kernel.money import money
+        from alphamind._kernel.money import price as mk_price
+        from alphamind.execution.write_paths.fill_persistence import append_fill_record
+        from alphamind.execution.write_paths.phase1 import integrate_recovered_fills
+        from alphamind.portfolio_state.records.orders import (
+            BracketLegStatus,
+            BracketStatus,
+            OrderStatus,
+        )
+        from alphamind.portfolio_state.records.positions import (
+            EquityPositionDetails,
+            PositionStatus,
+        )
+        from alphamind.state.records import FillProcessingStatus
+        from alphamind.state.tables.bracket_legs import BracketLegRow
+        from alphamind.state.tables.brackets import BracketRow
+        from alphamind.state.tables.positions import PositionRow
+        from alphamind.state.tables.positions_codec import row_to_record as pos_row_to_record
+
+        factory, _alpaca_uuid = substrate_factory
+
+        fill = FillRecord(
+            fill_id="fill-767-test",
+            order_id=_ENTRY_ORDER_ID,
+            fill_timestamp=_NOW_767,
+            fill_price=mk_price(150.0),
+            fill_quantity=10.0,
+            remaining_quantity_after=0.0,
+            order_status_after=OrderStatus.FILLED,
+            slippage_usd=None,
+            fees_usd=money(1.50),
+            execution_venue="NASDAQ",
+            gateway_reference="alp-fill-767-test",
+            persistence_timestamp=_NOW_767,
+            processing_status=FillProcessingStatus.UNPROCESSED,
+            processing_invocation_id=None,
+            processing_timestamp=None,
+            regt_attribution=None,
+            live_execution_estimate=None,
+        )
+        async with factory() as sess:
+            await append_fill_record(sess, fill)
+            await sess.commit()
+
+        fills_processed = await integrate_recovered_fills(
+            factory,
+            process_lifetime_id=_PLT_ID,
+        )
+
+        assert fills_processed == 1
+
+        async with factory() as sess:
+            fill_row = (
+                await sess.execute(
+                    select(FillRecordRow).where(FillRecordRow.fill_id == "fill-767-test")
+                )
+            ).scalar_one()
+            assert fill_row.processing_status == FillProcessingStatus.PROCESSED.value
+
+            pos_row = (
+                await sess.execute(
+                    select(PositionRow).where(PositionRow.position_id == _POSITION_ID)
+                )
+            ).scalar_one()
+            pos = pos_row_to_record(pos_row)
+            assert pos.status == PositionStatus.OPEN
+            assert isinstance(pos.details, EquityPositionDetails)
+            assert pos.details.share_count == pytest.approx(10.0)
+
+            brk_row = (
+                await sess.execute(select(BracketRow).where(BracketRow.bracket_id == _BRACKET_ID))
+            ).scalar_one()
+            assert brk_row.status == BracketStatus.ACTIVE.value
+
+            leg_row = (
+                await sess.execute(
+                    select(BracketLegRow).where(BracketLegRow.bracket_leg_id == _LEG_ID)
+                )
+            ).scalar_one()
+            assert leg_row.leg_status == BracketLegStatus.ACTIVE.value
+
+    async def test_drain_with_process_lifetime_id_runs_phase1_end_to_end(
+        self,
+        substrate_factory: tuple[async_sessionmaker[AsyncSession], str],
+    ) -> None:
+        """ALP-767: the full drain path — unattributed fill → drain → Phase-1 —
+        converges the position to OPEN without waiting for the next scheduled run."""
+        from alphamind.execution.continuous_monitor.fill_stream_consumer.translation import (
+            derive_broker_fill_key,
+        )
+        from alphamind.execution.write_paths.unattributed_fill_persistence import (
+            append_unattributed_fill,
+        )
+        from alphamind.portfolio_state.records.positions import PositionStatus
+        from alphamind.state.records import UnattributedFill
+        from alphamind.state.tables.positions import PositionRow
+        from alphamind.state.tables.positions_codec import row_to_record as pos_row_to_record
+
+        factory, alpaca_uuid = substrate_factory
+
+        report = _fill_report(
+            order_id=UUID(alpaca_uuid),
+            client_order_id="inv-20260602.CMD-767.1.0",
+            price=150.0,
+            qty=10.0,
+        )
+
+        # Directly insert into unattributed_fills, simulating the quarantine path
+        # where the fill arrived before its orders row committed.
+        unattributed = UnattributedFill(
+            broker_fill_key=derive_broker_fill_key(report),
+            alpaca_order_id=alpaca_uuid,
+            client_order_id="inv-20260602.CMD-767.1.0",
+            event_type="fill",
+            fill_timestamp=_NOW_767,
+            fill_price=150.0,
+            fill_quantity=10.0,
+            raw_report_json=report.model_dump_json(),
+            first_seen_at=_NOW_767,
+            last_retry_at=None,
+            retry_count=0,
+            alerted=True,
+        )
+        async with factory() as sess:
+            await append_unattributed_fill(sess, unattributed)
+            await sess.commit()
+
+        # Run drain with process_lifetime_id → Phase-1 fires immediately after
+        # the fill is resolved and appended to fill_records.
+        integrated = await drain_unattributed_fills(
+            session_factory=factory,
+            process_lifetime_id=_PLT_ID,
+        )
+
+        assert integrated == 1
+
+        # Position must be OPEN — no scheduled pipeline run needed.
+        async with factory() as sess:
+            pos_row = (
+                await sess.execute(
+                    select(PositionRow).where(PositionRow.position_id == _POSITION_ID)
+                )
+            ).scalar_one()
+        pos = pos_row_to_record(pos_row)
+        assert pos.status == PositionStatus.OPEN

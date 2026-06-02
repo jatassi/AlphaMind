@@ -62,7 +62,7 @@ NowProvider = Callable[[], datetime]
 SleepCallable = Callable[[float], Awaitable[None]]
 
 
-async def run_fill_backfill(
+async def run_fill_backfill(  # noqa: PLR0913 — composition root; each kw-arg is one injected seam
     session: MonitorSession,
     config: ContinuousMonitorConfig,
     *,
@@ -70,6 +70,7 @@ async def run_fill_backfill(
     trading_client_factory: TradingClientFactory,
     account_state_queries_factory: AccountStateQueriesFactory,
     enrichment_callable: EnrichmentCallable | None = None,
+    process_lifetime_id: str | None = None,
     now: NowProvider = lambda: datetime.now(UTC),
     sleep: SleepCallable = asyncio.sleep,
 ) -> None:
@@ -98,6 +99,7 @@ async def run_fill_backfill(
                 lookback=lookback,
                 session_factory=session_factory,
                 enrichment_callable=enrichment_callable,
+                process_lifetime_id=process_lifetime_id,
                 now=now,
             )
         except asyncio.CancelledError:
@@ -117,6 +119,7 @@ async def _run_sweep(
     lookback: timedelta,
     session_factory: async_sessionmaker[AsyncSession],
     enrichment_callable: EnrichmentCallable | None,
+    process_lifetime_id: str | None,
     now: NowProvider,
 ) -> None:
     """Run one backfill sweep: recover missing fills, then drain the queue.
@@ -152,6 +155,7 @@ async def _run_sweep(
     await drain_unattributed_fills(
         session_factory=session_factory,
         enrichment_callable=enrichment_callable,
+        process_lifetime_id=process_lifetime_id,
     )
 
 
