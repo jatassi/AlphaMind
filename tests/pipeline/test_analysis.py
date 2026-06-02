@@ -389,6 +389,58 @@ def test_pipeline_forwards_archive_root_and_provenance_root(
     assert log.synthesizer["archive_root"] == archive
 
 
+def test_pipeline_forwards_routing_inputs_to_runners(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every per-stage routing input reaches the runner that consumes it.
+
+    Consolidates the wiring/derivation contract for the inputs the pipeline
+    fans out to its runners (ALP-789): universe roster, derived ticker scope,
+    invocation/as_of/last_invocation_time clock, and the shared agents/sectors
+    config mappings. These are forwarded by-identity where the runner mutates
+    or re-resolves the mapping, so identity (``is``) is asserted there.
+    """
+    log = _CallLog()
+    _patch_runners(monkeypatch, log=log)
+    agents = _agents_registry()
+    sectors = _sectors_registry()
+    universe = frozenset({"NVDA", "JPM", "XOM"})
+    asyncio.run(
+        run_analysis_pipeline(
+            session=None,  # type: ignore[arg-type]
+            invocation_id=_INVOCATION_ID,
+            as_of=_AS_OF,
+            last_invocation_time=_LAST_INVOCATION_TIME,
+            distillation_config=MagicMock(),
+            ticker_scope=tuple(sorted(universe)),
+            universe=universe,
+            agents_config=agents,
+            sectors_config=sectors,
+            portfolio_reader=StubPortfolioReader(),
+        )
+    )
+
+    # Universe roster reaches both tool-loop agents.
+    assert log.qualitative["universe"] == universe
+    assert log.adaptive["universe"] == universe
+
+    # Distillation receives the sorted-tuple ticker scope plus the clock keys.
+    assert log.distillation["ticker_scope"] == ("JPM", "NVDA", "XOM")
+    assert log.distillation["invocation_id"] == _INVOCATION_ID
+    assert log.distillation["as_of"] == _AS_OF
+
+    # Qualitative receives the prior-run timestamp for its news digest window.
+    assert log.qualitative["last_invocation_time"] == _LAST_INVOCATION_TIME
+
+    # The same agents_config mapping reaches every agent-driven runner.
+    assert log.domain["agents_config"] is agents
+    assert log.qualitative["agents_config"] is agents
+    assert log.adaptive["agents_config"] is agents
+
+    # sectors_config reaches only the domain orchestrator (the lone consumer).
+    assert log.domain["sectors_config"] is sectors
+
+
 # ---------------------------------------------------------------------------
 # run_analysis_pipeline — fail-closed propagation
 # ---------------------------------------------------------------------------
