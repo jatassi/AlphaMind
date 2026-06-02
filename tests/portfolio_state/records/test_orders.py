@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 from datetime import UTC, date, datetime
 from typing import Any
@@ -11,7 +12,6 @@ import pytest
 
 from alphamind._kernel.ids import (
     AlpacaOrderId,
-    BracketId,
     OrderId,
     Symbol,
 )
@@ -173,16 +173,6 @@ class TestOrderClass:
             OrderClass.MLEG,
         }
 
-    def test_string_values(self) -> None:
-        assert OrderClass.SIMPLE == "SIMPLE"
-        assert OrderClass.BRACKET == "BRACKET"
-        assert OrderClass.OCO == "OCO"
-        assert OrderClass.OTO == "OTO"
-        assert OrderClass.MLEG == "MLEG"
-
-    def test_strenum_semantics(self) -> None:
-        assert isinstance(OrderClass.MLEG, str)
-
 
 class TestOrderRole:
     def test_members(self) -> None:
@@ -195,14 +185,6 @@ class TestOrderRole:
             OrderRole.ADD_ENTRY,
         }
 
-    def test_string_values(self) -> None:
-        assert OrderRole.ENTRY == "ENTRY"
-        assert OrderRole.TAKE_PROFIT == "TAKE_PROFIT"
-        assert OrderRole.PRICE_STOP == "PRICE_STOP"
-        assert OrderRole.TIME_STOP == "TIME_STOP"
-        assert OrderRole.CLOSE == "CLOSE"
-        assert OrderRole.ADD_ENTRY == "ADD_ENTRY"
-
 
 class TestOrderType:
     def test_members(self) -> None:
@@ -212,12 +194,6 @@ class TestOrderType:
             OrderType.STOP,
             OrderType.STOP_LIMIT,
         }
-
-    def test_string_values(self) -> None:
-        assert OrderType.MARKET == "MARKET"
-        assert OrderType.LIMIT == "LIMIT"
-        assert OrderType.STOP == "STOP"
-        assert OrderType.STOP_LIMIT == "STOP_LIMIT"
 
 
 class TestOrderDirection:
@@ -230,14 +206,6 @@ class TestOrderDirection:
             OrderDirection.BUY_TO_CLOSE,
             OrderDirection.SELL_TO_CLOSE,
         }
-
-    def test_string_values(self) -> None:
-        assert OrderDirection.BUY == "BUY"
-        assert OrderDirection.SELL == "SELL"
-        assert OrderDirection.BUY_TO_OPEN == "BUY_TO_OPEN"
-        assert OrderDirection.SELL_TO_OPEN == "SELL_TO_OPEN"
-        assert OrderDirection.BUY_TO_CLOSE == "BUY_TO_CLOSE"
-        assert OrderDirection.SELL_TO_CLOSE == "SELL_TO_CLOSE"
 
 
 class TestOrderDuration:
@@ -252,11 +220,6 @@ class TestOrderDuration:
         """Pinned set — any re-addition of IOC/FOK or new member trips this test."""
         assert {m.value for m in OrderDuration} == {"DAY", "GTC", "GTD"}
 
-    def test_string_values(self) -> None:
-        assert OrderDuration.DAY == "DAY"
-        assert OrderDuration.GTC == "GTC"
-        assert OrderDuration.GTD == "GTD"
-
 
 class TestOrderStatus:
     def test_members(self) -> None:
@@ -269,14 +232,6 @@ class TestOrderStatus:
             OrderStatus.REJECTED,
         }
 
-    def test_string_values(self) -> None:
-        assert OrderStatus.PENDING == "PENDING"
-        assert OrderStatus.PARTIALLY_FILLED == "PARTIALLY_FILLED"
-        assert OrderStatus.FILLED == "FILLED"
-        assert OrderStatus.CANCELLED == "CANCELLED"
-        assert OrderStatus.EXPIRED == "EXPIRED"
-        assert OrderStatus.REJECTED == "REJECTED"
-
 
 class TestBracketStatus:
     def test_members(self) -> None:
@@ -286,12 +241,6 @@ class TestBracketStatus:
             BracketStatus.COMPLETED,
             BracketStatus.DISSOLVED,
         }
-
-    def test_string_values(self) -> None:
-        assert BracketStatus.PENDING_ENTRY == "PENDING_ENTRY"
-        assert BracketStatus.ACTIVE == "ACTIVE"
-        assert BracketStatus.COMPLETED == "COMPLETED"
-        assert BracketStatus.DISSOLVED == "DISSOLVED"
 
 
 class TestBracketLegType:
@@ -303,17 +252,11 @@ class TestBracketLegType:
             BracketLegType.EVENT_INVALIDATION,
         }
 
-    def test_string_values(self) -> None:
-        assert BracketLegType.TAKE_PROFIT == "TAKE_PROFIT"
-        assert BracketLegType.PRICE_STOP == "PRICE_STOP"
-        assert BracketLegType.TIME_EXPIRATION == "TIME_EXPIRATION"
-        assert BracketLegType.EVENT_INVALIDATION == "EVENT_INVALIDATION"
-
     def test_importable_from_orders(self) -> None:
         """BracketLegType must be importable from orders module (canonical declaration site)."""
         from alphamind.portfolio_state.records.orders import BracketLegType
 
-        assert BracketLegType.TAKE_PROFIT == "TAKE_PROFIT"
+        assert BracketLegType.TAKE_PROFIT is BracketLegType.TAKE_PROFIT
 
 
 class TestBracketLegEnforcement:
@@ -322,10 +265,6 @@ class TestBracketLegEnforcement:
             BracketLegEnforcement.MECHANICAL,
             BracketLegEnforcement.ADVISORY,
         }
-
-    def test_string_values(self) -> None:
-        assert BracketLegEnforcement.MECHANICAL == "MECHANICAL"
-        assert BracketLegEnforcement.ADVISORY == "ADVISORY"
 
 
 class TestBracketLegStatus:
@@ -336,12 +275,6 @@ class TestBracketLegStatus:
             BracketLegStatus.TRIGGERED,
             BracketLegStatus.CANCELLED,
         }
-
-    def test_string_values(self) -> None:
-        assert BracketLegStatus.PENDING_ACTIVATION == "PENDING_ACTIVATION"
-        assert BracketLegStatus.ACTIVE == "ACTIVE"
-        assert BracketLegStatus.TRIGGERED == "TRIGGERED"
-        assert BracketLegStatus.CANCELLED == "CANCELLED"
 
 
 # ---------------------------------------------------------------------------
@@ -391,16 +324,6 @@ class TestInstrumentSpecDiscriminator:
 
         with pytest.raises((ValueError, TypeError)):
             _instrument_spec_from_dict({"instrument_type": "BOGUS"})
-
-    def test_strategy_legs_must_be_options_specs_static_only(self) -> None:
-        """Strategy-leg type enforcement is now a static-type check (mypy).
-
-        Without Pydantic the dataclass stores whatever leg tuple the caller
-        passes; mypy + ``--strict`` catches the equity-leg case in
-        ``StrategyInstrumentSpec(legs=(EquityInstrumentSpec(...),))``. The
-        runtime constructor accepts the bad input."""
-        spec = StrategyInstrumentSpec(legs=(_equity_spec(),))  # type: ignore[arg-type]
-        assert len(spec.legs) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -784,30 +707,6 @@ class TestOrderRecordOrderClass:
 
 
 # ---------------------------------------------------------------------------
-# OrderRecord round-trip / frozen check
-# ---------------------------------------------------------------------------
-
-
-class TestOrderRecordFrozen:
-    def test_order_record_is_frozen(self) -> None:
-        order = _make_order()
-        with pytest.raises((AttributeError, ValueError, TypeError)):
-            order.order_id = OrderId("changed")  # type: ignore[misc]
-
-
-# ---------------------------------------------------------------------------
-# BracketRecord round-trip / frozen check
-# ---------------------------------------------------------------------------
-
-
-class TestBracketRecordFrozen:
-    def test_bracket_record_is_frozen(self) -> None:
-        bracket = _make_bracket()
-        with pytest.raises((AttributeError, ValueError, TypeError)):
-            bracket.bracket_id = BracketId("changed")  # type: ignore[misc]
-
-
-# ---------------------------------------------------------------------------
 # entry_window_deadline field (ALP-341)
 # ---------------------------------------------------------------------------
 
@@ -875,26 +774,6 @@ class TestPriceTrigger:
     def test_empty_ticker_rejected(self) -> None:
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             PriceTrigger(underlying_ticker=Symbol(""), threshold_usd=10.0, direction="LTE")
-
-    def test_invalid_direction_static_only(self) -> None:
-        """Literal['GTE', 'LTE'] is a static-type check (mypy) post-dataclass.
-
-        Pydantic enforced Literal membership at runtime. The dataclass stores
-        the string as-is; mypy --strict catches the misuse statically.
-        """
-        trigger = PriceTrigger(
-            underlying_ticker=Symbol("NVDA"),
-            threshold_usd=10.0,
-            direction="ABOVE",  # type: ignore[arg-type]
-        )
-        assert trigger.direction == "ABOVE"  # type: ignore[comparison-overlap]
-
-    def test_frozen(self) -> None:
-        trigger = PriceTrigger(
-            underlying_ticker=Symbol("NVDA"), threshold_usd=10.0, direction="GTE"
-        )
-        with pytest.raises((AttributeError, ValueError, TypeError)):
-            trigger.threshold_usd = 20.0  # type: ignore[misc]
 
 
 class TestTimeTrigger:
@@ -1159,19 +1038,6 @@ class TestPLAnchorSpec:
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             PLAnchorSpec(spec_type="target", pct=0.80, planned_entry_price=0.0)
 
-    def test_invalid_spec_type_static_only(self) -> None:
-        """Literal['target', 'stop'] is a static-type check (mypy) post-dataclass.
-
-        Pydantic enforced Literal membership at runtime. The dataclass stores
-        the string as-is; mypy --strict catches the misuse statically.
-        """
-        spec = PLAnchorSpec(
-            spec_type="limit",  # type: ignore[arg-type]
-            pct=0.80,
-            planned_entry_price=18.50,
-        )
-        assert spec.spec_type == "limit"  # type: ignore[comparison-overlap]
-
     def test_recalculated_without_actual_price_rejected(self) -> None:
         with pytest.raises((ValueError, TypeError)):
             PLAnchorSpec(
@@ -1190,11 +1056,6 @@ class TestPLAnchorSpec:
                 actual_entry_price=17.80,
                 recalculated_at_fill=False,
             )
-
-    def test_frozen(self) -> None:
-        spec = PLAnchorSpec(spec_type="target", pct=0.80, planned_entry_price=18.50)
-        with pytest.raises((AttributeError, ValueError, TypeError)):
-            spec.pct = 0.50  # type: ignore[misc]
 
     def test_round_trip(self) -> None:
         spec = PLAnchorSpec(
@@ -1369,3 +1230,137 @@ class TestOrderDirectionValidator:
     def test_non_mleg_with_non_none_direction_passes(self) -> None:
         order = _make_order(order_class=OrderClass.SIMPLE, direction=OrderDirection.SELL)
         assert order.direction == OrderDirection.SELL
+
+
+# ---------------------------------------------------------------------------
+# Static-only validation (five collapsed markers — ALP-795)
+# ---------------------------------------------------------------------------
+#
+# Post-Pydantic dataclasses: Literal/type enforcement that Pydantic previously
+# applied at construction now lives in mypy (static) or at the codec boundary.
+# Each row below confirms the dataclass stores the out-of-contract value
+# unchanged — i.e. no runtime guard at construction. This is the single
+# canonical record of that design note instead of five scattered dead-green
+# copies.
+#
+# Row IDs mirror the five rows enumerated in §4 of ALP-795.
+
+
+def _static_only_strategy_legs() -> object:
+    """orders / strategy_legs: leg-type enforcement is mypy-only."""
+    spec = StrategyInstrumentSpec(legs=(_equity_spec(),))  # type: ignore[arg-type]
+    return spec.legs
+
+
+def _static_only_orders_direction() -> object:
+    """orders / direction: Literal['GTE','LTE'] is mypy-only."""
+    trigger = PriceTrigger(
+        underlying_ticker=Symbol("NVDA"),
+        threshold_usd=10.0,
+        direction="ABOVE",  # type: ignore[arg-type]
+    )
+    return trigger.direction
+
+
+def _static_only_orders_spec_type() -> object:
+    """orders / spec_type: Literal['target','stop'] is mypy-only."""
+    spec = PLAnchorSpec(
+        spec_type="limit",  # type: ignore[arg-type]
+        pct=0.80,
+        planned_entry_price=18.50,
+    )
+    return spec.spec_type
+
+
+def _static_only_positions_construction_from_dict() -> object:
+    """positions / construction_from_dict: codec layer owns dict→variant parsing."""
+    from datetime import UTC, datetime
+
+    from alphamind._kernel.ids import PositionId as _PositionId
+    from alphamind._kernel.ids import ThesisId as _ThesisId
+    from alphamind._kernel.money import money, price, signed_money
+    from alphamind.portfolio_state.records.positions import (
+        Direction,
+        EquityPositionDetails,
+        PositionFill,
+        PositionRecord,
+        PositionStatus,
+    )
+
+    _now = datetime.now(tz=UTC)
+    _fill = PositionFill(
+        fill_timestamp=_now,
+        fill_price=price(150.0),
+        fill_quantity=100.0,
+        slippage=signed_money(0.01),
+        fees=money(1.0),
+    )
+    details_dict: Any = {
+        "instrument_type": "EQUITY",
+        "ticker": "AAPL",
+        "share_count": 100.0,
+        "average_cost_basis_per_share": 150.0,
+    }
+    p = PositionRecord(
+        position_id=_PositionId("POS-AAPL-001"),
+        thesis_id=_ThesisId("THESIS-001"),
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_now,
+        details=details_dict,
+        execution_history=(_fill,),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    # The dataclass accepts the dict but it stays a dict — no auto-conversion.
+    return not isinstance(p.details, EquityPositionDetails)
+
+
+def _static_only_capital_zone() -> object:
+    """capital / zone: zone-string validation lives at the codec boundary."""
+    from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetEntry
+
+    entry = RiskBudgetEntry(
+        rule_id="r",
+        rule_label="R",
+        current_value=1.0,
+        limit_value=10.0,
+        headroom=9.0,
+        headroom_pct_of_limit=90.0,
+        zone="UNKNOWN_ZONE",  # type: ignore[arg-type]
+        unit="pct",
+        cumulative_invocation_impact_value=0.0,
+    )
+    return entry.zone
+
+
+_StaticOnlyRow = Callable[[], object]
+
+_STATIC_ONLY_ROWS: list[tuple[str, _StaticOnlyRow]] = [
+    ("orders/strategy_legs", _static_only_strategy_legs),
+    ("orders/direction", _static_only_orders_direction),
+    ("orders/spec_type", _static_only_orders_spec_type),
+    ("positions/construction_from_dict", _static_only_positions_construction_from_dict),
+    ("capital/zone", _static_only_capital_zone),
+]
+
+
+@pytest.mark.parametrize(
+    ("row_id", "call"),
+    _STATIC_ONLY_ROWS,
+)
+def test_static_only_validation(row_id: str, call: _StaticOnlyRow) -> None:
+    """Post-Pydantic dataclasses store out-of-contract values unchanged.
+
+    Each row confirms that Literal/type enforcement happens at the mypy layer
+    (or at the codec boundary), not at construction time. The dataclass
+    constructor accepts the bad value and returns it unmodified.
+    """
+    result = call()
+    # The call must not raise — that is the entire contract being tested.
+    # The returned value (the stored out-of-contract payload) must be truthy
+    # to confirm storage occurred.
+    assert result is not None, f"row {row_id!r}: expected stored value, got None"

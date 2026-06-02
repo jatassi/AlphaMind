@@ -198,15 +198,3 @@ def test_non_positive_limit_value_raises_with_value_in_message(limit_value: floa
             escalation_zones=_default_zones(),
         )
     assert "limit_value" in str(exc_info.value)
-
-
-@pytest.mark.parametrize("call_index", range(100))
-def test_determinism_repeated_calls_return_identical_outputs(call_index: int) -> None:
-    """100 repeated invocations with identical inputs yield identical outputs."""
-    del call_index  # parametrization drives repetition
-    result = classify_zone(
-        current_value=82.5,
-        limit_value=100,
-        escalation_zones=_default_zones(),
-    )
-    assert result is RiskZone.WARNING

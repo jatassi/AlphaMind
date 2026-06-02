@@ -14,9 +14,7 @@ required-MarketInputs surface.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 from sqlalchemy import select
@@ -30,18 +28,9 @@ from alphamind._kernel.ids import (
     Symbol,
 )
 from alphamind._kernel.money import money, price, signed_money
-from alphamind._kernel.regime import RiskZone
 from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
 )
-from alphamind.persistence.models import Base
-from alphamind.persistence.session import (
-    make_async_engine,
-    make_async_session_factory,
-    make_engine,
-)
-from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
-from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
     BracketStatus,
     EquityInstrumentSpec,
@@ -71,8 +60,6 @@ from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
 from alphamind.state.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
     invocation_record_to_row,
     process_lifetime_record_to_row,
 )
@@ -82,18 +69,18 @@ from alphamind.state.records import (
     RegTMarginAttribution,
 )
 from alphamind.state.tables.brackets import BracketRow
-from alphamind.state.tables.cash_ledger_codec import (
-    cash_ledger_record_to_row,
-)
-from alphamind.state.tables.drawdown_state_codec import (
-    drawdown_state_record_to_row,
-)
 from alphamind.state.tables.fill_records import FillRecordRow
 from alphamind.state.tables.orders_codec import (
     record_to_row as order_record_to_row,
 )
 from alphamind.state.tables.positions_codec import (
     record_to_row as position_record_to_row,
+)
+from tests.execution.state_persistence.conftest import (
+    _make_invocation_record,
+    _make_process_lifetime,
+    _seed_cash_ledger,
+    _seed_drawdown_state,
 )
 
 # ---------------------------------------------------------------------------
@@ -108,79 +95,8 @@ _SPOT = 150.0
 
 
 # ---------------------------------------------------------------------------
-# Engine + session fixture
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-async def db(
-    tmp_path: Path,
-) -> AsyncIterator[tuple[AsyncEngine, async_sessionmaker[AsyncSession]]]:
-    """Yield (async_engine, async_session_factory) over a fresh on-disk SQLite DB."""
-    db_path = tmp_path / "alphamind.db"
-
-    # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.state.tables  # noqa: F401
-
-    sync_engine = make_engine(str(db_path))
-    Base.metadata.create_all(sync_engine)
-    sync_engine.dispose()
-
-    async_engine = make_async_engine(str(db_path))
-    factory = make_async_session_factory(async_engine)
-    yield async_engine, factory
-    await async_engine.dispose()
-
-
-# ---------------------------------------------------------------------------
 # Builders
 # ---------------------------------------------------------------------------
-
-
-def _make_process_lifetime() -> ProcessLifetimeRecord:
-    return ProcessLifetimeRecord(
-        process_lifetime_id=_PROCESS_ID,
-        process_role="pipeline",
-        process_start_at=_NOW.isoformat().replace("+00:00", "Z"),
-        process_pid=12345,
-        hostname="alpha-prod-01",
-        git_sha="a" * 40,
-        git_branch="main",
-        git_dirty=False,
-        python_version="3.13.1",
-        pip_freeze_hash="0" * 64,
-        pip_freeze_snapshot_path="/tmp/pip-freeze/proc-regt-1.txt",
-        anthropic_sdk_version="0.40.0",
-        claude_agent_sdk_version="0.1.69",
-        os_release="Linux-6.5.0",
-    )
-
-
-def _make_invocation_record(invocation_id: str = _INV_ID) -> InvocationRecord:
-    return InvocationRecord(
-        invocation_id=invocation_id,
-        process_lifetime_id=_PROCESS_ID,
-        start_at=_NOW.isoformat().replace("+00:00", "Z"),
-        phase1_completed_at=None,
-        phase2_completed_at=None,
-        trigger_type="scheduled",
-        trigger_source="cron",
-        trigger_reason="0 9 * * 1-5",
-        git_sha_at_invocation="a" * 40,
-        active_profile="medium",
-        active_regime="normal",
-        active_mode="normal",
-        active_overlays_json="[]",
-        resolved_config_hash="0" * 64,
-        resolved_config_snapshot_path="/tmp/provenance/inv/resolved.json",
-        feature_flags_snapshot_json="{}",
-        data_calibration_state_snapshot_path="/tmp/provenance/calibration.json",
-        data_source_freshness_json="{}",
-        fill_collection_summary_json=None,
-        command_execution_summary_json=None,
-        staleness_flag=None,
-        snapshot_metadata_json=None,
-    )
 
 
 _BRACKET_ID = "brk-regt-1"
@@ -263,36 +179,6 @@ def _make_pending_position(
     )
 
 
-def _make_cash_ledger(current_cash_usd: float = 100_000.0) -> CashLedger:
-    return CashLedger(
-        current_cash_usd=current_cash_usd,
-        settled_cash_usd=current_cash_usd,
-        reserved_capital_usd=0.0,
-        available_buying_power_usd=current_cash_usd,
-        margin_held_usd=0.0,
-        unsettled_proceeds=(),
-        cash_pct_of_portfolio=0.0,
-        true_deployable_capital_usd=0.0,
-        regt_excess_trailing_30d_usd=0.0,
-        regt_excess_trailing_90d_usd=0.0,
-        regt_excess_lifetime_usd=0.0,
-    )
-
-
-def _make_drawdown_state() -> DrawdownState:
-    return DrawdownState(
-        current_drawdown_pct=0.0,
-        equity_high_water_mark_usd=100_000.0,
-        drawdown_duration_hours=0.0,
-        lifetime_max_drawdown_pct=0.0,
-        intraday_drawdown_pct=0.0,
-        daily_zone=RiskZone.NORMAL,
-        cumulative_zone=RiskZone.NORMAL,
-        cumulative_tier=None,
-        drawdown_by_source_pct={},
-    )
-
-
 def _make_unprocessed_fill(
     fill_id: str,
     *,
@@ -349,9 +235,23 @@ async def _seed_invocation_substrate(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async with factory() as sess:
-        sess.add(process_lifetime_record_to_row(_make_process_lifetime()))
+        sess.add(
+            process_lifetime_record_to_row(
+                _make_process_lifetime(
+                    process_lifetime_id=_PROCESS_ID,
+                    pip_freeze_snapshot_path="/tmp/pip-freeze/proc-regt-1.txt",
+                )
+            )
+        )
         await sess.flush()
-        sess.add(invocation_record_to_row(_make_invocation_record()))
+        sess.add(
+            invocation_record_to_row(
+                _make_invocation_record(
+                    invocation_id=_INV_ID,
+                    process_lifetime_id=_PROCESS_ID,
+                )
+            )
+        )
         await sess.commit()
 
 
@@ -383,22 +283,6 @@ async def _seed_position_order_bracket(
         await sess.commit()
 
 
-async def _seed_cash_ledger(
-    factory: async_sessionmaker[AsyncSession],
-) -> None:
-    async with factory() as sess:
-        sess.add(cash_ledger_record_to_row(_make_cash_ledger(), last_updated_at=_NOW))
-        await sess.commit()
-
-
-async def _seed_drawdown_state(
-    factory: async_sessionmaker[AsyncSession],
-) -> None:
-    async with factory() as sess:
-        sess.add(drawdown_state_record_to_row(_make_drawdown_state(), last_updated_at=_NOW))
-        await sess.commit()
-
-
 async def _append_fill(
     factory: async_sessionmaker[AsyncSession],
     fill: FillRecord,
@@ -415,7 +299,10 @@ async def _open_handle(
 ) -> tuple[InvocationContext, InvocationHandle]:
     ctx = InvocationContext(
         session_factory=factory,
-        record=_make_invocation_record(invocation_id=f"{_INV_ID}-{invocation_id_suffix}"),
+        record=_make_invocation_record(
+            invocation_id=f"{_INV_ID}-{invocation_id_suffix}",
+            process_lifetime_id=_PROCESS_ID,
+        ),
     )
     handle = await ctx.__aenter__()
     return ctx, handle

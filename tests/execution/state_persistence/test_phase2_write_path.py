@@ -15,7 +15,6 @@ contract.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -79,11 +78,9 @@ from alphamind.decision.portfolio_manager.submit_envelope import (
     SubmissionResult,
 )
 from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
-from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
     make_async_session_factory,
-    make_engine,
 )
 from alphamind.portfolio_state.events.activity_log import (
     EventType,
@@ -120,14 +117,11 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecord,
     ThesisRecordStatus,
 )
-from alphamind.state.config import StatePersistenceConfig
 from alphamind.state.invocation_context.context import (
     InvocationContext,
     InvocationHandle,
 )
 from alphamind.state.invocation_context.records import (
-    InvocationRecord,
-    ProcessLifetimeRecord,
     invocation_record_to_row,
     process_lifetime_record_to_row,
 )
@@ -167,6 +161,11 @@ from alphamind.state.tables.theses import ThesisRow
 from alphamind.state.tables.theses_codec import (
     record_to_rows as thesis_record_to_rows,
 )
+from tests.execution.state_persistence.conftest import (
+    _make_invocation_record,
+    _make_process_lifetime,
+    _make_state_persistence_config,
+)
 
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
 _INV_ID = "inv-2026-05-08T12:00:00Z-aaaa"
@@ -191,86 +190,10 @@ def _bypass_init_PortfolioManagerView(**kwargs: object) -> PortfolioManagerView:
     return obj
 
 
-@pytest.fixture()
-async def db(
-    tmp_path: Path,
-) -> AsyncIterator[tuple[AsyncEngine, async_sessionmaker[AsyncSession]]]:
-    """Yield (async_engine, async_session_factory) over a fresh on-disk SQLite DB."""
-    db_path = tmp_path / "alphamind.db"
-
-    # Side-effect import: registers state-persistence tables on Base.metadata.
-    import alphamind.state.tables  # noqa: F401
-
-    sync_engine = make_engine(str(db_path))
-    Base.metadata.create_all(sync_engine)
-    sync_engine.dispose()
-
-    async_engine = make_async_engine(str(db_path))
-    factory = make_async_session_factory(async_engine)
-    yield async_engine, factory
-    await async_engine.dispose()
-
-
 # ---------------------------------------------------------------------------
-# Builders — invocation substrate
+# Builders — invocation substrate (hoisted makes; local seed kept for
+# its invocation_id defaulting behavior)
 # ---------------------------------------------------------------------------
-
-
-def _make_state_persistence_config() -> StatePersistenceConfig:
-    return StatePersistenceConfig.model_validate(
-        {
-            "pm_decision_log_sliding_window_invocations": 3,
-            "snapshot_read_timeout_seconds": 5.0,
-            "pip_freeze_snapshot_root": "/tmp/pip-freeze",
-            "invocation_provenance_root": "/tmp/provenance",
-        }
-    )
-
-
-def _make_process_lifetime() -> ProcessLifetimeRecord:
-    return ProcessLifetimeRecord(
-        process_lifetime_id=_PROCESS_ID,
-        process_role="pipeline",
-        process_start_at=_NOW.isoformat().replace("+00:00", "Z"),
-        process_pid=12345,
-        hostname="alpha-prod-01",
-        git_sha="a" * 40,
-        git_branch="main",
-        git_dirty=False,
-        python_version="3.13.1",
-        pip_freeze_hash="0" * 64,
-        pip_freeze_snapshot_path="/tmp/pip-freeze/proc-1.txt",
-        anthropic_sdk_version="0.40.0",
-        claude_agent_sdk_version="0.1.69",
-        os_release="Linux-6.5.0",
-    )
-
-
-def _make_invocation_record(invocation_id: str = _INV_ID) -> InvocationRecord:
-    return InvocationRecord(
-        invocation_id=invocation_id,
-        process_lifetime_id=_PROCESS_ID,
-        start_at=_NOW.isoformat().replace("+00:00", "Z"),
-        phase1_completed_at=None,
-        phase2_completed_at=None,
-        trigger_type="scheduled",
-        trigger_source="cron",
-        trigger_reason="0 9 * * 1-5",
-        git_sha_at_invocation="a" * 40,
-        active_profile="medium",
-        active_regime="normal",
-        active_mode="normal",
-        active_overlays_json="[]",
-        resolved_config_hash="0" * 64,
-        resolved_config_snapshot_path="/tmp/provenance/inv/resolved.json",
-        feature_flags_snapshot_json="{}",
-        data_calibration_state_snapshot_path="/tmp/provenance/calibration.json",
-        data_source_freshness_json="{}",
-        fill_collection_summary_json=None,
-        command_execution_summary_json=None,
-        staleness_flag=None,
-        snapshot_metadata_json=None,
-    )
 
 
 async def _seed_invocation_substrate(
