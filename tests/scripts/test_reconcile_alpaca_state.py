@@ -61,7 +61,8 @@ def _local(legs: list[tuple[str, str, str | None, float]]) -> dict[str, Any]:
 
 def _line_for(symbol: str, output: str) -> str:
     for line in output.splitlines():
-        if line.lstrip().startswith(symbol):
+        parts = line.split()
+        if parts and parts[0] == symbol:  # exact symbol, not a prefix of another
             return line
     raise AssertionError(f"no position line for {symbol!r} in:\n{output}")
 
@@ -78,11 +79,14 @@ def _line_for(symbol: str, output: str) -> str:
         pytest.param("-6", ("OPEN", "LONG", 6.0), True, id="direction_mismatch_flags"),
         # Magnitude divergence: Alpaca 50 vs local LONG 40 — must still flag.
         pytest.param("50", ("OPEN", "LONG", 40.0), True, id="magnitude_mismatch_flags"),
+        # NULL direction (a strategy/legacy row) signs as long-like (positive), so
+        # Alpaca +6 reconciles clean — exercises the `or ""` fallback in _signed_shares.
+        pytest.param("6", ("OPEN", None, 6.0), False, id="null_direction_treated_long"),
     ],
 )
 def test_report_positions_signs_local_quantity(
     alpaca_qty: str,
-    leg: tuple[str, str, float],
+    leg: tuple[str, str | None, float],
     expect_divergence: bool,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -105,3 +109,13 @@ def test_cancelled_leg_excluded_from_comparison(capsys: pytest.CaptureFixture[st
 
     line = _line_for("SYM", capsys.readouterr().out)
     assert "<<< DIVERGENCE" not in line
+
+
+def test_leg_label_renders_status_and_direction(capsys: pytest.CaptureFixture[str]) -> None:
+    # The local side is self-describing — status/direction/magnitude — so the printed row
+    # explains itself next to Alpaca's signed qty (e.g. `alpaca=-6 ... local=[OPEN/SHORT:6.0sh]`).
+    local = _local([("SYM", "OPEN", "SHORT", 6.0)])
+
+    _report_positions({"SYM": _FakeAlpacaPos(qty="-6")}, local)
+
+    assert "local=[OPEN/SHORT:6.0sh]" in _line_for("SYM", capsys.readouterr().out)
