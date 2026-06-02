@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Use to drive an AlphaMind feature's implementation work tree end-to-end — fetch the parent Linear Issue, dispatch its sub-issues to subagents in dependency-respecting waves, verify each, integrate to a feature branch, then PR → pre-review triage → wait for CI green → /review → address feedback → update `docs/project-tracker.md` → land → clean local git → PushNotification. Triggers on `/orchestrate <Feature>` and operator phrases like "orchestrate Breach behavior", "implement the Synthesizer feature", "drive Domain researchers to completion", "build out State persistence", "execute the Portfolio manager work tree", "land the X feature". Assumes the work tree has already been drafted via `/draft-user-stories` (parent Issue exists with sub-issues + dependency graph + orchestrator notes). Use this skill whenever the operator asks to implement, build, drive, execute, land, or complete an AlphaMind feature that has a drafted Linear work tree, even if they don't say "orchestrate". Do NOT use for one-off story dispatch (just call `Agent` directly), bug fixes, refactors, or features without a Linear parent Issue.
+description: Use to drive an AlphaMind feature's implementation work tree end-to-end — fetch the parent Linear Issue, dispatch its sub-issues to subagents in dependency-respecting waves, verify each, integrate to a feature branch, then PR → pre-review triage → wait for CI green → /review → address feedback → land → clean local git → PushNotification. Triggers on `/orchestrate <Feature>` and operator phrases like "orchestrate Breach behavior", "implement the Synthesizer feature", "drive Domain researchers to completion", "build out State persistence", "execute the Portfolio manager work tree", "land the X feature". Assumes the work tree has already been drafted via `/draft-user-stories` (parent Issue exists with sub-issues + dependency graph + orchestrator notes). Use this skill whenever the operator asks to implement, build, drive, execute, land, or complete an AlphaMind feature that has a drafted Linear work tree, even if they don't say "orchestrate". Do NOT use for one-off story dispatch (just call `Agent` directly), bug fixes, refactors, or features without a Linear parent Issue.
 ---
 
 # Orchestrate an AlphaMind feature implementation
@@ -19,7 +19,7 @@ These are project invariants that override any default behavior. Track them with
 - **Always tag the model in the `Agent` tool's `description` field** (`[Sonnet] 04a — Zone classifier`, `[Opus] 03 — Canonical types`). Visible-at-a-glance model selection is a CLAUDE.md requirement.
 - **Run the full lint chain after each parallelized wave merges** to the feature branch. Catches integration issues that pass per-story but fail in combination. Commands: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run lint-imports`. **Do NOT run the full pytest suite locally** — per CLAUDE.md "Testing", the CI workflow (`.github/workflows/ci.yml`) is the authoritative full-suite gate on every PR push. Per-story and per-wave pytest is scoped to the changed paths only (`uv run pytest tests/<area>/ -n auto` or a single test node-id), kept fast and used as a sanity check during integration. The CI run that fires when you open the PR (or push subsequent commits to it) is the wave-spanning full-suite check.
 - **A story blocked mid-implementation gets `state="Blocked"` in Linear,** plus a `blockedBy` link to the blocking issue if one exists in Linear (use `save_issue(id=..., state="Blocked", blockedBy=[...])`). If the blocker isn't in Linear, surface it in the final summary instead.
-- **Do not skip the post-completion sequence.** PR → pre-review triage → wait for CI green → /review → address feedback → update `docs/project-tracker.md` → land → clean local git → PushNotification. Add these as tasks before the work begins (see below).
+- **Do not skip the post-completion sequence.** PR → pre-review triage → wait for CI green → /review → address feedback → land → clean local git → PushNotification. Add these as tasks before the work begins (see below).
 
 ## Pre-flight
 
@@ -69,15 +69,14 @@ Before any dispatch:
 Use `TaskCreate` once, up front, to register everything you must not drop. Two groups:
 
 - **One task per sub-issue** — title `<NN — Title>`, status `pending`. As you dispatch, mark `in_progress`; as you verify and merge, mark `completed`.
-- **Completion-sequence tasks** — register all eight before the work begins so they cannot be forgotten:
+- **Completion-sequence tasks** — register all seven before the work begins so they cannot be forgotten:
   1. `Open PR to main`
   2. `Pre-review triage of work-tree residue`
   3. `Wait for CI green on the PR`
   4. `Spawn /review subagent`
   5. `Address review feedback`
-  6. `Update docs/project-tracker.md status to _done_`
-  7. `Land PR and clean local git state`
-  8. `Send PushNotification summarizing completed work`
+  6. `Land PR and clean local git state`
+  7. `Send PushNotification summarizing completed work`
 
 ### 6. Create and push the feature branch
 
@@ -124,7 +123,7 @@ Each implementation subagent receives a prompt of this exact shape (replace `<Li
 ```
 Implement story <Linear ID>.
 
-You are running in an isolated git worktree on a fresh branch. IT IS CRITICAL that you only make changes and commits inside the worktree. ALWAYS use relative paths (e.g. `docs/project-tracker.md`), NEVER use fully-qualified paths (e.g. `/Users/jatassi/Git/AlphaMind/docs/project-tracker.md`). Do not push, switch branches, or merge.
+You are running in an isolated git worktree on a fresh branch. IT IS CRITICAL that you only make changes and commits inside the worktree. ALWAYS use relative paths (e.g. `src/alphamind/<package>/<module>.py`), NEVER use fully-qualified paths (e.g. `/Users/jatassi/Git/AlphaMind/src/alphamind/<package>/<module>.py`). Do not push, switch branches, or merge.
 
 **Verify your base before starting work.** The harness creates worktree branches off `main`. The integration branch for this work tree is `<feature-branch>` (it carries all prior waves' commits). Fetching is allowed; pushing is not. Run:
 
@@ -238,7 +237,6 @@ Skip delegation only when overhead exceeds the work:
 - Reading sub-issues and the parent Issue to plan the next wave.
 - Resolving trivial merge conflicts when a subagent's `--ff-only` fails.
 - Trivial-fix unwarranted lint suppressions.
-- The single-line `docs/project-tracker.md` status update.
 - Trivial story work the parent Issue's orchestrator notes mark for inline handling (e.g., a one-line README link).
 
 **Subagent token-limit recovery.** If a dispatch reports `You've hit your limit · resets <date>` (or any other mid-flight termination short of the verbatim-git-log report), the work may still be substantively complete — agents typically commit last, so a token cutoff during the staging step leaves all the implementation as untracked files in the worktree. Investigate before re-dispatching:
@@ -373,11 +371,7 @@ After the subagent reports back, verify and merge into the feature branch as in 
 
 After all accepted feedback is addressed, push the new commits to the PR.
 
-### 6. Update docs/project-tracker.md
-
-Edit the feature's bullet under "Ready for implementation": change `_in progress_` (or whatever transient status it had) to `_done_`. Commit with a message like `chore(project-tracker): mark <feature> done`. This commit goes on the feature branch and rides the same PR.
-
-### 7. Land PR and clean local git state
+### 6. Land PR and clean local git state
 
 - Confirm CI is still green on the PR — completion-sequence step 3 waited for the initial run, but the address-feedback push (step 5) triggered a fresh CI run. Watch it by ID per CLAUDE.md "Watching CI on a PR": `sleep 5 && gh run watch $(gh run list --branch <feature-branch> --workflow ci.yml --limit 1 --json databaseId -q '.[0].databaseId') --exit-status`. Iterate (fix → push → re-watch) until green.
 - **Before `gh pr merge`, sweep stale `main`-bearing worktrees.** Run `git worktree list` and look for orphan worktrees from prior sessions checked out to `main` (typical naming: `.claude/worktrees/<random-name>` with no `agent-` prefix). `gh pr merge` switches the local checkout to `main` to apply the merge and fails with `fatal: 'main' is already used by worktree at <path>` if a stale `main` worktree exists. Confirm the orphan's `git -C <path> status --short` is clean (no uncommitted work), then `git worktree remove -f -f <path>`. Diagnose only if the worktree has uncommitted work — rare for orphans, but possible if it represents the operator's in-progress side work.
@@ -428,7 +422,7 @@ This discards uncommitted edits and untracked files inside the worktree without 
 
 Verify clean state: `git status` shows nothing pending.
 
-### 8. PushNotification
+### 7. PushNotification
 
 Send a notification summarizing the run:
 
