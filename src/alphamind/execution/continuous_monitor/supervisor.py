@@ -41,6 +41,12 @@ log = logging.getLogger(__name__)
 TaskCoroFn = Callable[[MonitorSession, ContinuousMonitorConfig], Coroutine[Any, Any, None]]
 SleepFn = Callable[[float], Awaitable[None]]
 MonotonicFn = Callable[[], float]
+# A zero-arg factory returning the supervised heartbeat iterator with its name +
+# cadence pre-bound. A run-forever leaf task drives it as
+# ``async for _ in loop(): <body>`` so the supervisor owns the beat + the pacing.
+# Wiring binds it to ``lambda: supervisor.supervised_loop(name, cadence)``; tests
+# substitute a fake iterator factory that bounds the iteration count.
+SupervisedLoop = Callable[[], AsyncIterator[None]]
 _SHUTDOWN_SIGNALS = (signal.SIGINT, signal.SIGTERM)
 
 

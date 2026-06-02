@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 
@@ -37,12 +37,12 @@ from alphamind.execution.continuous_monitor.entry_window.repricer import (
     EntryWindowDeadlineHandler,
 )
 from alphamind.execution.continuous_monitor.session import MonitorSession
+from alphamind.execution.continuous_monitor.supervisor import SupervisedLoop
 from alphamind.portfolio_state.records.orders import BracketRecord
 
 log = logging.getLogger(__name__)
 
 NowProvider = Callable[[], datetime]
-SleepCallable = Callable[[float], Awaitable[None]]
 
 # Outcomes that mean "stop looking at this bracket this session": the entry was
 # cancelled, or it had already filled at the broker (reconciliation will flip it
@@ -117,21 +117,25 @@ async def run_entry_window_watcher(
     *,
     bracket_reader: PendingEntryBracketReader,
     handler: EntryWindowDeadlineHandler,
+    loop: SupervisedLoop,
     now: NowProvider = lambda: datetime.now(UTC),
-    sleep: SleepCallable = asyncio.sleep,
 ) -> None:
     """Long-running task the supervisor registers as ``entry_window``.
 
     The loop body delegates to :func:`_run_entry_window_cycle` so the same code
-    path the tests exercise drives production. The ``fired`` set is private to
-    this task — per-session memory of which bracket has already terminally fired
-    so a read of the still-``PENDING_ENTRY`` row before the next reconciliation
-    does NOT re-fire (a REPRICED bracket is intentionally left out so it is
-    re-evaluated next cycle).
+    path the tests exercise drives production. *loop* is the supervisor's
+    :meth:`MonitorSupervisor.supervised_loop` iterator (name + cadence pre-bound
+    by the wiring): it beats the watchdog at the top of every iteration and paces
+    the loop at the entry-window cadence, so this task is liveness-watched with no
+    hand-wired ``beat()``. The ``fired`` set is private to this task —
+    per-session memory of which bracket has already terminally fired so a read of
+    the still-``PENDING_ENTRY`` row before the next reconciliation does NOT
+    re-fire (a REPRICED bracket is intentionally left out so it is re-evaluated
+    next cycle).
     """
     del session  # session id is not woven into the cancel reason (no trigger id)
     fired: set[str] = set()
-    while True:
+    async for _ in loop():
         try:
             await _run_entry_window_cycle(
                 config=config,
@@ -146,8 +150,7 @@ async def run_entry_window_watcher(
             # Per-cycle supervisor backstop: the cycle handles its own per-
             # bracket failures, so a raise here is a programming bug. Log and
             # continue so the loop survives transient consistency issues.
-            log.exception("entry_window cycle raised; continuing after sleep")
-        await sleep(float(config.entry_window_evaluation_cadence_seconds))
+            log.exception("entry_window cycle raised; continuing after pacing sleep")
 
 
 __all__ = [

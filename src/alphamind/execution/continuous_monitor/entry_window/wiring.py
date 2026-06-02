@@ -448,11 +448,13 @@ def register_entry_window_watcher_task(
             max_reprice_count=config.entry_window_max_reprices,
             bps_through_touch=execution_config.marketable_entry_bps_through_touch,
         )
+        cadence = float(config.entry_window_evaluation_cadence_seconds)
         await run_entry_window_watcher(
             session,
             config,
             bracket_reader=bracket_reader,
             handler=handler,
+            loop=lambda: supervisor.supervised_loop("entry_window", cadence),
         )
 
     supervisor.register_task(name="entry_window", coro_fn=_coro)

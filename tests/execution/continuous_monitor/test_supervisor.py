@@ -423,6 +423,53 @@ class TestStartupGraceWarning:
         assert len(warnings) == 1  # latched: one warning, not one per check pass
 
 
+class TestStalledLoopTripsWatchdog:
+    async def test_supervised_loop_body_that_hangs_trips_os_exit(self) -> None:
+        """A task driving supervised_loop whose body wedges stops beating → trip.
+
+        The leaf-task regression for the whole tree: a loop wired through
+        supervised_loop beats at the top of each iteration, so a body that hangs
+        (never reaches the next iteration's beat) goes stale within its bound and
+        the watchdog forces os._exit(1). Drives the real run()/TaskGroup path so
+        the watchdog observes a live registered task, with a fake clock so the
+        stall is virtual.
+        """
+        clock = _FakeClock()
+        supervisor = _supervisor(clock=clock)
+        body_entered = asyncio.Event()
+
+        async def _wedging_leaf(session: MonitorSession, config: ContinuousMonitorConfig) -> None:
+            del session, config
+            async for _ in supervisor.supervised_loop("wedging_leaf", 1.0):  # bound 10s
+                body_entered.set()
+                await asyncio.Future()  # wedge: never reach the next beat
+
+        supervisor.register_task(name="wedging_leaf", coro_fn=_wedging_leaf)
+
+        exits: list[int] = []
+
+        async def _advance_until_trip() -> None:
+            await body_entered.wait()
+            # Push virtual time past the 10s bound; the watchdog's next check
+            # pass then sees the wedged task as stale.
+            clock.advance(30.0)
+            # Let the watchdog run its check, then stop the supervisor so run()
+            # returns regardless of whether the (mocked) os._exit "fired".
+            for _ in range(20):
+                await asyncio.sleep(0)
+                if exits:
+                    break
+            supervisor.request_stop()
+
+        with mock.patch(_EXIT_PATH, side_effect=exits.append):
+            await asyncio.wait_for(
+                asyncio.gather(supervisor.run(), _advance_until_trip()),
+                timeout=5.0,
+            )
+
+        assert exits == [1]
+
+
 class TestWatchdogShutdown:
     async def test_graceful_stop_cancels_watchdog_without_hanging(self) -> None:
         """run() must return within the shutdown timeout — the watchdog must not block __aexit__."""
