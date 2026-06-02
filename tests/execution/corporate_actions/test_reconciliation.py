@@ -1814,8 +1814,6 @@ async def test_reconcile_corrects_settled_cash_alongside_current_cash(
     settled_cash_usd frozen at the seed value and overstating deployable
     capital for position sizing.
     """
-    import pytest
-
     from alphamind.execution.corporate_actions.reconciliation import reconcile
     from alphamind.state.tables.cash_ledger import (
         CASH_LEDGER_SINGLETON_ID,
