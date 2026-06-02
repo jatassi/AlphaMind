@@ -6,10 +6,12 @@ root `CLAUDE.md` "Branch policy" section.
 ## paths-ignore and concurrency
 
 The `ci` workflow uses `paths-ignore` for `**.md`, `docs/**`, `.archive/**`,
-`.claude/**`, and `audit-*.html` — pure docs/tooling PRs skip the test run and can merge
-as soon as you open them. Any change touching `src/`, `tests/`, `config/`, `prompts/`,
-`scripts/`, `pyproject.toml`, `uv.lock`, `.importlinter`, `alembic.ini`, or
-`.github/workflows/**` triggers the full CI run.
+`.claude/**`, `audit-*.html`, and `scripts/**` — pure docs/tooling/ops-script PRs skip
+the test run and can merge as soon as you open them. Any change touching `src/`,
+`tests/`, `config/`, `prompts/`, `pyproject.toml`, `uv.lock`, `.importlinter`,
+`alembic.ini`, or `.github/workflows/**` triggers the full CI run. (`scripts/` is
+ops/investigation tooling, not production code; mypy still type-checks it on any
+non-ignored PR since it walks the whole tree — only a scripts-only PR skips the gate.)
 
 `paths-ignore` on `pull_request` evaluates the PR's **full diff**, not the latest
 commit's diff. Pushing a docs-only follow-up commit to a PR that already contains code

@@ -58,8 +58,8 @@ fall back to serial.
 
 `main` is PR-only — never push directly; open a PR. Squash-merge every PR. Don't merge
 until the `ci` workflow is green. Docs/tooling-only PRs skip CI (`paths-ignore`:
-`**.md`, `docs/**`, `.archive/**`, `.claude/**`, `audit-*.html`). The CI watch/merge
-loop and the GitHub usage-limit fallback live in `docs/agents/ci.md`.
+`**.md`, `docs/**`, `.archive/**`, `.claude/**`, `audit-*.html`, `scripts/**`). The CI
+watch/merge loop and the GitHub usage-limit fallback live in `docs/agents/ci.md`.
 
 ## Subagents
 
