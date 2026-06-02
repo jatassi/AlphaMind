@@ -16,7 +16,7 @@ These are project invariants that override any default behavior. Track them with
 - **Take a feature branch off `main` before any subagent dispatches.** Branch name: `<initials>/alp-<parent-issue-number>-<slug>` matching the Linear `gitBranchName` for the parent Issue. Never let subagents work directly off `main`.
 - **Max 6 concurrent active subagents.** When a parallel wave has more than 6 eligible stories, batch into sub-waves of ≤6. Wait for a sub-wave to finish before dispatching the next.
 - **Always pass `isolation: "worktree"` and `run_in_background: true` to `Agent`.** Worktree isolation is mandatory per CLAUDE.md and prevents parallel-checkout collisions; background mode is mandatory per CLAUDE.md. You'll be notified as each completes — do not poll.
-- **Always tag the model in the `Agent` tool's `description` field** (`[Sonnet] 04a — Zone classifier`, `[Opus] 03 — Canonical types`). Visible-at-a-glance model selection is a CLAUDE.md requirement.
+- **Always tag the model in the dispatch's `description`** (`[Sonnet] 04a — Zone classifier`, `[Opus] 03 — Canonical types`, `[Grok] 05a — fixture hoist`) — the `Agent` tool's `description` for Opus/Sonnet, the background command's description for a Grok CLI dispatch. Visible-at-a-glance model selection is a CLAUDE.md requirement.
 - **Run the full lint chain after each parallelized wave merges** to the feature branch. Catches integration issues that pass per-story but fail in combination. Commands: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run lint-imports`. **Do NOT run the full pytest suite locally** — per CLAUDE.md "Testing", the CI workflow (`.github/workflows/ci.yml`) is the authoritative full-suite gate on every PR push. Per-story and per-wave pytest is scoped to the changed paths only (`uv run pytest tests/<area>/ -n auto` or a single test node-id), kept fast and used as a sanity check during integration. The CI run that fires when you open the PR (or push subsequent commits to it) is the wave-spanning full-suite check.
 - **A story blocked mid-implementation gets `state="Blocked"` in Linear,** plus a `blockedBy` link to the blocking issue if one exists in Linear (use `save_issue(id=..., state="Blocked", blockedBy=[...])`). If the blocker isn't in Linear, surface it in the final summary instead.
 - **Do not skip the post-completion sequence.** PR → pre-review triage → wait for CI green → /review → address feedback → land → clean local git → PushNotification. Add these as tasks before the work begins (see below).
@@ -102,9 +102,15 @@ Recovery: `rm -f <repo>/.git/index.lock` and immediately re-run the chained git 
 
 ## Operating posture
 
-**Delegate by default.** You drive sequencing and status; subagents do the work. Use `Agent` (`subagent_type: general-purpose`, `isolation: "worktree"`, `run_in_background: true`) for every implementation story. Write code yourself only when the work is smaller than dispatch overhead — Linear status updates, frontmatter fixes, single-line README edits, file-existence checks while planning a wave.
+**Delegate by default.** You drive sequencing and status; subagents do the work. Use `Agent` (`subagent_type: general-purpose`, `isolation: "worktree"`, `run_in_background: true`) for every Opus/Sonnet implementation story (a story flagged **Grok** dispatches via the CLI instead — see **Model selection**). Write code yourself only when the work is smaller than dispatch overhead — Linear status updates, frontmatter fixes, single-line README edits, file-existence checks while planning a wave.
 
-**Model selection.** Per CLAUDE.md: mechanical changes → Sonnet; everything else → Opus. Mechanical means: a single-line README edit, a one-file frontmatter change, a verbatim file copy. Anything involving algorithmic judgment, schema design, fixture construction, or test-list reasoning is Opus. The parent Issue's orchestrator notes may flag specific stories that override this default — honor those flags. Tag the model in the `Agent` description as `[Sonnet]` or `[Opus]`.
+**Model selection.** Per CLAUDE.md's subagent taxonomy, pick by how much the story leaves to decide:
+
+- **Opus** — the approach itself must be worked out: design, architectural/algorithmic/schema decisions, ambiguous specs, non-obvious trade-offs.
+- **Sonnet** — the approach is clear, but execution still needs discretion a green test/lint run wouldn't prove: preserving behavior, choosing what to keep vs cut within a known pattern, cross-file coherence, edge cases.
+- **Grok** (run via its CLI, *not* the `Agent` tool) — a rote, fully-specified change whose correctness is captured entirely by the test + lint gate, with nothing left to decide: mechanical renames, verbatim refactors, fixture/builder hoists.
+
+The parent Issue's orchestrator notes — and any per-story model labels (e.g. ALP-783's `Grok`/`Sonnet` labels) — may assign specific stories; honor those over this default. Tag the dispatch `[Opus]` / `[Sonnet]` / `[Grok]`. A Grok story does not go through the `Agent` wave — see **Dispatching a Grok story (CLI)** below.
 
 **Run independent stories in parallel.** The dependency graph is in the parent Issue's description; the per-sub-issue `blockedBy` relations are the source of truth. A story is dispatch-eligible when: its status is `Todo` AND every story it `blockedBy` has status `Done`. Stories at the same dependency rank dispatch together in one wave (one `Agent` call per story, all in the same message), capped at 6 concurrent.
 
@@ -164,6 +170,21 @@ Do not change the status of the user story in Linear; the orchestrator owns stat
 ```
 
 When dispatching multiple parallel-eligible stories, send all `Agent` calls in a single message (one block per story). Use `description` like `[Opus] 04a — Zone classifier` for visibility.
+
+### Dispatching a Grok story (CLI)
+
+A story flagged **Grok** does **not** go through the `Agent` tool — there is no `grok` model there. Dispatch it through the Grok CLI per `docs/agents/grok-cli.md`. The worktree → verify → cherry-pick flow is otherwise identical (own worktree off the feature tip, scoped pytest + coverage-guard, merge on pass), with three orchestration differences that matter:
+
+- **Dispatch sequentially, outside the parallel `Agent` wave.** Concurrent grok-build jobs trip xAI's team token-per-minute limit (HTTP 429) and truncate. When a wave mixes models, fire the Opus/Sonnet `Agent` calls together and run the Grok stories one at a time.
+- **Give a high `--max-turns`.** Grok issues one tool-call per turn; a multi-file hoist needs headroom or it stops mid-task *without committing* — which looks like broken output (e.g. tests left failing because it never reached the verify step).
+- **Verify the output yourself.** Grok self-reports success even when truncated. Run the scoped pytest + coverage guard and confirm it committed (`git -C <worktree> log`) before merging.
+
+Build the prompt from the same shape as the Agent dispatch prompt above — but **drop the `Skill("tdd")` / `Skill("python-architecture")` lines** (Claude-only) — and embed the story spec inline. Run it headless, e.g.:
+
+    grok -m grok-build --cwd <worktree> --prompt-file <prompt> \
+      --always-approve --no-subagents --max-turns 500 --output-format plain
+
+Flag rationale and the full gotcha list (the benign `AuthorizationRequired` log line, flaky `search_replace` on large files, auth) live in `docs/agents/grok-cli.md` — read it before the first Grok dispatch.
 
 ## Status tracking loop
 
