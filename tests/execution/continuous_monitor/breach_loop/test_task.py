@@ -1677,3 +1677,78 @@ async def test_global_stale_emits_distinct_last_error() -> None:
     ]
     assert len(global_stale_signals) >= 1
     assert global_stale_signals[0].degraded is True
+
+
+@pytest.mark.asyncio
+async def test_global_stale_signal_latches_and_rearms_on_recovery() -> None:
+    """ALP-825 review: the global-stale (cold-feed) signal fires once on onset,
+    debounces while the feed stays cold, and re-arms when the feed recovers.
+
+    Five ticks: cold, cold, fresh, cold, cold. The latch must emit the
+    global-stale signal on tick 1 (onset), suppress it on tick 2 (still cold),
+    re-arm on tick 3 (feed fresh), and emit again on tick 4 (new onset) — so
+    exactly TWO global-stale signals across the run, not one per cold tick.
+    Mirrors the per-ticker ``stale_degraded`` latch behaviour.
+    """
+    repo = _StubRepository(
+        drawdown_states=[_drawdown_state() for _ in range(5)],
+        active_risk_parameters=_active_risk_parameters(),
+    )
+    immediate, emergency, sink = _noop_callbacks()
+    health = _CallableRecord()
+
+    def _on_health(signal: BreachLoopHealthSignal) -> None:
+        health.calls.append((signal,))
+
+    async def _snapshot() -> LibrarySnapshot:
+        return _library_snapshot_with_position("IBM")
+
+    async def _regime() -> RegimeAdaptationOutput:
+        return _regime_output()
+
+    tick_time = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
+    stale_c = _stale_cache("IBM", price=200.0, age_seconds=7200.0)
+    fresh_c = _stale_cache("IBM", price=200.0, age_seconds=5.0)
+    # cold, cold, fresh, cold, cold
+    swappable: Any = _SwappableCache([stale_c, stale_c, fresh_c, stale_c, stale_c])
+
+    async def _counted_swap_loop() -> AsyncIterator[None]:
+        for _ in range(5):
+            yield
+            swappable._i = min(swappable._i + 1, 4)
+            await asyncio.sleep(0)
+        raise asyncio.CancelledError
+
+    # failure_threshold high so the per-ticker stale escalation never latches —
+    # isolates the global-stale latch under test.
+    with pytest.raises(asyncio.CancelledError):
+        await run_breach_loop(
+            _session(),
+            _config(failure_threshold=100, underlying_price_max_age_seconds=60.0),
+            repository=cast(PortfolioStateRepository, repo),
+            cache=cast(Any, swappable),
+            snapshot_provider=_snapshot,
+            regime_provider=_regime,
+            progressive_tiers=_progressive_tiers(),
+            library_config_factory=_library_config,
+            iv_provider=_FixtureIvProvider(),
+            risk_free_rate=0.045,
+            breach_response_lookup=_breach_response_lookup(),
+            market_hours=_StubMarketHours(open_flag=True),
+            activity_log_sink=sink,
+            on_immediate_breach=immediate,
+            on_emergency_input=emergency,
+            on_health_signal=_on_health,
+            now=lambda: tick_time,
+            loop=_counted_swap_loop,
+        )
+
+    global_stale_signals = [
+        c[0]
+        for c in health.calls
+        if c[0].last_error == "underlying price feed globally stale — writer wedged"
+    ]
+    # Onset on tick 1, suppressed on tick 2, re-armed on tick 3 (fresh), new
+    # onset on tick 4, suppressed on tick 5 → exactly two emits.
+    assert len(global_stale_signals) == 2
+    assert all(s.degraded is True for s in global_stale_signals)
