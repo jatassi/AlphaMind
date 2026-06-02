@@ -425,7 +425,11 @@ async def _run_daemon(*, mode: MonitorMode) -> None:  # noqa: PLR0915 — compos
     # production wiring adapters that observe each breach / fill /
     # emergency callsite.
     sse_emitter = SSEEventEmitter()
-    underlying_cache = register_underlying_stream_task(supervisor, repository=open_positions_reader)
+    underlying_cache = register_underlying_stream_task(
+        supervisor,
+        repository=open_positions_reader,
+        is_market_open=calendar_cache.is_market_open,
+    )
     # ALP-528/530/642 — one shared realized-vol dict feeds both the paper-mode
     # enrichment wedge (via MapVolLookup) and the breach-loop's
     # SqlOptionsIvProvider (as its fallback channel). Pre-populate at startup

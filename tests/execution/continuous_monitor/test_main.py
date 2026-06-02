@@ -267,6 +267,67 @@ def test_main_shares_trigger_id_generator_across_breach_loop_and_bracket_stops(
     assert breach_trigger_ids is bracket_trigger_ids
 
 
+def test_main_wires_is_market_open_into_underlying_stream(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _silent_logger: None,
+) -> None:
+    """Regression (ALP-832) — the daemon supplies a non-None ``is_market_open``
+    to ``register_underlying_stream_task``.
+
+    Without it, ``run_underlying_stream``'s ``is_market_open`` defaults to
+    ``None`` → ``is_rth`` stays ``None`` → ``evaluate_staleness`` reports
+    ``stalled=False`` on every slice → ``StreamStalledError`` never raises →
+    the budget-neutral RTH-silence reconnect can never fire in production.
+
+    The existing ``underlying_stream`` task tests inject ``is_market_open``
+    directly, so they could not catch the omission at the ``__main__``
+    composition site. This test captures the kwarg the daemon actually passes
+    to the wiring helper — the production seam — and asserts it is the
+    calendar cache's predicate, not ``None``.
+    """
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("ALPACA_PAPER_KEY", "test-key")
+    monkeypatch.setenv("ALPACA_PAPER_SECRET", "test-secret")
+    _ensure_db_schema(tmp_path)
+
+    captured: dict[str, object] = {}
+
+    real_register = (
+        "alphamind.execution.continuous_monitor.__main__.register_underlying_stream_task"
+    )
+
+    def _capture_register(*args: object, **kwargs: object) -> object:
+        captured["is_market_open"] = kwargs.get("is_market_open")
+        # Return a real cache so the rest of the composition (breach loop,
+        # greeks refresh, bracket stops) wires against a valid instance.
+        from alphamind.execution.continuous_monitor.underlying_stream.cache import (
+            UnderlyingPriceCache,
+        )
+
+        return UnderlyingPriceCache()
+
+    async def _no_op_run(self: object) -> None:
+        del self
+
+    with (
+        mock.patch(
+            "alphamind.execution.continuous_monitor.__main__.MonitorSupervisor.run",
+            _no_op_run,
+        ),
+        mock.patch(real_register, _capture_register),
+    ):
+        monitor_main(["run", "--mode", "paper"])
+
+    is_market_open = captured.get("is_market_open")
+    assert is_market_open is not None, (
+        "register_underlying_stream_task was called without is_market_open; "
+        "the RTH-silence staleness reconnect would be dead in production"
+    )
+    assert callable(is_market_open)
+
+
 def test_main_writes_pip_freeze_snapshot_under_monkeypatched_home(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
