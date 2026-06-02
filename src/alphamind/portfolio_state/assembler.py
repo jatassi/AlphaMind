@@ -138,6 +138,7 @@ def _build_assembled_snapshot(
     oldest_price_as_of: datetime | None,
     config: PortfolioStateConfig,
     price_map: dict[str, PriceQuote],
+    warn_on_phase1_latency: bool = True,
 ) -> AssembledSnapshot:
     """Build and return the AssembledSnapshot; emit structured warnings when needed."""
     fetch_outcomes = PriceFetchOutcomes(
@@ -147,7 +148,7 @@ def _build_assembled_snapshot(
         oldest_price_as_of=oldest_price_as_of,
     )
     freshness = compute_snapshot_freshness(snapshot, fetch_outcomes=fetch_outcomes, config=config)
-    if not freshness.phase1_to_snapshot_within_threshold:
+    if warn_on_phase1_latency and not freshness.phase1_to_snapshot_within_threshold:
         log.warning(
             "phase1→snapshot latency exceeded threshold: %.3fs > %.3fs",
             freshness.phase1_to_snapshot_seconds,
@@ -527,6 +528,7 @@ def assemble_snapshot(
     sector_resolver: SectorResolver,
     config: PortfolioStateConfig,
     now: datetime,
+    warn_on_phase1_latency: bool = True,
 ) -> AssembledSnapshot:
     """Assemble an AssembledSnapshot (snapshot + freshness sidecar) from repository and prices.
 
@@ -824,4 +826,5 @@ def assemble_snapshot(
         _oldest_price_as_of,
         config,
         price_map,
+        warn_on_phase1_latency=warn_on_phase1_latency,
     )
