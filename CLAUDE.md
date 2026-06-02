@@ -63,14 +63,18 @@ watch/merge loop and the GitHub usage-limit fallback live in `docs/agents/ci.md`
 
 ## Subagents
 
-Mechanical changes → Sonnet; everything else → Opus. Always background (async) mode. Put
-the model in the title: `[Sonnet|Opus|Grok] <Title>`. Subagents must commit before reporting
-done — verify with `git log main..HEAD`.
+Match the model to the work:
 
-Mechanical work can also be offloaded to the **Grok CLI** (`grok-build`) to conserve Claude
-usage limits (shared by mainline dev and live AlphaMind operations). Dispatch grok jobs
-**sequentially**, give them a high `--max-turns`, and **verify their output yourself** —
-keep judgment-heavy work on Claude. Playbook + gotchas in `docs/agents/grok-cli.md`.
+- **Opus** — anything needing judgment: design, algorithmic or schema decisions,
+  fixture/test-list reasoning, deciding what to keep vs cut.
+- **Sonnet** — mechanical, well-specified changes (verbatim refactors, renames, dedup,
+  boilerplate).
+- **Grok** (`grok-build`, via its CLI) — mechanical changes, run off the Grok budget instead
+  of the Claude usage budget (shared by mainline dev and live AlphaMind operations); never
+  judgment work. Read `docs/agents/grok-cli.md` before dispatching.
+
+Always background (async) mode. Put the model in the title: `[Sonnet|Opus|Grok] <Title>`.
+Subagents must commit before reporting done — verify with `git log main..HEAD`.
 
 ## Environment
 
