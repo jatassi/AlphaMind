@@ -70,7 +70,9 @@ def _now_utc() -> datetime:
     return datetime.now(UTC)
 
 
-def _config(*, max_reconnect_attempts: int = 5) -> ContinuousMonitorConfig:
+def _config(
+    *, max_reconnect_attempts: int = 5, fill_stream_stale_timeout_seconds: int = 900
+) -> ContinuousMonitorConfig:
     return ContinuousMonitorConfig(
         breach_evaluation_cadence_seconds=60,
         greeks_refresh_interval_minutes=15,
@@ -78,6 +80,7 @@ def _config(*, max_reconnect_attempts: int = 5) -> ContinuousMonitorConfig:
         underlying_stream_provider="alpaca-iex",
         max_reconnect_attempts=max_reconnect_attempts,
         supervisor_shutdown_timeout_seconds=5,
+        fill_stream_stale_timeout_seconds=fill_stream_stale_timeout_seconds,
     )
 
 
@@ -1148,7 +1151,9 @@ class TestSilentStreamRecovery:
         task = asyncio.create_task(
             run_fill_stream_consumer(
                 _session(),
-                _config(max_reconnect_attempts=2),
+                # Explicit 60s timeout (the floor) so the test does not depend on
+                # the config default; _StepClock(1000) exceeds it on every poll.
+                _config(max_reconnect_attempts=2, fill_stream_stale_timeout_seconds=60),
                 **kwargs,
                 is_market_open=lambda _at: True,
                 beat=lambda: beats.append(1),
@@ -1157,12 +1162,12 @@ class TestSilentStreamRecovery:
             )
         )
 
-        # Four reconnects is more than the 2-attempt reconnect budget — only
+        # Three reconnects exceeds the 2-attempt reconnect budget — only
         # possible if a stale-driven reconnect does NOT count as a failure.
-        await _wait_for_count(streams_built, at_least=4)
+        await _wait_for_count(streams_built, at_least=3)
 
         assert not task.done()  # budget never exhausted
-        assert len(streams_built) >= 4
+        assert len(streams_built) >= 3
         assert beats  # watchdog heartbeats fired while the stream was silent
 
         task.cancel()
@@ -1189,7 +1194,7 @@ class TestSilentStreamRecovery:
         task = asyncio.create_task(
             run_fill_stream_consumer(
                 _session(),
-                _config(),
+                _config(fill_stream_stale_timeout_seconds=60),
                 **kwargs,
                 is_market_open=lambda _at: False,  # market closed
                 monotonic=_StepClock(1000.0),

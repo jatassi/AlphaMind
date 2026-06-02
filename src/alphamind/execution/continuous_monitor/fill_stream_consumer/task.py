@@ -198,11 +198,11 @@ async def _consume_stream(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     enrichment_callable: EnrichmentCallable | None,
-    frame_timeout: float | None = None,
-    is_rth: Callable[[], bool] | None = None,
-    beat: Callable[[], None] = lambda: None,
-    poll_interval: float = 5.0,
-    monotonic: Callable[[], float] = time.monotonic,
+    frame_timeout: float | None,
+    is_rth: Callable[[], bool] | None,
+    beat: Callable[[], None],
+    poll_interval: float,
+    monotonic: Callable[[], float],
 ) -> None:
     """Drain :func:`subscribe_trade_updates` until the generator exits.
 

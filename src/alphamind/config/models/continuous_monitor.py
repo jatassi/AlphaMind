@@ -158,7 +158,7 @@ class ContinuousMonitorConfig(BaseModel):
     )
     fill_stream_stale_timeout_seconds: int = Field(
         default=900,
-        ge=1,
+        ge=60,
         description=(
             "Seconds of trade_updates silence during RTH before the fill-stream "
             "consumer forces a reconnect (ALP-819). The websockets library "
@@ -169,7 +169,9 @@ class ContinuousMonitorConfig(BaseModel):
             "reconnect (plus the fill-backfill backstop) re-captures any gap, "
             "so a needless reconnect during a quiet-but-healthy session is "
             "cheap. Must exceed the longest legitimate RTH gap between fills; "
-            "900s (15 min) matches the fill-backfill interval."
+            "900s (15 min) matches the fill-backfill interval. Floored at 60s: "
+            "a sub-minute value would reconnect (and REST-recover) so often it "
+            "would hammer the broker's order-history endpoint."
         ),
     )
 

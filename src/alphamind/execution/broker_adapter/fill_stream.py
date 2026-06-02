@@ -382,19 +382,27 @@ async def subscribe_trade_updates(
             try:
                 update = await asyncio.wait_for(queue.get(), timeout=poll_interval)
             except TimeoutError:
-                # No frame this slice. A genuinely-quiet stream and a
-                # silently-wedged one look identical here, so force a reconnect
-                # only when the market is open (fills are sparse off-hours) and
-                # the silence exceeds frame_timeout. The consumer's reconnect
-                # re-subscribes a fresh socket and REST-recovers any gap.
-                if (
-                    frame_timeout is not None
-                    and is_rth is not None
-                    and is_rth()
-                    and monotonic() - last_frame_at > frame_timeout
-                ):
-                    msg = f"no trade_updates frame for >{frame_timeout:.0f}s during RTH"
-                    raise FillStreamStalledError(msg) from None
+                # No frame this slice. If the background task has finished
+                # (raised or returned cleanly) but its None sentinel has not yet
+                # been dequeued, surface that directly — otherwise a real
+                # transport error that lands right at the staleness boundary
+                # would be misread as a stall and swallowed by the finally.
+                if run_task.done():
+                    run_task.result()  # re-raises run_task's error; None on clean
+                    return
+                # A genuinely-quiet stream and a silently-wedged one look
+                # identical here. Force a reconnect only when the market is open
+                # (fills are sparse off-hours) and the silence exceeds
+                # frame_timeout; the consumer's reconnect re-subscribes a fresh
+                # socket and REST-recovers any gap. Off-hours, reset the clock so
+                # the closed-market gap is not charged against the first RTH
+                # window (which would force a spurious reconnect at the open).
+                if frame_timeout is not None and is_rth is not None:
+                    if not is_rth():
+                        last_frame_at = monotonic()
+                    elif monotonic() - last_frame_at > frame_timeout:
+                        msg = f"no trade_updates frame for >{frame_timeout:.0f}s during RTH"
+                        raise FillStreamStalledError(msg) from None
                 continue
             last_frame_at = monotonic()
             if update is None:
