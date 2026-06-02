@@ -325,17 +325,13 @@ class TestBuildExposureRules:
 
 
 class TestGuardrailDashboard:
-    def test_returns_200(self, client: TestClient) -> None:
+    def test_response_shape(self, client: TestClient) -> None:
+        """Full response-shape: status, rules array fields, rule names, drawdown + amo keys."""
         resp = client.get("/api/views/risk/guardrail-dashboard")
         assert resp.status_code == 200
-
-    def test_response_has_rules(self, client: TestClient) -> None:
-        data = client.get("/api/views/risk/guardrail-dashboard").json()
-        assert "rules" in data
+        data = resp.json()
+        # Rules array and per-rule field shape.
         assert isinstance(data["rules"], list)
-
-    def test_rules_have_documented_fields(self, client: TestClient) -> None:
-        data = client.get("/api/views/risk/guardrail-dashboard").json()
         for rule in data["rules"]:
             assert "rule_name" in rule
             assert "current_value" in rule
@@ -343,22 +339,13 @@ class TestGuardrailDashboard:
             assert "headroom_pct" in rule
             assert "zone" in rule
             assert rule["zone"] in {"normal", "warning", "critical", "hard_block"}
-
-    def test_contains_drawdown_rules(self, client: TestClient) -> None:
-        data = client.get("/api/views/risk/guardrail-dashboard").json()
         rule_names = [r["rule_name"] for r in data["rules"]]
         assert "daily_drawdown" in rule_names
         assert "cumulative_drawdown" in rule_names
-
-    def test_contains_exposure_rules(self, client: TestClient) -> None:
-        data = client.get("/api/views/risk/guardrail-dashboard").json()
-        rule_names = [r["rule_name"] for r in data["rules"]]
         assert "gross_exposure" in rule_names
         assert "net_long_exposure" in rule_names
         assert "net_short_exposure" in rule_names
-
-    def test_drawdown_status_fields(self, client: TestClient) -> None:
-        data = client.get("/api/views/risk/guardrail-dashboard").json()
+        # Drawdown pane field shape.
         dd = data["drawdown"]
         assert "current_drawdown_pct" in dd
         assert "equity_high_water_mark_usd" in dd
@@ -370,6 +357,12 @@ class TestGuardrailDashboard:
         assert "cumulative_zone" in dd
         assert "progressive_tier" in dd
         assert "halt_mode_engaged" in dd
+        # Active multipliers/overlays pane.
+        amo = data["active_multipliers_and_overlays"]
+        assert "halt_mode_engaged" in amo
+        assert "multipliers" in amo
+        assert "active_overlays" in amo
+        assert amo["halt_mode_engaged"] is False  # seeded 0
 
     def test_drawdown_cumulative_zone_matches_seeded_value(self, client: TestClient) -> None:
         # seeded: current_drawdown_pct = 3.0 — below 8% limit → tier 0 / normal zone
@@ -390,15 +383,6 @@ class TestGuardrailDashboard:
         # Old RISK_PARAMETER_CHANGED from 2020 should NOT appear.
         for b in data["recent_breaches"]:
             assert b["entry_at"] >= "2026"
-
-    def test_active_multipliers_and_overlays_present(self, client: TestClient) -> None:
-        data = client.get("/api/views/risk/guardrail-dashboard").json()
-        assert "active_multipliers_and_overlays" in data
-        amo = data["active_multipliers_and_overlays"]
-        assert "halt_mode_engaged" in amo
-        assert "multipliers" in amo
-        assert "active_overlays" in amo
-        assert amo["halt_mode_engaged"] is False  # seeded 0
 
     def test_halt_mode_flag_when_engaged(self, seeded_db: str) -> None:
         """Engaging halt mode surfaces in both drawdown and active_multipliers."""
@@ -431,16 +415,20 @@ class TestGuardrailDashboard:
 
 
 class TestRegimeTimeline:
-    def test_returns_200(self, client: TestClient) -> None:
+    def test_response_shape(self, client: TestClient) -> None:
+        """Full response-shape assertion: status, top-level keys, event field shape."""
         resp = client.get("/api/views/risk/regime-timeline")
         assert resp.status_code == 200
-
-    def test_response_shape(self, client: TestClient) -> None:
-        data = client.get("/api/views/risk/regime-timeline").json()
+        data = resp.json()
         assert "events" in data
         assert "from_ts" in data
         assert "to_ts" in data
         assert isinstance(data["events"], list)
+        for evt in data["events"]:
+            assert "entry_at" in evt
+            assert "event_type" in evt
+            assert "event_group" in evt
+            assert "detail_json" in evt
 
     def test_custom_time_window(self, client: TestClient) -> None:
         resp = client.get(
@@ -451,16 +439,6 @@ class TestRegimeTimeline:
         data = resp.json()
         assert data["from_ts"] == "2026-05-26T00:00:00Z"
         assert data["to_ts"] == "2026-05-27T00:00:00Z"
-
-    def test_events_have_documented_fields(self, client: TestClient) -> None:
-        # Seed a HALT_ACTIVATED event in the default window (last 24 h).
-        # The existing entry-1 (GUARDRAIL_REJECTION) should appear if in timeline_types.
-        data = client.get("/api/views/risk/regime-timeline").json()
-        for evt in data["events"]:
-            assert "entry_at" in evt
-            assert "event_type" in evt
-            assert "event_group" in evt
-            assert "detail_json" in evt
 
     @pytest.mark.xfail(
         reason=(
@@ -485,36 +463,24 @@ class TestRegimeTimeline:
 
 
 class TestCalibrationMix:
-    def test_returns_200(self, client: TestClient) -> None:
+    def test_response_shape(self, client: TestClient) -> None:
+        """Full response-shape: status, top-level keys, warmup estimate content, custom window."""
         resp = client.get("/api/views/risk/calibration-mix")
         assert resp.status_code == 200
-
-    def test_response_shape(self, client: TestClient) -> None:
-        data = client.get("/api/views/risk/calibration-mix").json()
+        data = resp.json()
         assert "per_invocation" in data
         assert "seven_day_trend" in data
         assert "stuck_blocks" in data
         assert "warmup_duration_estimate" in data
-
-    def test_warmup_duration_estimate_present(self, client: TestClient) -> None:
-        data = client.get("/api/views/risk/calibration-mix").json()
         assert data["warmup_duration_estimate"] == WARMUP_DURATION_ESTIMATE
-
-    def test_warmup_estimate_references_key_durations(self, client: TestClient) -> None:
-        """The warm-up estimate cross-references key baselines from threshold-calibration.md."""
-        data = client.get("/api/views/risk/calibration-mix").json()
         est = data["warmup_duration_estimate"]
         # Should mention volume/ATR, sentiment, gap-fill, extended-hours, lead-lag
         assert "20 trading days" in est or "Volume" in est
         assert "gap-fill" in est.lower() or "gap_fill" in est.lower()
-
-    def test_per_invocation_returns_list(self, client: TestClient) -> None:
-        data = client.get("/api/views/risk/calibration-mix").json()
         assert isinstance(data["per_invocation"], list)
-
-    def test_custom_invocations_window(self, client: TestClient) -> None:
-        resp = client.get("/api/views/risk/calibration-mix", params={"invocations_window": 5})
-        assert resp.status_code == 200
+        # Also verify custom invocations_window parameter is accepted.
+        resp2 = client.get("/api/views/risk/calibration-mix", params={"invocations_window": 5})
+        assert resp2.status_code == 200
 
     def test_invocations_window_bounds(self, client: TestClient) -> None:
         """invocations_window must be in [1, 100]."""

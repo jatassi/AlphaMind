@@ -213,13 +213,6 @@ def _anyio_backend() -> str:
 class TestPositionDetailEndpoint:
     """GET /api/views/portfolio/positions/{position_id}."""
 
-    def test_returns_200_for_existing_position(self, seeded_db: str) -> None:
-        reader = build_foreign_reader_session_factory(seeded_db)
-        app = _app_with_reader(reader)
-        with TestClient(app) as client:
-            resp = client.get("/api/views/portfolio/positions/pos-detail-1")
-        assert resp.status_code == 200
-
     def test_returns_404_for_missing_position(self, seeded_db: str) -> None:
         reader = build_foreign_reader_session_factory(seeded_db)
         app = _app_with_reader(reader)
@@ -231,7 +224,9 @@ class TestPositionDetailEndpoint:
         reader = build_foreign_reader_session_factory(seeded_db)
         app = _app_with_reader(reader)
         with TestClient(app) as client:
-            body = client.get("/api/views/portfolio/positions/pos-detail-1").json()
+            resp = client.get("/api/views/portfolio/positions/pos-detail-1")
+        assert resp.status_code == 200
+        body = resp.json()
         assert body["position_id"] == "pos-detail-1"
         assert body["ticker"] == "TSLA"
         assert body["instrument_type"] == "EQUITY"

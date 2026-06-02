@@ -32,7 +32,11 @@ from fastapi.routing import Mount
 from fastapi.testclient import TestClient
 
 from alphamind.command_center.__main__ import _warn_if_mixed_lan_bind_and_access
-from alphamind.command_center.app import build_app
+from alphamind.command_center.app import (
+    AuthOverrides,
+    _resolve_webauthn_verifier,
+    build_app,
+)
 from alphamind.command_center.auth.webauthn import RealWebauthnVerifier
 from alphamind.command_center.config import (
     load_alerts_config,
@@ -78,8 +82,11 @@ monitor:
     return tmp_path, db
 
 
-class TestBuildApp:
-    def test_returns_fastapi_instance(self, configs: tuple[Path, Path]) -> None:
+class TestBuildAppAndHealthz:
+    """Consolidated: build_app title + /healthz smoke + lifespan session factories + multiplexer."""
+
+    def test_app_title_and_healthz(self, configs: tuple[Path, Path]) -> None:
+        """build_app returns a correctly titled FastAPI instance that serves /healthz."""
         config_dir, _ = configs
         app = build_app(
             command_center_config=load_command_center_config(config_dir),
@@ -87,78 +94,17 @@ class TestBuildApp:
             alerts_config=load_alerts_config(config_dir),
         )
         assert app.title == "AlphaMind command center"
-
-
-class TestHealthzRoute:
-    def test_returns_200_with_status_ok(self, configs: tuple[Path, Path]) -> None:
-        config_dir, _ = configs
-        app = build_app(
-            command_center_config=load_command_center_config(config_dir),
-            security_config=load_security_config(config_dir),
-            alerts_config=load_alerts_config(config_dir),
-        )
         with TestClient(app) as client:
             response = client.get("/healthz")
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
 
-
-class TestLifespanWiresSessionFactories:
-    def test_factories_attached_to_app_state(self, configs: tuple[Path, Path]) -> None:
-        config_dir, _ = configs
-        app = build_app(
-            command_center_config=load_command_center_config(config_dir),
-            security_config=load_security_config(config_dir),
-            alerts_config=load_alerts_config(config_dir),
-        )
-        with TestClient(app):
-            # TestClient enters the lifespan; the factories must be on
-            # app.state for downstream routers (added in later stories)
-            # to pull off Request.app.state.
-            assert hasattr(app.state, "cc_writer_session_factory")
-            assert hasattr(app.state, "foreign_reader_session_factory")
-
-    def test_production_session_factory_attached_to_app_state(
+    def test_lifespan_wires_session_factories_and_multiplexer(
         self, configs: tuple[Path, Path]
     ) -> None:
-        """Composition root threads the production factory into build_app.
-
-        The factory lands on ``app.state.production_session_factory``
-        for the operator-invocation bridge (story 04a). The lifespan
-        does NOT own the engine; the composition root's
-        ``engine_pair_context`` does. Here we pass a sentinel value to
-        confirm the stash.
+        """Lifespan wires cc_writer, foreign_reader, production_session_factory, and multiplexer
+        onto app.state (stories 02, 04a, 04b).
         """
-        config_dir, _ = configs
-        sentinel = object()
-        app = build_app(
-            command_center_config=load_command_center_config(config_dir),
-            security_config=load_security_config(config_dir),
-            alerts_config=load_alerts_config(config_dir),
-            production_session_factory=sentinel,  # type: ignore[arg-type]
-        )
-        assert app.state.production_session_factory is sentinel
-
-    def test_production_session_factory_default_none_when_unset(
-        self, configs: tuple[Path, Path]
-    ) -> None:
-        """Tests that don't exercise the operator-action bridge can omit it."""
-        config_dir, _ = configs
-        app = build_app(
-            command_center_config=load_command_center_config(config_dir),
-            security_config=load_security_config(config_dir),
-            alerts_config=load_alerts_config(config_dir),
-        )
-        assert app.state.production_session_factory is None
-
-
-class TestLifespanWiresEventMultiplexer:
-    """Story 04b (ALP-669): build_app wires an EventMultiplexer onto
-    app.state and exposes a hook for registering the upstream consumer
-    tasks on the supervisor.
-    """
-
-    def test_multiplexer_attached_to_app_state(self, configs: tuple[Path, Path]) -> None:
         from alphamind.command_center.events.multiplexer import EventMultiplexer
 
         config_dir, _ = configs
@@ -167,23 +113,14 @@ class TestLifespanWiresEventMultiplexer:
             security_config=load_security_config(config_dir),
             alerts_config=load_alerts_config(config_dir),
         )
+        # production_session_factory defaults to None when omitted.
+        assert app.state.production_session_factory is None
         with TestClient(app):
+            # Session factories wired by lifespan.
+            assert hasattr(app.state, "cc_writer_session_factory")
+            assert hasattr(app.state, "foreign_reader_session_factory")
+            # EventMultiplexer and consumer task factories (story 04b).
             assert isinstance(app.state.event_multiplexer, EventMultiplexer)
-
-    def test_consumer_task_factories_attached_to_app_state(
-        self, configs: tuple[Path, Path]
-    ) -> None:
-        """The two upstream-consumer task factories are exposed so the
-        composition root can register them on the supervisor's
-        TaskGroup at process startup.
-        """
-        config_dir, _ = configs
-        app = build_app(
-            command_center_config=load_command_center_config(config_dir),
-            security_config=load_security_config(config_dir),
-            alerts_config=load_alerts_config(config_dir),
-        )
-        with TestClient(app):
             factories = app.state.event_consumer_task_factories
             assert set(factories) == {
                 "events_pipeline_consumer",
@@ -193,6 +130,18 @@ class TestLifespanWiresEventMultiplexer:
             assert callable(factories["events_pipeline_consumer"])
             assert callable(factories["events_monitor_consumer"])
             assert callable(factories["schedule_cache_subscriber"])
+
+    def test_production_session_factory_threaded_through(self, configs: tuple[Path, Path]) -> None:
+        """A sentinel production_session_factory round-trips through build_app (story 04a)."""
+        config_dir, _ = configs
+        sentinel = object()
+        app = build_app(
+            command_center_config=load_command_center_config(config_dir),
+            security_config=load_security_config(config_dir),
+            alerts_config=load_alerts_config(config_dir),
+            production_session_factory=sentinel,
+        )
+        assert app.state.production_session_factory is sentinel
 
 
 class TestRegisteredRoutes:
@@ -598,6 +547,7 @@ webauthn:
     def test_resolver_uses_access_for_expected_origin(self, tmp_path: Path) -> None:
         """AC1 + AC5: LAN-style access block yields correct scheme://host:port origin
         (rp_id still sourced from security config).
+        Calls resolver directly — no full app boot needed.
         """
         config_dir, _, _ = self._write_lan_configs(
             tmp_path,
@@ -609,14 +559,9 @@ webauthn:
         )
         cc_cfg = load_command_center_config(config_dir)
         sec_cfg = load_security_config(config_dir)
-        alerts_cfg = load_alerts_config(config_dir)
-
-        app = build_app(
-            command_center_config=cc_cfg,
-            security_config=sec_cfg,
-            alerts_config=alerts_cfg,
+        verifier = _resolve_webauthn_verifier(
+            AuthOverrides(), command_center_config=cc_cfg, security_config=sec_cfg
         )
-        verifier = app.state.webauthn_verifier
         assert isinstance(verifier, RealWebauthnVerifier)
         assert verifier._expected_origin == "http://alphamind.local:8080"
         assert verifier._relying_party_id == "alphamind.local"
@@ -624,6 +569,7 @@ webauthn:
     def test_localhost_no_access_block_preserves_historical_origin(self, tmp_path: Path) -> None:
         """AC4: omitted access: key + loopback bind still produces historical
         http://localhost:8080 exactly (zero behavior change for v1 installs).
+        Calls resolver directly — no full app boot needed.
         """
         config_dir, _, _ = self._write_lan_configs(
             tmp_path,
@@ -634,14 +580,9 @@ webauthn:
         )
         cc_cfg = load_command_center_config(config_dir)
         sec_cfg = load_security_config(config_dir)
-        alerts_cfg = load_alerts_config(config_dir)
-
-        app = build_app(
-            command_center_config=cc_cfg,
-            security_config=sec_cfg,
-            alerts_config=alerts_cfg,
+        verifier = _resolve_webauthn_verifier(
+            AuthOverrides(), command_center_config=cc_cfg, security_config=sec_cfg
         )
-        verifier = app.state.webauthn_verifier
         assert isinstance(verifier, RealWebauthnVerifier)
         assert verifier._expected_origin == "http://localhost:8080"
 
@@ -672,6 +613,7 @@ webauthn:
     def test_resolver_port_none_http_omits_default_port(self, tmp_path: Path) -> None:
         """ALP-730 (03d) + RFC 6454: access port=None for http yields origin without port
         (browsers omit default ports in clientDataJSON / WebAuthn).
+        Calls resolver directly — no full app boot needed.
         """
         config_dir, _, _ = self._write_lan_configs(
             tmp_path,
@@ -683,19 +625,16 @@ webauthn:
         )
         cc_cfg = load_command_center_config(config_dir)
         sec_cfg = load_security_config(config_dir)
-        alerts_cfg = load_alerts_config(config_dir)
-
-        app = build_app(
-            command_center_config=cc_cfg,
-            security_config=sec_cfg,
-            alerts_config=alerts_cfg,
+        verifier = _resolve_webauthn_verifier(
+            AuthOverrides(), command_center_config=cc_cfg, security_config=sec_cfg
         )
-        verifier = app.state.webauthn_verifier
         assert isinstance(verifier, RealWebauthnVerifier)
         assert verifier._expected_origin == "http://myhost.local"
 
     def test_resolver_port_none_https_omits_default_port(self, tmp_path: Path) -> None:
-        """ALP-730 (03d) + RFC 6454: access port=None for https yields origin without port."""
+        """ALP-730 (03d) + RFC 6454: access port=None for https yields origin without port.
+        Calls resolver directly — no full app boot needed.
+        """
         config_dir, _, _ = self._write_lan_configs(
             tmp_path,
             bind_host="10.0.0.5",
@@ -706,14 +645,9 @@ webauthn:
         )
         cc_cfg = load_command_center_config(config_dir)
         sec_cfg = load_security_config(config_dir)
-        alerts_cfg = load_alerts_config(config_dir)
-
-        app = build_app(
-            command_center_config=cc_cfg,
-            security_config=sec_cfg,
-            alerts_config=alerts_cfg,
+        verifier = _resolve_webauthn_verifier(
+            AuthOverrides(), command_center_config=cc_cfg, security_config=sec_cfg
         )
-        verifier = app.state.webauthn_verifier
         assert isinstance(verifier, RealWebauthnVerifier)
         assert verifier._expected_origin == "https://secure.local"
 
