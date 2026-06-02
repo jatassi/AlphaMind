@@ -67,6 +67,11 @@ Mechanical changes → Sonnet; everything else → Opus. Always background (asyn
 the model in the title: `[Sonnet|Opus|Grok] <Title>`. Subagents must commit before reporting
 done — verify with `git log main..HEAD`.
 
+Mechanical work can also be offloaded to the **Grok CLI** (`grok-build`) to conserve Claude
+usage limits (shared by mainline dev and live AlphaMind operations). Dispatch grok jobs
+**sequentially**, give them a high `--max-turns`, and **verify their output yourself** —
+keep judgment-heavy work on Claude. Playbook + gotchas in `docs/agents/grok-cli.md`.
+
 ## Environment
 
 **macOS = dev machine. Windows = production server.** Production is read-only over SMB
