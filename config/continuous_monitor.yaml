@@ -101,3 +101,11 @@ fill_backfill_lookback_seconds: 259200
 # default cadence, 3 is ~3 minutes of unbroken failure before escalating; the
 # counter resets to zero on the first successful tick.
 breach_loop_consecutive_failure_alert_threshold: 3
+
+# Seconds without a heartbeat before the in-process watchdog forces os._exit(1)
+# so NSSM recycles the monitor process (ALP-768). Only tasks that call
+# MonitorSupervisor.beat(name) are watched. Set well above the longest
+# legitimate inter-beat gap for opted-in tasks (e.g. breach_loop at 60s cadence
+# → any gap >1h is a genuine stall). Default 3600s (1h) is deliberately
+# conservative to avoid false positives for long-running steady-state tasks.
+watchdog_stall_timeout_seconds: 3600

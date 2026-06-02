@@ -580,3 +580,62 @@ class TestSubscribeTradeUpdates:
             await anext_task
 
         await gen.aclose()
+
+    async def test_stream_task_oserror_unblocks_consumer_and_propagates(self) -> None:
+        """OSError in _run_forever must propagate to the consumer, not hang.
+
+        Regression test for ALP-768: when the trading-stream task fails with
+        an ``OSError`` (e.g. WinError 121 on Windows), the done-callback puts
+        a ``None`` sentinel into the queue so ``queue.get()`` unblocks, and
+        the generator re-raises the exception to the reconnect loop instead of
+        parking indefinitely.
+        """
+
+        class _ErrorStream:
+            def subscribe_trade_updates(self, handler: Any) -> None:
+                pass  # no real events — the error fires before any arrive
+
+            async def _run_forever(self) -> None:
+                raise OSError("simulated WinError 121")
+
+        stream = _ErrorStream()
+        gen = subscribe_trade_updates(stream)
+        anext_task = asyncio.create_task(gen.__anext__())
+
+        # Two event-loop turns: first starts _run_forever (raises OSError and
+        # fires the done-callback); second lets queue.get() unblock and the
+        # generator call run_task.result() to re-raise.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        with pytest.raises(OSError, match="simulated WinError 121"):
+            await anext_task
+
+        await gen.aclose()
+
+    async def test_stream_task_clean_exit_unblocks_consumer_without_error(self) -> None:
+        """A clean _run_forever return yields StopAsyncIteration to the caller.
+
+        A stream that closes itself cleanly (no exception) must still unblock
+        ``queue.get()`` via the done-callback and exit the generator cleanly
+        so the reconnect loop treats it as a clean close cycle.
+        """
+
+        class _CleanStream:
+            def subscribe_trade_updates(self, handler: Any) -> None:
+                pass
+
+            async def _run_forever(self) -> None:
+                return  # exits cleanly, no exception
+
+        stream = _CleanStream()
+        gen = subscribe_trade_updates(stream)
+        anext_task = asyncio.create_task(gen.__anext__())
+
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        with pytest.raises(StopAsyncIteration):
+            await anext_task
+
+        await gen.aclose()

@@ -126,6 +126,18 @@ class ContinuousMonitorConfig(BaseModel):
             "Same HH:MM format as ``SessionWindow.open``/``.close`` in venue.yaml."
         ),
     )
+    watchdog_stall_timeout_seconds: int = Field(
+        default=3600,
+        ge=60,
+        description=(
+            "Seconds without a heartbeat before the in-process watchdog "
+            "forces ``os._exit(1)`` so NSSM restarts the monitor (ALP-768). "
+            "Only tasks that call ``MonitorSupervisor.beat(name)`` are watched; "
+            "tasks that never beat are ignored. Set conservatively — periodic "
+            "tasks (breach loop, greeks refresh) should beat at every tick; "
+            "the timeout must exceed the longest legitimate inter-tick gap."
+        ),
+    )
 
     @field_validator("borrow_accrual_tick_local_time")
     @classmethod
