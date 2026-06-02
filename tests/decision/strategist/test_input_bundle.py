@@ -69,6 +69,9 @@ from alphamind.portfolio_state.records.orders import (
     BracketStatus,
     EquityInstrumentSpec,
     EventTrigger,
+    InstrumentSpec,
+    OptionsInstrumentSpec,
+    OrderClass,
     OrderDirection,
     OrderDuration,
     OrderRecord,
@@ -77,6 +80,7 @@ from alphamind.portfolio_state.records.orders import (
     OrderType,
     PriceParameters,
     PriceTrigger,
+    StrategyInstrumentSpec,
     TimeTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
@@ -570,15 +574,18 @@ def _make_pending_order(
     ticker: str = "NVDA",
     limit_price: float = 380.0,
     age_hours: float = 36.0,
+    direction: OrderDirection | None = OrderDirection.BUY,
+    instrument_spec: InstrumentSpec | None = None,
+    order_class: OrderClass = OrderClass.SIMPLE,
 ) -> OrderRecord:
-    spec = EquityInstrumentSpec(ticker=Symbol(ticker))
+    spec = instrument_spec or EquityInstrumentSpec(ticker=Symbol(ticker))
     return OrderRecord(
         order_id=OrderId(order_id),
         position_id=PositionId(position_id),
         bracket_id=BracketId("BRK-NVDA-001"),
         role=OrderRole.ENTRY,
         instrument_spec=spec,
-        direction=OrderDirection.BUY,
+        direction=direction,
         order_type=OrderType.LIMIT,
         price_parameters=PriceParameters(
             limit_price=price(str(limit_price)), stop_trigger_price=None
@@ -597,6 +604,7 @@ def _make_pending_order(
         originating_thesis_id=None,
         originating_pm_command_id=None,
         age_hours=age_hours,
+        order_class=order_class,
     )
 
 
@@ -1610,44 +1618,18 @@ def test_between_invocation_closures_section_before_intra_log() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_order_record(
-    *,
-    direction: OrderDirection,
-    limit_price: float,
-    order_id: str = "ORD-TEST-1",
-    age_hours: float = 2.0,
-) -> OrderRecord:
-    spec = EquityInstrumentSpec(ticker=Symbol("TST"))
-    return OrderRecord(
-        order_id=OrderId(order_id),
-        position_id=PositionId("POS-TST-001"),
-        bracket_id=BracketId("BRK-TST-001"),
-        role=OrderRole.ENTRY,
-        instrument_spec=spec,
-        direction=direction,
-        order_type=OrderType.LIMIT,
-        price_parameters=PriceParameters(
-            limit_price=price(str(limit_price)), stop_trigger_price=None
-        ),
-        quantity=10.0,
-        duration=OrderDuration.GTC,
-        status=OrderStatus.PENDING,
-        alpaca_order_id=AlpacaOrderId("alp-test-1"),
-        alpaca_order_id_chain=(AlpacaOrderId("alp-test-1"),),
-        submission_timestamp=_ENTRY_TIMESTAMP,
-        last_update_timestamp=_ENTRY_TIMESTAMP,
-        filled_quantity=0.0,
-        avg_fill_price=None,
-        remaining_quantity=10.0,
-        modification_count=0,
-        originating_thesis_id=None,
-        originating_pm_command_id=None,
-        age_hours=age_hours,
+def _make_options_spec() -> OptionsInstrumentSpec:
+    return OptionsInstrumentSpec(
+        underlying=Symbol("TST"),
+        strike=100.0,
+        expiration=date(2026, 7, 17),
+        contract_type=OptionContractType.CALL,
+        contract_multiplier=100.0,
     )
 
 
 def test_render_pending_order_row_buy_above_market_is_marketable() -> None:
-    order = _make_order_record(direction=OrderDirection.BUY, limit_price=105.0)
+    order = _make_pending_order(direction=OrderDirection.BUY, limit_price=105.0)
     result = _render_pending_order_row(order, current_price=100.0)
     assert "marketable" in result
     assert "high fill-likelihood" in result
@@ -1656,7 +1638,7 @@ def test_render_pending_order_row_buy_above_market_is_marketable() -> None:
 
 
 def test_render_pending_order_row_buy_below_market_is_low_fill() -> None:
-    order = _make_order_record(direction=OrderDirection.BUY, limit_price=95.0)
+    order = _make_pending_order(direction=OrderDirection.BUY, limit_price=95.0)
     result = _render_pending_order_row(order, current_price=100.0)
     assert "away from fill" in result
     assert "low fill-likelihood" in result
@@ -1664,7 +1646,7 @@ def test_render_pending_order_row_buy_below_market_is_low_fill() -> None:
 
 
 def test_render_pending_order_row_sell_below_market_is_marketable() -> None:
-    order = _make_order_record(direction=OrderDirection.SELL, limit_price=95.0)
+    order = _make_pending_order(direction=OrderDirection.SELL, limit_price=95.0)
     result = _render_pending_order_row(order, current_price=100.0)
     assert "marketable" in result
     assert "high fill-likelihood" in result
@@ -1673,7 +1655,7 @@ def test_render_pending_order_row_sell_below_market_is_marketable() -> None:
 
 
 def test_render_pending_order_row_sell_above_market_is_low_fill() -> None:
-    order = _make_order_record(direction=OrderDirection.SELL, limit_price=105.0)
+    order = _make_pending_order(direction=OrderDirection.SELL, limit_price=105.0)
     result = _render_pending_order_row(order, current_price=100.0)
     assert "away from fill" in result
     assert "low fill-likelihood" in result
@@ -1682,7 +1664,14 @@ def test_render_pending_order_row_sell_above_market_is_low_fill() -> None:
 
 def test_render_pending_order_row_buy_at_market_is_marketable() -> None:
     """Limit == current_price is the marketable boundary — must render as marketable."""
-    order = _make_order_record(direction=OrderDirection.BUY, limit_price=100.0)
+    order = _make_pending_order(direction=OrderDirection.BUY, limit_price=100.0)
+    result = _render_pending_order_row(order, current_price=100.0)
+    assert "marketable" in result
+
+
+def test_render_pending_order_row_sell_at_market_is_marketable() -> None:
+    """Limit == current_price is the marketable boundary for sells too (<=)."""
+    order = _make_pending_order(direction=OrderDirection.SELL, limit_price=100.0)
     result = _render_pending_order_row(order, current_price=100.0)
     assert "marketable" in result
 
@@ -1693,7 +1682,7 @@ def test_render_pending_order_row_dvn_preopen_snapshot() -> None:
     The old code rendered this as negative distance ("below underlying — won't fill").
     The fix must render it as marketable since the buy-limit is above market.
     """
-    order = _make_order_record(
+    order = _make_pending_order(
         direction=OrderDirection.BUY,
         limit_price=46.46,
         order_id="ORD-DVN-1",
@@ -1702,3 +1691,36 @@ def test_render_pending_order_row_dvn_preopen_snapshot() -> None:
     assert "marketable" in result
     assert "high fill-likelihood" in result
     assert "away from fill" not in result
+
+
+def test_render_pending_order_row_options_does_not_claim_marketability() -> None:
+    """An options limit is a premium, not comparable to the underlying spot.
+
+    A $4.00 call premium vs a $100 underlying must NOT be labelled
+    "away from fill" just because 4.00 < 100.00 — fall back to the
+    direction-neutral distance instead of a false marketability claim.
+    """
+    order = _make_pending_order(
+        direction=OrderDirection.BUY,
+        limit_price=4.00,
+        instrument_spec=_make_options_spec(),
+    )
+    result = _render_pending_order_row(order, current_price=100.0)
+    assert "marketable" not in result
+    assert "fill-likelihood" not in result
+    assert "from underlying" in result
+
+
+def test_render_pending_order_row_mleg_falls_back_to_distance() -> None:
+    """MLEG strategy orders (direction=None) keep the direction-neutral label."""
+    spec = StrategyInstrumentSpec(legs=(_make_options_spec(),))
+    order = _make_pending_order(
+        direction=None,
+        limit_price=2.50,
+        instrument_spec=spec,
+        order_class=OrderClass.MLEG,
+    )
+    result = _render_pending_order_row(order, current_price=100.0)
+    assert "marketable" not in result
+    assert "fill-likelihood" not in result
+    assert "from underlying" in result
