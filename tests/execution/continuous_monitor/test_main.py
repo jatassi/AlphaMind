@@ -142,6 +142,37 @@ def test_main_run_defaults_to_paper_mode(
     assert "mode=paper" in log_path.read_text(encoding="utf-8")
 
 
+def test_main_run_no_mode_arg_defaults_to_paper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _silent_logger: None,
+) -> None:
+    """Argparse DEFAULT path: ``monitor_main(['run'])`` with no ``--mode`` selects paper.
+
+    The consolidated ``_paper_boot`` fixture always passes ``--mode paper``
+    explicitly, so it does not exercise the argparse default. This test calls
+    ``monitor_main(['run'])`` with no ``--mode`` argument and asserts the log
+    records ``mode=paper`` — proving the argparse default is wired to paper.
+    """
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("ALPACA_PAPER_KEY", "test-key")
+    monkeypatch.setenv("ALPACA_PAPER_SECRET", "test-secret")
+    _ensure_db_schema(tmp_path)
+
+    async def _no_op_run(self: object) -> None:
+        del self
+
+    with mock.patch(
+        "alphamind.execution.continuous_monitor.__main__.MonitorSupervisor.run",
+        _no_op_run,
+    ):
+        monitor_main(["run"])
+
+    log_path = tmp_path / "AlphaMind" / "logs" / "monitor.log"
+    assert "mode=paper" in log_path.read_text(encoding="utf-8")
+
+
 def test_main_registers_wave_2_and_3_tasks(
     _paper_boot: dict[str, Any],
 ) -> None:
