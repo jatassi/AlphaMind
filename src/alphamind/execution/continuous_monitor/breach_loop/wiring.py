@@ -73,7 +73,6 @@ def register_breach_loop_task(  # noqa: PLR0913
     risk_free_rate: float,
     breach_response_lookup: Mapping[str, BreachResponse],
     market_hours: MarketHoursClock,
-    max_price_age_seconds: float = 900.0,
     on_immediate_breach: (
         Callable[[BreachLoopResult, RuleEvaluation], Awaitable[None]] | None
     ) = None,
@@ -91,12 +90,17 @@ def register_breach_loop_task(  # noqa: PLR0913
     ``on_health_signal`` (ALP-732) carries the sustained-failure escalation
     sink; when omitted the loop's own no-op default applies so an unwired
     caller still runs (the loop just logs degraded/recovered transitions).
+
+    The loop is driven via ``supervisor.supervised_loop`` (ALP-826/ALP-831)
+    which beats the watchdog at the top of every iteration, so no ``beat``
+    lambda is needed here.
     """
     resolved_immediate = on_immediate_breach or _no_op_immediate_breach
     resolved_emergency = on_emergency_input or _no_op_emergency_input
     resolved_sink = activity_log_sink or _no_op_activity_log_sink
 
     async def _coro(session: MonitorSession, config: ContinuousMonitorConfig) -> None:
+        cadence = float(config.breach_evaluation_cadence_seconds)
         kwargs: dict[str, object] = {
             "repository": repository,
             "cache": cache,
@@ -111,10 +115,10 @@ def register_breach_loop_task(  # noqa: PLR0913
             "activity_log_sink": resolved_sink,
             "on_immediate_breach": resolved_immediate,
             "on_emergency_input": resolved_emergency,
-            "max_price_age_seconds": max_price_age_seconds,
-            # ALP-819 — feed the supervisor stall watchdog the breach-loop
-            # (risk-supervision) heartbeat so a wedged loop trips os._exit(1).
-            "beat": lambda: supervisor.beat("breach_loop"),
+            # ALP-826/ALP-831: the supervised_loop seam beats the watchdog at
+            # the top of every iteration and paces the cadence — no hand-wired
+            # beat() lambda required.
+            "loop": lambda: supervisor.supervised_loop("breach_loop", cadence),
         }
         if on_health_signal is not None:
             kwargs["on_health_signal"] = on_health_signal
