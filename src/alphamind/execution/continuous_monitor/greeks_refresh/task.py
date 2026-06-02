@@ -39,7 +39,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
@@ -713,7 +713,7 @@ async def run_greeks_refresh(  # noqa: PLR0913 — orchestrator surface dictated
     session: MonitorSession,
     config: ContinuousMonitorConfig,
     *,
-    loop: SupervisedLoop | None = None,
+    loop: SupervisedLoop,
     repository: OpenPositionsReader,
     cache: UnderlyingPriceCache,
     iv_fetch: IVFetcher,
@@ -746,9 +746,7 @@ async def run_greeks_refresh(  # noqa: PLR0913 — orchestrator surface dictated
     del session  # session identity flows through invocation_id_provider closure
     states: dict[str, LastRefreshState] = {}
 
-    _loop_iter = loop() if loop is not None else _default_loop(config)
-
-    async for _ in _loop_iter:
+    async for _ in loop():
         current_now = now()
         try:
             await _run_refresh_cycle(
@@ -772,20 +770,4 @@ async def run_greeks_refresh(  # noqa: PLR0913 — orchestrator surface dictated
             # here indicates a programming bug; log and continue so the loop
             # survives transient consistency issues. ``BaseException``
             # (``CancelledError``) re-raised above for clean shutdown.
-            log.exception("greeks_refresh cycle raised; continuing after pacing sleep")
-
-
-async def _default_loop(config: ContinuousMonitorConfig) -> AsyncIterator[None]:
-    """Fallback loop used when no ``supervised_loop`` factory is injected.
-
-    Runs ``while True`` with ``asyncio.sleep`` pacing. The production wiring
-    always passes an explicit *loop* factory (via
-    :func:`~greeks_refresh.wiring.register_greeks_refresh_task`), so this path
-    is only reached by tests that have not yet been migrated to the new seam.
-    Unlike ``supervised_loop`` it does not beat the watchdog — it is outside
-    the liveness net. Pass ``loop=lambda: supervisor.supervised_loop(...)``
-    to bring a task under the watchdog.
-    """
-    while True:
-        yield
-        await asyncio.sleep(float(config.greeks_refresh_inspection_cadence_seconds))
+            log.exception("greeks_refresh cycle raised; continuing to the next iteration")

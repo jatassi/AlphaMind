@@ -1343,7 +1343,9 @@ async def test_stale_price_escalates_to_degraded_after_n_cycles() -> None:
     stale_degraded = [
         s for s in degraded_signals if s.last_error == "stale/missing underlying price"
     ]
-    assert len(stale_degraded) >= 1
+    # Exactly one per-ticker DEGRADED (fires-once debounce, ALP-770); the global-stale
+    # signal co-fires on this all-stale tick under a distinct last_error and is excluded.
+    assert len(stale_degraded) == 1
     signal = stale_degraded[0]
     assert signal.degraded is True
     assert signal.consecutive_failures == 1
@@ -1395,8 +1397,10 @@ async def test_missing_price_escalates_to_degraded_after_n_cycles() -> None:
         )
 
     degraded_calls = [c[0] for c in health.calls if c[0].degraded]
-    assert len(degraded_calls) >= 1
-    assert any(s.last_error == "stale/missing underlying price" for s in degraded_calls)
+    stale_degraded = [s for s in degraded_calls if s.last_error == "stale/missing underlying price"]
+    # Exactly one per-ticker DEGRADED for the missing-as-stale escalation (fires-once
+    # debounce, ALP-770); the global-stale signal co-fires under a distinct last_error.
+    assert len(stale_degraded) == 1
 
 
 @pytest.mark.asyncio

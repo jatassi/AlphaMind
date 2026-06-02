@@ -65,6 +65,7 @@ from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.execution.continuous_monitor.supervisor import SupervisedLoop
 from alphamind.execution.continuous_monitor.underlying_stream.cache import (
     FreshPrice,
+    StalePrice,
     UnderlyingPriceCache,
 )
 from alphamind.execution.guardrail_enforcement import (
@@ -418,7 +419,7 @@ async def _run_one_tick(  # noqa: PLR0913
             underlying_prices[ticker] = read.price
         else:
             had_stale_or_missing = True
-            if hasattr(read, "age_seconds"):
+            if isinstance(read, StalePrice):
                 log.warning(
                     "underlying price for %s is stale (%.0fs > max %.0fs); "
                     "excluded from stop enforcement",
