@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Literal
@@ -60,7 +60,7 @@ class FreshPrice:
 
     price: float
     as_of: datetime
-    freshness: Literal[PriceFreshness.FRESH] = field(default=PriceFreshness.FRESH)
+    freshness: Literal[PriceFreshness.FRESH] = PriceFreshness.FRESH
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,14 +76,14 @@ class StalePrice:
     last_price: float
     as_of: datetime
     age_seconds: float
-    freshness: Literal[PriceFreshness.STALE] = field(default=PriceFreshness.STALE)
+    freshness: Literal[PriceFreshness.STALE] = PriceFreshness.STALE
 
 
 @dataclass(frozen=True, slots=True)
 class MissingPrice:
     """A read for a ticker the cache has never observed. Exposes no price."""
 
-    freshness: Literal[PriceFreshness.MISSING] = field(default=PriceFreshness.MISSING)
+    freshness: Literal[PriceFreshness.MISSING] = PriceFreshness.MISSING
 
 
 # Discriminated union a price consumer pattern-matches on. Only ``FreshPrice``
@@ -184,6 +184,40 @@ class UnderlyingPriceCache:
             ticker: self.read(ticker, as_of=as_of, max_age_seconds=max_age_seconds)
             for ticker in tickers
         }
+
+    def global_staleness(
+        self,
+        *,
+        as_of: datetime,
+        max_age_seconds: float,
+        expected_tickers: Iterable[str],
+    ) -> GlobalStalenessSignal | None:
+        """Detect the writer-wedged cold-feed case at the cache boundary.
+
+        Returns a :class:`GlobalStalenessSignal` iff *every* ticker in
+        *expected_tickers* reads ``STALE`` or ``MISSING`` at *as_of* — i.e. the
+        whole underlying feed is cold and the monitor would otherwise enforce
+        stops against frozen prices (ALP-770 class). Returns ``None`` when at
+        least one expected ticker reads ``FRESH`` (the feed is partly live, not
+        wedged) and when *expected_tickers* is empty (no positions → nothing to
+        escalate). This story provides the detector; 02d wires the single
+        emitter through ``breach_loop``'s health channel.
+        """
+        expected = frozenset(expected_tickers)
+        if not expected:
+            return None
+        reads = self.read_all(expected, as_of=as_of, max_age_seconds=max_age_seconds)
+        if any(isinstance(read, FreshPrice) for read in reads.values()):
+            return None
+        stale = frozenset(t for t, read in reads.items() if isinstance(read, StalePrice))
+        missing = frozenset(t for t, read in reads.items() if isinstance(read, MissingPrice))
+        return GlobalStalenessSignal(
+            as_of=as_of,
+            max_age_seconds=max_age_seconds,
+            expected_tickers=expected,
+            stale_tickers=stale,
+            missing_tickers=missing,
+        )
 
     def get_all(self) -> Mapping[str, UnderlyingQuote]:
         """Return a snapshot of every ticker → quote pair currently in the cache.

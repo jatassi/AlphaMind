@@ -21,6 +21,7 @@ import pytest
 from alphamind._kernel.ids import Symbol
 from alphamind.execution.continuous_monitor.underlying_stream import (
     FreshPrice,
+    GlobalStalenessSignal,
     MissingPrice,
     StalePrice,
     UnderlyingPriceCache,
@@ -168,10 +169,36 @@ class TestFreshnessAwareReadAll:
         cache = UnderlyingPriceCache()
         await cache.update(_quote("SPY", 500.0, _AS_OF))
         await cache.update(_quote("AAPL", 200.0, _AS_OF - timedelta(seconds=60)))
-        reads = cache.read_all(
-            ["SPY", "AAPL", "MSFT"], as_of=_AS_OF, max_age_seconds=30.0
-        )
+        reads = cache.read_all(["SPY", "AAPL", "MSFT"], as_of=_AS_OF, max_age_seconds=30.0)
         assert set(reads) == {"SPY", "AAPL", "MSFT"}
         assert isinstance(reads["SPY"], FreshPrice)
         assert isinstance(reads["AAPL"], StalePrice)
         assert isinstance(reads["MSFT"], MissingPrice)  # requested but absent
+
+
+class TestGlobalStaleness:
+    async def test_returns_signal_when_every_expected_ticker_is_stale_or_missing(self) -> None:
+        cache = UnderlyingPriceCache()
+        await cache.update(_quote("SPY", 500.0, _AS_OF - timedelta(seconds=45)))  # stale
+        # AAPL never written → missing
+        signal = cache.global_staleness(
+            as_of=_AS_OF, max_age_seconds=30.0, expected_tickers={"SPY", "AAPL"}
+        )
+        assert isinstance(signal, GlobalStalenessSignal)
+        assert signal.expected_tickers == frozenset({"SPY", "AAPL"})
+        assert signal.stale_tickers == frozenset({"SPY"})
+        assert signal.missing_tickers == frozenset({"AAPL"})
+
+    async def test_returns_none_when_any_expected_ticker_is_fresh(self) -> None:
+        cache = UnderlyingPriceCache()
+        await cache.update(_quote("SPY", 500.0, _AS_OF))  # fresh
+        await cache.update(_quote("AAPL", 200.0, _AS_OF - timedelta(seconds=45)))  # stale
+        signal = cache.global_staleness(
+            as_of=_AS_OF, max_age_seconds=30.0, expected_tickers={"SPY", "AAPL"}
+        )
+        assert signal is None
+
+    async def test_returns_none_when_expected_tickers_empty(self) -> None:
+        cache = UnderlyingPriceCache()
+        signal = cache.global_staleness(as_of=_AS_OF, max_age_seconds=30.0, expected_tickers=set())
+        assert signal is None
