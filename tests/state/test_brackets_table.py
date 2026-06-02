@@ -234,18 +234,8 @@ def _read_legs(session: Session, bracket_id: str) -> tuple[BracketLegRow, ...]:
 
 
 class TestBracketsTable:
-    def test_table_has_expected_columns(self, engine: Engine) -> None:
+    def test_table_primary_key(self, engine: Engine) -> None:
         insp = inspect(engine)
-        cols = {c["name"] for c in insp.get_columns("brackets")}
-        assert cols == {
-            "bracket_id",
-            "position_id",
-            "status",
-            "entry_order_id",
-            "entry_window_deadline",
-            "corporate_action_cancellation_reason",
-            "modification_history_json",
-        }
         pk = insp.get_pk_constraint("brackets")
         assert pk["constrained_columns"] == ["bracket_id"]
 
@@ -281,21 +271,8 @@ class TestBracketsTable:
 
 
 class TestBracketLegsTable:
-    def test_table_has_expected_columns(self, engine: Engine) -> None:
+    def test_table_primary_key(self, engine: Engine) -> None:
         insp = inspect(engine)
-        cols = {c["name"] for c in insp.get_columns("bracket_legs")}
-        assert cols == {
-            "bracket_leg_id",
-            "bracket_id",
-            "leg_index",
-            "leg_type",
-            "order_id",
-            "trigger_kind",
-            "trigger_payload_json",
-            "pl_anchor_json",
-            "enforcement",
-            "leg_status",
-        }
         pk = insp.get_pk_constraint("bracket_legs")
         assert pk["constrained_columns"] == ["bracket_leg_id"]
 

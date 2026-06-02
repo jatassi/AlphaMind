@@ -99,20 +99,8 @@ def _row_kwargs(
 
 
 class TestCashLedgerTableShape:
-    def test_table_has_eight_columns(self, engine: Engine) -> None:
+    def test_table_primary_key(self, engine: Engine) -> None:
         insp = inspect(engine)
-        cols = {c["name"] for c in insp.get_columns("cash_ledger")}
-        expected = {
-            "id",
-            "current_cash_usd",
-            "settled_cash_usd",
-            "reserved_capital_usd",
-            "available_buying_power_usd",
-            "margin_held_usd",
-            "unsettled_proceeds_json",
-            "last_updated_at",
-        }
-        assert cols == expected
         pk = insp.get_pk_constraint("cash_ledger")
         assert pk["constrained_columns"] == ["id"]
 

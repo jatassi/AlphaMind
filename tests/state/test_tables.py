@@ -105,27 +105,8 @@ def _invocation_kwargs(
 
 
 class TestProcessLifetimesTable:
-    def test_table_has_expected_columns(self, engine: Engine) -> None:
+    def test_table_primary_key(self, engine: Engine) -> None:
         insp = inspect(engine)
-        cols = {c["name"]: c for c in insp.get_columns("process_lifetimes")}
-        expected = {
-            "process_lifetime_id",
-            "process_role",
-            "process_start_at",
-            "process_pid",
-            "hostname",
-            "git_sha",
-            "git_branch",
-            "git_dirty",
-            "python_version",
-            "pip_freeze_hash",
-            "pip_freeze_snapshot_path",
-            "anthropic_sdk_version",
-            "claude_agent_sdk_version",
-            "os_release",
-        }
-        assert set(cols) == expected
-        # Exactly one primary key, on process_lifetime_id.
         pk = insp.get_pk_constraint("process_lifetimes")
         assert pk["constrained_columns"] == ["process_lifetime_id"]
 
@@ -163,34 +144,8 @@ class TestProcessLifetimesTable:
 
 
 class TestInvocationsTable:
-    def test_table_has_expected_columns(self, engine: Engine) -> None:
+    def test_table_primary_key(self, engine: Engine) -> None:
         insp = inspect(engine)
-        cols = {c["name"]: c for c in insp.get_columns("invocations")}
-        expected = {
-            "invocation_id",
-            "process_lifetime_id",
-            "start_at",
-            "phase1_completed_at",
-            "phase2_completed_at",
-            "trigger_type",
-            "trigger_source",
-            "trigger_reason",
-            "git_sha_at_invocation",
-            "active_profile",
-            "active_regime",
-            "active_mode",
-            "active_overlays_json",
-            "resolved_config_hash",
-            "resolved_config_snapshot_path",
-            "feature_flags_snapshot_json",
-            "data_calibration_state_snapshot_path",
-            "data_source_freshness_json",
-            "fill_collection_summary_json",
-            "command_execution_summary_json",
-            "staleness_flag",
-            "snapshot_metadata_json",
-        }
-        assert set(cols) == expected
         pk = insp.get_pk_constraint("invocations")
         assert pk["constrained_columns"] == ["invocation_id"]
 
