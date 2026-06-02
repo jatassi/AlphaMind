@@ -63,9 +63,20 @@ watch/merge loop and the GitHub usage-limit fallback live in `docs/agents/ci.md`
 
 ## Subagents
 
-Mechanical changes → Sonnet; everything else → Opus. Always background (async) mode. Put
-the model in the title: `[Sonnet|Opus|Grok] <Title>`. Subagents must commit before reporting
-done — verify with `git log main..HEAD`.
+Pick by how much the task leaves to decide:
+
+- **Opus** — the approach itself must be worked out: design, architectural/algorithmic/schema
+  decisions, ambiguous or underspecified specs, non-obvious trade-offs.
+- **Sonnet** — the approach is clear, but correct execution still needs discretion a green
+  test/lint run wouldn't prove on its own: preserving existing behavior, choosing what to keep
+  vs cut within a known pattern, cross-file coherence, edge cases.
+- **Grok** (via its CLI) — a rote, fully-specified change whose correctness is captured
+  entirely by an objective gate (tests + lint), with nothing left to decide: mechanical
+  renames, verbatim refactors, applying a specified transform across files. Read
+  `docs/agents/grok-cli.md` before dispatching.
+
+Always background (async) mode. Put the model in the title: `[Sonnet|Opus|Grok] <Title>`.
+Subagents must commit before reporting done — verify with `git log main..HEAD`.
 
 ## Environment
 
