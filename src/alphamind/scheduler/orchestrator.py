@@ -859,10 +859,11 @@ def _assemble_phase1_snapshot(
     """Build the post-Phase-1 portfolio snapshot once per invocation.
 
     Opens fresh sessions through the repository factory; relies on Phase 1
-    having already committed so the repository's
-    ``phase1_completed_at IS NULL → RepositoryConsistencyError`` guard
-    sees a satisfied row. The same ``AssembledSnapshot`` feeds the
-    synthesizer reader and the decision pipeline.
+    having already committed so the repository's bound invocation row has
+    a non-NULL ``phase1_completed_at`` (the fallback-to-prior-invocation
+    path in ``get_current_invocation_metadata`` is never reached here).
+    The same ``AssembledSnapshot`` feeds the synthesizer reader and the
+    decision pipeline.
 
     Returns the ``(AssembledSnapshot, repository)`` pair so the decision
     pipeline's Phase 1 enforcement composition (story ALP-433) can read

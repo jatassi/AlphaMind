@@ -34,6 +34,7 @@ concurrent reader. The provider callables are likewise sync.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 
@@ -119,6 +120,7 @@ from alphamind.state.tables.thesis_components import (
 # inlines sync equivalents of those queries on its own session below.
 
 _PENDING_ORDER_STATUSES = (OrderStatus.PENDING.value, OrderStatus.PARTIALLY_FILLED.value)
+log = logging.getLogger(__name__)
 
 
 def _apply_pragmas(dbapi_connection: object, _connection_record: object) -> None:
@@ -440,12 +442,17 @@ class SqlPortfolioStateRepository:
             row = session.get(InvocationRow, self._invocation_id)
             # When the bound invocation is missing or paused before Phase-1 commit
             # (phase1_completed_at IS NULL), the monitor must not go DEGRADED —
-            # fall back to the most-recently-completed invocation so the breach_loop
+            # fall back to the most-recently-completed *pipeline* invocation
+            # (resolved_config_snapshot_path != '' excludes maintenance ticks,
+            # consistent with get_prior_invocation_context) so the breach_loop
             # can continue ticking with stale-but-valid state metadata.
             if row is None or row.phase1_completed_at is None:
                 fallback = session.execute(
                     select(InvocationRow)
-                    .where(InvocationRow.phase1_completed_at.is_not(None))
+                    .where(
+                        InvocationRow.phase1_completed_at.is_not(None),
+                        InvocationRow.resolved_config_snapshot_path != "",
+                    )
                     .order_by(InvocationRow.start_at.desc())
                     .limit(1)
                 ).scalar_one_or_none()
@@ -456,8 +463,19 @@ class SqlPortfolioStateRepository:
                         "to fall back to"
                     )
                     raise RepositoryConsistencyError(msg)
+                log.warning(
+                    "get_current_invocation_metadata: bound invocation %r is paused or missing "
+                    "— ticking against prior completed invocation %r (phase1_committed_at=%s). "
+                    "Snapshot metadata is stale; risk evaluation continues.",
+                    self._invocation_id,
+                    fallback.invocation_id,
+                    fallback.phase1_completed_at,
+                )
                 row = fallback
-            assert row.phase1_completed_at is not None  # guaranteed by fallback WHERE clause
+            # phase1_completed_at is not None: either the if-condition above was False
+            # (bound row already had a non-NULL value) or the fallback WHERE clause
+            # guaranteed it for the fallback row.
+            assert row.phase1_completed_at is not None
             return CurrentInvocationMetadata(
                 invocation_id=row.invocation_id,
                 phase1_committed_at=datetime.fromisoformat(row.phase1_completed_at),

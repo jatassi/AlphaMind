@@ -1370,9 +1370,10 @@ async def test_get_current_invocation_metadata_returns_committed_metadata(
     assert result.pipeline_invocation_started_at is None
 
 
-async def test_get_current_invocation_metadata_phase1_uncommitted_raises(
+async def test_get_current_invocation_metadata_raises_when_no_completed_fallback_exists_null_phase1(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
+    # Only a NULL-phase1 invocation exists — no completed fallback, so raises.
     _, factory = db
     await _seed_minimal_invocation(
         factory, invocation=_make_invocation_record(phase1_completed_at=None)
@@ -1383,11 +1384,11 @@ async def test_get_current_invocation_metadata_phase1_uncommitted_raises(
         repo.get_current_invocation_metadata()
 
 
-async def test_get_current_invocation_metadata_missing_row_raises(
+async def test_get_current_invocation_metadata_raises_when_no_completed_fallback_exists_missing_row(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
+    # No invocation rows at all — no completed fallback, so raises.
     _, factory = db
-    # Seed only the process_lifetime — no invocation row.
     async with factory() as sess:
         sess.add(process_lifetime_record_to_row(_make_process_lifetime()))
         await sess.commit()
