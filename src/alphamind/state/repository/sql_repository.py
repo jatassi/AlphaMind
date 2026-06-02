@@ -16,11 +16,11 @@ against the SQL tables shipped in stories 02b and 04a-04e:
   the injected callable provider.
 
 Snapshot isolation enforcement: ``get_current_invocation_metadata``
-falls back to the most-recently-completed invocation when the bound row is
-missing or has ``phase1_completed_at IS NULL`` (e.g. scheduler paused
-mid-invocation), so the breach_loop can continue ticking.  Only raises
-:class:`RepositoryConsistencyError` when no completed invocation exists
-at all.  Story 07 + 08 verify the full six-step ordering.
+falls back to the most-recently-completed pipeline invocation when the
+bound row is missing or has ``phase1_completed_at IS NULL`` (e.g. scheduler
+paused mid-invocation), so the breach_loop can continue ticking.  Only
+raises :class:`RepositoryConsistencyError` when no completed pipeline
+invocation exists at all.  Story 07 + 08 verify the full six-step ordering.
 
 ALP-454 Pre-resolved decision (C): per the audit, the Protocol surface
 is synchronous (SQLite is the persistence engine; aiosqlite already
