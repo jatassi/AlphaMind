@@ -1493,3 +1493,54 @@ async def test_cash_dividend_long_on_strategy_position_credits_and_preserves_leg
         )
         assert len(ledger_rows) == 1
         assert ledger_rows[0].processing_status == CorporateActionLedgerStatus.PROCESSED.value
+
+
+async def test_ca_cash_dividend_mirrors_settled_cash(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-778 — a CA cash credit must update settled_cash_usd alongside
+    current_cash_usd.
+
+    Prior to the fix, _apply_signed_cash_movement only wrote current_cash_usd;
+    settled stayed frozen, making compute_true_deployable_capital_usd
+    understate available capital until the next reconciliation run.
+    """
+    from alphamind.execution.corporate_actions import integrate_ca_activity
+    from alphamind.execution.corporate_actions.types import CorporateActionActivity
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_position_cluster(
+        factory,
+        _make_open_position(direction=Direction.LONG, share_count=100.0),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_active_bracket(),
+    )
+    await _seed_cash_ledger(factory)
+    await _seed_drawdown_state(factory)
+
+    ca = CorporateActionActivity(
+        alpaca_activity_id="ca-cash-div-settled-1",
+        action_type=CorporateActionType.CASH_DIVIDEND_LONG,
+        ticker=Symbol("AAPL"),
+        new_ticker=None,
+        ratio_or_amount=0.50,
+        position_id=PositionId("pos-1"),
+        signed_cash_impact_usd=500.0,
+        transaction_time=_NOW - timedelta(minutes=5),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await integrate_ca_activity(handle, ca, alpaca_position_lookup=None)
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        cash_row = (
+            await sess.execute(
+                select(CashLedgerRow).where(CashLedgerRow.id == CASH_LEDGER_SINGLETON_ID)
+            )
+        ).scalar_one()
+        assert cash_row.current_cash_usd == pytest.approx(_INITIAL_CASH + 500.0)
+        # ALP-778: settled must track current after every CA cash movement.
+        assert cash_row.settled_cash_usd == pytest.approx(_INITIAL_CASH + 500.0)

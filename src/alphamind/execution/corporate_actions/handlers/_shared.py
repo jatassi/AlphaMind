@@ -272,6 +272,8 @@ async def _apply_signed_cash_movement(
     # caller-supplied float impact through ``Decimal(str(...))`` so the cash
     # accumulator stays exact across CA-driven movements.
     cash_row.current_cash_usd = cash_row.current_cash_usd + Decimal(str(signed_cash_impact_usd))
+    # ALP-778: settled tracks current (no T+2 lag modelled in paper trading).
+    cash_row.settled_cash_usd = cash_row.current_cash_usd
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
     new_balance_money = signed_money(cash_row.current_cash_usd)
     if signed_cash_impact_usd >= 0:
