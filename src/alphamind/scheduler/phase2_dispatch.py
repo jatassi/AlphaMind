@@ -154,6 +154,7 @@ async def dispatch_phase2(
                         "tuple[BrokerDispatchResult | None, ...] | None",
                         entry.dispatch_results,
                     ),
+                    reprice_markers=entry.reprice_markers,
                 )
                 await session.commit()
         # ALP-711 — when broker routing returned ``GatewaySubmissionFailed``

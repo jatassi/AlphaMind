@@ -139,3 +139,55 @@ async def test_no_quote_source_leaves_entry_verbatim() -> None:
     (command,) = fake_dispatch.captured
     assert isinstance(command, OpenCommand)
     assert command.entry_order.limit_price == price("950.0")
+
+
+@pytest.mark.asyncio
+async def test_repriced_envelope_carries_reprice_marker_in_submission_log() -> None:
+    """ALP-765: a repriced enter-now entry stamps reprice_markers on the log entry.
+
+    The submission_log entry for a repriced envelope must carry a reprice marker
+    with the ticker, analyst price, and marketable price so the pm_decision audit
+    row records the execution-layer price movement — the envelope can no longer
+    read as 'approve / no modifications' when the price was silently moved.
+    """
+    from alphamind.decision.portfolio_manager.submit_envelope import (
+        _handle_submit_envelope,
+        build_initial_submit_envelope_state,
+    )
+    from alphamind.execution.broker_adapter import AccountStateQueries
+
+    quote_source = _FakeQuoteSource({"NVDA": TouchQuote(bid=price("899.98"), ask=price("900.00"))})
+    validation_state = _make_validation_state()
+    state = build_initial_submit_envelope_state(
+        invocation_id=validation_state.invocation_id,
+        starting_validation_state=validation_state,
+    )
+    envelope = _enter_now_limit_envelope()  # analyst limit_price = 950.0
+    fake_dispatch = _CapturingBrokerDispatch()
+
+    _response, new_state = await _handle_submit_envelope(
+        envelope.model_dump(mode="json"),
+        state=state,
+        retrieval_store=_retrieval_store(),
+        pre_processor_bundle=_make_bundle(recommendations=(_recommendation_stub("REC-1"),)),
+        pm_view=_make_pm_view(),
+        active_sectors=_DEFAULT_ACTIVE_SECTORS,
+        halt_mode=False,
+        sector_resolver=_sector_resolver,
+        state_persistence_config=MagicMock(),
+        invocation_handle=None,
+        client=MagicMock(),
+        queries=MagicMock(spec=AccountStateQueries),
+        execution_config=_default_execution_config(),
+        quote_source=quote_source,
+        broker_dispatch=fake_dispatch,
+    )
+
+    assert len(new_state.submission_log) == 1
+    log_entry = new_state.submission_log[0]
+    assert len(log_entry.reprice_markers) == 1
+    marker = log_entry.reprice_markers[0]
+    assert marker["ticker"] == "NVDA"
+    assert marker["analyst_price"] == "950.0"
+    # long enter-now: 900.00 x (1 + 0.0005) = 900.45
+    assert marker["marketable_price"] == "900.45"
