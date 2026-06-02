@@ -373,8 +373,8 @@ class TestRealizedVolRefreshHeartbeat:
         iterations so the otherwise-run-forever loop terminates.
         """
         from alphamind.execution.continuous_monitor.__main__ import (
-            _EmptyMapAlertOnce,
             _REALIZED_VOL_HEARTBEAT_CADENCE_SECONDS,
+            _EmptyMapAlertOnce,
             _register_realized_vol_refresh_task,
         )
         from alphamind.execution.continuous_monitor.session import MonitorSession
@@ -456,8 +456,8 @@ class TestRealizedVolRefreshHeartbeat:
         preserved) rather than every heartbeat.
         """
         from alphamind.execution.continuous_monitor.__main__ import (
-            _EmptyMapAlertOnce,
             _REALIZED_VOL_HEARTBEAT_CADENCE_SECONDS,
+            _EmptyMapAlertOnce,
             _register_realized_vol_refresh_task,
         )
         from alphamind.execution.continuous_monitor.session import MonitorSession

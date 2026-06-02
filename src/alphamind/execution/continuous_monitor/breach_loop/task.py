@@ -152,6 +152,52 @@ def _safe_emit_health_signal(sink: OnHealthSignal, signal: BreachLoopHealthSigna
         log.exception("breach_loop health-signal sink raised; continuing")
 
 
+def _emit_global_stale_if_onset(
+    *,
+    cache: UnderlyingPriceCache,
+    as_of: datetime,
+    max_age_seconds: float,
+    expected_tickers: frozenset[str],
+    latched: bool,
+    on_health_signal: OnHealthSignal,
+) -> bool:
+    """Emit the latched global-stale (cold-feed) signal; return the new latch state.
+
+    When every expected open-position ticker is STALE/MISSING the underlying
+    writer is wedged. The loud ERROR + health signal fires once on *onset* and
+    debounces while the feed stays cold (``latched=True``), then re-arms when the
+    feed recovers — mirroring the per-ticker ``stale_degraded`` latch so a
+    sustained outage does not spam the health channel + log every cadence.
+
+    Recovery signalling on the health channel is owned by the per-ticker
+    ``stale_degraded`` path; this latch only re-arms on recovery (no separate
+    recovered signal).
+    """
+    global_signal = cache.global_staleness(
+        as_of=as_of,
+        max_age_seconds=max_age_seconds,
+        expected_tickers=expected_tickers,
+    )
+    if global_signal is None:
+        return False  # feed fresh again — re-arm the latch
+    if not latched:
+        log.error(
+            "breach_loop: underlying price feed globally stale — "
+            "writer appears wedged; stale=%s missing=%s",
+            sorted(global_signal.stale_tickers),
+            sorted(global_signal.missing_tickers),
+        )
+        _safe_emit_health_signal(
+            on_health_signal,
+            BreachLoopHealthSignal(
+                degraded=True,
+                consecutive_failures=0,
+                last_error=_GLOBAL_STALE_ERROR,
+            ),
+        )
+    return True
+
+
 async def run_breach_loop(  # noqa: PLR0913,PLR0912,C901 — fan-in is the seam, not incidental complexity
     session: MonitorSession,
     config: ContinuousMonitorConfig,
@@ -339,39 +385,17 @@ async def run_breach_loop(  # noqa: PLR0913,PLR0912,C901 — fan-in is the seam,
             # distinctly-labelled signal through the same health channel so the
             # operator can differentiate "one ticker lagging" from "price stream
             # dead." This is the single global-stale emitter — 02b/02c add none.
-            # ``expected_tickers`` is the open-position set returned by the tick.
-            global_signal = cache.global_staleness(
+            # The emitter latches (ALP-825 review) so a sustained outage fires
+            # once on onset, not every cadence; ``global_stale_degraded`` carries
+            # the latch state across ticks.
+            global_stale_degraded = _emit_global_stale_if_onset(
+                cache=cache,
                 as_of=as_of,
                 max_age_seconds=config.underlying_price_max_age_seconds,
                 expected_tickers=expected_tickers,
+                latched=global_stale_degraded,
+                on_health_signal=on_health_signal,
             )
-            if global_signal is not None:
-                # Latched onset (mirrors ``stale_degraded``): fire the loud
-                # ERROR + health signal once when the feed goes cold, then
-                # debounce until it recovers — a sustained outage no longer
-                # spams the health channel + log every cadence.
-                if not global_stale_degraded:
-                    global_stale_degraded = True
-                    log.error(
-                        "breach_loop: underlying price feed globally stale — "
-                        "writer appears wedged; stale=%s missing=%s",
-                        sorted(global_signal.stale_tickers),
-                        sorted(global_signal.missing_tickers),
-                    )
-                    _safe_emit_health_signal(
-                        on_health_signal,
-                        BreachLoopHealthSignal(
-                            degraded=True,
-                            consecutive_failures=0,
-                            last_error=_GLOBAL_STALE_ERROR,
-                        ),
-                    )
-            else:
-                # Feed recovered (no longer globally stale) — re-arm the latch
-                # so the next cold-feed onset fires again. The per-ticker
-                # ``stale_degraded`` path owns recovery signalling on the health
-                # channel; this latch only re-arms.
-                global_stale_degraded = False
 
 
 async def _run_one_tick(  # noqa: PLR0913
