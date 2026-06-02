@@ -198,4 +198,3 @@ def test_non_positive_limit_value_raises_with_value_in_message(limit_value: floa
             escalation_zones=_default_zones(),
         )
     assert "limit_value" in str(exc_info.value)
-

@@ -187,7 +187,6 @@ def test_halt_state_negative_drawdown_rejected(field: str) -> None:
     assert field in str(exc_info.value)
 
 
-
 # ---------------------------------------------------------------------------
 # EmergencyContext
 # ---------------------------------------------------------------------------
@@ -223,7 +222,6 @@ def test_emergency_context_rejects_non_positive_minutes(field: str, bad_value: f
     assert field in str(exc_info.value)
 
 
-
 # ---------------------------------------------------------------------------
 # BreachDetails / SecondaryBreachCheckResult / EngineGuardrailTriggerRecord
 # ---------------------------------------------------------------------------
@@ -250,7 +248,6 @@ def test_breach_details_accepts_optional_unit_and_regime() -> None:
     assert details.regime_at_breach is RegimeLabel.ELEVATED
 
 
-
 def test_secondary_breach_check_result_constructs() -> None:
     result = SecondaryBreachCheckResult(result=SecondaryBreachOutcome.NO_SECONDARY_BREACH)
     assert result.result is SecondaryBreachOutcome.NO_SECONDARY_BREACH
@@ -263,7 +260,6 @@ def test_secondary_breach_check_result_carries_notes() -> None:
         notes="Selected alternate position to cure primary without breaching net long limit.",
     )
     assert result.notes is not None and "alternate position" in result.notes
-
 
 
 def test_engine_guardrail_trigger_record_constructs() -> None:
@@ -305,7 +301,6 @@ def test_engine_guardrail_trigger_record_carries_optional_cascade_and_secondary(
     assert record.cascade_id == "cascade-2026-04-29-14-30"
     assert record.secondary_breach_check_result is not None
     assert record.secondary_breach_check_result.result is SecondaryBreachOutcome.NO_SECONDARY_BREACH
-
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +374,6 @@ def test_engine_close_command_rejects_non_positive_numeric_quantity(bad_quantity
             quantity_or_all=bad_quantity,
         )
     assert "must be positive" in str(exc_info.value)
-
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +474,6 @@ def test_engine_envelope_rejects_command_id_not_prefixed_by_envelope_id() -> Non
     assert "command_id must begin with" in str(exc_info.value)
 
 
-
 # ---------------------------------------------------------------------------
 # RejectionRuleEntry / HardRejectionPayload
 # ---------------------------------------------------------------------------
@@ -503,7 +496,6 @@ def test_rejection_rule_entry_constructs() -> None:
     assert entry.rule_id == "sector_concentration_tech"
     assert entry.current_value == 23.7
     assert entry.unit == "pct_of_portfolio"
-
 
 
 def test_hard_rejection_payload_constructs() -> None:
@@ -539,7 +531,6 @@ def test_hard_rejection_payload_rejects_empty_breaching_rules() -> None:
             headroom_after_hypothetical_compliance=(),
         )
     assert "at least one breaching rule" in str(exc_info.value)
-
 
 
 # ---------------------------------------------------------------------------
@@ -592,5 +583,3 @@ def test_position_selection_result_partial_trim_without_target_rejected() -> Non
             rationale="rationale",
         )
     assert "required for PARTIAL_TRIM" in str(exc_info.value)
-
-

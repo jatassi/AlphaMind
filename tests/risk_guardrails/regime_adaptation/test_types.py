@@ -212,7 +212,6 @@ _RECORD_BUILDERS: tuple[tuple[type, Callable[[], object]], ...] = (
 _RECORD_TYPES: tuple[type, ...] = tuple(record_type for record_type, _ in _RECORD_BUILDERS)
 
 
-
 # ---------------------------------------------------------------------------
 # RegimeAdaptationState
 # ---------------------------------------------------------------------------
@@ -223,7 +222,6 @@ def test_regime_adaptation_state_constructible_with_valid_inputs() -> None:
     assert state.active_regime is Regime.normal
     assert state.transition_state is RegimeTransitionState.STABLE
     assert state.transition_invocations_remaining == 0
-
 
 
 def test_regime_adaptation_state_rejects_stable_with_remaining_nonzero() -> None:

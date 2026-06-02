@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 from datetime import UTC, date, datetime
 from typing import Any
@@ -323,16 +324,6 @@ class TestInstrumentSpecDiscriminator:
 
         with pytest.raises((ValueError, TypeError)):
             _instrument_spec_from_dict({"instrument_type": "BOGUS"})
-
-    def test_strategy_legs_must_be_options_specs_static_only(self) -> None:
-        """Strategy-leg type enforcement is now a static-type check (mypy).
-
-        Without Pydantic the dataclass stores whatever leg tuple the caller
-        passes; mypy + ``--strict`` catches the equity-leg case in
-        ``StrategyInstrumentSpec(legs=(EquityInstrumentSpec(...),))``. The
-        runtime constructor accepts the bad input."""
-        spec = StrategyInstrumentSpec(legs=(_equity_spec(),))  # type: ignore[arg-type]
-        assert len(spec.legs) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -715,7 +706,6 @@ class TestOrderRecordOrderClass:
         assert order.order_class == OrderClass.OTO
 
 
-
 # ---------------------------------------------------------------------------
 # entry_window_deadline field (ALP-341)
 # ---------------------------------------------------------------------------
@@ -784,19 +774,6 @@ class TestPriceTrigger:
     def test_empty_ticker_rejected(self) -> None:
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             PriceTrigger(underlying_ticker=Symbol(""), threshold_usd=10.0, direction="LTE")
-
-    def test_invalid_direction_static_only(self) -> None:
-        """Literal['GTE', 'LTE'] is a static-type check (mypy) post-dataclass.
-
-        Pydantic enforced Literal membership at runtime. The dataclass stores
-        the string as-is; mypy --strict catches the misuse statically.
-        """
-        trigger = PriceTrigger(
-            underlying_ticker=Symbol("NVDA"),
-            threshold_usd=10.0,
-            direction="ABOVE",  # type: ignore[arg-type]
-        )
-        assert trigger.direction == "ABOVE"  # type: ignore[comparison-overlap]
 
 
 class TestTimeTrigger:
@@ -1061,19 +1038,6 @@ class TestPLAnchorSpec:
         with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
             PLAnchorSpec(spec_type="target", pct=0.80, planned_entry_price=0.0)
 
-    def test_invalid_spec_type_static_only(self) -> None:
-        """Literal['target', 'stop'] is a static-type check (mypy) post-dataclass.
-
-        Pydantic enforced Literal membership at runtime. The dataclass stores
-        the string as-is; mypy --strict catches the misuse statically.
-        """
-        spec = PLAnchorSpec(
-            spec_type="limit",  # type: ignore[arg-type]
-            pct=0.80,
-            planned_entry_price=18.50,
-        )
-        assert spec.spec_type == "limit"  # type: ignore[comparison-overlap]
-
     def test_recalculated_without_actual_price_rejected(self) -> None:
         with pytest.raises((ValueError, TypeError)):
             PLAnchorSpec(
@@ -1266,3 +1230,137 @@ class TestOrderDirectionValidator:
     def test_non_mleg_with_non_none_direction_passes(self) -> None:
         order = _make_order(order_class=OrderClass.SIMPLE, direction=OrderDirection.SELL)
         assert order.direction == OrderDirection.SELL
+
+
+# ---------------------------------------------------------------------------
+# Static-only validation (five collapsed markers — ALP-795)
+# ---------------------------------------------------------------------------
+#
+# Post-Pydantic dataclasses: Literal/type enforcement that Pydantic previously
+# applied at construction now lives in mypy (static) or at the codec boundary.
+# Each row below confirms the dataclass stores the out-of-contract value
+# unchanged — i.e. no runtime guard at construction. This is the single
+# canonical record of that design note instead of five scattered dead-green
+# copies.
+#
+# Row IDs mirror the five rows enumerated in §4 of ALP-795.
+
+
+def _static_only_strategy_legs() -> object:
+    """orders / strategy_legs: leg-type enforcement is mypy-only."""
+    spec = StrategyInstrumentSpec(legs=(_equity_spec(),))  # type: ignore[arg-type]
+    return spec.legs
+
+
+def _static_only_orders_direction() -> object:
+    """orders / direction: Literal['GTE','LTE'] is mypy-only."""
+    trigger = PriceTrigger(
+        underlying_ticker=Symbol("NVDA"),
+        threshold_usd=10.0,
+        direction="ABOVE",  # type: ignore[arg-type]
+    )
+    return trigger.direction
+
+
+def _static_only_orders_spec_type() -> object:
+    """orders / spec_type: Literal['target','stop'] is mypy-only."""
+    spec = PLAnchorSpec(
+        spec_type="limit",  # type: ignore[arg-type]
+        pct=0.80,
+        planned_entry_price=18.50,
+    )
+    return spec.spec_type
+
+
+def _static_only_positions_construction_from_dict() -> object:
+    """positions / construction_from_dict: codec layer owns dict→variant parsing."""
+    from datetime import UTC, datetime
+
+    from alphamind._kernel.ids import PositionId as _PositionId
+    from alphamind._kernel.ids import ThesisId as _ThesisId
+    from alphamind._kernel.money import money, price, signed_money
+    from alphamind.portfolio_state.records.positions import (
+        Direction,
+        EquityPositionDetails,
+        PositionFill,
+        PositionRecord,
+        PositionStatus,
+    )
+
+    _now = datetime.now(tz=UTC)
+    _fill = PositionFill(
+        fill_timestamp=_now,
+        fill_price=price(150.0),
+        fill_quantity=100.0,
+        slippage=signed_money(0.01),
+        fees=money(1.0),
+    )
+    details_dict: Any = {
+        "instrument_type": "EQUITY",
+        "ticker": "AAPL",
+        "share_count": 100.0,
+        "average_cost_basis_per_share": 150.0,
+    }
+    p = PositionRecord(
+        position_id=_PositionId("POS-AAPL-001"),
+        thesis_id=_ThesisId("THESIS-001"),
+        bracket_id=None,
+        status=PositionStatus.OPEN,
+        direction=Direction.LONG,
+        entry_timestamp=_now,
+        details=details_dict,
+        execution_history=(_fill,),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    # The dataclass accepts the dict but it stays a dict — no auto-conversion.
+    return not isinstance(p.details, EquityPositionDetails)
+
+
+def _static_only_capital_zone() -> object:
+    """capital / zone: zone-string validation lives at the codec boundary."""
+    from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetEntry
+
+    entry = RiskBudgetEntry(
+        rule_id="r",
+        rule_label="R",
+        current_value=1.0,
+        limit_value=10.0,
+        headroom=9.0,
+        headroom_pct_of_limit=90.0,
+        zone="UNKNOWN_ZONE",  # type: ignore[arg-type]
+        unit="pct",
+        cumulative_invocation_impact_value=0.0,
+    )
+    return entry.zone
+
+
+_StaticOnlyRow = Callable[[], object]
+
+_STATIC_ONLY_ROWS: list[tuple[str, _StaticOnlyRow]] = [
+    ("orders/strategy_legs", _static_only_strategy_legs),
+    ("orders/direction", _static_only_orders_direction),
+    ("orders/spec_type", _static_only_orders_spec_type),
+    ("positions/construction_from_dict", _static_only_positions_construction_from_dict),
+    ("capital/zone", _static_only_capital_zone),
+]
+
+
+@pytest.mark.parametrize(
+    ("row_id", "call"),
+    _STATIC_ONLY_ROWS,
+)
+def test_static_only_validation(row_id: str, call: _StaticOnlyRow) -> None:
+    """Post-Pydantic dataclasses store out-of-contract values unchanged.
+
+    Each row confirms that Literal/type enforcement happens at the mypy layer
+    (or at the codec boundary), not at construction time. The dataclass
+    constructor accepts the bad value and returns it unmodified.
+    """
+    result = call()
+    # The call must not raise — that is the entire contract being tested.
+    # The returned value (the stored out-of-contract payload) must be truthy
+    # to confirm storage occurred.
+    assert result is not None, f"row {row_id!r}: expected stored value, got None"

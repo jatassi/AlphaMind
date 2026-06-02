@@ -386,22 +386,6 @@ class TestPositionRecordDiscriminator:
         p = _make_position(details=strat, direction=None)
         assert isinstance(p.details, StrategyPositionDetails)
 
-    def test_construction_from_dict_no_longer_supported(self) -> None:
-        """Post-Pydantic dataclass: dict-payload discriminator parsing now lives in
-        the codec layer (``state/tables/positions_codec.py``); callers construct
-        each variant via its concrete dataclass directly. Documenting the
-        boundary so this regression is intentional, not silent."""
-        # The dataclass accepts the dict but it stays a dict (no auto-conversion).
-        p = _make_position(
-            details={
-                "instrument_type": "EQUITY",
-                "ticker": "AAPL",
-                "share_count": 100.0,
-                "average_cost_basis_per_share": 150.0,
-            }
-        )
-        assert not isinstance(p.details, EquityPositionDetails)
-
     def test_concrete_instance_passes_through(self) -> None:
         """The dataclass stores the variant the caller hands it without conversion."""
         equity = EquityPositionDetails(

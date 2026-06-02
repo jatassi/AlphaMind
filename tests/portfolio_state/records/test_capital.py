@@ -270,17 +270,6 @@ class TestRiskBudgetEntry:
                 current_value=0.0, limit_value=20.0, headroom=20.0, headroom_pct_of_limit=101.0
             )
 
-    def test_invalid_zone_accepted_at_construction(self) -> None:
-        """Post-Pydantic dataclass: zone-string validation lives at the codec boundary.
-
-        The Pydantic record enforced enum membership at construction. The frozen
-        dataclass stores whatever ``zone`` value the caller passes; mismatched
-        enums surface at the codec / consumer layer instead. Documenting the
-        post-migration behavior so the test rebaselines explicitly.
-        """
-        entry = _make_risk_budget_entry(zone="UNKNOWN_ZONE")
-        assert entry.zone == "UNKNOWN_ZONE"
-
     def test_nan_current_value_raises(self) -> None:
         with pytest.raises((ValueError, TypeError)):
             _make_risk_budget_entry(
