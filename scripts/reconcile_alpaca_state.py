@@ -64,11 +64,18 @@ def load_local() -> dict[str, Any]:
         }
     positions = {}
     for r in db.execute(
-        "SELECT position_id, status, "
+        # ``direction`` is a top-level positions column (LONG/SHORT/NULL), not a
+        # details_json field — for EQUITY rows details_json carries no direction.
+        "SELECT position_id, status, direction, "
         "json_extract(details_json,'$.ticker') t, "
         "json_extract(details_json,'$.share_count') sc FROM positions"
     ):
-        positions[r["position_id"]] = {"sym": r["t"], "status": r["status"], "shares": r["sc"]}
+        positions[r["position_id"]] = {
+            "sym": r["t"],
+            "status": r["status"],
+            "dir": r["direction"],
+            "shares": r["sc"],
+        }
     cash = dict(db.execute("SELECT * FROM cash_ledger").fetchone())
     db.close()
     return {"orders": orders, "positions": positions, "cash": cash}
@@ -88,6 +95,18 @@ def _report_account(acct: Any, local: dict[str, Any]) -> None:
     print(f"  >> CASH DRIFT (alpaca - local current_cash) = {drift}")
 
 
+def _signed_shares(p: dict[str, Any]) -> float:
+    """Local share count signed by direction (SHORT negative) to match Alpaca's signed qty."""
+    shares = float(p["shares"] or 0)
+    return -shares if (p.get("dir") or "").upper() == "SHORT" else shares
+
+
+def _leg_label(p: dict[str, Any]) -> str:
+    """Per-leg local description, e.g. ``OPEN/SHORT:6.0sh`` (direction shown when present)."""
+    direction = f"/{p['dir']}" if p.get("dir") else ""
+    return f"{p['status']}{direction}:{p['shares']}sh"
+
+
 def _report_positions(apos: dict[str, Any], local: dict[str, Any]) -> None:
     print("=" * 78)
     print("POSITIONS  (alpaca qty | local shares | status)")
@@ -98,10 +117,11 @@ def _report_positions(apos: dict[str, Any], local: dict[str, Any]) -> None:
         a_qty = a.qty if a else 0
         a_px = a.avg_entry_price if a else "-"
         a_pl = a.unrealized_pl if a else "-"
-        loc_desc = ", ".join(f"{p['status']}:{p['shares']}sh" for p in locs) or "(none)"
+        loc_desc = ", ".join(_leg_label(p) for p in locs) or "(none)"
         flag = ""
-        loc_open_sh = sum(float(p["shares"] or 0) for p in locs if p["status"] != "CANCELLED")
-        if abs(float(a_qty) - loc_open_sh) > 1e-9:
+        # Compare signed-to-signed: a SHORT 6 nets to -6, matching Alpaca's -6.
+        loc_open_qty = sum(_signed_shares(p) for p in locs if p["status"] != "CANCELLED")
+        if abs(float(a_qty) - loc_open_qty) > 1e-9:
             flag = "  <<< DIVERGENCE"
         print(f"  {s:6} alpaca={a_qty} @ {a_px} uPL={a_pl} | local=[{loc_desc}]{flag}")
 
