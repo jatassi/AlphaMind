@@ -38,8 +38,8 @@ from dataclasses import dataclass
 class StreamStalledError(Exception):
     """A connected stream stopped delivering activity during RTH (ALP-819).
 
-    The canonical cross-stream name (renamed from ``FillStreamStalledError``):
-    both the fill stream and the underlying-price stream raise it to signal a
+    The canonical cross-stream name: both the fill stream and the
+    underlying-price stream raise it to signal a
     connected-but-silent wedge. The consumer treats it as a budget-neutral
     signal to tear down and rebuild the stream.
     """

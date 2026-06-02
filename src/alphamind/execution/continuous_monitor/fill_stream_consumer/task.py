@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.broker_adapter import (
     FillReport,
-    FillStreamStalledError,
+    StreamStalledError,
     recover_missed_fills_since,
     subscribe_trade_updates,
 )
@@ -93,7 +93,7 @@ async def run_fill_stream_consumer(  # noqa: PLR0913 — run-forever orchestrato
     into the connected-but-silent detection and the supervisor's stall
     watchdog. When the websockets library reconnects internally on a transport
     error (WinError 121) without raising or delivering frames, the consume
-    generator raises :class:`FillStreamStalledError` after
+    generator raises :class:`StreamStalledError` after
     ``config.fill_stream_stale_timeout_seconds`` of RTH silence; that is a
     *budget-neutral* reconnect (a deliberate health refresh, not a failure) so
     a persistently silent stream keeps recovering rather than exhausting the
@@ -151,7 +151,7 @@ async def run_fill_stream_consumer(  # noqa: PLR0913 — run-forever orchestrato
         except asyncio.CancelledError:
             log.info("fill_stream_consumer cancelled cleanly")
             raise
-        except FillStreamStalledError:
+        except StreamStalledError:
             # Connected-but-silent stream detected during RTH (ALP-819): the
             # library reconnect-looped internally without raising or delivering
             # frames. Tear down and rebuild a fresh stream. This is a deliberate
@@ -207,7 +207,7 @@ async def _consume_stream(
     """Drain :func:`subscribe_trade_updates` until the generator exits.
 
     Explicit ``try/finally`` with ``aclose()`` so a propagating exception
-    (e.g., translation error or :class:`FillStreamStalledError`) triggers the
+    (e.g., translation error or :class:`StreamStalledError`) triggers the
     primitive's ``run_task.cancel()`` in deterministic order, rather than
     relying on async-generator GC. The staleness knobs (ALP-819) flow through
     to the primitive's poll loop.
