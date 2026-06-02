@@ -320,6 +320,8 @@ async def subscribe_trade_updates(
     """
     # None is used as a sentinel: the done-callback puts it when run_task
     # finishes so queue.get() unblocks even if no fill events arrive.
+    # The queue is unbounded (maxsize=0) — put_nowait() in the done-callback
+    # must not raise QueueFull. Do not cap this queue.
     queue: asyncio.Queue[TradeUpdate | None] = asyncio.Queue()
 
     async def _handler(update: TradeUpdate) -> None:

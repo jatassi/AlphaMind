@@ -93,18 +93,25 @@ class MonitorSupervisor:
                         )
                         for n, fn in self._registry
                     ]
-                    tg.create_task(
+                    # Keep a reference so we can cancel the watchdog explicitly
+                    # at shutdown. TaskGroup.__aexit__ only cancels tasks
+                    # automatically when the body raises; on a normal body exit
+                    # it waits for all group tasks — so an uncancelled
+                    # ``while True`` watchdog would hang graceful shutdown.
+                    watchdog_task = tg.create_task(
                         self._watchdog_loop(),
                         name="monitor_supervisor:watchdog",
                     )
                     await self._stop_event.wait()
-                    # Graceful stop — cascade-cancel and bound the wait
-                    # so a task swallowing ``CancelledError`` cannot stall.
+                    # Graceful stop — cascade-cancel all tasks (registered +
+                    # watchdog) and bound the wait so a task swallowing
+                    # ``CancelledError`` cannot stall the process.
                     for task in tasks:
                         task.cancel()
-                    if tasks:
-                        timeout = self._config.supervisor_shutdown_timeout_seconds
-                        await asyncio.wait(tasks, timeout=timeout)
+                    watchdog_task.cancel()
+                    stop_targets: list[asyncio.Task[None]] = [*tasks, watchdog_task]
+                    timeout = self._config.supervisor_shutdown_timeout_seconds
+                    await asyncio.wait(stop_targets, timeout=timeout)
             except BaseExceptionGroup as eg:
                 first = first_non_cancelled(eg)
                 if first is not None:
@@ -120,8 +127,12 @@ class MonitorSupervisor:
         check_interval = max(1, timeout // 4)
         while True:
             await asyncio.sleep(check_interval)
+            # Exit cleanly if the supervisor is shutting down — avoids a
+            # spurious os._exit(1) while tasks are mid-cancellation.
+            if self._stop_event is not None and self._stop_event.is_set():
+                return
             now = time.monotonic()
-            for name, last in list(self._heartbeats.items()):
+            for name, last in self._heartbeats.items():
                 elapsed = now - last
                 if elapsed > timeout:
                     log.critical(
@@ -131,6 +142,9 @@ class MonitorSupervisor:
                         elapsed,
                         timeout,
                     )
+                    # ``_exit`` (not ``sys.exit``) skips atexit handlers and
+                    # ``finally`` blocks so the process terminates immediately,
+                    # giving NSSM a clean exit code to restart on.
                     os._exit(1)
 
 
