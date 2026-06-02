@@ -265,23 +265,21 @@ def _capture_begin_statements(engine: Engine) -> list[str]:
 
 
 class TestBeginMode:
-    """The begin hook emits ``BEGIN <mode>`` from the ``sqlite_begin_mode`` option."""
+    """The async begin hook emits ``BEGIN <mode>`` from the ``sqlite_begin_mode``
+    option; the sync engine keeps pysqlite's implicit BEGIN (ALP-824)."""
 
-    def test_unmarked_transaction_stays_deferred(self, file_engine: Engine) -> None:
-        begins = _capture_begin_statements(file_engine)
-        with file_engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-            conn.rollback()
+    async def test_unmarked_async_transaction_stays_deferred(self, tmp_path: Path) -> None:
+        engine = make_async_engine(str(tmp_path / "deferred.db"))
+        begins = _capture_begin_statements(engine.sync_engine)
+        try:
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+                await conn.rollback()
+        finally:
+            await engine.dispose()
         assert begins == ["BEGIN DEFERRED"]
 
-    def test_immediate_option_emits_begin_immediate(self, file_engine: Engine) -> None:
-        begins = _capture_begin_statements(file_engine)
-        with file_engine.connect().execution_options(sqlite_begin_mode="IMMEDIATE") as conn:
-            conn.execute(text("SELECT 1"))
-            conn.rollback()
-        assert begins == ["BEGIN IMMEDIATE"]
-
-    async def test_begin_write_immediate_helper_marks_async_session(self, tmp_path: Path) -> None:
+    async def test_begin_write_immediate_helper_emits_begin_immediate(self, tmp_path: Path) -> None:
         engine = make_async_engine(str(tmp_path / "immediate_helper.db"))
         begins = _capture_begin_statements(engine.sync_engine)
         factory = make_async_session_factory(engine)
@@ -293,6 +291,32 @@ class TestBeginMode:
         finally:
             await engine.dispose()
         assert begins == ["BEGIN IMMEDIATE"]
+
+    def test_sync_engine_keeps_implicit_begin(self, file_engine: Engine) -> None:
+        """The begin hooks are async-only: the sync engine emits no explicit BEGIN,
+        preserving pysqlite's lazy implicit BEGIN so an in-flight
+        ``PRAGMA foreign_keys=OFF`` (Alembic batch migrations) still runs in
+        autocommit. Guards against re-broadening the begin hook to the sync engine."""
+        begins = _capture_begin_statements(file_engine)
+        with file_engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+            conn.execute(text("CREATE TABLE _t (id INTEGER PRIMARY KEY)"))
+            conn.commit()
+        assert begins == []
+
+    async def test_begin_write_immediate_rejects_open_transaction(self, tmp_path: Path) -> None:
+        """The helper refuses an already-open transaction rather than silently
+        degrading IMMEDIATE to the default deferred begin."""
+        engine = make_async_engine(str(tmp_path / "guard.db"))
+        factory = make_async_session_factory(engine)
+        try:
+            async with factory() as session:
+                await session.execute(text("SELECT 1"))  # opens a deferred txn
+                with pytest.raises(RuntimeError, match="before the session opens"):
+                    await begin_write_immediate(session)
+                await session.rollback()
+        finally:
+            await engine.dispose()
 
 
 class TestCrossWriterSnapshotConflict:
@@ -412,6 +436,25 @@ class TestSqliteBusyRetry:
         with pytest.raises(OperationalError, match="database is locked"):
             await run_with_sqlite_busy_retry(op, attempts=3, base_backoff_s=0.0)
         assert calls["n"] == 3
+
+    async def test_detects_transient_via_sqlite_errorname(self) -> None:
+        """A lock is classified transient by ``orig.sqlite_errorname`` even when the
+        message text does not contain a lock marker (robust to message drift)."""
+
+        class _SnapshotConflictError(Exception):
+            sqlite_errorname = "SQLITE_BUSY_SNAPSHOT"
+
+        calls = {"n": 0}
+
+        async def op() -> str:
+            calls["n"] += 1
+            if calls["n"] < 2:
+                raise OperationalError("UPDATE t", {}, _SnapshotConflictError("snapshot conflict"))
+            return "ok"
+
+        result = await run_with_sqlite_busy_retry(op, attempts=3, base_backoff_s=0.0)
+        assert result == "ok"
+        assert calls["n"] == 2
 
 
 # ---------------------------------------------------------------------------

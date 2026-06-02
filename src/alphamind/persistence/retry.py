@@ -21,15 +21,13 @@ from sqlalchemy.exc import OperationalError
 
 log = logging.getLogger(__name__)
 
-# Transient SQLite lock signatures. SQLITE_BUSY surfaces as ``database is
-# locked``; SQLITE_BUSY_SNAPSHOT (code 517) carries the same message plus its own
-# extended error name. Matching the lowercased ``orig`` message covers both, and
-# the explicit names guard against a future SQLite build whose message differs.
-_TRANSIENT_LOCK_MARKERS = (
-    "database is locked",
-    "database is busy",
-    "sqlite_busy",
-)
+# Transient SQLite lock signatures. SQLITE_BUSY and SQLITE_BUSY_SNAPSHOT (code
+# 517) both surface as the message "database is locked"; pysqlite also exposes the
+# reliable extended name on the DBAPI error's ``sqlite_errorname`` attribute. We
+# match the error name first (robust to message-text drift across SQLite builds),
+# then fall back to the message for wrappers that don't carry the name.
+_TRANSIENT_SQLITE_ERRORNAMES = frozenset({"SQLITE_BUSY", "SQLITE_BUSY_SNAPSHOT"})
+_TRANSIENT_LOCK_MESSAGE_MARKERS = ("database is locked", "database is busy")
 
 _DEFAULT_ATTEMPTS = 5
 _DEFAULT_BASE_BACKOFF_S = 0.05
@@ -38,13 +36,16 @@ _DEFAULT_BASE_BACKOFF_S = 0.05
 def _is_transient_lock_error(exc: OperationalError) -> bool:
     """Whether an ``OperationalError`` is a transient SQLite lock worth retrying.
 
-    Inspects the wrapped DBAPI error (``exc.orig``) — the layer that carries the
-    ``database is locked`` / ``SQLITE_BUSY`` text — falling back to the
-    SQLAlchemy-level message when ``orig`` is absent.
+    Checks the wrapped DBAPI error's ``sqlite_errorname`` (the reliable
+    discriminator for SQLITE_BUSY / SQLITE_BUSY_SNAPSHOT) first, then falls back to
+    substring-matching the lowercased message for DBAPI wrappers that don't expose
+    the name (and to the SQLAlchemy-level message when ``orig`` is absent).
     """
-    message = str(exc.orig) if exc.orig is not None else str(exc)
-    message = message.lower()
-    return any(marker in message for marker in _TRANSIENT_LOCK_MARKERS)
+    orig = exc.orig
+    if getattr(orig, "sqlite_errorname", None) in _TRANSIENT_SQLITE_ERRORNAMES:
+        return True
+    message = (str(orig) if orig is not None else str(exc)).lower()
+    return any(marker in message for marker in _TRANSIENT_LOCK_MESSAGE_MARKERS)
 
 
 async def run_with_sqlite_busy_retry[T](
@@ -61,22 +62,28 @@ async def run_with_sqlite_busy_retry[T](
     ``OperationalError`` (``database is locked`` / ``SQLITE_BUSY`` /
     ``SQLITE_BUSY_SNAPSHOT``) it backs off ``base_backoff_s * 2**i`` seconds and
     retries, up to ``attempts`` total tries. A non-transient ``OperationalError``
-    re-raises immediately; the final transient error re-raises once the attempt
-    budget is spent (ALP-824).
+    re-raises immediately; the final attempt's result (success or exception)
+    propagates directly once the retry budget is spent (ALP-824).
+
+    This is a *backstop*, not the primary cross-writer wait. With ``BEGIN
+    IMMEDIATE`` (see :func:`alphamind.persistence.session.begin_write_immediate`)
+    an ordinary lock conflict is already absorbed by ``PRAGMA busy_timeout``
+    *inside* the BEGIN, so the short backoff here is not meant to outwait a long
+    lock hold — it covers an immediate ``SQLITE_BUSY_SNAPSHOT`` (which
+    ``busy_timeout`` does NOT cover) and the rare case of a fully-exhausted
+    ``busy_timeout``.
     """
     if attempts < 1:
         msg = f"attempts must be >= 1, got {attempts}"
         raise ValueError(msg)
-    last_exc: OperationalError | None = None
-    for attempt in range(attempts):
+    # Attempts 1..N-1 retry with backoff; the final attempt runs outside the loop
+    # so its outcome propagates directly — no sentinel / post-loop re-raise.
+    for attempt in range(attempts - 1):
         try:
             return await operation()
         except OperationalError as exc:
             if not _is_transient_lock_error(exc):
                 raise
-            last_exc = exc
-            if attempt + 1 >= attempts:
-                break
             backoff_s = base_backoff_s * (2**attempt)
             log.warning(
                 "sqlite transient lock on attempt %d/%d (%s); retrying in %.3fs",
@@ -86,7 +93,4 @@ async def run_with_sqlite_busy_retry[T](
                 backoff_s,
             )
             await asyncio.sleep(backoff_s)
-    # Only reachable after the loop broke on the final transient failure; the
-    # transient branch always assigns ``last_exc`` before breaking.
-    assert last_exc is not None
-    raise last_exc
+    return await operation()

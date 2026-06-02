@@ -26,6 +26,7 @@ from typing import Any
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import (
@@ -290,8 +291,6 @@ def _patch_no_op_pipeline(
         captured["phase1"] = {"args": args, "kwargs": kw}
         phase1_calls["n"] += 1
         if phase1_calls["n"] <= phase1_transient_failures:
-            from sqlalchemy.exc import OperationalError
-
             raise OperationalError(
                 "INSERT INTO activity_log ...", {}, Exception("database is locked")
             )

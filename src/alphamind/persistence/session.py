@@ -102,30 +102,32 @@ def _resolve_path(path: str | None) -> str:
     )
 
 
-# ALP-824 — per-transaction BEGIN-mode control. With pysqlite's implicit BEGIN
-# disabled (``isolation_level = None`` in :func:`_apply_pragmas`), SQLAlchemy
-# fires the ``begin`` event on transaction start and :func:`_emit_begin` issues
-# an explicit ``BEGIN <mode>``. ``<mode>`` is read from the connection execution
-# option :data:`_SQLITE_BEGIN_MODE_OPTION`, defaulting to ``DEFERRED`` so every
-# existing transaction is byte-for-byte unchanged; a write unit that races the
-# continuous monitor opts into the up-front write lock with ``IMMEDIATE`` (see
-# :func:`begin_write_immediate`).
+# ALP-824 — selective per-transaction BEGIN-mode control, ASYNC engine only.
+# The scheduler's Phase-1 write unit races the continuous monitor on one WAL DB;
+# :func:`begin_write_immediate` opts that one transaction into ``BEGIN IMMEDIATE``
+# so the write lock is taken up front and ``busy_timeout`` governs contention. To
+# control the BEGIN statement, the async engine disables pysqlite's implicit BEGIN
+# (``isolation_level = None``) and a ``begin`` hook emits ``BEGIN <mode>`` from the
+# ``sqlite_begin_mode`` execution option (default ``DEFERRED``).
+#
+# These two hooks are registered ONLY on the async engine, never the sync one:
+# ``begin_write_immediate`` is async-only (the async Phase-1 unit is its sole
+# caller), and the sync engine must keep pysqlite's lazy implicit BEGIN so that a
+# ``PRAGMA foreign_keys=OFF`` issued inside an Alembic batch migration still runs
+# in autocommit (SQLite silently *ignores* that pragma once a transaction is
+# pending, which would re-enable FK enforcement mid-table-recreate).
 _SQLITE_BEGIN_MODE_OPTION = "sqlite_begin_mode"
 _DEFAULT_BEGIN_MODE = "DEFERRED"
-_VALID_BEGIN_MODES = frozenset({"DEFERRED", "IMMEDIATE", "EXCLUSIVE"})
+_VALID_BEGIN_MODES = frozenset({"DEFERRED", "IMMEDIATE"})
 
 
 def _apply_pragmas(dbapi_connection: Any, _connection_record: Any) -> None:
-    """Fire the four required pragmas and hand BEGIN emission to SQLAlchemy.
+    """Fire the four required pragmas on every fresh DBAPI connection (sync + async).
 
-    Setting ``isolation_level = None`` disables pysqlite's implicit, deferred
-    ``BEGIN`` so the ``begin`` event hook (:func:`_emit_begin`) can issue an
-    explicit ``BEGIN <mode>`` — the seam a Phase-1-style write unit uses to take
-    the SQLite write lock up front via ``BEGIN IMMEDIATE`` (ALP-824). The pragmas
-    then run in this autocommit state, which is where ``PRAGMA journal_mode=WAL``
-    must run anyway (it cannot change journal mode inside a transaction).
+    Pragmas run in pysqlite's autocommit state (it does not implicitly begin a
+    transaction on a ``PRAGMA``), which is where ``PRAGMA journal_mode=WAL`` must
+    run — it cannot change the journal mode inside a transaction.
     """
-    dbapi_connection.isolation_level = None
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA busy_timeout=60000")
@@ -134,15 +136,27 @@ def _apply_pragmas(dbapi_connection: Any, _connection_record: Any) -> None:
     cursor.close()
 
 
+def _disable_implicit_begin(dbapi_connection: Any, _connection_record: Any) -> None:
+    """Hand BEGIN emission to SQLAlchemy so a transaction can opt into IMMEDIATE.
+
+    Async-engine only (ALP-824). Setting ``isolation_level = None`` disables
+    pysqlite's implicit, deferred ``BEGIN`` so the ``begin`` hook
+    (:func:`_emit_begin`) can issue an explicit ``BEGIN <mode>``. Deliberately NOT
+    applied to the sync engine — see the module-level note above on the
+    ``PRAGMA foreign_keys=OFF`` migration interaction.
+    """
+    dbapi_connection.isolation_level = None
+
+
 def _emit_begin(conn: Connection) -> None:
     """Emit an explicit ``BEGIN <mode>`` honoring the ``sqlite_begin_mode`` option.
 
-    Fires on transaction start now that pysqlite's implicit ``BEGIN`` is
-    disabled (:func:`_apply_pragmas`). The mode defaults to ``DEFERRED`` (a read
+    Fires on transaction start now that pysqlite's implicit ``BEGIN`` is disabled
+    (:func:`_disable_implicit_begin`). The mode defaults to ``DEFERRED`` (a read
     snapshot taken on the first SELECT, upgraded on the first write — the prior
-    behavior), so unmarked transactions are unchanged. A caller opts one
-    transaction into the up-front write lock by setting the
-    ``sqlite_begin_mode="IMMEDIATE"`` execution option (ALP-824).
+    locking behavior), so an unmarked async transaction keeps its deferred
+    semantics. A caller opts one transaction into the up-front write lock by
+    setting the ``sqlite_begin_mode="IMMEDIATE"`` execution option (ALP-824).
     """
     mode = conn.get_execution_options().get(_SQLITE_BEGIN_MODE_OPTION, _DEFAULT_BEGIN_MODE)
     if mode not in _VALID_BEGIN_MODES:
@@ -154,14 +168,14 @@ def _emit_begin(conn: Connection) -> None:
     conn.exec_driver_sql(f"BEGIN {mode}")
 
 
-def _register_sqlite_transaction_hooks(sync_engine: Engine) -> None:
-    """Attach the connect (pragmas + isolation) and begin (BEGIN-mode) hooks.
+def _register_immediate_begin_hooks(sync_engine: Engine) -> None:
+    """Enable selective ``BEGIN IMMEDIATE`` on an engine (ALP-824, async only).
 
-    Registered on the sync ``Engine`` and — for the async engine — on its
-    ``sync_engine``, so transaction emission is identical whether the caller is
-    sync or async (ALP-824).
+    For the async engine, pass its ``sync_engine``. Pairs the implicit-begin
+    disable with the BEGIN-mode emitter so :func:`begin_write_immediate` can take
+    the write lock up front. Never registered on the sync engine.
     """
-    event.listen(sync_engine, "connect", _apply_pragmas)
+    event.listen(sync_engine, "connect", _disable_implicit_begin)
     event.listen(sync_engine, "begin", _emit_begin)
 
 
@@ -178,8 +192,17 @@ async def begin_write_immediate(session: AsyncSession) -> None:
 
     Must run before any other statement on *session*: the execution option is
     consumed when the transaction begins, so a transaction already opened by a
-    prior read/write would ignore it.
+    prior read/write would silently ignore it (re-exposing the
+    ``SQLITE_BUSY_SNAPSHOT`` race). The guard below turns that silent footgun into
+    a loud failure rather than a deferred transaction masquerading as IMMEDIATE.
     """
+    if session.in_transaction():
+        msg = (
+            "begin_write_immediate must run before the session opens its "
+            "transaction; one is already active, so BEGIN IMMEDIATE would be "
+            "silently ignored. Call it as the first operation on a fresh session."
+        )
+        raise RuntimeError(msg)
     # Typed as a plain mapping so mypy resolves the ``Mapping[str, Any]`` overload
     # of ``execution_options`` rather than the options TypedDict (which rejects a
     # non-literal key — and ``sqlite_begin_mode`` is a custom key SQLAlchemy passes
@@ -201,7 +224,9 @@ def make_engine(path: str | None = None) -> Engine:
     resolved = _resolve_path(path)
     url = "sqlite:///:memory:" if resolved == ":memory:" else f"sqlite:///{resolved}"
     engine = _sa_create_engine(url)
-    _register_sqlite_transaction_hooks(engine)
+    # Sync engine keeps pysqlite's implicit BEGIN (no begin-mode hooks) — see the
+    # ALP-824 module note: migrations rely on autocommit-timed PRAGMA foreign_keys.
+    event.listen(engine, "connect", _apply_pragmas)
     return engine
 
 
@@ -227,11 +252,13 @@ def make_async_engine(path: str | None = None) -> AsyncEngine:
         else f"sqlite+aiosqlite:///{resolved}"
     )
     engine = _sa_create_async_engine(url)
-    # The sync ``Engine`` underlying an ``AsyncEngine`` exposes the same
-    # ``connect`` / ``begin`` events the sync helper hooks; pragmas fire on every
-    # fresh DBAPI connection and the BEGIN-mode hook governs transaction emission
-    # regardless of whether the caller is sync or async (ALP-824).
-    _register_sqlite_transaction_hooks(engine.sync_engine)
+    # The sync ``Engine`` underlying an ``AsyncEngine`` exposes the same ``connect``
+    # / ``begin`` events. Pragmas fire on every fresh DBAPI connection (as on the
+    # sync engine); the async engine additionally gets the BEGIN-mode hooks so the
+    # Phase-1 write unit can take the write lock up front via ``BEGIN IMMEDIATE``
+    # (ALP-824).
+    event.listen(engine.sync_engine, "connect", _apply_pragmas)
+    _register_immediate_begin_hooks(engine.sync_engine)
     return engine
 
 
