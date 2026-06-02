@@ -28,10 +28,15 @@ from alphamind.config.models.distillation import (
     RegimeClassification,
     RegimeTransition,
 )
+from alphamind.distillation._calibration_core import CalibrationState
 from alphamind.distillation._config_domain import DistillationDomainConfig
+from alphamind.distillation._repository import DailyBarRow, TickerBaselineRow
 from alphamind.distillation._repository_sql import SqlDistillationRepository
 from alphamind.distillation.q1._loaders import load_q1_inputs
 from alphamind.distillation.q1.assemble import (
+    _EmaSummary,
+    _summarize_ema_pairs,
+    _trend_state_payload_for_ticker,
     assemble_q1_blocks,
     assemble_q1_blocks_from_inputs,
 )
@@ -250,3 +255,115 @@ def test_pure_path_matches_session_path_on_populated_universe(
         assert pb.audience == lb.audience
         assert pb.payload == lb.payload
         assert pb.calibration_state == lb.calibration_state
+
+
+# ---------------------------------------------------------------------------
+# ALP-776 — EMA fields must be None (not 0.0) when series is too short
+# ---------------------------------------------------------------------------
+
+# _EMA_PAIR_LONG_PERIOD = 200; _ADX_PERIOD * _RETURN_MIN_LEN + 1 = 29
+_SHORT_SERIES_LEN = 50  # enough for ADX, not enough for EMA pairs
+_CALIBRATED_SERIES_LEN = 210  # satisfies the 200-close minimum
+
+
+def _make_bars(n: int, base: float = 100.0) -> list[DailyBarRow]:
+    return [
+        DailyBarRow(
+            ticker="TEST",
+            period_start=f"2026-01-{(i % 28) + 1:02d}T00:00:00Z",
+            adj_open=base + i * 0.1,
+            adj_high=base + i * 0.1 + 1.0,
+            adj_low=base + i * 0.1 - 1.0,
+            adj_close=base + i * 0.1,
+            adj_volume=1_000_000,
+        )
+        for i in range(n)
+    ]
+
+
+def _calibrated_atr_baseline(ticker: str = "TEST") -> TickerBaselineRow:
+    return TickerBaselineRow(
+        ticker=ticker,
+        baseline_kind="atr",
+        as_of="2026-01-01",
+        mean=2.0,
+        stdev=0.5,
+        n_observations=14,
+        window_days=14,
+        calibration_state="calibrated",
+    )
+
+
+class TestSummarizeEmaPairsNullOnShortSeries:
+    def test_short_series_ema_fields_are_none_not_zero(self) -> None:
+        closes = [100.0 + i * 0.1 for i in range(_SHORT_SERIES_LEN)]
+        result = _summarize_ema_pairs(closes, atr=2.0)
+        assert result.ema_20 is None
+        assert result.ema_20_slope is None
+        assert result.ema_50_slope is None
+        assert result.distance_from_ema_20_in_atr is None
+
+    def test_short_series_bootstrap_reason_is_set(self) -> None:
+        closes = [100.0 + i * 0.1 for i in range(_SHORT_SERIES_LEN)]
+        result = _summarize_ema_pairs(closes, atr=2.0)
+        assert result.bootstrap_reason is not None
+        assert "ema_pairs_min_closes" in result.bootstrap_reason
+        assert str(_SHORT_SERIES_LEN) in result.bootstrap_reason
+
+    def test_calibrated_series_ema_fields_are_real_floats(self) -> None:
+        closes = [100.0 + i * 0.1 for i in range(_CALIBRATED_SERIES_LEN)]
+        result = _summarize_ema_pairs(closes, atr=2.0)
+        assert result.ema_20 is not None
+        assert result.ema_20_slope is not None
+        assert result.ema_50_slope is not None
+        assert result.distance_from_ema_20_in_atr is not None
+        assert result.bootstrap_reason is None
+        assert isinstance(result.ema_20, float)
+
+    def test_ema_summary_type_annotation_is_optional(self) -> None:
+        """_EmaSummary fields carry float | None annotations (not bare float)."""
+        for field_name in ("ema_20", "ema_20_slope", "ema_50_slope", "distance_from_ema_20_in_atr"):
+            annotation = _EmaSummary.__dataclass_fields__[field_name].type
+            assert annotation is not float, (
+                f"_EmaSummary.{field_name} is bare float — must be float | None"
+            )
+
+
+class TestTrendStatePayloadNullOnAccumulatingEma:
+    def test_accumulating_ticker_ema_fields_are_null_in_payload(self) -> None:
+        bars = _make_bars(_SHORT_SERIES_LEN)
+        result = _trend_state_payload_for_ticker(
+            ticker="TEST",
+            bars=bars,
+            atr_baseline=_calibrated_atr_baseline(),
+        )
+        assert result is not None, "Expected a payload, got None (bars too short for ADX?)"
+        payload, _cal_state, _reason = result
+        assert payload["ema_20"] is None
+        assert payload["ema_20_slope"] is None
+        assert payload["ema_50_slope"] is None
+        assert payload["distance_from_ema_20_in_atr"] is None
+
+    def test_accumulating_ticker_calibration_state_is_accumulating(self) -> None:
+        bars = _make_bars(_SHORT_SERIES_LEN)
+        result = _trend_state_payload_for_ticker(
+            ticker="TEST",
+            bars=bars,
+            atr_baseline=_calibrated_atr_baseline(),
+        )
+        assert result is not None
+        _payload, cal_state, _reason = result
+        assert cal_state is CalibrationState.ACCUMULATING
+
+    def test_calibrated_ticker_ema_fields_are_real_floats_in_payload(self) -> None:
+        bars = _make_bars(_CALIBRATED_SERIES_LEN)
+        result = _trend_state_payload_for_ticker(
+            ticker="TEST",
+            bars=bars,
+            atr_baseline=_calibrated_atr_baseline(),
+        )
+        assert result is not None
+        payload, _cal_state, _reason = result
+        assert payload["ema_20"] is not None
+        assert isinstance(payload["ema_20"], float)
+        assert payload["distance_from_ema_20_in_atr"] is not None

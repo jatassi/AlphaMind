@@ -439,10 +439,10 @@ def _annotate_intra_sector_rank(
 class _EmaSummary:
     """EMA-pair derived summary for the trend-state payload."""
 
-    ema_20: float
-    ema_20_slope: float
-    ema_50_slope: float
-    distance_from_ema_20_in_atr: float
+    ema_20: float | None
+    ema_20_slope: float | None
+    ema_50_slope: float | None
+    distance_from_ema_20_in_atr: float | None
     bootstrap_reason: str | None
 
 
@@ -452,10 +452,10 @@ def _summarize_ema_pairs(closes: Sequence[float], atr: float) -> _EmaSummary:
         ema_pairs = compute_ema_pairs(list(closes))
     except ValueError:
         return _EmaSummary(
-            ema_20=0.0,
-            ema_20_slope=0.0,
-            ema_50_slope=0.0,
-            distance_from_ema_20_in_atr=0.0,
+            ema_20=None,
+            ema_20_slope=None,
+            ema_50_slope=None,
+            distance_from_ema_20_in_atr=None,
             bootstrap_reason=(f"ema_pairs_min_closes: {len(closes)} < {_EMA_PAIR_LONG_PERIOD}"),
         )
     return _EmaSummary(
@@ -545,10 +545,12 @@ def _trend_state_payload_for_ticker(
     adx = compute_adx(highs, lows, closes, period=_ADX_PERIOD)
     atr = compute_atr(highs, lows, closes, period=_ATR_PERIOD)
     ema = _summarize_ema_pairs(closes, atr=float(atr))
+    # None slopes (EMA still accumulating) → 0.0 sentinel → range_bound;
+    # CalibrationState.ACCUMULATING (returned below) signals payload unreliability.
     trend_state = classify_trend_state(
         adx=float(adx.value),
-        ema_20_slope=ema.ema_20_slope,
-        ema_50_slope=ema.ema_50_slope,
+        ema_20_slope=ema.ema_20_slope if ema.ema_20_slope is not None else 0.0,
+        ema_50_slope=ema.ema_50_slope if ema.ema_50_slope is not None else 0.0,
     )
     year_window = closes[-_FIFTY_TWO_WEEK_DAYS:] if len(closes) >= _FIFTY_TWO_WEEK_DAYS else closes
     range_pct = compute_fifty_two_week_range_percentile(
@@ -567,7 +569,7 @@ def _trend_state_payload_for_ticker(
         "ema_20": ema.ema_20,
         "ema_20_slope": ema.ema_20_slope,
         "ema_50_slope": ema.ema_50_slope,
-        "distance_from_ema_20_in_atr": float(ema.distance_from_ema_20_in_atr),
+        "distance_from_ema_20_in_atr": ema.distance_from_ema_20_in_atr,
         "fifty_two_week_range_percentile": float(range_pct),
         "volatility_regime": vol_regime,
         "atr_regime": atr_regime_label,
