@@ -468,6 +468,12 @@ def test_decision_not_execution_contract_with_composition_root_exception() -> No
         # marketable-entry rewrite to re-price enter-now entries before dispatch.
         f"{pkg}.server -> alphamind.execution.broker_adapter.entry_pricing",
         f"{pkg}.server -> alphamind.execution.broker_adapter.quotes",
+        # ALP-836 — atomicity-first order persistence interleaves the per-command
+        # pre-commit/backfill/teardown with the broker dispatch in the composition
+        # root (dispatch), and finalizes the envelope audit via the same module
+        # after the loop (server). Same permanent carve-out as the persist edge.
+        f"{pkg}.dispatch -> alphamind.execution.write_paths.phase2.atomic",
+        f"{pkg}.server -> alphamind.execution.write_paths.phase2.atomic",
         "alphamind.state.config -> alphamind.execution.corporate_actions.config",
     }
     assert set(ignored) == expected_edges, (
