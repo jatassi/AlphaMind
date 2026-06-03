@@ -93,10 +93,12 @@ def stub_order_row(
     direction: str = OrderDirection.BUY.value,
     status: str = OrderStatus.FILLED.value,
     alpaca_order_id: str | None = None,
+    client_order_id: str | None = None,
 ) -> OrderRow:
     # ``alpaca_order_id`` defaults to the synthetic ``alp-{order_id}`` placeholder;
     # pass a real broker UUID to exercise the alpaca_order_id-keyed resolution
-    # path (ALP-746).
+    # path (ALP-746). ``client_order_id`` defaults to NULL; pass the command_id to
+    # exercise the ALP-836 client_order_id-keyed (pre-backfill) resolution path.
     resolved_alpaca_id = alpaca_order_id or f"alp-{order_id}"
     return OrderRow(
         order_id=order_id,
@@ -120,6 +122,7 @@ def stub_order_row(
         remaining_quantity=1.0,
         modification_count=0,
         metadata_json='{"originating_thesis_id":null,"originating_pm_command_id":null,"age_hours":0.0}',
+        client_order_id=client_order_id,
     )
 
 
