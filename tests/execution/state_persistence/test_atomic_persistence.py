@@ -397,3 +397,47 @@ async def test_backfill_pending_submit_orders_noop_without_match(
     assert row is not None
     assert row.status == OrderStatus.PENDING_SUBMIT.value
     assert row.alpaca_order_id.startswith("alp-")
+
+
+# ---------------------------------------------------------------------------
+# Integrity guard — phase2 stamp withheld on a PENDING_SUBMIT strand
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_invocation_has_pending_submit_strand_detects_and_scopes(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-836 — the integrity guard flags THIS invocation's stuck PENDING_SUBMIT
+    row (a lost post-submit backfill), is scoped to its command_id prefix, and
+    clears once the row is backfilled to PENDING."""
+    from alphamind.execution.write_paths.phase2.atomic import (
+        invocation_has_pending_submit_strand,
+    )
+
+    _, factory = db
+    await _seed_open_close_substrate(factory)
+    # A command_id whose prefix matches the invocation (inv-{invocation_id}.…).
+    command_id = f"{_INV}.ENV-SA-1.0.0"
+    result = _accepted_result(0, command_id)
+    await precommit_command(factory, invocation_id=_INV, command=_close_command(), result=result)
+
+    async with factory() as session:
+        assert await invocation_has_pending_submit_strand(session, invocation_id=_INV) is True
+        # A different invocation's stamp is unaffected by this strand.
+        assert (
+            await invocation_has_pending_submit_strand(
+                session, invocation_id="inv-2099-01-01T00:00:00Z-zzzz"
+            )
+            is False
+        )
+
+    # Once backfilled to PENDING, the strand is cleared.
+    await backfill_command_broker_ids(
+        factory,
+        command=_close_command(),
+        result=result,
+        dispatch_result=_dispatch_result("real-uuid"),
+    )
+    async with factory() as session:
+        assert await invocation_has_pending_submit_strand(session, invocation_id=_INV) is False

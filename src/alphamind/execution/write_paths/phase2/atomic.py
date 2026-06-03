@@ -64,7 +64,7 @@ from alphamind.execution.write_paths.phase2.close import _close_order_id
 from alphamind.execution.write_paths.phase2.open import _new_open_ids
 from alphamind.persistence.session import begin_write_immediate
 from alphamind.portfolio_state.records.orders import OrderRole, OrderStatus
-from alphamind.state.invocation_context.context import InvocationHandle, stamp_phase_completion
+from alphamind.state.invocation_context.context import InvocationHandle
 from alphamind.state.tables.orders import OrderRow
 
 logger = logging.getLogger(__name__)
@@ -364,21 +364,16 @@ async def finalize_broker_envelope(
     abandoned_entries: tuple[Any, ...],
     reprice_markers: tuple[Any, ...],
 ) -> None:
-    """Emit the envelope-level audit + stamp phase-2 after the per-command loop.
+    """Emit the envelope-level audit after the per-command loop, in a fresh txn.
 
     The order rows + capital are already durably committed per command by
     :func:`precommit_command` / :func:`backfill_command_broker_ids`; this writes
-    the once-per-envelope ``pm_decision``, one ``command_abandoned`` per
-    broker-rejected command, and stamps ``phase2_completed_at`` — all in a fresh
-    transaction.
-
-    **Integrity guard (ALP-836).** ``phase2_completed_at`` is stamped ONLY when
-    every accepted command has a committed ``orders`` row (resolvable by its
-    ``client_order_id``). The GS strand was ``phase2_completed_at`` stamped while
-    ``commands_submitted=0`` and a live broker order had no local row; atomicity
-    already makes that impossible, but if a backfill were somehow lost the guard
-    refuses to mark the phase complete and logs loudly, leaving the invocation
-    visibly incomplete + recoverable rather than papering over a missing row.
+    only the once-per-envelope ``pm_decision`` and one ``command_abandoned`` per
+    broker-rejected command. The ``phase2_completed_at`` stamp is NOT emitted here
+    — it is the orchestrator's single authoritative phase-2 completion stamp,
+    guarded by :func:`invocation_has_pending_submit_strand` (ALP-836). Stamping
+    here too would be both redundant and ineffective (the orchestrator's
+    unconditional stamp would overwrite it).
     """
     async with session_factory() as session:
         await begin_write_immediate(session)
@@ -399,34 +394,55 @@ async def finalize_broker_envelope(
                 failure_reason=str(abandoned.failure_reason),
                 retry_attempt_count=int(abandoned.retry_attempt_count),
             )
-        if await _accepted_rows_all_committed(session, accepted_command_ids):
-            await stamp_phase_completion(handle, column="phase2_completed_at")
         await session.commit()
 
 
-async def _accepted_rows_all_committed(
-    session: AsyncSession, accepted_command_ids: tuple[str, ...]
-) -> bool:
-    """Integrity guard: every accepted command has a committed order row.
+def _command_id_prefix(invocation_id: str) -> str:
+    """The ``client_order_id`` prefix for this invocation's commands.
 
-    Logs (and returns ``False``) when an accepted command's ``client_order_id``
-    has no ``orders`` row — the signature of a lost writeback behind a live broker
-    order. Returns ``True`` for the empty case (a no-command envelope completes
-    phase 2 normally).
+    Mirrors :func:`alphamind.execution.oms.command_ids.derive_pm_command_id`: a
+    PM command_id is ``inv-{invocation_id}.{envelope}.{ordinal}.{seq}``, with the
+    ``inv-`` prefix added only when absent.
     """
-    for cid in accepted_command_ids:
-        row = (
-            await session.execute(select(OrderRow.order_id).where(OrderRow.client_order_id == cid))
-        ).scalar_one_or_none()
-        if row is None:
-            logger.error(
-                "phase2 integrity: accepted command %s has no committed order row; "
-                "refusing to stamp phase2_completed_at (lost writeback behind a live "
-                "broker order) — invocation left recoverable",
-                cid,
+    prefix = invocation_id if invocation_id.startswith("inv-") else f"inv-{invocation_id}"
+    return f"{prefix}."
+
+
+async def invocation_has_pending_submit_strand(
+    session: AsyncSession, *, invocation_id: str
+) -> bool:
+    """Integrity guard: does this invocation have an order stuck in PENDING_SUBMIT?
+
+    A row left in ``PENDING_SUBMIT`` is a durable order whose post-submit
+    ``alpaca_order_id`` backfill was lost — a live broker order whose local row
+    never got its broker id (the GS-husk signature, now made impossible to LOSE
+    by atomicity but still detectable if the backfill commit itself was lost).
+    The orchestrator withholds the ``phase2_completed_at`` stamp when this returns
+    ``True``, leaving the invocation visibly incomplete + recoverable (the Phase-1
+    reconcile order-backfill repairs it next run). Scoped to THIS invocation by
+    the ``client_order_id`` prefix so a prior-invocation strand under recovery
+    does not block an otherwise-clean phase 2. Logs loudly on a hit.
+    """
+    prefix = _command_id_prefix(invocation_id)
+    rows = (
+        await session.execute(
+            select(OrderRow.order_id, OrderRow.client_order_id).where(
+                OrderRow.status == OrderStatus.PENDING_SUBMIT.value,
+                OrderRow.client_order_id.is_not(None),
             )
-            return False
-    return True
+        )
+    ).all()
+    for order_id, client_order_id in rows:
+        if client_order_id and client_order_id.startswith(prefix):
+            logger.error(
+                "phase2 integrity: order %s (client_order_id=%s) stuck in PENDING_SUBMIT — "
+                "a lost post-submit backfill behind a live broker order; withholding "
+                "phase2_completed_at (invocation left recoverable for the reconcile backfill)",
+                order_id,
+                client_order_id,
+            )
+            return True
+    return False
 
 
 __all__ = [
@@ -434,6 +450,7 @@ __all__ = [
     "backfill_command_broker_ids",
     "dispatched_order_id",
     "finalize_broker_envelope",
+    "invocation_has_pending_submit_strand",
     "persist_cancel_writeback",
     "precommit_command",
     "session_factory_from_handle",

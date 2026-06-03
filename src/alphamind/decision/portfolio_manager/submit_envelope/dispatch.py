@@ -290,6 +290,16 @@ async def _route_one_command(
                 _abandoned(result, command, stale_reason, 0),
             )
 
+    # Resolve the broker-dispatch context BEFORE the pre-commit mutates state.
+    # For an ADJUST this reads the ORIGINAL protective leg's real
+    # ``alpaca_order_id`` (the broker REPLACE target) while it is still PENDING —
+    # the pre-commit cancels that leg and inserts a synthetic-id replacement, so
+    # resolving context afterwards would target the placeholder id (ALP-836).
+    # OPEN needs no context (returns ``{}``); CLOSE/ADD/CANCEL read rows the
+    # pre-commit does not mutate. A resolution failure (missing position/leg)
+    # propagates before any pre-commit, leaving no half-mutated graph.
+    context_kwargs = await _dispatcher_context_for(command, invocation_handle=ctx.invocation_handle)
+
     # (A) Pre-commit the durable order row before dispatch. If it cannot land, the
     # command aborts without dispatching — never a broker order without a row.
     try:
@@ -309,9 +319,6 @@ async def _route_one_command(
 
     # (B) Dispatch to the broker.
     try:
-        context_kwargs = await _dispatcher_context_for(
-            command, invocation_handle=ctx.invocation_handle
-        )
         outcome = await ctx.dispatch(
             command,
             client=ctx.client,
