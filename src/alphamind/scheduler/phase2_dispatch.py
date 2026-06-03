@@ -36,6 +36,7 @@ from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
 from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.orders import OrderRow
 
 if TYPE_CHECKING:
     from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
@@ -66,22 +67,37 @@ class PMResultLike(Protocol):
 
 
 async def _envelope_already_persisted(
-    session: AsyncSession, *, invocation_id: str, envelope_id: str
+    session: AsyncSession,
+    *,
+    invocation_id: str,
+    envelope_id: str,
+    accepted_command_ids: tuple[str, ...],
 ) -> bool:
     """Return whether this envelope's Phase-2 outcome was already persisted in-turn.
 
-    Detection key (ALP-763): the single ``PM_DECISION`` activity-log row
-    :func:`persist_envelope_outcome` emits as the last semantic step of an
-    accepted envelope's writeback, scoped to ``(invocation_id, envelope_id)``.
-    The query is cheap — ``activity_log`` is indexed on
-    ``(event_type, invocation_id)`` — and the marker is reliable because the
-    broker-active PM turn commits the full writeback (orders + capital
-    reservation + ``pm_decision``) atomically on its own session before the
-    fill can arrive, so a present ``pm_decision`` row implies the rest of the
-    graph landed too. ``envelope_id`` is read off the rehydrated typed detail
-    rather than matched against the encoded JSON so the key never couples to
-    the serialization format.
+    Primary key (ALP-836 / scope G): a pre-committed ``orders`` row keyed by the
+    deterministic ``client_order_id`` (= an accepted command_id). The broker-active
+    PM turn commits each command's durable order row BEFORE its broker dispatch
+    (atomicity-first), so a present row is the load-bearing signal that the in-turn
+    writeback ran — and it survives a lost ``pm_decision`` finalize commit, which
+    keying solely off the ``PM_DECISION`` marker (the prior ALP-763 approach) would
+    not. Re-running ``persist_envelope_outcome`` here would PK-collide on those
+    rows + double the capital reservation, so we skip.
+
+    Fallback: the ``PM_DECISION`` activity-log row scoped to
+    ``(invocation_id, envelope_id)`` — covers an all-rejected envelope (no order
+    rows) and any legacy path that emits the marker without a client_order_id row.
+    ``envelope_id`` is read off the rehydrated typed detail rather than matched
+    against the encoded JSON so the key never couples to the serialization format.
     """
+    if accepted_command_ids:
+        order_stmt = (
+            select(OrderRow.order_id)
+            .where(OrderRow.client_order_id.in_(accepted_command_ids))
+            .limit(1)
+        )
+        if (await session.execute(order_stmt)).first() is not None:
+            return True
     stmt = select(ActivityLogRow).where(
         ActivityLogRow.event_type == EventType.PM_DECISION.value,
         ActivityLogRow.invocation_id == invocation_id,
@@ -135,8 +151,14 @@ async def dispatch_phase2(
         # counts are derived purely from ``submission_results`` and run regardless.
         async with session_factory() as session:
             handle = InvocationHandle(session=session, invocation_id=invocation_id)
+            accepted_command_ids = tuple(
+                r.command_id for r in entry.submission_results if r.status == "accepted"
+            )
             already_persisted = await _envelope_already_persisted(
-                session, invocation_id=invocation_id, envelope_id=str(entry.envelope.envelope_id)
+                session,
+                invocation_id=invocation_id,
+                envelope_id=str(entry.envelope.envelope_id),
+                accepted_command_ids=accepted_command_ids,
             )
             if not already_persisted:
                 # ALP-711 scope (C) — when the submit_envelope wrapper routed
