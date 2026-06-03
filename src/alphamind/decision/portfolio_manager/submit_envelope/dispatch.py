@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from sqlalchemy import select as _select
@@ -35,6 +36,7 @@ from alphamind.decision.portfolio_manager.submit_envelope.types import (
     SubmissionResult,
     _BreachedRule,
 )
+from alphamind.persistence.retry import run_with_sqlite_busy_retry
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -51,6 +53,7 @@ from alphamind.state.tables.positions_codec import (
 
 if TYPE_CHECKING:
     from alpaca.trading.client import TradingClient
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from alphamind.config.models.execution import ExecutionConfig
     from alphamind.execution.broker_adapter import AccountStateQueries, QuoteSource
@@ -179,11 +182,9 @@ async def _route_through_broker(
     missing/erroring quote leaves the command to the broker's own validation.
     Skipped entirely when ``quote_source`` is absent (the fixture-only path).
     """
-    # Lazy imports — broker_adapter ships an alpaca-py dependency we don't
-    # want loaded for the fixture-only path.
-    from alphamind.execution.broker_adapter import GatewaySubmissionFailed, Submitted
-    from alphamind.execution.broker_adapter.errors import classify_alpaca_error
-    from alphamind.execution.broker_adapter.order_options import PermanentRejectionError
+    # Lazy import — atomic ships an alpaca-py-adjacent dependency we don't want
+    # loaded for the fixture-only path; only the handle-present path reaches it.
+    from alphamind.execution.write_paths.phase2.atomic import session_factory_from_handle
 
     dispatch: BrokerDispatch
     if broker_dispatch is not None:
@@ -196,6 +197,28 @@ async def _route_through_broker(
         # at the Protocol seam — exactly the swap-point we want to accept.
         dispatch = cast(BrokerDispatch, dispatch_command_to_broker)
 
+    # ALP-836 — atomicity-first persistence. When an invocation_handle is present
+    # (the production broker-active path), each command's durable ``orders`` row is
+    # committed BEFORE its broker dispatch (pre-commit), then backfilled with the
+    # real broker id after (or torn down on rejection), each in its own retryable
+    # transaction on a fresh session derived from the handle's async engine. When
+    # absent (the fixture-only broker path), dispatch stays a no-persistence no-op,
+    # exactly as before.
+    session_factory = (
+        session_factory_from_handle(invocation_handle) if invocation_handle is not None else None
+    )
+    invocation_id = invocation_handle.invocation_id if invocation_handle is not None else None
+    ctx = _BrokerRouteCtx(
+        client=client,
+        queries=queries,
+        execution_config=execution_config,
+        invocation_handle=invocation_handle,
+        dispatch=dispatch,
+        quote_source=quote_source,
+        session_factory=session_factory,
+        invocation_id=invocation_id,
+    )
+
     updated: list[SubmissionResult] = []
     dispatches: list[BrokerDispatchResult | None] = []
     abandoned: list[_AbandonedCommandEntry] = []
@@ -205,93 +228,248 @@ async def _route_through_broker(
             updated.append(result)
             dispatches.append(None)
             continue
-        if quote_source is not None:
-            stale_reason = await _stale_anchor_rejection_reason(command, quote_source=quote_source)
-            if stale_reason is not None:
-                logger.warning(
-                    "broker_dispatch: rejecting %s before submission — %s",
-                    result.command_id,
-                    stale_reason,
-                )
-                updated.append(
-                    _to_rejection(result, code=_STALE_ANCHOR_REJECTION_CODE, reason=stale_reason)
-                )
-                dispatches.append(None)
-                abandoned.append(
-                    _AbandonedCommandEntry(
-                        command_id=result.command_id,
-                        command_type=_COMMAND_TYPE_TO_LABEL[command.command_type],
-                        failure_reason=stale_reason,
-                        retry_attempt_count=0,
-                    )
-                )
-                continue
-        try:
-            context_kwargs = await _dispatcher_context_for(
-                command, invocation_handle=invocation_handle
-            )
-            outcome = await dispatch(
-                command,
-                client=client,
-                queries=queries,
-                execution=execution_config,
-                client_order_id=ClientOrderId(result.command_id),
-                **context_kwargs,
-            )
-        except PermanentRejectionError as exc:
-            # Single-leg options translator wraps permanent rejections in this
-            # typed exception; surface the broker code in gateway_reason.
-            updated.append(_to_rejection(result, code=exc.rejection.code, reason=str(exc)))
-            dispatches.append(None)
-            continue
-        except Exception as exc:
-            # Translation seam per runtime §G1: equity/mleg translators
-            # re-raise raw alpaca-py APIError on permanent failure; classify
-            # here for a uniform rejection shape. The wide catch is warranted
-            # because the translator's exception hierarchy is not contracted;
-            # ``classify_alpaca_error`` decides on a per-instance basis and we
-            # re-raise any non-broker exception so config bugs surface
-            # unchanged. ``BaseException`` (``CancelledError``) propagates so
-            # cooperative cancellation is never re-classified.
-            rejection = classify_alpaca_error(exc)
-            if rejection is None:
-                raise
-            updated.append(
-                _to_rejection(
-                    result,
-                    code=rejection.code,
-                    reason=(
-                        f"Alpaca rejected: code={rejection.code}, "
-                        f"http_status={rejection.http_status}, "
-                        f"message={rejection.alpaca_message!r}"
-                    ),
-                )
-            )
-            dispatches.append(None)
-            continue
-        if isinstance(outcome, GatewaySubmissionFailed):
-            reason = (
-                f"gateway_submission_failed: {outcome.reason} "
-                f"(last_error={outcome.last_error_class}, attempts={outcome.attempt_count})"
-            )
-            updated.append(_to_rejection(result, code="broker_gateway_failure", reason=reason))
-            dispatches.append(None)
-            abandoned.append(
-                _AbandonedCommandEntry(
-                    command_id=result.command_id,
-                    command_type=_COMMAND_TYPE_TO_LABEL[command.command_type],
-                    failure_reason=reason,
-                    retry_attempt_count=outcome.attempt_count,
-                )
-            )
-            continue
-        assert isinstance(outcome, Submitted)
-        # Swap the validator's synthetic order_id for the broker's real
-        # alpaca_order_id so the submission_log carries the broker-grade id.
-        updated.append(_with_real_order_id(result, outcome.payload.alpaca_order_id))
-        dispatches.append(outcome.payload)
+        new_result, dispatch_entry, abandoned_entry = await _route_one_command(
+            result=result, command=command, ctx=ctx
+        )
+        updated.append(new_result)
+        dispatches.append(dispatch_entry)
+        if abandoned_entry is not None:
+            abandoned.append(abandoned_entry)
 
     return tuple(updated), tuple(dispatches), tuple(abandoned)
+
+
+@dataclass(frozen=True)
+class _BrokerRouteCtx:
+    """Per-invocation broker-routing context threaded to :func:`_route_one_command`."""
+
+    client: TradingClient
+    queries: AccountStateQueries
+    execution_config: ExecutionConfig
+    invocation_handle: Any | None
+    dispatch: BrokerDispatch
+    quote_source: QuoteSource | None
+    session_factory: async_sessionmaker[AsyncSession] | None
+    invocation_id: str | None
+
+
+async def _route_one_command(
+    *,
+    result: SubmissionResult,
+    command: OMSCommand,
+    ctx: _BrokerRouteCtx,
+) -> tuple[SubmissionResult, BrokerDispatchResult | None, _AbandonedCommandEntry | None]:
+    """Route one accepted command: stale-check → (A) pre-commit → (B) dispatch →
+    (C) backfill / (F) teardown. Returns ``(updated_result, dispatch_entry,
+    abandoned_entry)``.
+
+    Atomicity (ALP-836) is active when ``ctx.session_factory`` is present: the
+    durable ``orders`` row is committed before dispatch and a command whose
+    pre-commit cannot land is aborted WITHOUT dispatching (no broker order without
+    a durable row). CANCEL has no pre-commit (it creates no row); its writeback
+    runs after a successful broker cancel. The per-command persistence is handled
+    by the self-guarding ``_precommit_if_atomic`` / ``_abandon_if_atomic`` /
+    ``_finalize_dispatch_if_persisting`` helpers (no-ops on the fixture path).
+    """
+    from alphamind.execution.broker_adapter import GatewaySubmissionFailed, Submitted
+    from alphamind.execution.broker_adapter.errors import classify_alpaca_error
+    from alphamind.execution.broker_adapter.order_options import PermanentRejectionError
+
+    # ALP-747 stale-anchor coherence backstop — rejected before any pre-commit.
+    if ctx.quote_source is not None:
+        stale_reason = await _stale_anchor_rejection_reason(command, quote_source=ctx.quote_source)
+        if stale_reason is not None:
+            logger.warning(
+                "broker_dispatch: rejecting %s before submission — %s",
+                result.command_id,
+                stale_reason,
+            )
+            return (
+                _to_rejection(result, code=_STALE_ANCHOR_REJECTION_CODE, reason=stale_reason),
+                None,
+                _abandoned(result, command, stale_reason, 0),
+            )
+
+    # (A) Pre-commit the durable order row before dispatch. If it cannot land, the
+    # command aborts without dispatching — never a broker order without a row.
+    try:
+        await _precommit_if_atomic(ctx, command=command, result=result)
+    except Exception:
+        logger.exception(
+            "broker_dispatch: pre-commit failed for %s; aborting WITHOUT dispatch "
+            "(no broker order without a durable row)",
+            result.command_id,
+        )
+        reason = "precommit_failed: durable order row could not be committed pre-dispatch"
+        return (
+            _to_rejection(result, code="precommit_failed", reason=reason),
+            None,
+            _abandoned(result, command, reason, 0),
+        )
+
+    # (B) Dispatch to the broker.
+    try:
+        context_kwargs = await _dispatcher_context_for(
+            command, invocation_handle=ctx.invocation_handle
+        )
+        outcome = await ctx.dispatch(
+            command,
+            client=ctx.client,
+            queries=ctx.queries,
+            execution=ctx.execution_config,
+            client_order_id=ClientOrderId(result.command_id),
+            **context_kwargs,
+        )
+    except PermanentRejectionError as exc:
+        await _abandon_if_atomic(
+            ctx, command=command, result=result, reason=f"permanent_rejection: {exc.rejection.code}"
+        )
+        return _to_rejection(result, code=exc.rejection.code, reason=str(exc)), None, None
+    except Exception as exc:
+        # Translation seam per runtime §G1: equity/mleg translators re-raise raw
+        # alpaca-py APIError on permanent failure; classify here for a uniform
+        # rejection shape. The wide catch is warranted — the translator's
+        # exception hierarchy is not contracted — and any non-broker exception is
+        # re-raised so config bugs surface unchanged. ``BaseException``
+        # (``CancelledError``) propagates so cancellation is never re-classified.
+        rejection = classify_alpaca_error(exc)
+        if rejection is None:
+            raise
+        await _abandon_if_atomic(
+            ctx, command=command, result=result, reason=f"alpaca_rejection: {rejection.code}"
+        )
+        return (
+            _to_rejection(
+                result,
+                code=rejection.code,
+                reason=(
+                    f"Alpaca rejected: code={rejection.code}, "
+                    f"http_status={rejection.http_status}, "
+                    f"message={rejection.alpaca_message!r}"
+                ),
+            ),
+            None,
+            None,
+        )
+    if isinstance(outcome, GatewaySubmissionFailed):
+        reason = (
+            f"gateway_submission_failed: {outcome.reason} "
+            f"(last_error={outcome.last_error_class}, attempts={outcome.attempt_count})"
+        )
+        await _abandon_if_atomic(ctx, command=command, result=result, reason=reason)
+        return (
+            _to_rejection(result, code="broker_gateway_failure", reason=reason),
+            None,
+            _abandoned(result, command, reason, outcome.attempt_count),
+        )
+
+    assert isinstance(outcome, Submitted)
+    # (C) Backfill the real broker id + flip PENDING_SUBMIT → PENDING (order
+    # commands); for CANCEL, persist the cancel writeback now that the broker
+    # confirmed the cancel.
+    await _finalize_dispatch_if_persisting(
+        ctx, command=command, result=result, dispatch_result=outcome.payload
+    )
+    # Swap the validator's synthetic order_id for the broker's real one so the
+    # submission_log carries the broker-grade id.
+    return _with_real_order_id(result, outcome.payload.alpaca_order_id), outcome.payload, None
+
+
+async def _precommit_if_atomic(
+    ctx: _BrokerRouteCtx, *, command: OMSCommand, result: SubmissionResult
+) -> None:
+    """(A) Pre-commit the durable order row in its own retryable transaction.
+
+    No-op when persistence is off (fixture path) or for CANCEL (no order row).
+    Raises on a pre-commit that cannot land after retries — the caller aborts the
+    command WITHOUT dispatching.
+    """
+    if (
+        ctx.session_factory is None
+        or ctx.invocation_id is None
+        or isinstance(command, CancelCommand)
+    ):
+        return
+    from alphamind.execution.write_paths.phase2.atomic import precommit_command
+
+    await run_with_sqlite_busy_retry(
+        partial(
+            precommit_command,
+            ctx.session_factory,
+            invocation_id=ctx.invocation_id,
+            command=command,
+            result=result,
+        )
+    )
+
+
+async def _abandon_if_atomic(
+    ctx: _BrokerRouteCtx, *, command: OMSCommand, result: SubmissionResult, reason: str
+) -> None:
+    """(F) Tear down a pre-committed command whose broker dispatch was rejected.
+
+    No-op when persistence is off or for CANCEL (no pre-committed row exists).
+    """
+    if (
+        ctx.session_factory is None
+        or ctx.invocation_id is None
+        or isinstance(command, CancelCommand)
+    ):
+        return
+    from alphamind.execution.write_paths.phase2.atomic import abandon_command
+
+    await abandon_command(
+        ctx.session_factory,
+        invocation_id=ctx.invocation_id,
+        command=command,
+        result=result,
+        reason=reason,
+    )
+
+
+async def _finalize_dispatch_if_persisting(
+    ctx: _BrokerRouteCtx,
+    *,
+    command: OMSCommand,
+    result: SubmissionResult,
+    dispatch_result: BrokerDispatchResult,
+) -> None:
+    """(C) After a successful dispatch: backfill the real broker id (order
+    commands) or persist the cancel writeback (CANCEL). No-op when persistence is
+    off (fixture path).
+    """
+    if ctx.session_factory is None or ctx.invocation_id is None:
+        return
+    from alphamind.execution.write_paths.phase2.atomic import (
+        backfill_command_broker_ids,
+        persist_cancel_writeback,
+    )
+
+    if isinstance(command, CancelCommand):
+        await persist_cancel_writeback(
+            ctx.session_factory, invocation_id=ctx.invocation_id, command=command
+        )
+        return
+    await run_with_sqlite_busy_retry(
+        partial(
+            backfill_command_broker_ids,
+            ctx.session_factory,
+            command=command,
+            result=result,
+            dispatch_result=dispatch_result,
+        )
+    )
+
+
+def _abandoned(
+    result: SubmissionResult, command: OMSCommand, reason: str, attempt_count: int
+) -> _AbandonedCommandEntry:
+    return _AbandonedCommandEntry(
+        command_id=result.command_id,
+        command_type=_COMMAND_TYPE_TO_LABEL[command.command_type],
+        failure_reason=reason,
+        retry_attempt_count=attempt_count,
+    )
 
 
 async def _dispatcher_context_for(

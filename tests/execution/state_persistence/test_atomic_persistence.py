@@ -26,7 +26,6 @@ from alphamind.portfolio_state.records.orders import OrderRole, OrderStatus
 from alphamind.state.tables.cash_ledger import CASH_LEDGER_SINGLETON_ID, CashLedgerRow
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.positions import PositionRow
-from tests.execution.state_persistence.conftest import _make_state_persistence_config
 from tests.execution.state_persistence.test_phase2_write_path import (
     _accepted_result,
     _active_bracket,
@@ -40,7 +39,6 @@ from tests.execution.state_persistence.test_phase2_write_path import (
 )
 
 _INV = "inv-2026-05-08T12:00:00Z-aaaa"
-_CFG = _make_state_persistence_config()
 
 
 def _dispatch_result(
@@ -103,9 +101,7 @@ async def test_precommit_close_writes_pending_submit_row(
     cmd = _close_command()
     result = _accepted_result(0, "inv-X.ENV-SA-1.0.0")
 
-    landed = await precommit_command(
-        factory, invocation_id=_INV, command=cmd, result=result, config=_CFG
-    )
+    landed = await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
 
     assert landed is True
     row = await _read_order_by_client_order_id(factory, "inv-X.ENV-SA-1.0.0")
@@ -126,9 +122,7 @@ async def test_precommit_open_reserves_capital_and_marks_entry_pending_submit(
     cmd = _limit_open()
     result = _accepted_result(0, "inv-X.ENV-SA-2.0.0")
 
-    landed = await precommit_command(
-        factory, invocation_id=_INV, command=cmd, result=result, config=_CFG
-    )
+    landed = await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
 
     assert landed is True
     row = await _read_order_by_client_order_id(factory, "inv-X.ENV-SA-2.0.0")
@@ -149,13 +143,9 @@ async def test_precommit_is_idempotent_no_double_reservation(
     cmd = _limit_open()
     result = _accepted_result(0, "inv-X.ENV-SA-3.0.0")
 
-    assert await precommit_command(
-        factory, invocation_id=_INV, command=cmd, result=result, config=_CFG
-    )
+    assert await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
     # Replay — must be a no-op: one row, one reservation.
-    assert await precommit_command(
-        factory, invocation_id=_INV, command=cmd, result=result, config=_CFG
-    )
+    assert await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
 
     async with factory() as sess:
         rows = (
@@ -184,7 +174,7 @@ async def test_backfill_flips_to_pending_and_stamps_real_id(
     await _seed_open_close_substrate(factory)
     cmd = _close_command()
     result = _accepted_result(0, "inv-X.ENV-SA-4.0.0")
-    await precommit_command(factory, invocation_id=_INV, command=cmd, result=result, config=_CFG)
+    await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
 
     await backfill_command_broker_ids(
         factory,
@@ -209,7 +199,7 @@ async def test_backfill_open_stamps_native_bracket_leg_ids(
     await _seed_cash_ledger(factory)
     cmd = _limit_open()
     result = _accepted_result(0, "inv-X.ENV-SA-5.0.0")
-    await precommit_command(factory, invocation_id=_INV, command=cmd, result=result, config=_CFG)
+    await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
 
     await backfill_command_broker_ids(
         factory,
@@ -248,7 +238,7 @@ async def test_abandon_close_cancels_row(
     await _seed_open_close_substrate(factory)
     cmd = _close_command()
     result = _accepted_result(0, "inv-X.ENV-SA-6.0.0")
-    await precommit_command(factory, invocation_id=_INV, command=cmd, result=result, config=_CFG)
+    await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
 
     await abandon_command(
         factory, invocation_id=_INV, command=cmd, result=result, reason="broker_gateway_failure"
@@ -268,7 +258,7 @@ async def test_abandon_open_tears_down_graph_and_releases_capital(
     await _seed_cash_ledger(factory)
     cmd = _limit_open()
     result = _accepted_result(0, "inv-X.ENV-SA-7.0.0")
-    await precommit_command(factory, invocation_id=_INV, command=cmd, result=result, config=_CFG)
+    await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
     assert await _read_reserved_capital(factory) == pytest.approx(9000.0)
 
     await abandon_command(

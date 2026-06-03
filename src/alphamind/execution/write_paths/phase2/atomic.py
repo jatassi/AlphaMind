@@ -32,7 +32,9 @@ post-dispatch path, not here.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -41,22 +43,31 @@ from alphamind._kernel.ids import OrderId
 from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
+    CancelCommand,
     CloseCommand,
     OMSCommand,
     OpenCommand,
 )
+from alphamind.commands.pm_envelope import PMEnvelope
 from alphamind.commands.submission_results import SubmissionResult
 from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
+from alphamind.execution.write_paths.phase2 import (
+    _dispatch_command_writeback,
+    _emit_pm_decision,
+    persist_command_abandoned,
+)
 from alphamind.execution.write_paths.phase2._shared import _instrument_ticker_key
 from alphamind.execution.write_paths.phase2.add import _add_order_id
 from alphamind.execution.write_paths.phase2.adjust import _adjust_replacement_order_id
 from alphamind.execution.write_paths.phase2.cancel import _writeback_cancel
 from alphamind.execution.write_paths.phase2.close import _close_order_id
 from alphamind.execution.write_paths.phase2.open import _new_open_ids
+from alphamind.persistence.session import begin_write_immediate
 from alphamind.portfolio_state.records.orders import OrderRole, OrderStatus
-from alphamind.state.config import StatePersistenceConfig
-from alphamind.state.invocation_context.context import InvocationHandle
+from alphamind.state.invocation_context.context import InvocationHandle, stamp_phase_completion
 from alphamind.state.tables.orders import OrderRow
+
+logger = logging.getLogger(__name__)
 
 # Native-bracket protective-leg role → the ``leg_alpaca_order_ids`` key the broker
 # dispatch returns (ALP-746). Mirrors ``open._build_protective_orders``: Alpaca's
@@ -65,6 +76,22 @@ _LEG_ROLE_TO_DISPATCH_KEY: dict[str, str] = {
     OrderRole.TAKE_PROFIT.value: "take_profit",
     OrderRole.PRICE_STOP.value: "stop_loss",
 }
+
+
+def session_factory_from_handle(
+    handle: InvocationHandle,
+) -> async_sessionmaker[AsyncSession]:
+    """Build a fresh ``async_sessionmaker`` bound to *handle*'s async engine.
+
+    The atomicity-first steps each need their OWN committed transaction on a fresh
+    session (so ``run_with_sqlite_busy_retry`` can re-open a clean session per
+    attempt), independent of the long-lived ``handle.session`` the PM turn uses
+    for broker-routing reads. ``handle.session.bind`` is the async engine the
+    subprocess worker built (with the ALP-824 BEGIN-mode hooks), so a sessionmaker
+    rebuilt from it supports ``begin_write_immediate``.
+    """
+    bind = handle.session.bind
+    return async_sessionmaker(bind=bind, expire_on_commit=False)
 
 
 def dispatched_order_id(command: OMSCommand, *, command_id: str) -> str | None:
@@ -93,7 +120,6 @@ async def precommit_command(
     invocation_id: str,
     command: OMSCommand,
     result: SubmissionResult,
-    config: StatePersistenceConfig,
 ) -> bool:
     """(A) Commit the durable pre-broker intent for *command* in its own transaction.
 
@@ -105,16 +131,11 @@ async def precommit_command(
     Idempotent: if a row with this ``client_order_id`` already exists the whole
     writeback is skipped — no duplicate order row, no double capital reservation.
     """
-    from alphamind.execution.write_paths.phase2 import _dispatch_command_writeback
-
-    del config  # forward-shaped; no knobs consumed at this story.
     oid = dispatched_order_id(command, command_id=result.command_id)
     if oid is None:
         return False
 
     async with session_factory() as session:
-        from alphamind.persistence.session import begin_write_immediate
-
         await begin_write_immediate(session)
         # Idempotency: an existing row for this client_order_id means a prior
         # (replayed) pre-commit already landed — re-running would PK-collide on
@@ -167,8 +188,6 @@ async def backfill_command_broker_ids(
         return
     now = datetime.now(UTC).isoformat()
     async with session_factory() as session:
-        from alphamind.persistence.session import begin_write_immediate
-
         await begin_write_immediate(session)
         row = (
             await session.execute(
@@ -263,14 +282,10 @@ async def abandon_command(
     A no-op when the pre-committed row is absent (the pre-commit never landed —
     nothing reached the broker either, by the A-before-B guarantee).
     """
-    from alphamind.commands.command_models import CancelCommand
-
     oid = dispatched_order_id(command, command_id=result.command_id)
     if oid is None:
         return
     async with session_factory() as session:
-        from alphamind.persistence.session import begin_write_immediate
-
         await begin_write_immediate(session)
         row = await session.get(OrderRow, oid)
         if row is None:
@@ -316,9 +331,110 @@ async def _reinstate_adjusted_legs(session: AsyncSession, *, replacement_row: Or
             row.status = OrderStatus.PENDING.value
 
 
+async def persist_cancel_writeback(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    invocation_id: str,
+    command: OMSCommand,
+) -> None:
+    """Persist a CANCEL's writeback after a successful broker cancel, own transaction.
+
+    CANCEL creates no durable order row of its own — it cancels an existing order
+    at the broker — so it has no pre-commit; its writeback (mark the target order
+    CANCELLED, release reserved capital, dissolve the bracket if it targets an
+    entry) runs here, after the broker confirms the cancel. A lost CANCEL
+    writeback is self-healing: the broker's ``canceled`` event drives the order
+    CANCELLED via terminal-status-sync.
+    """
+    if not isinstance(command, CancelCommand):
+        return
+    async with session_factory() as session:
+        await begin_write_immediate(session)
+        handle = InvocationHandle(session=session, invocation_id=invocation_id)
+        await _writeback_cancel(handle, command=command)
+        await session.commit()
+
+
+async def finalize_broker_envelope(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    invocation_id: str,
+    envelope: PMEnvelope,
+    accepted_command_ids: tuple[str, ...],
+    abandoned_entries: tuple[Any, ...],
+    reprice_markers: tuple[Any, ...],
+) -> None:
+    """Emit the envelope-level audit + stamp phase-2 after the per-command loop.
+
+    The order rows + capital are already durably committed per command by
+    :func:`precommit_command` / :func:`backfill_command_broker_ids`; this writes
+    the once-per-envelope ``pm_decision``, one ``command_abandoned`` per
+    broker-rejected command, and stamps ``phase2_completed_at`` — all in a fresh
+    transaction.
+
+    **Integrity guard (ALP-836).** ``phase2_completed_at`` is stamped ONLY when
+    every accepted command has a committed ``orders`` row (resolvable by its
+    ``client_order_id``). The GS strand was ``phase2_completed_at`` stamped while
+    ``commands_submitted=0`` and a live broker order had no local row; atomicity
+    already makes that impossible, but if a backfill were somehow lost the guard
+    refuses to mark the phase complete and logs loudly, leaving the invocation
+    visibly incomplete + recoverable rather than papering over a missing row.
+    """
+    async with session_factory() as session:
+        await begin_write_immediate(session)
+        handle = InvocationHandle(session=session, invocation_id=invocation_id)
+        await _emit_pm_decision(
+            handle,
+            envelope=envelope,
+            command_ids=accepted_command_ids,
+            reprice_markers=reprice_markers,
+        )
+        for abandoned in abandoned_entries:
+            await persist_command_abandoned(
+                handle,
+                envelope_id=str(envelope.envelope_id),
+                command_id=str(abandoned.command_id),
+                originating_agent=str(envelope.source_provenance),
+                command_type=abandoned.command_type,
+                failure_reason=str(abandoned.failure_reason),
+                retry_attempt_count=int(abandoned.retry_attempt_count),
+            )
+        if await _accepted_rows_all_committed(session, accepted_command_ids):
+            await stamp_phase_completion(handle, column="phase2_completed_at")
+        await session.commit()
+
+
+async def _accepted_rows_all_committed(
+    session: AsyncSession, accepted_command_ids: tuple[str, ...]
+) -> bool:
+    """Integrity guard: every accepted command has a committed order row.
+
+    Logs (and returns ``False``) when an accepted command's ``client_order_id``
+    has no ``orders`` row — the signature of a lost writeback behind a live broker
+    order. Returns ``True`` for the empty case (a no-command envelope completes
+    phase 2 normally).
+    """
+    for cid in accepted_command_ids:
+        row = (
+            await session.execute(select(OrderRow.order_id).where(OrderRow.client_order_id == cid))
+        ).scalar_one_or_none()
+        if row is None:
+            logger.error(
+                "phase2 integrity: accepted command %s has no committed order row; "
+                "refusing to stamp phase2_completed_at (lost writeback behind a live "
+                "broker order) — invocation left recoverable",
+                cid,
+            )
+            return False
+    return True
+
+
 __all__ = [
     "abandon_command",
     "backfill_command_broker_ids",
     "dispatched_order_id",
+    "finalize_broker_envelope",
+    "persist_cancel_writeback",
     "precommit_command",
+    "session_factory_from_handle",
 ]

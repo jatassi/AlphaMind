@@ -430,6 +430,14 @@ ignore_imports =
     # carve-out as the ALP-711 entries above.
     alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.broker_adapter.entry_pricing
     alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.broker_adapter.quotes
+    # ALP-836 — atomicity-first order persistence. ``submit_envelope.dispatch``
+    # interleaves the per-command pre-commit / backfill / teardown
+    # (``execution.write_paths.phase2.atomic``) with the broker dispatch in the PM
+    # composition root, and ``submit_envelope.server`` finalizes the envelope-level
+    # audit (pm_decision + phase2 stamp) via the same module after the loop. Same
+    # permanent composition-root carve-out as the ``persist -> ...phase2`` edge.
+    alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.write_paths.phase2.atomic
+    alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.write_paths.phase2.atomic
     # ALP-470 hoisted ``state.config`` out of execution but its
     # ``CorporateActionsConfig`` field still reaches into
     # ``execution.corporate_actions.config`` (the per-feature CA knobs).

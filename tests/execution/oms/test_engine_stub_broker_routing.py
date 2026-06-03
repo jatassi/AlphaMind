@@ -110,6 +110,7 @@ from alphamind.state.tables.cash_ledger_codec import (
     cash_ledger_record_to_row,
 )
 from alphamind.state.tables.orders import OrderRow
+from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.positions_codec import (
     record_to_row as position_record_to_row,
 )
@@ -914,9 +915,11 @@ async def test_pm_envelope_gateway_failure_writes_command_abandoned(
     tmp_path: Any,
 ) -> None:
     """When the broker dispatch returns ``GatewaySubmissionFailed`` (retry
-    window exhausted), the OMS writes a ``command_abandoned`` activity-log
-    entry and the per-command result is rejected — the entry order is NOT
-    persisted."""
+    window exhausted), the OMS writes a ``command_abandoned`` activity-log entry
+    and the per-command result is rejected. ALP-836 — the entry was durably
+    pre-committed BEFORE dispatch, so the gateway failure tears it down to a
+    CANCELLED entry + drives the never-filled position terminal (never a live
+    broker order without a local row), rather than leaving no row."""
     import httpx
 
     from alphamind.decision.portfolio_manager.submit_envelope import (
@@ -975,11 +978,17 @@ async def test_pm_envelope_gateway_failure_writes_command_abandoned(
         )
         await ctx.__aexit__(None, None, None)
 
-        # No entry order persisted — the writeback was skipped on gateway failure.
+        # ALP-836 — the entry was durably pre-committed before dispatch, so the
+        # gateway failure leaves a torn-down CANCELLED entry (no live broker order
+        # without a row) and the never-filled position is driven terminal.
         async with factory() as sess:
             order_rows = (await sess.execute(select(OrderRow))).scalars().all()
             entry_orders = [o for o in order_rows if o.order_role == "ENTRY"]
-            assert entry_orders == []
+            assert len(entry_orders) == 1
+            assert entry_orders[0].status == "CANCELLED"
+            pos = await sess.get(PositionRow, entry_orders[0].position_id)
+            assert pos is not None
+            assert pos.status == "CANCELLED"
 
             log_rows = (
                 (
@@ -1312,10 +1321,13 @@ async def test_pm_envelope_permanent_rejection_carries_code_in_gateway_reason(
         # The PermanentRejection code lands in gateway_reason.
         assert result.rejection_payload.gateway_reason == "insufficient_buying_power"
 
-        # No entry order was persisted — rejection short-circuits writeback.
+        # ALP-836 — pre-committed before dispatch, so a permanent rejection leaves
+        # a torn-down CANCELLED entry rather than no row.
         async with factory() as sess:
             order_rows = (await sess.execute(select(OrderRow))).scalars().all()
-            assert [o for o in order_rows if o.order_role == "ENTRY"] == []
+            entry_orders = [o for o in order_rows if o.order_role == "ENTRY"]
+            assert len(entry_orders) == 1
+            assert entry_orders[0].status == "CANCELLED"
     finally:
         await async_engine.dispose()
 
