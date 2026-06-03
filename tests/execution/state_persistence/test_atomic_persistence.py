@@ -300,3 +300,100 @@ def test_dispatched_order_id_is_none_for_cancel() -> None:
 
     cancel = CancelCommand(command_type="cancel", order_id=OrderId("ord-x"), cancel_reason="stale")
     assert dispatched_order_id(cancel, command_id="inv-X.ENV-SA-9.0.0") is None
+
+
+# ---------------------------------------------------------------------------
+# (E) reconcile order→broker-link backfill (lost-(C) recovery)
+# ---------------------------------------------------------------------------
+
+
+def _order_snapshot(*, order_id: str, client_order_id: str, status: str = "filled") -> object:
+    from datetime import UTC, datetime
+
+    from alphamind.execution.broker_adapter.queries import OrderSnapshot
+
+    return OrderSnapshot(
+        order_id=order_id,
+        client_order_id=client_order_id,
+        symbol="NVDA",
+        asset_class="us_equity",
+        qty=10.0,
+        filled_qty=10.0 if status == "filled" else 0.0,
+        side="sell",
+        order_type="market",
+        time_in_force="day",
+        order_class="simple",
+        status=status,
+        submitted_at=datetime(2026, 6, 3, tzinfo=UTC),
+        filled_at=None,
+        replaced_by=None,
+        replaces=None,
+        legs=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_backfill_pending_submit_orders_recovers_lost_link(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-836 (E) — a PENDING_SUBMIT row whose post-submit backfill was lost is
+    recovered: matched to the live Alpaca order by client_order_id, stamped with
+    the real alpaca_order_id, and flipped PENDING_SUBMIT → PENDING."""
+    from alphamind.execution.corporate_actions.reconciliation import (
+        backfill_pending_submit_orders,
+    )
+    from alphamind.state.invocation_context.context import InvocationHandle
+
+    _, factory = db
+    await _seed_open_close_substrate(factory)
+    cmd = _close_command()
+    result = _accepted_result(0, "inv-X.ENV-SA-E.0.0")
+    # Pre-commit but NEVER backfill — the row is stuck in PENDING_SUBMIT with the
+    # synthetic placeholder (the lost-(C) state).
+    await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
+    row = await _read_order_by_client_order_id(factory, "inv-X.ENV-SA-E.0.0")
+    assert row is not None
+    assert row.status == OrderStatus.PENDING_SUBMIT.value
+    assert row.alpaca_order_id.startswith("alp-")
+
+    snapshot = _order_snapshot(order_id="real-broker-uuid", client_order_id="inv-X.ENV-SA-E.0.0")
+    async with factory() as session:
+        handle = InvocationHandle(session=session, invocation_id=_INV)
+        n = await backfill_pending_submit_orders(handle, alpaca_orders=(snapshot,))  # type: ignore[arg-type]
+        await session.commit()
+    assert n == 1
+
+    row = await _read_order_by_client_order_id(factory, "inv-X.ENV-SA-E.0.0")
+    assert row is not None
+    assert row.alpaca_order_id == "real-broker-uuid"
+    assert row.status == OrderStatus.PENDING.value
+
+
+@pytest.mark.asyncio
+async def test_backfill_pending_submit_orders_noop_without_match(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A PENDING_SUBMIT row with no matching Alpaca order is left untouched (the
+    dispatch likely never landed) — no spurious id stamp."""
+    from alphamind.execution.corporate_actions.reconciliation import (
+        backfill_pending_submit_orders,
+    )
+    from alphamind.state.invocation_context.context import InvocationHandle
+
+    _, factory = db
+    await _seed_open_close_substrate(factory)
+    cmd = _close_command()
+    result = _accepted_result(0, "inv-X.ENV-SA-F.0.0")
+    await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
+
+    other = _order_snapshot(order_id="unrelated", client_order_id="some-other-command")
+    async with factory() as session:
+        handle = InvocationHandle(session=session, invocation_id=_INV)
+        n = await backfill_pending_submit_orders(handle, alpaca_orders=(other,))  # type: ignore[arg-type]
+        await session.commit()
+    assert n == 0
+
+    row = await _read_order_by_client_order_id(factory, "inv-X.ENV-SA-F.0.0")
+    assert row is not None
+    assert row.status == OrderStatus.PENDING_SUBMIT.value
+    assert row.alpaca_order_id.startswith("alp-")

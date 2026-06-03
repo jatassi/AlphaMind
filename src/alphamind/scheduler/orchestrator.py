@@ -724,6 +724,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
                 market_inputs=phase1_inputs.market_inputs,
                 config=state_persistence_config,
                 borrow_cost_resolver=borrow_cost_resolver,
+                alpaca_orders=phase1_inputs.alpaca_orders,
             )
             await _update_row_phase1(
                 write_handle,
