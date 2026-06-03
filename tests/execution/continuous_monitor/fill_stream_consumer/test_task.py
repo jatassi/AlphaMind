@@ -952,6 +952,7 @@ async def _seed_leg_order(
     role: str,
     status: str,
     alpaca_order_id: str,
+    client_order_id: str | None = None,
 ) -> None:
     """Add a protective-leg / entry order to the seeded bracket-1 cluster."""
     async with session_factory() as session:
@@ -964,6 +965,7 @@ async def _seed_leg_order(
                 direction="SELL",
                 status=status,
                 alpaca_order_id=alpaca_order_id,
+                client_order_id=client_order_id,
             )
         )
         await session.commit()
@@ -1066,6 +1068,40 @@ class TestUuidResolution:
         rows = await _read_fill_records(session_factory)
         assert len(rows) == 1
         assert rows[0].order_id == "ORD-NVDA-entry-1"
+
+    async def test_in_window_fill_resolves_to_pending_submit_row_by_client_order_id(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """ALP-836 — a fast fill arriving in the submit→backfill window resolves to
+        the durable pre-committed row by ``client_order_id`` even though the row
+        still carries the synthetic placeholder (real ``alpaca_order_id`` not yet
+        backfilled), so the fill attributes instead of stranding."""
+        command_id = "inv-20260603.ENV-SA-1.0.0"
+        real_uuid = uuid4()
+        # Pre-committed row: PENDING_SUBMIT, client_order_id set, synthetic alpaca
+        # id (the real broker UUID has NOT been backfilled yet).
+        await _seed_leg_order(
+            session_factory,
+            order_id="ORD-CLOSE-pos-1-1",
+            role="CLOSE",
+            status="PENDING_SUBMIT",
+            alpaca_order_id="alp-ORD-CLOSE-pos-1-1",
+            client_order_id=command_id,
+        )
+        # The fill carries the command_id as its client_order_id and the real
+        # broker UUID — the UUID lookup would miss the synthetic placeholder.
+        report = _report_from_order(
+            _build_order(order_id=real_uuid, client_order_id=command_id),
+            event="fill",
+            price=150.0,
+            qty=1.0,
+        )
+
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
+
+        rows = await _read_fill_records(session_factory)
+        assert len(rows) == 1
+        assert rows[0].order_id == "ORD-CLOSE-pos-1-1"
 
     async def test_fill_for_unknown_order_is_quarantined_not_dropped(
         self, session_factory: async_sessionmaker[AsyncSession]

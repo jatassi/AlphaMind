@@ -483,20 +483,43 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
 
     # Step 6: SQL writeback (opt-in via invocation_handle).
     #
-    # ``defer_writeback=True`` (the scheduler orchestrator's PM path) normally
-    # defers persistence to the orchestrator's separate ``dispatch_phase2``
-    # stage so the same envelope is not written twice. BUT when broker routing
-    # is active a real order was just dispatched to the broker inside this turn
-    # — and a fast fill (≈3s) can beat the deferred order-row commit (observed
-    # ≈74s later), leaving the continuous monitor unable to resolve the fill
-    # (ALP-763). On that path we write through + COMMIT here, in the PM turn,
-    # right after dispatch, closing the race to ~0; ``dispatch_phase2`` then
-    # detects the already-persisted envelope and skips it (no double-write, no
-    # double capital reservation, no duplicate audit emits).
+    # ALP-836 — atomicity-first. On the production broker-active path
+    # (``invocation_handle`` present + broker triple wired) the per-command durable
+    # ``orders`` rows + capital reservations were ALREADY committed before each
+    # broker dispatch inside ``_route_through_broker`` (pre-commit), then backfilled
+    # with the real broker id (or torn down on rejection) — each in its own
+    # retryable transaction. So here we only finalize the envelope-level audit:
+    # the once-per-envelope ``pm_decision``, one ``command_abandoned`` per
+    # broker-rejected command, and the (integrity-guarded) ``phase2_completed_at``
+    # stamp. ``dispatch_phase2`` then detects the already-persisted envelope (by
+    # the pre-committed order rows) and skips it.
+    #
+    # The non-broker in-tool path (``defer_writeback=False``, no broker triple —
+    # the continuous monitor / standalone composition / debug-e2e) keeps the
+    # single-pass writeback on the handle's session, committed by the surrounding
+    # ``InvocationContext``. The deferred non-broker path writes nothing here;
+    # ``dispatch_phase2`` is the sole writer.
     broker_routing_active = (
         client is not None and queries is not None and execution_config is not None
     )
-    if invocation_handle is not None and (not defer_writeback or broker_routing_active):
+    if broker_routing_active and invocation_handle is not None:
+        from alphamind.execution.write_paths.phase2.atomic import (
+            finalize_broker_envelope,
+            session_factory_from_handle,
+        )
+
+        accepted_command_ids = tuple(
+            r.command_id for r in submission_results if r.status == "accepted"
+        )
+        await finalize_broker_envelope(
+            session_factory_from_handle(invocation_handle),
+            invocation_id=invocation_handle.invocation_id,
+            envelope=envelope,
+            accepted_command_ids=accepted_command_ids,
+            abandoned_entries=abandoned_entries,
+            reprice_markers=reprice_markers,
+        )
+    elif invocation_handle is not None and not defer_writeback:
         await _persist_envelope_outcome_via_phase2(
             invocation_handle,
             envelope,
@@ -515,13 +538,6 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
                 failure_reason=abandoned.failure_reason,
                 retry_attempt_count=abandoned.retry_attempt_count,
             )
-        if defer_writeback and broker_routing_active:
-            # The production (broker-active) path threads a normal writable
-            # session that is NOT wrapped by an InvocationContext committing on
-            # exit (the in-tool / debug-e2e paths run ``defer_writeback=False``
-            # under their own context). Commit it here so the freshly-persisted
-            # order rows are durable the instant the broker fill could arrive.
-            await invocation_handle.session.commit()
 
     # Step 7: serialize.
     response = {

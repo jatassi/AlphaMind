@@ -25,16 +25,21 @@ from alphamind.state.tables.orders import OrderRow
 
 log = logging.getLogger(__name__)
 
-# A zero-fill terminal sync only ever applies to a PENDING order: the consumer
-# gates this path on ``cumulative_filled_quantity == 0`` (see the caller
-# ``_sync_terminal_status_if_any``), and a zero-fill order has never been
-# advanced past PENDING by Phase 1's fill integration. Restricting the source
-# state to PENDING makes the contract exact and the write idempotent — a
-# re-processed terminal event (live + recovery overlap) finds a non-PENDING
-# status and no-ops, so ``last_update_timestamp`` is not bumped twice. (A
-# partially-filled order is handled by the fill path + Phase 1, not here, so
-# there is no "don't clobber a FILLED status" case for this guard to defend.)
-_TRANSITIONABLE_FROM: frozenset[str] = frozenset({OrderStatus.PENDING.value})
+# A zero-fill terminal sync applies to a PENDING or PENDING_SUBMIT order: the
+# consumer gates this path on ``cumulative_filled_quantity == 0`` (see the caller
+# ``_sync_terminal_status_if_any``), and a zero-fill order has never been advanced
+# past those pre-fill states by Phase 1's fill integration. PENDING_SUBMIT
+# (ALP-836) is included so a broker ``canceled`` / ``expired`` event for an order
+# whose post-submit ``alpaca_order_id`` backfill was lost (still PENDING_SUBMIT)
+# still drives it terminal rather than leaving it wedged. Restricting the source
+# state to these two makes the write idempotent — a re-processed terminal event
+# (live + recovery overlap) finds an already-terminal status and no-ops, so
+# ``last_update_timestamp`` is not bumped twice. (A partially-filled order is
+# handled by the fill path + Phase 1, not here, so there is no "don't clobber a
+# FILLED status" case for this guard to defend.)
+_TRANSITIONABLE_FROM: frozenset[str] = frozenset(
+    {OrderStatus.PENDING.value, OrderStatus.PENDING_SUBMIT.value}
+)
 
 
 async def sync_terminal_order_status(

@@ -224,6 +224,7 @@ class TestOrderDuration:
 class TestOrderStatus:
     def test_members(self) -> None:
         assert set(OrderStatus) == {
+            OrderStatus.PENDING_SUBMIT,
             OrderStatus.PENDING,
             OrderStatus.PARTIALLY_FILLED,
             OrderStatus.FILLED,

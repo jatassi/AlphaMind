@@ -311,6 +311,20 @@ class TestRoundTripCodec:
         assert readback.position_id is None
         assert readback.avg_fill_price is None
 
+    def test_client_order_id_round_trips(self) -> None:
+        """ALP-836 — the durable-intent client_order_id survives the round-trip
+        both set and unset (default None)."""
+        from alphamind._kernel.ids import ClientOrderId
+
+        with_coid = _market_order(
+            status=OrderStatus.PENDING_SUBMIT,
+            client_order_id=ClientOrderId("inv-X.ENV-SA-1.0.0"),
+        )
+        assert row_to_record(record_to_row(with_coid)) == with_coid
+        assert record_to_row(with_coid).client_order_id == "inv-X.ENV-SA-1.0.0"
+        # Default (protective-leg / never-dispatched) — stays None.
+        assert row_to_record(record_to_row(_market_order())).client_order_id is None
+
     def test_partial_fill_with_chain_round_trips(self) -> None:
         """Spot-check from story verification: partially-filled active order, chain length 2."""
         record = _market_order(
@@ -437,6 +451,7 @@ class TestOrdersMigration:
                 "remaining_quantity",
                 "modification_count",
                 "metadata_json",
+                "client_order_id",
             }
 
             indexes = {idx["name"] for idx in insp.get_indexes("orders")}
@@ -445,6 +460,7 @@ class TestOrdersMigration:
                 "ix_orders_position_id",
                 "ix_orders_bracket_id",
                 "ix_orders_alpaca_order_id",
+                "ix_orders_client_order_id",
             } <= indexes
         finally:
             eng.dispose()

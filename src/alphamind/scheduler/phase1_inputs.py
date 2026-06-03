@@ -53,6 +53,7 @@ from alphamind.execution.broker_adapter.protocols import (
 )
 from alphamind.execution.broker_adapter.queries import (
     AccountStateQueries,
+    OrderSnapshot,
     PositionSnapshot,
     TradeAccountSnapshot,
 )
@@ -66,6 +67,7 @@ from alphamind.execution.corporate_actions.types import (
     PositionLookup,
 )
 from alphamind.persistence.models import AssetUniverse, MacroObservations, OhlcvBars
+from alphamind.portfolio_state.records.orders import OrderStatus
 from alphamind.portfolio_state.records.positions import Direction
 from alphamind.risk_guardrails.guardrail_evaluation import (
     IvProvider,
@@ -76,6 +78,7 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
+from alphamind.state.tables.orders import OrderRow
 
 _AccountQueriesFactory = Callable[[VenueConfig, ExecutionMode], AccountStateQueriesP]
 _CorporateActionsQueriesFactory = Callable[[VenueConfig, ExecutionMode], CorporateActionsQueriesP]
@@ -165,6 +168,10 @@ class Phase1Inputs:
     alpaca_account: TradeAccountSnapshot | None
     market_inputs: MarketInputs
     staleness_flag: bool
+    # ALP-836 — Alpaca orders for the order→broker-link backfill, fetched ONLY
+    # when local ``PENDING_SUBMIT`` rows exist (a lost post-submit commit). Empty
+    # in the common case so no extra ``GET /v2/orders`` call is made.
+    alpaca_orders: tuple[OrderSnapshot, ...] = ()
 
 
 def _alpaca_client_factory(
@@ -615,42 +622,13 @@ async def gather_phase1_inputs(
     ca_factory = ca_queries_factory or _default_ca_queries_factory
     quote_factory = quote_source_factory or _default_quote_source_factory
 
-    staleness_flag = False
-
-    account: TradeAccountSnapshot | None
-    positions: tuple[PositionSnapshot, ...]
-    try:
-        queries = account_factory(venue_config, execution_mode)
-    except RuntimeError as exc:
-        log.warning(
-            "phase1_inputs: broker-adapter construction failed (%s); degrading "
-            "alpaca_account/alpaca_positions to defaults",
-            exc,
-        )
-        account = None
-        positions = ()
-        staleness_flag = True
-    else:
-        try:
-            account = queries.get_account()
-        except RuntimeError as exc:
-            log.warning(
-                "phase1_inputs: AccountStateQueries.get_account() failed (%s); "
-                "degrading alpaca_account to None",
-                exc,
-            )
-            account = None
-            staleness_flag = True
-        try:
-            positions = queries.get_positions()
-        except RuntimeError as exc:
-            log.warning(
-                "phase1_inputs: AccountStateQueries.get_positions() failed (%s); "
-                "degrading alpaca_positions to empty tuple",
-                exc,
-            )
-            positions = ()
-            staleness_flag = True
+    account, positions, alpaca_orders, staleness_flag = await _gather_broker_state(
+        handle,
+        account_factory,
+        venue_config=venue_config,
+        execution_mode=execution_mode,
+        as_of=as_of,
+    )
 
     ca_activities: tuple[CorporateActionActivity, ...] = ()
     if positions:
@@ -734,4 +712,104 @@ async def gather_phase1_inputs(
         alpaca_account=account,
         market_inputs=market_inputs,
         staleness_flag=staleness_flag,
+        alpaca_orders=alpaca_orders,
     )
+
+
+async def _gather_broker_state(
+    handle: InvocationHandle,
+    account_factory: _AccountQueriesFactory,
+    *,
+    venue_config: VenueConfig,
+    execution_mode: ExecutionMode,
+    as_of: datetime,
+) -> tuple[
+    TradeAccountSnapshot | None, tuple[PositionSnapshot, ...], tuple[OrderSnapshot, ...], bool
+]:
+    """Fetch account + positions + (conditionally) orders from the broker.
+
+    Each sub-fetch degrades independently to a no-op default and flips the
+    returned staleness flag on a ``RuntimeError`` (parent decision H). Returns
+    ``(account, positions, alpaca_orders, staleness_flag)``. The orders fetch
+    (ALP-836) only runs when a local ``PENDING_SUBMIT`` row exists; an orders
+    failure does NOT escalate staleness (the rare backfill retries next run).
+    """
+    staleness_flag = False
+    try:
+        queries = account_factory(venue_config, execution_mode)
+    except RuntimeError as exc:
+        log.warning(
+            "phase1_inputs: broker-adapter construction failed (%s); degrading "
+            "alpaca_account/alpaca_positions to defaults",
+            exc,
+        )
+        return None, (), (), True
+
+    account: TradeAccountSnapshot | None
+    try:
+        account = queries.get_account()
+    except RuntimeError as exc:
+        log.warning(
+            "phase1_inputs: AccountStateQueries.get_account() failed (%s); "
+            "degrading alpaca_account to None",
+            exc,
+        )
+        account = None
+        staleness_flag = True
+
+    positions: tuple[PositionSnapshot, ...]
+    try:
+        positions = queries.get_positions()
+    except RuntimeError as exc:
+        log.warning(
+            "phase1_inputs: AccountStateQueries.get_positions() failed (%s); "
+            "degrading alpaca_positions to empty tuple",
+            exc,
+        )
+        positions = ()
+        staleness_flag = True
+
+    alpaca_orders = await _maybe_fetch_orders_for_backfill(handle, queries, as_of=as_of)
+    return account, positions, alpaca_orders, staleness_flag
+
+
+# Lookback window for the ALP-836 order→broker-link backfill fetch. A lost
+# post-submit commit is recent (the orphaning invocation ran in the last day or
+# two); a generous week bounds the ``GET /v2/orders`` page walk while still
+# covering any plausibly-recoverable PENDING_SUBMIT row.
+_ORDER_BACKFILL_LOOKBACK_DAYS = 7
+
+
+async def _maybe_fetch_orders_for_backfill(
+    handle: InvocationHandle,
+    queries: object,
+    *,
+    as_of: datetime,
+) -> tuple[OrderSnapshot, ...]:
+    """Fetch Alpaca orders for the order→broker-link backfill, guarded.
+
+    Returns ``()`` unless a local ``PENDING_SUBMIT`` row exists — the cheap
+    read-phase guard that keeps the common case free of an extra broker call.
+    When one does exist (a lost post-submit commit), fetch the recent order
+    window so :func:`backfill_pending_submit_orders` can match by
+    ``client_order_id``.
+    """
+    has_pending = (
+        await handle.session.execute(
+            select(OrderRow.order_id)
+            .where(OrderRow.status == OrderStatus.PENDING_SUBMIT.value)
+            .limit(1)
+        )
+    ).first() is not None
+    if not has_pending or not isinstance(queries, AccountStateQueries):
+        return ()
+    since = as_of - timedelta(days=_ORDER_BACKFILL_LOOKBACK_DAYS)
+    try:
+        return tuple([snap async for snap in queries.get_orders(status="all", since=since)])
+    except RuntimeError as exc:
+        log.warning(
+            "phase1_inputs: AccountStateQueries.get_orders() failed (%s); skipping the "
+            "order→broker-link backfill this invocation (retries next)",
+            exc,
+        )
+        return ()

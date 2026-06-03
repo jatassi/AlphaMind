@@ -94,6 +94,8 @@ truth. On disagreement, Alpaca wins."
 from __future__ import annotations
 
 import dataclasses
+import json
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Literal
@@ -101,6 +103,7 @@ from typing import Literal
 from sqlalchemy import select
 
 from alphamind.execution.broker_adapter.queries import (
+    OrderSnapshot,
     PositionSnapshot,
     TradeAccountSnapshot,
 )
@@ -112,6 +115,7 @@ from alphamind.portfolio_state.events.activity_log import (
     ReconciliationAlertDetail,
     ReconciliationCorrectionDetail,
 )
+from alphamind.portfolio_state.records.orders import OrderStatus
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -129,6 +133,7 @@ from alphamind.state.tables.cash_ledger import (
     CASH_LEDGER_SINGLETON_ID,
     CashLedgerRow,
 )
+from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.positions_codec import (
     record_to_row as position_record_to_row,
@@ -136,6 +141,20 @@ from alphamind.state.tables.positions_codec import (
 from alphamind.state.tables.positions_codec import (
     row_to_record as position_row_to_record,
 )
+
+log = logging.getLogger(__name__)
+
+# ALP-836 — Alpaca order status → local terminal OrderStatus for the order-link
+# backfill. A non-terminal Alpaca status (new / accepted / partially_filled /
+# filled / …) maps to local PENDING: the order is now broker-known, and Phase-1
+# fill integration (driven by the attributed fill_records row) advances it to
+# FILLED. Only the terminal no-fill dispositions need an explicit local terminal.
+_ALPACA_TERMINAL_TO_LOCAL: dict[str, OrderStatus] = {
+    "canceled": OrderStatus.CANCELLED,
+    "cancelled": OrderStatus.CANCELLED,
+    "expired": OrderStatus.EXPIRED,
+    "rejected": OrderStatus.REJECTED,
+}
 
 # Mirrors phase1.py's tolerance for "quantities are effectively equal".
 # Same threshold gates ALERT emission and ALP-619 auto-correction.
@@ -665,4 +684,86 @@ async def _read_live_position_rows(handle: InvocationHandle) -> list[PositionRow
     return list((await handle.session.execute(stmt)).scalars())
 
 
-__all__ = ["reconcile"]
+# ---------------------------------------------------------------------------
+# ALP-836 — order→broker-link backfill (recovers a lost post-submit commit)
+# ---------------------------------------------------------------------------
+
+
+async def backfill_pending_submit_orders(
+    handle: InvocationHandle,
+    *,
+    alpaca_orders: tuple[OrderSnapshot, ...],
+) -> int:
+    """Recover orders whose post-submit ``alpaca_order_id`` backfill was lost.
+
+    Atomicity-first persistence commits a durable ``orders`` row in
+    ``PENDING_SUBMIT`` (carrying the deterministic ``client_order_id`` and a
+    synthetic ``alp-{order_id}`` placeholder) BEFORE the broker dispatch, then
+    backfills the real ``alpaca_order_id`` + flips to ``PENDING`` after. If that
+    post-submit commit is lost, the row survives in ``PENDING_SUBMIT`` with the
+    synthetic placeholder — a live broker order whose local row has no broker id.
+
+    This pass matches each such row against Alpaca's orders by
+    ``client_order_id`` (Alpaca ``order.client_order_id == command_id``) and
+    backfills the real ``alpaca_order_id`` + chain, flipping ``PENDING_SUBMIT`` →
+    ``PENDING`` (or the broker's terminal disposition). The attributed fill — if
+    any — was never stranded (the fill stream resolves it by ``client_order_id``);
+    this repairs the order→broker link so reconciliation and the fill path see a
+    consistent row.
+
+    A ``PENDING_SUBMIT`` row with NO matching Alpaca order is left untouched and
+    logged: the pre-commit may have landed but the broker dispatch never did
+    (process death between the durable write and the submit) — there is no live
+    broker order to link, and an operator/cleanup resolves it out of band.
+
+    Runs inside the Phase-1 write transaction; the caller commits. Returns the
+    count of rows backfilled. ``alpaca_orders`` is fetched in the read-phase
+    gatherer (never inside the write lock) and is empty when no local
+    ``PENDING_SUBMIT`` rows exist (the common case), so this is a no-op then.
+    """
+    if not alpaca_orders:
+        return 0
+    rows = list(
+        (
+            await handle.session.execute(
+                select(OrderRow).where(
+                    OrderRow.status == OrderStatus.PENDING_SUBMIT.value,
+                    OrderRow.client_order_id.is_not(None),
+                )
+            )
+        ).scalars()
+    )
+    if not rows:
+        return 0
+    by_client_order_id = {o.client_order_id: o for o in alpaca_orders}
+    now = datetime.now(UTC).isoformat()
+    backfilled = 0
+    for row in rows:
+        snapshot = by_client_order_id.get(row.client_order_id or "")
+        if snapshot is None:
+            log.warning(
+                "order-link backfill: PENDING_SUBMIT order_id=%s client_order_id=%s has no "
+                "matching Alpaca order — the broker dispatch likely never landed; leaving "
+                "for operator review",
+                row.order_id,
+                row.client_order_id,
+            )
+            continue
+        new_status = _ALPACA_TERMINAL_TO_LOCAL.get(snapshot.status.lower(), OrderStatus.PENDING)
+        row.alpaca_order_id = snapshot.order_id
+        row.alpaca_order_id_chain_json = json.dumps([snapshot.order_id])
+        row.status = new_status.value
+        row.last_update_timestamp = now
+        backfilled += 1
+        log.warning(
+            "order-link backfill: recovered lost post-submit commit — order_id=%s "
+            "client_order_id=%s alpaca_order_id=%s status=PENDING_SUBMIT→%s",
+            row.order_id,
+            row.client_order_id,
+            snapshot.order_id,
+            new_status.value,
+        )
+    return backfilled
+
+
+__all__ = ["backfill_pending_submit_orders", "reconcile"]

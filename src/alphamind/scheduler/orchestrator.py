@@ -90,6 +90,9 @@ from alphamind.execution.write_paths.phase1 import (
     Phase1Summary,
     process_unprocessed_fills,
 )
+from alphamind.execution.write_paths.phase2.atomic import (
+    invocation_has_pending_submit_strand,
+)
 from alphamind.persistence.retry import run_with_sqlite_busy_retry
 from alphamind.persistence.session import begin_write_immediate
 from alphamind.pipeline.analysis import run_analysis_pipeline
@@ -724,6 +727,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
                 market_inputs=phase1_inputs.market_inputs,
                 config=state_persistence_config,
                 borrow_cost_resolver=borrow_cost_resolver,
+                alpaca_orders=phase1_inputs.alpaca_orders,
             )
             await _update_row_phase1(
                 write_handle,
@@ -838,7 +842,14 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     async with session_factory() as session:
         phase2_handle = InvocationHandle(session=session, invocation_id=invocation_id)
         await _update_row_phase2(phase2_handle, phase2_summary=phase2_summary)
-        await stamp_phase_completion(phase2_handle, column="phase2_completed_at")
+        # ALP-836 integrity guard — the single authoritative phase-2 stamp. Withhold
+        # it (leaving phase2_completed_at NULL + logging loudly) when any order is
+        # stuck in PENDING_SUBMIT for this invocation: a lost post-submit backfill
+        # behind a live broker order. The invocation reads as incomplete + the
+        # Phase-1 reconcile order-backfill repairs it next run, rather than papering
+        # over the strand by marking the phase done.
+        if not await invocation_has_pending_submit_strand(session, invocation_id=invocation_id):
+            await stamp_phase_completion(phase2_handle, column="phase2_completed_at")
         await session.commit()
     progress.phase_done("phase2", commands_submitted=phase2_summary.commands_submitted)
 

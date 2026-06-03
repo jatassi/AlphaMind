@@ -19,6 +19,7 @@ from typing import Any
 from alphamind._kernel.ids import (
     AlpacaOrderId,
     BracketId,
+    ClientOrderId,
     CommandId,
     OrderId,
     PositionId,
@@ -161,6 +162,7 @@ def record_to_row(record: OrderRecord) -> OrderRow:
             originating_pm_command_id=record.originating_pm_command_id,
             age_hours=record.age_hours,
         ),
+        client_order_id=record.client_order_id,
     )
 
 
@@ -194,6 +196,9 @@ def row_to_record(row: OrderRow) -> OrderRecord:
         originating_thesis_id=ThesisId(thesis_id_raw) if thesis_id_raw is not None else None,
         originating_pm_command_id=CommandId(pm_cmd_id_raw) if pm_cmd_id_raw is not None else None,
         age_hours=age_hours,
+        client_order_id=(
+            ClientOrderId(row.client_order_id) if row.client_order_id is not None else None
+        ),
     )
 
 

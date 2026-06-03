@@ -267,19 +267,26 @@ async def _sync_terminal_status_if_any(
 async def _resolve_oms_order_id(db: AsyncSession, report: FillReport) -> str | None:
     """Resolve the local ``orders`` PK a fill / terminal event applies to.
 
-    Two-step resolution (ALP-746):
+    Three-step resolution:
 
     1. Treat the report-derived id (``parent_client_order_id or client_order_id``)
        as a candidate PK — the historical / already-aligned path (and the only
        path the test substrate exercises by hand-aligning the two).
-    2. Otherwise resolve by the broker UUID of the order that owns the local
-       row: for an mleg per-leg child that is the parent's
+    2. (ALP-836) Resolve by the ``client_order_id`` column — the durable
+       pre-committed row carries the broker ``client_order_id`` (= command_id for
+       an equity entry / close / add) from the instant it is committed, BEFORE its
+       real ``alpaca_order_id`` is backfilled. This closes the atomicity-first
+       submit→backfill window: a fast fill in that window resolves to the
+       pre-committed row instead of stranding (the UUID lookup below would miss it
+       because the row still carries the synthetic ``alp-{order_id}`` placeholder).
+    3. (ALP-746) Otherwise resolve by the broker UUID of the order that owns the
+       local row: for an mleg per-leg child that is the parent's
        ``parent_alpaca_order_id`` (legs do not own ``orders`` rows); for an
        equity entry / close / native-bracket protective child it is the report's
        own ``alpaca_order_id``. The captured-at-submission UUID was written onto
        that row (entry / close / TAKE_PROFIT / PRICE_STOP), so the lookup hits.
 
-    Returns ``None`` when neither resolves — the caller declines to attribute
+    Returns ``None`` when none resolves — the caller declines to attribute
     the event rather than violate the ``fill_records.order_id`` FK.
 
     ``alpaca_order_id`` is expected unique across ``orders`` rows (captured
@@ -290,6 +297,14 @@ async def _resolve_oms_order_id(db: AsyncSession, report: FillReport) -> str | N
     """
     candidate_pk = order_id_for_report(report)
     row = await db.get(OrderRow, candidate_pk)
+    if row is not None:
+        return row.order_id
+    # ALP-836 — resolve the durable pre-committed row by the ``client_order_id``
+    # column. ``client_order_id`` is unique-when-present, so ``one_or_none``
+    # surfaces a duplicate as a loud invariant breach rather than guessing.
+    client_order_id_key = report.parent_client_order_id or report.client_order_id
+    stmt = select(OrderRow).where(OrderRow.client_order_id == client_order_id_key)
+    row = (await db.execute(stmt)).scalars().one_or_none()
     if row is not None:
         return row.order_id
     uuid_key = report.parent_alpaca_order_id or report.alpaca_order_id

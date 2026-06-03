@@ -24,10 +24,13 @@ PHASE2 = (
 
 
 def test_phase2_is_a_package_with_prescribed_files() -> None:
-    """phase2/ has the files prescribed by ALP-465, plus reprice.py (ALP-740).
+    """phase2/ has the files prescribed by ALP-465, plus reprice.py (ALP-740) and
+    atomic.py (ALP-836).
 
     ALP-740 added ``reprice.py`` — the non-terminal entry-window reprice
-    writeback that contrasts with the terminal ``cancel.py``.
+    writeback that contrasts with the terminal ``cancel.py``. ALP-836 added
+    ``atomic.py`` — the atomicity-first per-command pre-commit / backfill /
+    teardown the broker-active dispatch loop interleaves with broker submission.
     """
     assert PHASE2.is_dir()
     names = sorted(p.name for p in PHASE2.iterdir() if p.suffix == ".py")
@@ -36,6 +39,7 @@ def test_phase2_is_a_package_with_prescribed_files() -> None:
         "_shared.py",
         "add.py",
         "adjust.py",
+        "atomic.py",
         "cancel.py",
         "close.py",
         "open.py",

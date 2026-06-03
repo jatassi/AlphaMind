@@ -27,11 +27,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind._kernel.money import money, signed_money
 from alphamind.execution.broker_adapter.queries import (
+    OrderSnapshot,
     PositionSnapshot,
     TradeAccountSnapshot,
 )
 from alphamind.execution.corporate_actions import integrate_ca_activity
-from alphamind.execution.corporate_actions.reconciliation import reconcile
+from alphamind.execution.corporate_actions.reconciliation import (
+    backfill_pending_submit_orders,
+    reconcile,
+)
 from alphamind.execution.corporate_actions.types import (
     AlpacaPositionLookup,
     CorporateActionActivity,
@@ -229,6 +233,7 @@ async def process_unprocessed_fills(
     market_inputs: MarketInputs,
     config: StatePersistenceConfig,
     borrow_cost_resolver: Callable[[str], float | None] | None = None,
+    alpaca_orders: tuple[OrderSnapshot, ...] = (),
 ) -> Phase1Summary:
     """Drain every unprocessed fill + CA activity and integrate them atomically.
 
@@ -299,6 +304,14 @@ async def process_unprocessed_fills(
     # options / strategy branches of REVERSE_SPLIT / STOCK_DIVIDEND). The same
     # positions feed reconciliation below, so the lookup is free.
     alpaca_lookup = _SnapshotLookup(alpaca_positions) if alpaca_positions else None
+
+    # ALP-836 — recover any order whose post-submit ``alpaca_order_id`` backfill
+    # was lost (durable PENDING_SUBMIT row + synthetic placeholder) by matching
+    # Alpaca's orders on ``client_order_id``. Runs BEFORE fill integration so the
+    # row is flipped PENDING_SUBMIT → PENDING + carries the real broker id before
+    # its attributed fill advances it to FILLED. ``alpaca_orders`` is empty (and
+    # this a no-op) unless the read-phase gatherer found local PENDING_SUBMIT rows.
+    await backfill_pending_submit_orders(handle, alpaca_orders=alpaca_orders)
 
     fills_processed = 0
     quarantine_alerts = 0

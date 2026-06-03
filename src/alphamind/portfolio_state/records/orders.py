@@ -11,6 +11,7 @@ from typing import Literal
 from alphamind._kernel.ids import (
     AlpacaOrderId,
     BracketId,
+    ClientOrderId,
     CommandId,
     OrderId,
     PositionId,
@@ -101,6 +102,16 @@ class OrderDuration(StrEnum):
 
 
 class OrderStatus(StrEnum):
+    # PENDING_SUBMIT (ALP-836) is the durable-intent state of an order whose row
+    # has been committed locally but has NOT yet been accepted by the broker — the
+    # atomicity-first window between the pre-dispatch commit and the post-submit
+    # ``alpaca_order_id`` backfill. The row carries the synthetic ``alp-{order_id}``
+    # placeholder until the real broker id is backfilled, at which point it
+    # transitions to PENDING. A row stuck in PENDING_SUBMIT means the broker never
+    # accepted the order (lost backfill, rejection, or process death between the
+    # pre-commit and dispatch) — recoverable by the reconcile-by-``client_order_id``
+    # backfill, and never a live-broker-order-without-a-local-row strand.
+    PENDING_SUBMIT = "PENDING_SUBMIT"
     PENDING = "PENDING"
     PARTIALLY_FILLED = "PARTIALLY_FILLED"
     FILLED = "FILLED"
@@ -226,6 +237,15 @@ class OrderRecord:
     originating_pm_command_id: CommandId | None
     age_hours: float
     order_class: OrderClass = OrderClass.SIMPLE
+    # ALP-836 — the broker ``client_order_id`` this order was (or will be)
+    # submitted under. Equals the originating command_id for the primary order a
+    # command produces (entry / close / add-entry / ADJUST replacement); ``None``
+    # for native-bracket protective children (Alpaca generates their
+    # client_order_ids) and for orders never dispatched under one. Indexed +
+    # unique-when-present so a fill / reconcile pass can resolve the durable
+    # pre-committed row by the ``client_order_id`` the broker fill carries, even
+    # before the real ``alpaca_order_id`` has been backfilled.
+    client_order_id: ClientOrderId | None = None
 
     def __post_init__(self) -> None:
         self._check_mleg_requires_strategy()
