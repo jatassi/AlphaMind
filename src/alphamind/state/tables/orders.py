@@ -99,6 +99,14 @@ class OrderRow(Base):
     remaining_quantity: Mapped[float] = mapped_column(Float, nullable=False)
     modification_count: Mapped[int] = mapped_column(Integer, nullable=False)
     metadata_json: Mapped[str] = mapped_column(Text, nullable=False)
+    # ALP-836 — the broker ``client_order_id`` this order is/was submitted under
+    # (= the originating command_id for the primary order a command produces).
+    # Nullable: native-bracket protective children carry Alpaca-generated
+    # client_order_ids, and rows never dispatched under one stay NULL. The unique
+    # index admits many NULLs (SQLite treats NULLs as distinct) while enforcing
+    # one row per real ``client_order_id`` — the durable-intent key a fill /
+    # reconcile pass resolves against before ``alpaca_order_id`` is backfilled.
+    client_order_id: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         CheckConstraint(_check_in("order_role", _ORDER_ROLES), name="ck_orders_order_role"),
@@ -111,4 +119,5 @@ class OrderRow(Base):
         Index("ix_orders_position_id", "position_id"),
         Index("ix_orders_bracket_id", "bracket_id"),
         Index("ix_orders_alpaca_order_id", "alpaca_order_id"),
+        Index("ix_orders_client_order_id", "client_order_id", unique=True),
     )
