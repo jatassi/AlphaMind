@@ -20,7 +20,6 @@ the gap-free log.
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -29,7 +28,11 @@ from alphamind._kernel.ids import PositionId, ThesisId
 from alphamind.execution.write_paths.broker_event_persistence import append_broker_event
 from alphamind.portfolio_state.events.activity_log import CorporateActionType
 from alphamind.state.invocation_context.context import InvocationHandle
-from alphamind.state.records_broker_event_log import BrokerEventRecord, BrokerEventType
+from alphamind.state.records_broker_event_log import (
+    BrokerEventRecord,
+    BrokerEventType,
+    serialize_event_payload,
+)
 from alphamind.state.tables.positions import PositionRow
 
 from .types import CorporateActionActivity
@@ -93,7 +96,7 @@ async def capture_ca_event(
         thesis_id=ThesisId(thesis_id) if thesis_id is not None else None,
         invocation_id=None,
         position_id=PositionId(position_id) if position_id is not None else None,
-        raw_payload_json=_dump_payload(activity),
+        raw_payload_json=serialize_event_payload(activity.model_dump(mode="json")),
         broker_timestamp=activity.transaction_time,
         captured_at=datetime.now(UTC),
     )
@@ -116,11 +119,6 @@ async def _resolve_position_link(
     if row is None:
         return None, None
     return row[0], row[1]
-
-
-def _dump_payload(activity: CorporateActionActivity) -> str:
-    """Serialize the CA activity deterministically for the event-log row."""
-    return json.dumps(activity.model_dump(mode="json"), default=str, sort_keys=True)
 
 
 __all__ = ["ca_event_key", "capture_ca_event"]

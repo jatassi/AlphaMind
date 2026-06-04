@@ -31,7 +31,6 @@ pipeline, ADR-0005).
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -58,7 +57,11 @@ from alphamind.portfolio_state.records.positions import (
     alpaca_occ_symbol,
 )
 from alphamind.state.invocation_context.context import InvocationHandle
-from alphamind.state.records_broker_event_log import BrokerEventRecord, BrokerEventType
+from alphamind.state.records_broker_event_log import (
+    BrokerEventRecord,
+    BrokerEventType,
+    serialize_event_payload,
+)
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.positions_codec import record_to_row, row_to_record
@@ -101,7 +104,7 @@ async def _append_lifecycle_event(
         thesis_id=ThesisId(thesis_id) if thesis_id is not None else None,
         invocation_id=InvocationId(handle.invocation_id),
         position_id=position_id,
-        raw_payload_json=json.dumps(raw_payload, default=str, sort_keys=True),
+        raw_payload_json=serialize_event_payload(raw_payload),
         broker_timestamp=broker_timestamp,
         captured_at=datetime.now(UTC),
     )

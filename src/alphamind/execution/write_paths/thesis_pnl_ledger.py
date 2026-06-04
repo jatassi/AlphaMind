@@ -23,6 +23,7 @@ import json
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from alphamind._kernel.ids import InvocationId, ThesisId
@@ -35,6 +36,7 @@ from alphamind.state.records_intent import ThesisPnlLedgerRecord
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.broker_event_log_codec import row_to_record as event_row_to_record
 from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
+from alphamind.state.tables.thesis_pnl_ledger_codec import record_to_row
 
 
 async def rederive_thesis_pnl_ledger(
@@ -91,27 +93,18 @@ async def _upsert(session: AsyncSession, record: ThesisPnlLedgerRecord) -> None:
 
     A full replace — not an increment — keeps the ledger a faithful derived view:
     re-deriving from the same event set yields the same row, so the write is
-    idempotent under a projection rebuild.
+    idempotent under a projection rebuild. One ``INSERT … ON CONFLICT DO UPDATE``
+    on the ``thesis_id`` PK — no read-modify-write branch — matching the peer
+    write-path helpers (``broker_event_persistence``, ``fill_persistence``).
     """
-    row = await session.get(ThesisPnlLedgerRow, record.thesis_id)
-    if row is None:
-        session.add(
-            ThesisPnlLedgerRow(
-                thesis_id=record.thesis_id,
-                realized_pnl_usd=record.realized_pnl_usd,
-                cost_basis_usd=record.cost_basis_usd,
-                provenance_json=record.provenance_json,
-                derived_from_invocation_id=record.derived_from_invocation_id,
-                updated_at=record.updated_at.isoformat(),
-            )
-        )
-    else:
-        row.realized_pnl_usd = record.realized_pnl_usd
-        row.cost_basis_usd = record.cost_basis_usd
-        row.provenance_json = record.provenance_json
-        row.derived_from_invocation_id = record.derived_from_invocation_id
-        row.updated_at = record.updated_at.isoformat()
-    await session.flush()
+    row = record_to_row(record)
+    values = {col.name: getattr(row, col.name) for col in ThesisPnlLedgerRow.__table__.columns}
+    stmt = sqlite_insert(ThesisPnlLedgerRow).values(**values)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["thesis_id"],
+        set_={k: v for k, v in values.items() if k != "thesis_id"},
+    )
+    await session.execute(stmt)
 
 
 __all__ = ["rederive_thesis_pnl_ledger"]

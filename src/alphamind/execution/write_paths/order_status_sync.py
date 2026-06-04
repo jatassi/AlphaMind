@@ -28,7 +28,11 @@ from datetime import UTC, datetime
 from alphamind._kernel.ids import InvocationId, PositionId, ThesisId
 from alphamind.execution.broker_adapter import FillReport
 from alphamind.portfolio_state.records.orders import OrderStatus
-from alphamind.state.records_broker_event_log import BrokerEventRecord, BrokerEventType
+from alphamind.state.records_broker_event_log import (
+    BrokerEventRecord,
+    BrokerEventType,
+    serialize_event_payload,
+)
 
 
 def derive_terminal_event_key(report: FillReport, terminal_status: OrderStatus) -> str:
@@ -71,17 +75,10 @@ def terminal_status_event_record(
         thesis_id=thesis_id,
         invocation_id=invocation_id,
         position_id=position_id,
-        raw_payload_json=_dump_payload(payload),
+        raw_payload_json=serialize_event_payload(payload),
         broker_timestamp=report.fill_timestamp,
         captured_at=datetime.now(UTC),
     )
-
-
-def _dump_payload(payload: dict[str, object]) -> str:
-    """Serialize the terminal-event payload deterministically (sorted keys)."""
-    import json
-
-    return json.dumps(payload, default=str, sort_keys=True)
 
 
 __all__ = ["derive_terminal_event_key", "terminal_status_event_record"]

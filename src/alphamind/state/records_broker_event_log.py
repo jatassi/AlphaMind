@@ -16,12 +16,25 @@ is nullable — a position-lifecycle event (expiry / assignment) carries no
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
 from alphamind._kernel.ids import InvocationId, PositionId, ThesisId
+
+
+def serialize_event_payload(payload: object) -> str:
+    """Deterministically serialize a ``raw_payload`` for a ``broker_event_log`` row.
+
+    The single canonical serialization that feeds ``raw_payload_json`` for every
+    event producer (account-activities, corporate-actions, terminal order status).
+    ``sort_keys=True`` + ``default=str`` makes the JSON byte-stable across runs and
+    Python sessions, so the sha256-derived ``event_key`` idempotency stays exact —
+    a re-delivered event hashes to the same key regardless of dict-ordering.
+    """
+    return json.dumps(payload, default=str, sort_keys=True)
 
 
 class BrokerEventType(StrEnum):
@@ -83,4 +96,4 @@ class BrokerEventRecord(BaseModel):
     captured_at: datetime
 
 
-__all__ = ["BrokerEventRecord", "BrokerEventType"]
+__all__ = ["BrokerEventRecord", "BrokerEventType", "serialize_event_payload"]
