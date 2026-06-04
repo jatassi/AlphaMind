@@ -112,9 +112,7 @@ def _target_absolute() -> Target:
     return Target(target_type="absolute_price", price=price(170.0), order_type="limit")
 
 
-def _price_leg(
-    trigger_price: float = 140.0, trigger_signal: str = "underlying_price"
-) -> PriceLeg:
+def _price_leg(trigger_price: float = 140.0, trigger_signal: str = "underlying_price") -> PriceLeg:
     return PriceLeg(
         type="price",
         is_hard=True,
@@ -172,11 +170,21 @@ def _capital_protection_floor(loss_limit: float = 500.0) -> CapitalProtectionFlo
     return CapitalProtectionFloor(max_loss=money(loss_limit))
 
 
+# Sentinel distinguishing "caller omitted the floor (use the default)" from
+# "caller explicitly passed ``None``" (the floorless-rejection test case).
+_FLOOR_DEFAULT = object()
+
+
 def _option_open_command(
     *,
-    capital_protection_floor: CapitalProtectionFloor | None = _capital_protection_floor(),
+    capital_protection_floor: CapitalProtectionFloor | None | object = _FLOOR_DEFAULT,
     nature: str = "directional",
 ) -> OpenCommand:
+    floor = (
+        _capital_protection_floor()
+        if capital_protection_floor is _FLOOR_DEFAULT
+        else capital_protection_floor
+    )
     return OpenCommand(
         command_type="open",
         instrument=_option_instrument(),
@@ -187,7 +195,7 @@ def _option_open_command(
         target=_target_absolute(),
         invalidation_legs=(_price_leg(),),
         thesis=_thesis(nature=nature),
-        capital_protection_floor=capital_protection_floor,
+        capital_protection_floor=floor,  # type: ignore[arg-type]
     )
 
 
@@ -343,6 +351,7 @@ class TestInvalidationLegs:
             PriceLeg(
                 type="price",
                 is_hard=False,  # type: ignore[arg-type]
+                trigger_signal="underlying_price",
                 condition=PriceCondition(
                     underlying_trigger="AAPL", comparator="<=", trigger_price=price(140.0)
                 ),
@@ -510,9 +519,7 @@ class TestOpenCommand:
         # floor; an equity OPEN does not (native-bracket protection).
         for instrument in (_equity_instrument(), _option_instrument()):
             floor = (
-                None
-                if isinstance(instrument, EquityInstrument)
-                else _capital_protection_floor()
+                None if isinstance(instrument, EquityInstrument) else _capital_protection_floor()
             )
             OpenCommand(
                 command_type="open",

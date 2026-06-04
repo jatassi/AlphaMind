@@ -332,6 +332,7 @@ def test_build_active_thesis_yields_unique_component_ids_for_multiple_same_type(
     thesis_id = "THE-MRVL-abc123"
     wire = Thesis(
         summary="MRVL pre-gap consolidation long",
+        nature="directional",
         components=(
             _wire_component("entry_rationale", narrative="pre-gap floor break"),
             _wire_component("target_rationale", narrative="resistance retest"),
@@ -371,6 +372,7 @@ def test_build_active_thesis_component_id_carries_thesis_id_and_type() -> None:
     thesis_id = "THE-AAPL-xyz789"
     wire = Thesis(
         summary="AAPL long",
+        nature="directional",
         components=(
             _wire_component("entry_rationale", narrative="strong setup"),
             _wire_component("target_rationale", narrative="resistance"),
@@ -399,6 +401,7 @@ def test_build_active_thesis_backfill_yields_unique_component_ids() -> None:
     thesis_id = "THE-NVDA-zzz999"
     wire = Thesis(
         summary="NVDA momentum — invalidation-only wire (entry+target backfilled)",
+        nature="directional",
         components=(
             _wire_component("invalidation_rationale", narrative="floor break"),
             _wire_component("invalidation_rationale", narrative="time-stop"),
