@@ -24,13 +24,16 @@ from alphamind.execution.account_activities.poll import (
     PollResult,
     poll_account_activities,
 )
-from alphamind.execution.broker_adapter.client_factory import AlpacaClientFactory
+from alphamind.execution.broker_adapter.client_factory import (
+    AlpacaClientFactory,
+)
+from alphamind.execution.broker_adapter.client_factory import (
+    ExecutionMode as ClientFactoryExecutionMode,
+)
 from alphamind.execution.broker_adapter.queries import AccountStateQueries
 from alphamind.state.invocation_context.context import InvocationHandle
 
-ActivitiesSourceFactory = Callable[
-    [VenueConfig | None, ExecutionMode], AccountActivitiesSource
-]
+ActivitiesSourceFactory = Callable[[VenueConfig | None, ExecutionMode], AccountActivitiesSource]
 
 
 def _default_activities_source_factory(
@@ -46,7 +49,9 @@ def _default_activities_source_factory(
     if venue_config is None:
         msg = "venue_config is required to build the default Alpaca activities source"
         raise ValueError(msg)
-    mode_literal = "live" if execution_mode is ExecutionMode.live else "paper"
+    mode_literal: ClientFactoryExecutionMode = (
+        "live" if execution_mode is ExecutionMode.live else "paper"
+    )
     factory = AlpacaClientFactory(venue_config, mode=mode_literal)
     return AccountStateQueries(factory.build_trading_client())
 

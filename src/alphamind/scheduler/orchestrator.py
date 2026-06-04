@@ -136,6 +136,7 @@ from alphamind.risk_guardrails.state_delivery.config import (
     StateDeliveryConfig,
     load_state_delivery_config,
 )
+from alphamind.scheduler.account_activities_poll import run_account_activities_poll
 from alphamind.scheduler.control.events import SSEEventEmitter
 from alphamind.scheduler.control.models import (
     InvocationEndedEvent,
@@ -148,7 +149,6 @@ from alphamind.scheduler.control.sse_progress_bridge import (
     make_latency_budget_lookup,
 )
 from alphamind.scheduler.invocation import insert_invocation_record
-from alphamind.scheduler.account_activities_poll import run_account_activities_poll
 from alphamind.scheduler.phase1_inputs import gather_phase1_inputs
 from alphamind.scheduler.phase2_dispatch import (
     Phase2Summary,

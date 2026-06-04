@@ -255,6 +255,26 @@ def _make_decision_result() -> Any:
     )
 
 
+def _make_activities_poll_stub(
+    captured: dict[str, Any],
+) -> Any:
+    """Build a no-op ``run_account_activities_poll`` stub (ALP-846).
+
+    The account-activities poll is a composition-root stage like
+    ``gather_phase1_inputs``; stubbing it keeps the production default factory
+    from building a live Alpaca client during orchestration tests. Hoisted to
+    module scope so the heavy stub-patcher stays under the complexity ceiling.
+    """
+
+    async def _activities_poll_stub(*args: Any, **kw: Any) -> Any:
+        from alphamind.execution.account_activities.poll import PollResult
+
+        captured["activities_poll"] = {"args": args, "kwargs": kw}
+        return PollResult(activities_booked=0, cursor=None)
+
+    return _activities_poll_stub
+
+
 def _patch_no_op_pipeline(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -333,6 +353,11 @@ def _patch_no_op_pipeline(
 
     monkeypatch.setattr(module, "gather_phase1_inputs", _gather_stub)
     monkeypatch.setattr(module, "process_unprocessed_fills", _process_stub)
+    monkeypatch.setattr(
+        module,
+        "run_account_activities_poll",
+        _make_activities_poll_stub(captured),
+    )
     monkeypatch.setattr(module, "run_analysis_pipeline", _analysis_stub)
     monkeypatch.setattr(module, "run_decision_pipeline", _decision_stub)
     monkeypatch.setattr(module, "dispatch_phase2", _dispatch_stub)
@@ -1093,7 +1118,15 @@ def _stub_only_llm_and_broker(
     def _regime_stub(**_kw: Any) -> Any:
         return make_regime_output(now=_NOW)
 
+    async def _activities_poll_stub(*_args: Any, **_kw: Any) -> Any:
+        # ALP-846 — the activity poll touches the broker, so it joins the
+        # broker callees this helper stubs (alongside gather_phase1_inputs).
+        from alphamind.execution.account_activities.poll import PollResult
+
+        return PollResult(activities_booked=0, cursor=None)
+
     monkeypatch.setattr(module, "gather_phase1_inputs", _gather_stub)
+    monkeypatch.setattr(module, "run_account_activities_poll", _activities_poll_stub)
     monkeypatch.setattr(module, "run_analysis_pipeline", _analysis_stub)
     monkeypatch.setattr(module, "run_decision_pipeline", _decision_stub)
     monkeypatch.setattr(module, "_resolve_regime_adaptation_for_invocation", _regime_stub)

@@ -22,9 +22,8 @@ Realized-PnL conventions (ADR-0002, invariant 3):
 from __future__ import annotations
 
 import dataclasses
-from decimal import Decimal
-
 import datetime as dt
+from decimal import Decimal
 
 from alphamind._kernel.ids import PositionId, Symbol
 from alphamind._kernel.money import Money, price, signed_money
@@ -44,7 +43,7 @@ from alphamind.portfolio_state.records.positions import (
 
 
 def _premium_total(details: OptionsPositionDetails) -> Decimal:
-    """Total premium paid for the option = contracts × per-contract premium."""
+    """Total premium paid for the option = contracts x per-contract premium."""
     return Decimal(str(details.contract_count)) * Decimal(str(details.premium_paid_per_contract))
 
 
@@ -61,7 +60,7 @@ def _options_details(option: PositionRecord) -> OptionsPositionDetails:
             f"lifecycle booking expects an OptionsPositionDetails position; "
             f"got {type(details).__name__} for {option.position_id!r}"
         )
-        raise ValueError(msg)
+        raise TypeError(msg)
     return details
 
 
@@ -74,11 +73,13 @@ def _closed_option(option: PositionRecord, realized_pnl: Money) -> PositionRecor
     )
 
 
-def book_expiry(option: PositionRecord, event: LifecycleEvent) -> BookingResult:
+def book_expiry(option: PositionRecord) -> BookingResult:
     """Book an OTM expiry: realized PnL = ``-premium``; close the option.
 
     The option expires worthless, so the full premium paid is realized as a
-    loss and the position closes with no resulting equity leg.
+    loss and the position closes with no resulting equity leg. The activity
+    itself carries no booking input beyond identifying the option — the loss is
+    fully determined by the option's own premium.
     """
     details = _options_details(option)
     realized = signed_money(-_premium_total(details))
@@ -99,8 +100,8 @@ def book_assignment_or_exercise(
 
     The option's extrinsic value is realized as ``-premium`` (the option
     closes); the resulting equity position opens at the strike with cost basis
-    ``qty × strike`` from the paired ``OPTRD`` and the option's originating
-    thesis link (attribution rides the position→thesis edge, ADR-0002).
+    ``qty x strike`` from the paired ``OPTRD`` and the option's originating
+    thesis link (attribution rides the position->thesis edge, ADR-0002).
 
     Raises ``ValueError`` when the event carries no paired ``OPTRD`` — the
     equity leg would be underspecified, so the handler surfaces rather than

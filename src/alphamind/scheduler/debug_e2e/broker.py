@@ -178,7 +178,13 @@ class LogOnlyAccountStateQueries:
         Satisfies the ``AccountActivitiesSource`` Protocol (ALP-846) so the
         debug-e2e account-activities poll runs offline and books nothing.
         """
-        log.info("[debug_e2e] LogOnlyAccountStateQueries.get_account_activities()")
+        log.info(
+            "[debug_e2e] LogOnlyAccountStateQueries.get_account_activities("
+            "activity_types=%s after=%s until=%s)",
+            activity_types,
+            after,
+            until.isoformat() if until is not None else None,
+        )
         return
         yield  # pragma: no cover — makes this an async generator
 

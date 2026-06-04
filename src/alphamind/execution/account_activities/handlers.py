@@ -109,9 +109,7 @@ async def _find_open_option_position(
 ) -> tuple[PositionRow, PositionRecord] | None:
     """Find the OPEN option ``PositionRow`` whose OCC symbol equals *occ_symbol*."""
     stmt = select(PositionRow).where(
-        PositionRow.status.in_(
-            (PositionStatus.OPEN.value, PositionStatus.PENDING.value)
-        )
+        PositionRow.status.in_((PositionStatus.OPEN.value, PositionStatus.PENDING.value))
     )
     rows = (await handle.session.execute(stmt)).scalars().all()
     for row in rows:
@@ -207,13 +205,11 @@ async def handle_expiry(handle: InvocationHandle, event: LifecycleEvent) -> None
         raise ValueError(msg)
     option_row, option_record = found
     await _backfill_event_link(handle, event.activity_id, option_record)
-    result = book_expiry(option_record, event)
+    result = book_expiry(option_record)
     await _persist_booking(handle, option_row=option_row, result=result)
 
 
-async def handle_assignment_or_exercise(
-    handle: InvocationHandle, event: LifecycleEvent
-) -> None:
+async def handle_assignment_or_exercise(handle: InvocationHandle, event: LifecycleEvent) -> None:
     """Book an assignment / exercise: -premium on the option + open the equity leg."""
     # Surface BEFORE any write: a missing paired OPTRD leaves the equity leg
     # underspecified (parent ALP-842 surfacing condition). Raising here, before

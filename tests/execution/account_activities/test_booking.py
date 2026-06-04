@@ -26,6 +26,7 @@ from alphamind.execution.account_activities.records import (
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
+    EquityPositionDetails,
     OptionContractType,
     OptionGreeks,
     OptionsPositionDetails,
@@ -79,19 +80,11 @@ def _open_option(
 def test_otm_expiry_books_negative_premium_and_closes_option() -> None:
     """An OTM expiry realizes ``-premium`` and closes the option (no husk)."""
     option = _open_option(contract_count=5.0, premium_paid_per_contract=250.0)
-    event = LifecycleEvent(
-        activity_id="act-exp-1",
-        activity_type=LifecycleActivityType.OPEXP,
-        occ_symbol="AAPL250918C00150000",
-        qty=5.0,
-        transaction_time=_TXN,
-        paired_trade=None,
-    )
 
-    result = book_expiry(option, event)
+    result = book_expiry(option)
 
     # premium total = 5 contracts * $250/contract = $1250, lost in full.
-    assert result.realized_pnl_usd == signed_money(Decimal("-1250"))
+    assert result.realized_pnl_usd == signed_money(Decimal(-1250))
     assert result.closed_option.status is PositionStatus.CLOSED
     assert result.closed_option.realized_pnl_to_date_usd == pytest.approx(-1250.0)
     assert result.opened_equity is None
@@ -128,10 +121,12 @@ def test_assignment_opens_equity_at_strike_with_thesis_link() -> None:
     assert equity.status is PositionStatus.OPEN
     assert equity.thesis_id == ThesisId("thesis-1")
     assert equity.parent_position_id == option.position_id
-    assert equity.details.ticker == Symbol("AAPL")
-    assert equity.details.share_count == 500.0
+    details = equity.details
+    assert isinstance(details, EquityPositionDetails)
+    assert details.ticker == Symbol("AAPL")
+    assert details.share_count == 500.0
     # Cost basis is the strike, not the option premium.
-    assert equity.details.average_cost_basis_per_share == pytest.approx(150.0)
+    assert details.average_cost_basis_per_share == pytest.approx(150.0)
 
 
 def test_assignment_without_paired_optrd_surfaces() -> None:

@@ -23,9 +23,8 @@ The four lifecycle activity types this story handles (ADR-0002):
 from __future__ import annotations
 
 import datetime as dt
-from enum import StrEnum
-
 from dataclasses import dataclass
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 

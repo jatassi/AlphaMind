@@ -9,19 +9,16 @@ Alpaca client while tests / debug-e2e substitute a fake without monkey-patching.
 
 from __future__ import annotations
 
-import datetime as dt
-from collections.abc import AsyncIterator
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind.config.models.main import ExecutionMode
-from alphamind.scheduler.account_activities_poll import run_account_activities_poll
 from alphamind.execution.broker_adapter.queries import ActivitySnapshot
+from alphamind.scheduler.account_activities_poll import run_account_activities_poll
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
-
-from tests.execution.account_activities.test_handlers import _seed_open_option, _OCC, _TXN
+from tests.execution.account_activities.test_handlers import _OCC, _TXN, _seed_open_option
 from tests.execution.account_activities.test_poll import FakeAccountActivitiesQueries
 from tests.execution.corporate_actions._handler_substrate import open_handle
 
@@ -69,4 +66,4 @@ async def test_scheduler_poll_runs_against_factory_source(
         assert pos.status == "CLOSED"
         ledger = await sess.get(ThesisPnlLedgerRow, "thesis-1")
         assert ledger is not None
-        assert ledger.realized_pnl_usd == Decimal("-1250")
+        assert ledger.realized_pnl_usd == Decimal(-1250)
