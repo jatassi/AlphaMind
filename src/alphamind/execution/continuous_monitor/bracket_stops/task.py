@@ -57,6 +57,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     PriceTrigger,
+    TriggerSignal,
 )
 from alphamind.portfolio_state.records.positions import (
     OptionsPositionDetails,
@@ -313,26 +314,58 @@ def _leg_should_fire(
     now: datetime,
     risk_free_rate: float,
 ) -> bool:
-    """Route to the right evaluator based on leg geometry.
+    """Select the trigger evaluator by thesis nature (ALP-852 / ADR-0003).
 
-    A P/L-anchored leg on a :class:`StrategyPositionDetails` position routes
-    into :func:`evaluate_strategy_pl_target_trigger` (the strategy net-P/L
-    evaluator); a single-leg options position routes into
-    :func:`evaluate_pl_target_trigger`. A non-P/L leg evaluates against the
-    underlying price.
+    The thesis-invalidation stop is *thesis-shaped*: a PRICE_STOP leg carries a
+    :class:`TriggerSignal` (set at OPEN from the wire ``PriceLeg.trigger_signal``,
+    pinned consistent with the thesis nature by 02d's command validator):
+
+    * ``UNDERLYING_PRICE`` — a *directional* thesis. Evaluate against the
+      underlying-equity price (:func:`evaluate_price_based_trigger`).
+    * ``OPTION_PRICE`` — a *non-directional* single-option vol thesis. Evaluate
+      against the option's own derived mark (:func:`evaluate_pl_target_trigger`);
+      an underlying-level trigger is meaningless for a nonlinear vol thesis.
+    * ``NET_MARK`` — a *non-directional* multi-leg spread thesis. Evaluate against
+      the strategy net mark (:func:`evaluate_strategy_pl_target_trigger`).
+
+    A leg with no ``trigger_signal`` — a TAKE_PROFIT leg (which fires on its own
+    target geometry, routed by ``pl_anchor`` below), or a legacy PRICE_STOP
+    predating the tag — falls back to the geometry-based routing: a P/L-anchored
+    leg evaluates against option-price / net-mark, otherwise the underlying.
     """
+    if leg.trigger_signal is TriggerSignal.UNDERLYING_PRICE:
+        return evaluate_price_based_trigger(position=position, leg=leg, spot=spot)
+    if leg.trigger_signal in (TriggerSignal.OPTION_PRICE, TriggerSignal.NET_MARK):
+        return _evaluate_option_pl_trigger(
+            position=position, leg=leg, spot=spot, now=now, risk_free_rate=risk_free_rate
+        )
+    # No trigger_signal: TAKE_PROFIT (routed by pl_anchor) or a legacy PRICE_STOP.
     if leg.pl_anchor is not None:
-        try:
-            if isinstance(position.details, StrategyPositionDetails):
-                return evaluate_strategy_pl_target_trigger(
-                    position=position,
-                    leg=leg,
-                    spot=spot,
-                    risk_free_rate=risk_free_rate,
-                    as_of=now,
-                    buffer_pct=0.0,
-                )
-            return evaluate_pl_target_trigger(
+        return _evaluate_option_pl_trigger(
+            position=position, leg=leg, spot=spot, now=now, risk_free_rate=risk_free_rate
+        )
+    return evaluate_price_based_trigger(position=position, leg=leg, spot=spot)
+
+
+def _evaluate_option_pl_trigger(
+    *,
+    position: PositionRecord,
+    leg: BracketLeg,
+    spot: float,
+    now: datetime,
+    risk_free_rate: float,
+) -> bool:
+    """Evaluate the option-price / net-mark trigger for a non-directional leg.
+
+    A :class:`StrategyPositionDetails` position routes into the strategy net-P/L
+    evaluator (net mark); a single-leg options position routes into the
+    single-option derived-price evaluator. Both require the leg's
+    :class:`PLAnchorSpec`; a missing anchor / IV (pre-fill state) is caught,
+    logged, and treated as not-fired so the loop continues evaluating other legs.
+    """
+    try:
+        if isinstance(position.details, StrategyPositionDetails):
+            return evaluate_strategy_pl_target_trigger(
                 position=position,
                 leg=leg,
                 spot=spot,
@@ -340,17 +373,24 @@ def _leg_should_fire(
                 as_of=now,
                 buffer_pct=0.0,
             )
-        except ValueError:
-            # Anchor missing actual_entry_price (pre-fill state) or invalid
-            # IV — log via the structured logger; the loop continues so other
-            # legs still evaluate.
-            log.exception(
-                "bracket_stops: P/L trigger evaluation skipped for leg %s on position %s",
-                leg.leg_id,
-                position.position_id,
-            )
-            return False
-    return evaluate_price_based_trigger(position=position, leg=leg, spot=spot)
+        return evaluate_pl_target_trigger(
+            position=position,
+            leg=leg,
+            spot=spot,
+            risk_free_rate=risk_free_rate,
+            as_of=now,
+            buffer_pct=0.0,
+        )
+    except ValueError:
+        # Anchor missing actual_entry_price (pre-fill state) or invalid IV — log
+        # via the structured logger; the loop continues so other legs still
+        # evaluate.
+        log.exception(
+            "bracket_stops: P/L trigger evaluation skipped for leg %s on position %s",
+            leg.leg_id,
+            position.position_id,
+        )
+        return False
 
 
 async def _fire_leg(  # noqa: PLR0913 — fan-out parameters for the closer call
