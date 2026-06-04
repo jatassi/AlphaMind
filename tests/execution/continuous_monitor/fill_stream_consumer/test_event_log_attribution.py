@@ -59,6 +59,7 @@ from alphamind.persistence.session import (
     make_session_factory,
 )
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
+from alphamind.state.tables.orders import OrderRow
 from tests.state._fk_substrate import (
     seed_position_cluster,
     stub_invocation_row,
@@ -127,12 +128,15 @@ def _fill_report(
     price: float | None = 189.42,
     qty: float | None = 1.0,
     event: str = "fill",
+    filled_qty: str = "1",
     timestamp: datetime | None = None,
 ) -> FillReport:
     reports = translate_trade_update(
         TradeUpdate(
             event=event,
-            order=_build_order(client_order_id=client_order_id, order_id=order_id),
+            order=_build_order(
+                client_order_id=client_order_id, order_id=order_id, filled_qty=filled_qty
+            ),
             timestamp=timestamp or _now_utc(),
             price=price,
             qty=qty,
@@ -303,6 +307,173 @@ class TestEventLogIdempotency:
         # collapses onto the existing row.
         replay = _fill_report(
             client_order_id=_PM_LINKED_COMMAND_ID, order_id=order_uuid, timestamp=_FIXED_TS
+        )
+
+        await persist_fill_report(first, session_factory=session_factory, enrichment_callable=None)
+        await persist_fill_report(replay, session_factory=session_factory, enrichment_callable=None)
+
+        rows = await _read_event_log(session_factory)
+        assert len(rows) == 1
+
+
+class TestTerminalStatusEvent:
+    """ALP-849 / W1c — a zero-fill terminal order-status event appends a
+    ``TERMINAL_ORDER_STATUS`` row to the append-only log instead of RMW-ing
+    ``orders.status``. The continuous monitor is no longer a second writer on
+    the shared ``orders`` row (invariant 1)."""
+
+    async def test_zero_fill_cancel_appends_terminal_event_carrying_the_link(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A ``canceled`` event for a linked entry (its ``client_order_id`` is
+        the PM command id) appends one ``TERMINAL_ORDER_STATUS`` event-log row
+        carrying the decoded thesis / invocation / position link."""
+        report = _fill_report(
+            client_order_id=_PM_LINKED_COMMAND_ID,
+            order_id=uuid4(),
+            qty=1.0,
+            event="canceled",
+            filled_qty="0",
+            price=None,
+        )
+
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
+
+        rows = await _read_event_log(session_factory)
+        assert len(rows) == 1
+        (row,) = rows
+        assert row.event_type == "TERMINAL_ORDER_STATUS"
+        assert row.thesis_id == _THESIS_ID
+        assert row.invocation_id == f"inv-{_INVOCATION_ID}"
+        assert row.position_id == "pos-1"
+
+    async def test_monitor_appends_event_and_does_not_rmw_orders_status(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """Invariant 1: the monitor's terminal path appends an event and leaves
+        ``orders.status`` UNTOUCHED. The status is now a projection derived from
+        the log by the single (pipeline) writer — the monitor is no longer a
+        second writer on the shared ``orders`` row."""
+        # A durable PENDING entry row carrying the command id as client_order_id
+        # (the ALP-836 pre-backfill resolution path); the terminal event resolves
+        # to it but must NOT write its status.
+        async with session_factory() as session:
+            session.add(
+                stub_order_row(
+                    "order-entry-pending",
+                    "bracket-1",
+                    position_id="pos-1",
+                    status="PENDING",
+                    client_order_id=_PM_LINKED_COMMAND_ID,
+                )
+            )
+            await session.commit()
+
+        report = _fill_report(
+            client_order_id=_PM_LINKED_COMMAND_ID,
+            order_id=uuid4(),
+            event="canceled",
+            filled_qty="0",
+            price=None,
+        )
+
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
+
+        # The terminal fact is captured on the append-only log.
+        rows = await _read_event_log(session_factory)
+        assert [r.event_type for r in rows] == ["TERMINAL_ORDER_STATUS"]
+        # And the shared orders row was never RMW'd by the monitor.
+        async with session_factory() as session:
+            order = await session.get(OrderRow, "order-entry-pending")
+            assert order is not None
+            assert order.status == "PENDING"
+
+    async def test_oco_sibling_cancel_attributes_via_order_edge_no_invocation(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """An OCO sibling-cancel (Alpaca-generated, link-less ``client_order_id``,
+        resolved by captured broker UUID) appends a terminal event carrying the
+        thesis / position off the order's position edge — invocation ``NULL``
+        (no link carries the *when*)."""
+        sl_uuid = uuid4()
+        async with session_factory() as session:
+            session.add(
+                stub_order_row(
+                    "order-stop-leg",
+                    "bracket-1",
+                    position_id="pos-1",
+                    role="PRICE_STOP",
+                    direction="SELL",
+                    status="PENDING",
+                    alpaca_order_id=str(sl_uuid),
+                )
+            )
+            await session.commit()
+
+        report = _fill_report(
+            client_order_id="alpaca-generated-child-sl",
+            order_id=sl_uuid,
+            event="canceled",
+            filled_qty="0",
+            price=None,
+        )
+
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
+
+        rows = await _read_event_log(session_factory)
+        assert len(rows) == 1
+        (row,) = rows
+        assert row.event_type == "TERMINAL_ORDER_STATUS"
+        assert row.thesis_id == _THESIS_ID
+        assert row.position_id == "pos-1"
+        assert row.invocation_id is None
+        # No status RMW on the resolved leg row.
+        async with session_factory() as session:
+            leg = await session.get(OrderRow, "order-stop-leg")
+            assert leg is not None
+            assert leg.status == "PENDING"
+
+    async def test_partial_fill_then_terminal_is_gated_out(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A partially-filled-then-terminal order appends NO terminal event — the
+        fill path + Phase 1 own ``filled_quantity`` and integrate the partials
+        (the ALP-739 zero-fill scoping, preserved)."""
+        report = _fill_report(
+            client_order_id=_PM_LINKED_COMMAND_ID,
+            order_id=uuid4(),
+            qty=10.0,
+            event="expired",
+            filled_qty="3",
+            price=None,
+        )
+
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
+
+        assert await _read_event_log(session_factory) == []
+
+    async def test_redelivered_terminal_event_collapses_to_one_row(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """The same terminal disposition delivered twice (websocket + recovery
+        replay) collapses to one ``broker_event_log`` row, keyed on the
+        ``event_key`` PK (idempotency)."""
+        order_uuid = uuid4()
+        first = _fill_report(
+            client_order_id=_PM_LINKED_COMMAND_ID,
+            order_id=order_uuid,
+            event="canceled",
+            filled_qty="0",
+            price=None,
+            timestamp=_FIXED_TS,
+        )
+        replay = _fill_report(
+            client_order_id=_PM_LINKED_COMMAND_ID,
+            order_id=order_uuid,
+            event="canceled",
+            filled_qty="0",
+            price=None,
+            timestamp=_FIXED_TS,
         )
 
         await persist_fill_report(first, session_factory=session_factory, enrichment_callable=None)

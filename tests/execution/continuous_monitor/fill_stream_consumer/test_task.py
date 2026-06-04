@@ -57,6 +57,7 @@ from alphamind.persistence.session import (
     make_engine,
     make_session_factory,
 )
+from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.fill_records import FillRecordRow
 from alphamind.state.tables.orders import OrderRow
 from tests.state._fk_substrate import seed_position_cluster, stub_order_row
@@ -800,33 +801,33 @@ async def _set_order_status(
         await session.commit()
 
 
-async def _wait_for_order_status(
+async def _wait_for_event_log(
     session_factory: async_sessionmaker[AsyncSession],
     *,
-    order_id: str,
-    expected: str,
+    expected: int,
     timeout_seconds: float = 5.0,
-) -> str | None:
+) -> list[BrokerEventLogRow]:
     deadline = asyncio.get_event_loop().time() + timeout_seconds
-    status: str | None = None
+    rows: list[BrokerEventLogRow] = []
     while asyncio.get_event_loop().time() < deadline:
         async with session_factory() as session:
-            row = await session.get(OrderRow, order_id)
-            status = None if row is None else row.status
-        if status == expected:
-            return status
+            rows = list((await session.execute(select(BrokerEventLogRow))).scalars().all())
+        if len(rows) >= expected:
+            return rows
         await asyncio.sleep(0.01)
-    return status
+    return rows
 
 
-class TestTerminalStatusSync:
-    """ALP-739 — a broker terminal non-fill event reaches ``orders.status``."""
+class TestTerminalStatusEventLog:
+    """ALP-849 / W1c — a broker terminal non-fill event lands as an append-only
+    ``TERMINAL_ORDER_STATUS`` event; the monitor does NOT RMW ``orders.status``
+    (invariant 1: one writer per fact)."""
 
-    async def test_expired_event_syncs_order_status(
+    async def test_expired_event_appends_terminal_event_and_leaves_status(
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        # The seeded entry is FILLED by default; reset to PENDING so the
-        # terminal-status sync has a non-terminal source to transition.
+        # The seeded entry is FILLED by default; reset to PENDING so it is a
+        # plausible zero-fill terminal source. Its status must NOT change.
         await _set_order_status(session_factory, order_id="order-1", status="PENDING")
 
         stream = _FakeStream()
@@ -852,30 +853,36 @@ class TestTerminalStatusSync:
             )
         )
 
-        status = await _wait_for_order_status(
-            session_factory, order_id="order-1", expected="EXPIRED"
-        )
+        rows = await _wait_for_event_log(session_factory, expected=1)
 
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
-        assert status == "EXPIRED"
+        assert [r.event_type for r in rows] == ["TERMINAL_ORDER_STATUS"]
+        # Attribution rides the resolved order's position edge (thesis-1/pos-1).
+        assert rows[0].thesis_id == "thesis-1"
+        assert rows[0].position_id == "pos-1"
         # A terminal non-fill event appends no fill_records row.
         assert await _read_fill_records(session_factory) == []
+        # Invariant 1: the monitor never RMW'd the shared orders row.
+        status, _ = await _status_and_ts(session_factory, "order-1")
+        assert status == "PENDING"
 
-    async def test_partial_fill_then_expire_does_not_sync(
+    async def test_partial_fill_then_expire_appends_no_event(
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        # A partially-filled-then-expired entry must NOT be stamped terminal
-        # here: orders.filled_quantity is Phase-1-lagged, so doing so would
-        # transiently read filled_quantity==0 and fire a false no-fill alert.
-        # The sync is gated on the broker-authoritative cumulative fill.
+        # A partially-filled-then-expired entry appends NO terminal event: the
+        # fill path + Phase 1 own filled_quantity and integrate the partials.
         await _set_order_status(session_factory, order_id="order-1", status="PENDING")
         # A second PENDING entry expires cleanly (zero fill) and acts as a
-        # processing barrier: once it syncs, the earlier event is fully drained.
+        # processing barrier: once its event lands, the earlier one is drained.
         async with session_factory() as db:
-            db.add(stub_order_row("order-2", "bracket-1", status="PENDING"))
+            db.add(
+                stub_order_row(
+                    "order-2", "bracket-1", position_id="pos-1", status="PENDING"
+                )
+            )
             await db.commit()
 
         stream = _FakeStream()
@@ -901,7 +908,7 @@ class TestTerminalStatusSync:
                 ),
             )
         )
-        # order-2: clean zero-fill expire → syncs (the barrier).
+        # order-2: clean zero-fill expire → appends the terminal event (barrier).
         await stream.inject(
             _trade_update(
                 event="expired",
@@ -914,18 +921,17 @@ class TestTerminalStatusSync:
             )
         )
 
-        barrier = await _wait_for_order_status(
-            session_factory, order_id="order-2", expected="EXPIRED"
-        )
+        rows = await _wait_for_event_log(session_factory, expected=1)
 
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
-        assert barrier == "EXPIRED"
-        # order-1 was processed before the barrier and left untouched.
-        order_1_status, _ = await _status_and_ts(session_factory, "order-1")
-        assert order_1_status == "PENDING"
+        # Exactly one terminal event — order-2's. order-1 (partial) appended none.
+        assert len(rows) == 1
+        payload = rows[0].raw_payload_json
+        assert "order-2" in payload
+        assert "order-1" not in payload
 
 
 async def _status_and_ts(
@@ -1014,7 +1020,9 @@ class TestUuidResolution:
     ) -> None:
         """When the take-profit fills, Alpaca OCO-cancels the price-stop sibling;
         that ``canceled`` event (Alpaca client_order_id, zero fills) resolves to
-        the local stop row by captured UUID and transitions it to CANCELLED."""
+        the local stop row by captured UUID and appends a TERMINAL_ORDER_STATUS
+        event (attributing via the leg's position edge) — without RMW-ing the
+        shared orders row (invariant 1)."""
         sl_uuid = uuid4()
         await _seed_leg_order(
             session_factory,
@@ -1038,8 +1046,12 @@ class TestUuidResolution:
 
         await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
 
+        rows = await _wait_for_event_log(session_factory, expected=1)
+        assert [r.event_type for r in rows] == ["TERMINAL_ORDER_STATUS"]
+        assert rows[0].position_id == "pos-1"
+        # Invariant 1: the leg row's status is left untouched by the monitor.
         status, _ = await _status_and_ts(session_factory, "ORD-NVDA-inv0-1")
-        assert status == "CANCELLED"
+        assert status == "PENDING"
         # A cancel appends no fill record.
         assert await _read_fill_records(session_factory) == []
 
