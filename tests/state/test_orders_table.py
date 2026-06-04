@@ -206,6 +206,46 @@ class TestOrdersTableShape:
         with pytest.raises(IntegrityError):
             session.commit()
 
+    def test_client_order_id_unique_index_rejects_duplicate_non_null(
+        self, session: Session
+    ) -> None:
+        """The ``ix_orders_client_order_id`` unique index admits one row per real
+        ``client_order_id`` — two non-NULL rows sharing one raise IntegrityError
+        (the durable-intent idempotency key 02a's fill resolution relies on).
+
+        This constraint lost its dedicated coverage when 01a pruned the
+        per-migration tests; the unique index survives in the squashed baseline.
+        """
+        from tests.state._fk_substrate import seed_position_cluster, stub_order_row
+
+        seed_position_cluster(session)
+        session.commit()
+
+        coid = "inv-X.ENV-SA-1.0.0"
+        session.add(stub_order_row("ord-dup-a", "bracket-1", client_order_id=coid))
+        session.add(stub_order_row("ord-dup-b", "bracket-1", client_order_id=coid))
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+    def test_client_order_id_unique_index_admits_multiple_nulls(self, session: Session) -> None:
+        """Many NULL ``client_order_id`` rows coexist (SQLite treats NULLs as
+        distinct) — protective-leg / never-dispatched orders stay NULL without
+        colliding on the unique index."""
+        from tests.state._fk_substrate import seed_position_cluster, stub_order_row
+
+        seed_position_cluster(session)
+        session.commit()
+
+        session.add(stub_order_row("ord-null-a", "bracket-1", client_order_id=None))
+        session.add(stub_order_row("ord-null-b", "bracket-1", client_order_id=None))
+        session.commit()  # must not raise — both NULLs are admitted
+
+        order_ids = {
+            r.order_id
+            for r in session.query(OrderRow).filter(OrderRow.client_order_id.is_(None)).all()
+        }
+        assert {"ord-null-a", "ord-null-b"} <= order_ids
+
 
 # ---------------------------------------------------------------------------
 # Round-trip codec (AC #2, #3, #5, #6)

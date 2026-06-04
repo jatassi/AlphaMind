@@ -40,8 +40,8 @@ from sqlalchemy.exc import SAWarning
 # ``alphamind.state.tables`` attaches every state-persistence + new-design table
 # to ``Base.metadata``; ``persistence.models`` carries the collector / reference
 # / pipeline tables on the same ``Base``; the command-center package owns a
-# SEPARATE ``CommandCenterBase.metadata``.
-import alphamind.command_center.persistence.tables
+# SEPARATE ``CommandCenterBase.metadata`` — importing ``CommandCenterBase`` from
+# that module triggers the same registration side effects.
 import alphamind.state.tables  # noqa: F401
 from alphamind.command_center.persistence.tables import CommandCenterBase
 from alphamind.persistence.models import Base
