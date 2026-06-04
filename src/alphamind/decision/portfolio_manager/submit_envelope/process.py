@@ -22,7 +22,7 @@ from typing import Any, Literal
 
 from pydantic import TypeAdapter, ValidationError
 
-from alphamind._kernel.ids import EnvelopeId, OrderId, PositionId
+from alphamind._kernel.ids import EnvelopeId, OrderId, PositionId, ThesisId
 from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
@@ -76,6 +76,13 @@ from alphamind.risk_guardrails.state_delivery.validation_tool import (
 
 PositionLookup = Callable[[str], PositionRecord | None]
 """Resolves a ``position_id`` to its persisted record (or ``None`` if missing)."""
+
+OrderThesisLookup = Callable[[str], ThesisId | None]
+"""Resolves a CANCEL target ``order_id`` to its originating thesis FK.
+
+A CANCEL carries only an ``order_id``; its broker-carried link (ALP-844) reads
+the originating thesis off the targeted pending order's record (``None`` if the
+order is absent from the PM view or carries no thesis)."""
 
 _ENVELOPE_ADAPTER: TypeAdapter[PMEnvelope] = TypeAdapter(PMEnvelope)
 
@@ -287,6 +294,19 @@ def _format_first_error(exc: ValidationError) -> str:
     return f"{path}: {err['msg']}"
 
 
+_FORENSIC_REJECTION_ID_PREFIX = "ENV-REC-INVALID"
+"""Head token of the forensic id minted for a rejected / malformed envelope.
+
+A rejected or malformed envelope is NOT a real order and never reaches the
+broker, so it must never route through :func:`derive_pm_command_id` (the
+order-derivation contract, which now requires a real originating thesis —
+ALP-844). The forensic id gets its own synthetic scheme that is deliberately
+NOT a parseable PM/engine command id, so :func:`is_pm_originated` /
+:func:`is_engine_originated` return ``False`` and the failure-log surface
+stays distinguishable from real orders.
+"""
+
+
 def _safe_derive_pm_command_id(
     *,
     invocation_id: str,
@@ -294,23 +314,18 @@ def _safe_derive_pm_command_id(
     command_ordinal: int,
     attempt_seq: int,
 ) -> str:
-    """Derive a synthetic PM command_id; tolerate Layer-1 fallback envelope ids.
+    """Mint a *forensic* id for a rejected / malformed envelope's failure log.
 
-    Layer-1 fallback paths can emit a non-canonical ``envelope_id`` (e.g.
-    ``ENV-REC-INVALID`` when the payload omits it); :func:`derive_pm_command_id`
-    raises ``ValueError`` for such inputs. We catch that and assemble a
-    structurally well-formed ID so the failure-log surface stays queryable.
+    A rejected or malformed envelope is not a real order — it never reaches the
+    broker and has no originating thesis — so this deliberately does NOT route
+    through :func:`derive_pm_command_id`. It returns a clearly-separate
+    synthetic id (``ENV-REC-INVALID.{invocation}.{envelope}.{ordinal}.{seq}``)
+    that is *not* a parseable order command id, keeping the order-derivation
+    contract thesis-required and unbreached while leaving the failure-log
+    surface queryable (ALP-844).
     """
-    try:
-        return derive_pm_command_id(
-            invocation_id=invocation_id,
-            envelope_id=envelope_id,
-            command_ordinal=command_ordinal,
-            attempt_seq=attempt_seq,
-        )
-    except ValueError:
-        prefix = invocation_id if invocation_id.startswith("inv-") else f"inv-{invocation_id}"
-        return f"{prefix}.{envelope_id}.{command_ordinal}.{attempt_seq}"
+    prefix = invocation_id if invocation_id.startswith("inv-") else f"inv-{invocation_id}"
+    return f"{_FORENSIC_REJECTION_ID_PREFIX}.{prefix}.{envelope_id}.{command_ordinal}.{attempt_seq}"
 
 
 def _serialize_response(envelope_id: str, results: tuple[SubmissionResult, ...]) -> str:
@@ -396,6 +411,7 @@ def _process_commands(
     state: SubmitEnvelopeState,
     sector_resolver: Callable[[str], str],
     position_lookup: PositionLookup,
+    order_thesis_lookup: OrderThesisLookup,
 ) -> tuple[tuple[SubmissionResult, ...], SubmitEnvelopeState, tuple[ProjectedDelta | None, ...]]:
     """Process every command in *envelope*, in order.
 
@@ -426,6 +442,7 @@ def _process_commands(
             state=current_state,
             sector_resolver=sector_resolver,
             position_lookup=position_lookup,
+            order_thesis_lookup=order_thesis_lookup,
         )
         results.append(result)
         credited_deltas.append(credited_delta)
@@ -479,6 +496,63 @@ def _reconcile_validation_state(
     return dataclasses.replace(state, validation_state=reconciled)
 
 
+def _resolve_originating_thesis(
+    command: OMSCommand,
+    *,
+    base_command_id: str,
+    position_lookup: PositionLookup,
+    order_thesis_lookup: OrderThesisLookup,
+) -> ThesisId:
+    """Resolve the broker-carried originating thesis FK for *command* (ALP-844).
+
+    Every AlphaMind-derived command id carries the durable thesis FK so the
+    fill it rides on is self-attributing (ADR 0002). There is no thesis-less
+    path:
+
+    * **OPEN** mints a *new* thesis; its id is deterministic from the base
+      command id exactly as Phase 2 derives it (``THE-{ticker}-{suffix}``), so
+      the embedded FK equals the thesis row Phase 2 will persist.
+    * **CLOSE / ADD / ADJUST** act on an existing position; the FK is that
+      position's persisted ``thesis_id``. A real such command reaching
+      submission against a missing position, or one whose ``thesis_id is None``,
+      is a structural error — raise, never sentinel.
+    * **CANCEL** withdraws a pending order; the FK is the order's
+      ``originating_thesis_id`` (resolved by *order_thesis_lookup*).
+
+    Raises :class:`ValueError` when the originating thesis cannot be resolved —
+    the order-derivation contract must never emit a thesis-less id.
+    """
+    if isinstance(command, OpenCommand):
+        ticker = _instrument_ticker_key(command.instrument)
+        return ThesisId(f"THE-{ticker}-{synthesize_id_suffix(base_command_id)}")
+    if isinstance(command, CancelCommand):
+        thesis = order_thesis_lookup(command.order_id)
+        if thesis is None:
+            msg = (
+                f"CANCEL references order_id={command.order_id!r} with no resolvable "
+                "originating thesis; the broker-carried link (ALP-844) requires one."
+            )
+            raise ValueError(msg)
+        return thesis
+    # CLOSE / ADD / ADJUST — resolve the existing position's persisted thesis.
+    position = position_lookup(command.position_id)
+    if position is None:
+        msg = (
+            f"{command.command_type.upper()} references position_id={command.position_id!r} "
+            "absent from the PM view; cannot resolve its originating thesis for the "
+            "broker-carried link (ALP-844)."
+        )
+        raise ValueError(msg)
+    if position.thesis_id is None:
+        msg = (
+            f"{command.command_type.upper()} on position_id={command.position_id!r} has no "
+            "originating thesis_id; an AlphaMind-managed position always carries a thesis "
+            "(ADR 0002) — refusing to derive a thesis-less command id."
+        )
+        raise ValueError(msg)
+    return position.thesis_id
+
+
 def _process_one_command(
     *,
     command: OMSCommand,
@@ -488,6 +562,7 @@ def _process_one_command(
     state: SubmitEnvelopeState,
     sector_resolver: Callable[[str], str],
     position_lookup: PositionLookup,
+    order_thesis_lookup: OrderThesisLookup,
 ) -> tuple[SubmissionResult, SubmitEnvelopeState, ProjectedDelta | None]:
     """Process one embedded command — translate, validate, format result.
 
@@ -499,11 +574,27 @@ def _process_one_command(
     that PASSes guardrails here but is later rejected by the broker releases
     its credit (ALP-743).
     """
+    # The broker-carried thesis FK (ALP-844) rides on the same id-suffix as the
+    # base command id, so resolve the OPEN's thesis off the base id (the
+    # link-stripped ``inv-…`` form) before the link is appended — keeping the
+    # embedded thesis equal to the ``THE-{ticker}-{suffix}`` thesis_id Phase 2
+    # mints from the same command id.
+    bare_invocation = state.invocation_id.removeprefix("inv-")
+    base_command_id = (
+        f"inv-{bare_invocation}.{envelope.envelope_id}.{command_ordinal}.{attempt_seq}"
+    )
+    thesis_id = _resolve_originating_thesis(
+        command,
+        base_command_id=base_command_id,
+        position_lookup=position_lookup,
+        order_thesis_lookup=order_thesis_lookup,
+    )
     command_id = derive_pm_command_id(
         invocation_id=state.invocation_id,
         envelope_id=envelope.envelope_id,
         command_ordinal=command_ordinal,
         attempt_seq=attempt_seq,
+        thesis_id=thesis_id,
     )
 
     # CLOSE/CANCEL produce no projected exposure delta — route directly to
@@ -909,6 +1000,7 @@ __all__ = [
     "_OMS_TO_VALIDATION_ASSET",
     "_OMS_TO_VALIDATION_DIRECTION",
     "_OPTION_CONTRACT_TYPE_TO_VALIDATION_STR",
+    "OrderThesisLookup",
     "PositionLookup",
     "_add_instrument_kwargs",
     "_build_acknowledgment",
@@ -924,6 +1016,7 @@ __all__ = [
     "_process_commands",
     "_process_one_command",
     "_reconcile_validation_state",
+    "_resolve_originating_thesis",
     "_safe_derive_pm_command_id",
     "_serialize_response",
     "_strategy_legs_for_validation",
