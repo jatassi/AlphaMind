@@ -53,6 +53,7 @@ __all__ = [
     "BracketOrderParameters",
     "BracketOrderType",
     "CancelCommand",
+    "CapitalProtectionFloor",
     "CloseCommand",
     "CloseRationaleType",
     "CommandType",
@@ -86,8 +87,10 @@ __all__ = [
     "TargetType",
     "Thesis",
     "ThesisComponent",
+    "ThesisNature",
     "TimeCondition",
     "TimeLeg",
+    "TriggerSignal",
     "oms_command_schema",
 ]
 
@@ -114,6 +117,8 @@ CloseRationaleType = Literal[
 ]
 RiskManagementSubtype = Literal["pm_directed", "engine_guardrail"]
 ComponentType = Literal["entry_rationale", "target_rationale", "invalidation_rationale"]
+ThesisNature = Literal["directional", "non_directional"]
+TriggerSignal = Literal["underlying_price", "option_price", "net_mark"]
 StrategyType = Literal[
     "vertical_spread",
     "calendar_spread",
@@ -301,12 +306,23 @@ class BracketOrderParameters(BaseModel):
 
 
 class PriceLeg(BaseModel):
-    """Hard price-trigger invalidation leg."""
+    """Hard price-trigger invalidation leg.
+
+    ``trigger_signal`` names the signal the thesis-invalidation stop fires on,
+    matched to the thesis nature (ALP-848 / ADR 0003): ``underlying_price`` for
+    a *directional* thesis (the underlying crosses an invalidating level), and
+    ``option_price`` / ``net_mark`` for a *non-directional* vol/spread thesis
+    whose PnL is nonlinear in the underlying (the option's own mark, or a
+    multi-leg net mark, is the faithful invalidation signal). The
+    monitor-side selection that reads this is story 03d; here it is the field
+    plus the producer populating it.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     type: Literal["price"]
     is_hard: Literal[True]
+    trigger_signal: TriggerSignal
     condition: PriceCondition
     order_parameters: BracketOrderParameters
 
@@ -356,11 +372,22 @@ class ThesisComponent(BaseModel):
 
 
 class Thesis(BaseModel):
-    """Self-contained trade thesis — a summary plus per-leg components."""
+    """Self-contained trade thesis — a summary plus per-leg components.
+
+    ``nature`` tags the thesis as *directional* or *non-directional* (ALP-848 /
+    ADR 0003). A directional thesis is invalidated by an underlying price level
+    (a long call on an up-move); a non-directional thesis is a vol / time /
+    spread thesis with no single invalidating underlying level, PnL nonlinear
+    in the underlying. The nature determines which signal the thesis-
+    invalidation stop fires on (see :class:`PriceLeg` ``trigger_signal``). The
+    strategist expresses the thesis shape upstream; the PM carries it onto the
+    OPEN command.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     summary: str = Field(min_length=1)
+    nature: ThesisNature
     components: tuple[ThesisComponent, ...] = Field(min_length=1)
 
 
@@ -450,6 +477,37 @@ class EntryWindow(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Capital-protection floor (options OPENs only)
+# ---------------------------------------------------------------------------
+
+
+class CapitalProtectionFloor(BaseModel):
+    """PM-authored, PnL-denominated capital-protection floor on an options OPEN.
+
+    The exit answering "have I lost too much, regardless of thesis?" — always
+    present on an options position, broker-enforced where possible so it
+    survives a monitor wedge (ADR 0003, CONTEXT.md). ``max_loss`` is the USD
+    magnitude of the worst loss the PM is willing to absorb on this position;
+    the broker submission (story 04c) reads it to place the resting single-leg
+    GTC ``stop_limit``.
+
+    The level is PM judgment per position — there is no ``config/*.yaml`` cap
+    (parent decision B). The floor is authored per OPEN, not a global knob.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    max_loss: Money = Field(
+        gt=0,
+        description=(
+            "USD magnitude of the worst loss the PM will absorb on this options "
+            "position before the broker-enforced floor closes it. PM-authored "
+            "per OPEN; no config cap."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # command_id format documentation
 # ---------------------------------------------------------------------------
 
@@ -482,6 +540,37 @@ class OpenCommand(BaseModel):
     invalidation_legs: tuple[InvalidationLeg, ...] = Field(min_length=1)
     thesis: Thesis
     entry_window: EntryWindow | None = None
+    capital_protection_floor: CapitalProtectionFloor | None = Field(
+        default=None,
+        description=(
+            "PnL-denominated capital-protection floor — mandatory on an options "
+            "OPEN (single-option or multi-leg strategy), forbidden on an equity "
+            "OPEN (native-bracket protection). Validated for presence per "
+            "instrument asset type (ALP-848)."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_capital_protection_floor(self) -> OpenCommand:
+        # The floor answers "have I lost too much, regardless of thesis?" — it
+        # is always present on an options position (broker-enforced where
+        # possible so it survives a monitor wedge, ADR 0003), and absent on an
+        # equity OPEN, which the native bracket already protects. Options =
+        # single-option or multi-leg strategy.
+        is_options = isinstance(self.instrument, OptionInstrument | StrategyInstrument)
+        if is_options and self.capital_protection_floor is None:
+            raise ValueError(
+                "OpenCommand on an options instrument requires a "
+                "capital_protection_floor (PnL-denominated, broker-enforced where "
+                "possible so it survives a monitor wedge)"
+            )
+        if not is_options and self.capital_protection_floor is not None:
+            raise ValueError(
+                "OpenCommand on an equity instrument forbids a "
+                "capital_protection_floor (the native bracket already protects "
+                "the position; the floor field is options-scoped)"
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_hard_backstop(self) -> OpenCommand:

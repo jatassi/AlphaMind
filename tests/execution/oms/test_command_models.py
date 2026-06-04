@@ -35,6 +35,7 @@ from alphamind.commands.command_models import (
     BracketAdjustment,
     BracketOrderParameters,
     CancelCommand,
+    CapitalProtectionFloor,
     CloseCommand,
     EntryOrder,
     EntryWindow,
@@ -111,10 +112,13 @@ def _target_absolute() -> Target:
     return Target(target_type="absolute_price", price=price(170.0), order_type="limit")
 
 
-def _price_leg(trigger_price: float = 140.0) -> PriceLeg:
+def _price_leg(
+    trigger_price: float = 140.0, trigger_signal: str = "underlying_price"
+) -> PriceLeg:
     return PriceLeg(
         type="price",
         is_hard=True,
+        trigger_signal=trigger_signal,  # type: ignore[arg-type]
         condition=PriceCondition(
             underlying_trigger="AAPL", comparator="<=", trigger_price=price(trigger_price)
         ),
@@ -152,14 +156,38 @@ def _thesis_component(component_type: str = "entry_rationale") -> ThesisComponen
     )
 
 
-def _thesis() -> Thesis:
+def _thesis(nature: str = "directional") -> Thesis:
     return Thesis(
         summary="long AAPL on momentum",
+        nature=nature,  # type: ignore[arg-type]
         components=(
             _thesis_component("entry_rationale"),
             _thesis_component("target_rationale"),
             _thesis_component("invalidation_rationale"),
         ),
+    )
+
+
+def _capital_protection_floor(loss_limit: float = 500.0) -> CapitalProtectionFloor:
+    return CapitalProtectionFloor(max_loss=money(loss_limit))
+
+
+def _option_open_command(
+    *,
+    capital_protection_floor: CapitalProtectionFloor | None = _capital_protection_floor(),
+    nature: str = "directional",
+) -> OpenCommand:
+    return OpenCommand(
+        command_type="open",
+        instrument=_option_instrument(),
+        entry_order=_entry_order_market(),
+        position_size=PositionSize(
+            quantity=10.0, dollar_value=money(1_000.0), premium_at_risk=money(1_000.0)
+        ),
+        target=_target_absolute(),
+        invalidation_legs=(_price_leg(),),
+        thesis=_thesis(nature=nature),
+        capital_protection_floor=capital_protection_floor,
     )
 
 
@@ -444,6 +472,7 @@ class TestOpenCommand:
             "position_size": _position_size(),
             "invalidation_legs": (_price_leg(),),
             "thesis": _thesis(),
+            "capital_protection_floor": _capital_protection_floor(),
         }
         # pl_percentage strategy target constructs.
         OpenCommand(
@@ -477,7 +506,14 @@ class TestOpenCommand:
     def test_non_strategy_instrument_allows_any_target_type(self) -> None:
         # The strategy constraint must not regress equity / single-option OPENs —
         # they keep their full absolute_price | pl_percentage | pl_dollar range.
+        # An option OPEN additionally carries the mandatory capital-protection
+        # floor; an equity OPEN does not (native-bracket protection).
         for instrument in (_equity_instrument(), _option_instrument()):
+            floor = (
+                None
+                if isinstance(instrument, EquityInstrument)
+                else _capital_protection_floor()
+            )
             OpenCommand(
                 command_type="open",
                 instrument=instrument,
@@ -491,6 +527,7 @@ class TestOpenCommand:
                 ),
                 invalidation_legs=(_price_leg(),),
                 thesis=_thesis(),
+                capital_protection_floor=floor,
             )
 
     def test_allows_short_equity_instrument(self) -> None:
@@ -532,7 +569,122 @@ class TestOpenCommand:
             target=_target_absolute(),
             invalidation_legs=(_price_leg(),),
             thesis=_thesis(),
+            capital_protection_floor=_capital_protection_floor(),
         )
+
+
+class TestThesisNature:
+    """ALP-848: the thesis carries a directional / non-directional nature tag."""
+
+    def test_directional_nature_constructs(self) -> None:
+        thesis = _thesis(nature="directional")
+        assert thesis.nature == "directional"
+
+    def test_non_directional_nature_constructs(self) -> None:
+        thesis = _thesis(nature="non_directional")
+        assert thesis.nature == "non_directional"
+
+    def test_rejects_unknown_nature(self) -> None:
+        with pytest.raises((ValueError, TypeError)):
+            Thesis(
+                summary="x",
+                nature="sideways",  # type: ignore[arg-type]
+                components=(_thesis_component("entry_rationale"),),
+            )
+
+
+class TestThesisShapedInvalidationSignal:
+    """ALP-848: a price invalidation leg names the trigger signal it fires on."""
+
+    def test_directional_leg_carries_underlying_signal(self) -> None:
+        leg = _price_leg(trigger_signal="underlying_price")
+        assert leg.trigger_signal == "underlying_price"
+
+    def test_non_directional_leg_carries_option_price_signal(self) -> None:
+        leg = _price_leg(trigger_signal="option_price")
+        assert leg.trigger_signal == "option_price"
+
+    def test_non_directional_leg_carries_net_mark_signal(self) -> None:
+        leg = _price_leg(trigger_signal="net_mark")
+        assert leg.trigger_signal == "net_mark"
+
+    def test_rejects_unknown_trigger_signal(self) -> None:
+        with pytest.raises((ValueError, TypeError)):
+            PriceLeg(
+                type="price",
+                is_hard=True,
+                trigger_signal="implied_vol",  # type: ignore[arg-type]
+                condition=PriceCondition(
+                    underlying_trigger="AAPL", comparator="<=", trigger_price=price(140.0)
+                ),
+                order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
+            )
+
+
+class TestCapitalProtectionFloor:
+    """ALP-848: a PnL-denominated, PM-authored, options-mandatory capital floor."""
+
+    def test_floor_is_pnl_denominated(self) -> None:
+        floor = CapitalProtectionFloor(max_loss=money(750.0))
+        assert floor.max_loss == 750.0
+
+    def test_floor_rejects_non_positive_max_loss(self) -> None:
+        with pytest.raises((ValueError, TypeError)):
+            CapitalProtectionFloor(max_loss=money(0.0))
+
+    def test_option_open_requires_floor(self) -> None:
+        # An options OPEN missing the floor is rejected at the command boundary.
+        with pytest.raises((ValueError, TypeError)) as exc_info:
+            _option_open_command(capital_protection_floor=None)
+        assert "capital_protection_floor" in str(exc_info.value)
+
+    def test_option_open_with_floor_constructs(self) -> None:
+        cmd = _option_open_command()
+        assert cmd.capital_protection_floor is not None
+        assert cmd.capital_protection_floor.max_loss == 500.0
+
+    def test_strategy_open_requires_floor(self) -> None:
+        # The mandatory floor is options-scoped — a multi-leg strategy is an
+        # options position too, so a floorless strategy OPEN is rejected.
+        with pytest.raises((ValueError, TypeError)) as exc_info:
+            OpenCommand(
+                command_type="open",
+                instrument=_strategy_instrument(),
+                entry_order=_entry_order_market(),
+                position_size=_position_size(),
+                target=Target(
+                    target_type="pl_percentage",
+                    pl_percentage=80.0,
+                    price=price(170.0),
+                    order_type="limit",
+                ),
+                invalidation_legs=(_price_leg(),),
+                thesis=_thesis(),
+                capital_protection_floor=None,
+            )
+        assert "capital_protection_floor" in str(exc_info.value)
+
+    def test_equity_open_validates_without_floor(self) -> None:
+        # Equity OPENs are protected by the native bracket — the floor field is
+        # options-scoped, so an equity OPEN validates with it absent.
+        cmd = _open_command()
+        assert cmd.capital_protection_floor is None
+
+    def test_equity_open_rejects_floor(self) -> None:
+        # The floor is options-only: attaching it to an equity OPEN is a
+        # category error and is rejected.
+        with pytest.raises((ValueError, TypeError)) as exc_info:
+            OpenCommand(
+                command_type="open",
+                instrument=_equity_instrument(),
+                entry_order=_entry_order_market(),
+                position_size=_position_size(),
+                target=_target_absolute(),
+                invalidation_legs=(_price_leg(),),
+                thesis=_thesis(),
+                capital_protection_floor=_capital_protection_floor(),
+            )
+        assert "capital_protection_floor" in str(exc_info.value)
 
 
 class TestCloseCommand:
