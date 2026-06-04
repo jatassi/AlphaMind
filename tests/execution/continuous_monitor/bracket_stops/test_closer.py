@@ -214,6 +214,7 @@ class FakeSubmitter:
     options_calls: list[tuple[str, str]] = field(default_factory=list)
     strategy_calls: list[tuple[str, str]] = field(default_factory=list)
     strategy_returns: CloseSubmissionResult | None = None
+    trigger_reasons: list[PositionExitMethod] = field(default_factory=list)
 
     async def submit_options_close(
         self,
@@ -221,9 +222,11 @@ class FakeSubmitter:
         position: PositionRecord,
         details: OptionsPositionDetails,
         client_order_id: str,
+        trigger_reason: PositionExitMethod,
     ) -> CloseSubmissionResult:
         del details
         self.options_calls.append((position.position_id, client_order_id))
+        self.trigger_reasons.append(trigger_reason)
         return CloseSubmissionResult(
             order_ids=(client_order_id,),
             mode="single_leg",
@@ -235,9 +238,11 @@ class FakeSubmitter:
         position: PositionRecord,
         details: StrategyPositionDetails,
         client_order_id_base: str,
+        trigger_reason: PositionExitMethod,
     ) -> CloseSubmissionResult:
         del details
         self.strategy_calls.append((position.position_id, client_order_id_base))
+        self.trigger_reasons.append(trigger_reason)
         if self.strategy_returns is not None:
             return self.strategy_returns
         return CloseSubmissionResult(
@@ -364,6 +369,28 @@ class TestSingleLegClose:
         # The parsed invocation_id is the FULL inv-prefixed form (FK-valid
         # against invocations.invocation_id) — it equals the provider's id.
         assert components.invocation_id == "inv-20260511T143000Z-aabbccdd"
+
+    async def test_trigger_reason_threaded_to_submitter(self) -> None:
+        """The closer threads the thesis-shaped exit reason to the submitter so the
+        fresh close is framed as a Monitor-enforced thesis exit (ALP-853) — not an
+        engine-envelope cascade close. ``STOP_TRIGGERED`` flows through unchanged."""
+        position = _options_position()
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+        await submit_options_bracket_close(
+            position=position,
+            bracket=_bracket(),
+            trigger_reason=PositionExitMethod.STOP_TRIGGERED,
+            submitter=submitter,
+            activity_log=log.emit,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-20260511T143000Z-aabbccdd",
+            trigger_id=9,
+            now=_NOW,
+            estimated_exit_price=10.0,
+            realized_pnl_usd=-200.0,
+        )
+        assert submitter.trigger_reasons == [PositionExitMethod.STOP_TRIGGERED]
 
     async def test_thesis_less_position_raises(self) -> None:
         """A bracket-stop close on a position with no thesis_id raises rather

@@ -90,8 +90,15 @@ class BracketCloseSubmitter(Protocol):
         position: PositionRecord,
         details: OptionsPositionDetails,
         client_order_id: str,
+        trigger_reason: PositionExitMethod,
     ) -> CloseSubmissionResult:
-        """Submit a market close on a single-leg options position."""
+        """Submit a market close on a single-leg options position.
+
+        ``trigger_reason`` is the thesis-shaped exit the fired leg represents
+        (``STOP_TRIGGERED`` → thesis invalidated, ``TARGET_REACHED`` → target
+        reached); it frames the fresh close as a Monitor-enforced exit — never an
+        engine-envelope cascade close.
+        """
 
     async def submit_strategy_close(
         self,
@@ -99,10 +106,14 @@ class BracketCloseSubmitter(Protocol):
         position: PositionRecord,
         details: StrategyPositionDetails,
         client_order_id_base: str,
+        trigger_reason: PositionExitMethod,
     ) -> CloseSubmissionResult:
         """Submit a strategy close. The submitter is responsible for the
         Alpaca-mleg-combined-close attempt and the per-leg fallback on
-        rejection. The result reflects which path succeeded."""
+        rejection. The result reflects which path succeeded.
+
+        ``trigger_reason`` frames the fresh close as a Monitor-enforced
+        thesis-shaped exit (see :meth:`submit_options_close`)."""
 
 
 async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-out: closer + activity-log writer
@@ -148,12 +159,14 @@ async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-ou
             position=position,
             details=details,
             client_order_id=client_order_id_base,
+            trigger_reason=trigger_reason,
         )
     elif isinstance(details, StrategyPositionDetails):
         result = await submitter.submit_strategy_close(
             position=position,
             details=details,
             client_order_id_base=client_order_id_base,
+            trigger_reason=trigger_reason,
         )
     else:
         msg = (

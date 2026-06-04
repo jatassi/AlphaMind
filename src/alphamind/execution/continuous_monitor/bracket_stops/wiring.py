@@ -57,6 +57,7 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
 from alphamind.execution.continuous_monitor.underlying_stream.subscriptions import (
     OpenPositionsReader,
 )
+from alphamind.portfolio_state.events.activity_log import PositionExitMethod
 from alphamind.portfolio_state.records.orders import BracketRecord
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -177,6 +178,7 @@ class AlpacaBracketCloseSubmitter:
         position: PositionRecord,
         details: OptionsPositionDetails,
         client_order_id: str,
+        trigger_reason: PositionExitMethod,
     ) -> CloseSubmissionResult:
         occ_symbol = build_occ_symbol(
             details.underlying_ticker,
@@ -190,7 +192,7 @@ class AlpacaBracketCloseSubmitter:
         assert direction is not None  # single-leg options position
         intent = _DIRECTION_TO_CLOSE_INTENT[direction]
         outcome = await submit_options_close(
-            command=_build_synthetic_close_command(position),
+            command=_build_monitor_close_command(position, trigger_reason),
             client=self._trading_client,  # type: ignore[arg-type]
             execution=self._execution_config,
             client_order_id=client_order_id,
@@ -220,6 +222,7 @@ class AlpacaBracketCloseSubmitter:
         position: PositionRecord,
         details: StrategyPositionDetails,
         client_order_id_base: str,
+        trigger_reason: PositionExitMethod,
     ) -> CloseSubmissionResult:
         # The seam reverses each leg (LONG → sell_to_close, SHORT →
         # buy_to_close); ``submit_mleg_close`` receives close-side legs.
@@ -227,7 +230,7 @@ class AlpacaBracketCloseSubmitter:
         strategy_type = _strategy_type_from_label(details.strategy_type_label)
         try:
             outcome = await submit_mleg_close(
-                command=_build_synthetic_close_command(position),
+                command=_build_monitor_close_command(position, trigger_reason),
                 client=self._trading_client,  # type: ignore[arg-type]
                 execution=self._execution_config,
                 client_order_id=client_order_id_base,
@@ -242,7 +245,10 @@ class AlpacaBracketCloseSubmitter:
                 position.position_id,
             )
             return await self._per_leg_fallback(
-                position=position, details=details, client_order_id_base=client_order_id_base
+                position=position,
+                details=details,
+                client_order_id_base=client_order_id_base,
+                trigger_reason=trigger_reason,
             )
         if isinstance(outcome, GatewaySubmissionFailed):
             log.warning(
@@ -251,7 +257,10 @@ class AlpacaBracketCloseSubmitter:
                 position.position_id,
             )
             return await self._per_leg_fallback(
-                position=position, details=details, client_order_id_base=client_order_id_base
+                position=position,
+                details=details,
+                client_order_id_base=client_order_id_base,
+                trigger_reason=trigger_reason,
             )
         payload = outcome.payload
         return CloseSubmissionResult(
@@ -265,6 +274,7 @@ class AlpacaBracketCloseSubmitter:
         position: PositionRecord,
         details: StrategyPositionDetails,
         client_order_id_base: str,
+        trigger_reason: PositionExitMethod,
     ) -> CloseSubmissionResult:
         """Per-leg market-order fallback when the combined mleg close is rejected."""
         order_ids: list[str] = []
@@ -290,7 +300,7 @@ class AlpacaBracketCloseSubmitter:
                 raise ValueError(msg)
             intent = _DIRECTION_TO_CLOSE_INTENT[leg.direction]
             outcome = await submit_options_close(
-                command=_build_synthetic_close_command(position),
+                command=_build_monitor_close_command(position, trigger_reason),
                 client=self._trading_client,  # type: ignore[arg-type]
                 execution=self._execution_config,
                 client_order_id=leg_client_id,
@@ -317,13 +327,35 @@ class AlpacaBracketCloseSubmitter:
         )
 
 
-def _build_synthetic_close_command(position: PositionRecord) -> CloseCommand:
-    """Construct a CloseCommand the broker_adapter close path expects.
+def _build_monitor_close_command(
+    position: PositionRecord, trigger_reason: PositionExitMethod
+) -> CloseCommand:
+    """Build the real close command a fired Monitor-enforced leg submits.
 
-    The watcher does not route through the OMS, so we synthesize the minimum
-    fields the broker_adapter's translator reads — ``position_id``,
-    ``quantity="all"``, ``order_type="market"``, and ``close_rationale_type``.
+    This is a *fresh self-attributing close*, not a synthetic order and not an
+    engine-envelope cascade close: the broker-carried link rides the
+    ``client_order_id`` the closer threads (ALP-844), and the command is framed
+    by the leg's **thesis-shaped exit** — ``TARGET_REACHED`` → ``target_reached``;
+    a stop fire → ``thesis_invalidated`` (the leg's invalidation condition fired).
+    It deliberately does **not** carry ``risk_management_subtype="engine_guardrail"``
+    — that label marks the engine-envelope cascade close path
+    (:class:`~alphamind.commands.engine_envelope.EngineEnvelope`), which a
+    Monitor-enforced leg fire never routes through.
+
+    The broker_adapter close translator reads only ``position_id`` /
+    ``quantity="all"`` / ``order_type="market"`` / ``limit_price`` here; the
+    rationale carries the exit's *why* for an honest command shape.
     """
+    if trigger_reason is PositionExitMethod.TARGET_REACHED:
+        return CloseCommand(
+            command_id=None,
+            command_type="close",
+            position_id=position.position_id,
+            quantity="all",
+            order_type="market",
+            limit_price=None,
+            close_rationale_type="target_reached",
+        )
     return CloseCommand(
         command_id=None,
         command_type="close",
@@ -331,8 +363,8 @@ def _build_synthetic_close_command(position: PositionRecord) -> CloseCommand:
         quantity="all",
         order_type="market",
         limit_price=None,
-        close_rationale_type="risk_management",
-        risk_management_subtype="engine_guardrail",
+        close_rationale_type="thesis_invalidated",
+        invalidation_reason="monitor-enforced protective leg fired",
     )
 
 

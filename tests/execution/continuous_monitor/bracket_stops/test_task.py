@@ -248,15 +248,21 @@ class FakeSubmitter:
         position: PositionRecord,
         details: OptionsPositionDetails,
         client_order_id: str,
+        trigger_reason: PositionExitMethod,
     ) -> CloseSubmissionResult:
-        del details
+        del details, trigger_reason
         self.options_calls.append((position.position_id, client_order_id))
         return CloseSubmissionResult(order_ids=(client_order_id,), mode="single_leg")
 
     async def submit_strategy_close(
-        self, *, position: PositionRecord, details: object, client_order_id_base: str
+        self,
+        *,
+        position: PositionRecord,
+        details: object,
+        client_order_id_base: str,
+        trigger_reason: PositionExitMethod,
     ) -> CloseSubmissionResult:
-        del details
+        del details, trigger_reason
         self.strategy_calls.append(position.position_id)
         return CloseSubmissionResult(order_ids=(client_order_id_base,), mode="strategy_combined")
 
