@@ -278,7 +278,7 @@ async def _resolve_oms_order_id(db: AsyncSession, report: FillReport) -> str | N
        real ``alpaca_order_id`` is backfilled. This closes the atomicity-first
        submit→backfill window: a fast fill in that window resolves to the
        pre-committed row instead of stranding (the UUID lookup below would miss it
-       because the row still carries the synthetic ``alp-{order_id}`` placeholder).
+       because the row carries NO broker id yet — ``alpaca_order_id`` NULL, ALP-847).
     3. (ALP-746) Otherwise resolve by the broker UUID of the order that owns the
        local row: for an mleg per-leg child that is the parent's
        ``parent_alpaca_order_id`` (legs do not own ``orders`` rows); for an
@@ -289,9 +289,10 @@ async def _resolve_oms_order_id(db: AsyncSession, report: FillReport) -> str | N
     Returns ``None`` when none resolves — the caller declines to attribute
     the event rather than violate the ``fill_records.order_id`` FK.
 
-    ``alpaca_order_id`` is expected unique across ``orders`` rows (captured
-    broker UUIDs are distinct per order; synthetic ``alp-{order_id}`` placeholders
-    are unique per PK), so the UUID lookup uses ``one_or_none`` — a duplicate
+    A non-NULL ``alpaca_order_id`` is expected unique across ``orders`` rows
+    (captured broker UUIDs are distinct per order; ALP-847 — an order with no
+    broker counterpart carries NULL, which the UUID lookup never matches against a
+    real broker fill), so the UUID lookup uses ``one_or_none`` — a duplicate
     surfaces loudly as a ``MultipleResultsFound`` invariant breach rather than
     silently attributing the event to an arbitrary row.
     """

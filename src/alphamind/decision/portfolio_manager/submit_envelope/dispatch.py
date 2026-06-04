@@ -271,10 +271,6 @@ async def _route_one_command(
     by the self-guarding ``_precommit_if_atomic`` / ``_abandon_if_atomic`` /
     ``_finalize_dispatch_if_persisting`` helpers (no-ops on the fixture path).
     """
-    from alphamind.execution.broker_adapter import GatewaySubmissionFailed, Submitted
-    from alphamind.execution.broker_adapter.errors import classify_alpaca_error
-    from alphamind.execution.broker_adapter.order_options import PermanentRejectionError
-
     # ALP-747 stale-anchor coherence backstop — rejected before any pre-commit.
     if ctx.quote_source is not None:
         stale_reason = await _stale_anchor_rejection_reason(command, quote_source=ctx.quote_source)
@@ -309,6 +305,28 @@ async def _route_one_command(
         context_kwargs.get("target_alpaca_order_id") is None
     ):
         return await _route_monitor_enforced_local(ctx, command=command, result=result)
+
+    return await _dispatch_to_broker(
+        ctx, command=command, result=result, context_kwargs=context_kwargs
+    )
+
+
+async def _dispatch_to_broker(
+    ctx: _BrokerRouteCtx,
+    *,
+    command: OMSCommand,
+    result: SubmissionResult,
+    context_kwargs: dict[str, Any],
+) -> tuple[SubmissionResult, BrokerDispatchResult | None, _AbandonedCommandEntry | None]:
+    """(A) pre-commit → (B) dispatch → (C) backfill / (F) teardown for one command.
+
+    The broker-routing body of :func:`_route_one_command`, reached once the
+    stale-anchor backstop and the ALP-847 monitor-enforced-local branch have both
+    passed. ``context_kwargs`` is the resolved per-command dispatcher context.
+    """
+    from alphamind.execution.broker_adapter import GatewaySubmissionFailed, Submitted
+    from alphamind.execution.broker_adapter.errors import classify_alpaca_error
+    from alphamind.execution.broker_adapter.order_options import PermanentRejectionError
 
     # (A) Pre-commit the durable order row before dispatch. If it cannot land, the
     # command aborts without dispatching — never a broker order without a row.

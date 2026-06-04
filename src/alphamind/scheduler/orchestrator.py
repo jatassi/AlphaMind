@@ -797,7 +797,8 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     # the live ``TradingClient`` on its own side (alpaca-py is not picklable
     # across the subprocess boundary). Debug-e2e / log-only runs pass
     # ``None`` so the submit_envelope wrapper's broker-routing gate stays
-    # False and synthetic-``alp-{order_id}`` placeholders persist. The
+    # False and orders persist with NO broker id (NULL, ALP-847 — never a
+    # synthetic placeholder). The
     # ``ExecutionConfig`` is reused from ``pipeline_config.loaded.execution``
     # rather than re-parsing ``execution.yaml`` — ``parse_loaded_config``
     # already did the work inside ``insert_invocation_record``.

@@ -2470,9 +2470,7 @@ async def test_cancel_of_monitor_enforced_leg_is_local_no_broker_call(
     try:
         await _seed_invocation_substrate(factory)
         await _seed_cash_ledger(factory)
-        await _seed_position_cluster(
-            factory, _open_position(), _active_thesis(), _active_bracket()
-        )
+        await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
         await _seed_monitor_enforced_stop(
             factory,
             order_id="ord-monitor-stop",
@@ -2494,7 +2492,7 @@ async def test_cancel_of_monitor_enforced_leg_is_local_no_broker_call(
         dispatch = _RecordingBrokerDispatch()
         ctx, handle = await _open_handle(factory)
         try:
-            updated, dispatches, abandoned = await _route_through_broker(
+            updated, _dispatches, abandoned = await _route_through_broker(
                 envelope=envelope,
                 submission_results=(result,),
                 client=MagicMock(),

@@ -98,12 +98,12 @@ async def persist_envelope_outcome(
     When ``dispatch_results`` is supplied (broker-routing coordinated swap,
     story 03e / ALP-390), each accepted command's writeback consumes the
     matching :class:`BrokerDispatchResult` so the persisted entry / close /
-    add / adjust order carries Alpaca's real ``alpaca_order_id`` rather than
-    the synthetic ``alp-{order_id}`` placeholder. For a native equity bracket /
-    OTO OPEN, the dispatch result's ``leg_alpaca_order_ids`` additionally stamp
-    the real broker ids onto the TAKE_PROFIT / first-PRICE_STOP rows (ALP-746).
-    ``None`` entries (legacy callers and per-command failures) fall back to the
-    synthetic id.
+    add / adjust order carries Alpaca's real ``alpaca_order_id``. For a native
+    equity bracket / OTO OPEN, the dispatch result's ``leg_alpaca_order_ids``
+    additionally stamp the real broker ids onto the TAKE_PROFIT / first-PRICE_STOP
+    rows (ALP-746). ``None`` entries (legacy callers and per-command failures)
+    leave the order with NO broker id (``alpaca_order_id`` NULL, ALP-847 — never
+    a synthetic placeholder).
 
     ``reprice_markers`` (ALP-765): one ``{"ticker", "analyst_price",
     "marketable_price"}`` dict per enter-now entry repriced by the execution
@@ -236,7 +236,8 @@ async def persist_engine_envelope_outcome(
 
     When ``submitted_alpaca_order_id`` is supplied (broker-routing coordinated
     swap, story 03e / ALP-390), the persisted close order carries the broker's
-    real Alpaca order id rather than the synthetic ``alp-{order_id}`` placeholder.
+    real Alpaca order id; otherwise it carries NO broker id (``alpaca_order_id``
+    NULL, ALP-847 — never a synthetic placeholder).
 
     The continuous monitor produced the envelope; the OMS owns persistence.
     The surrounding ``InvocationContext`` commits or rolls back atomically.

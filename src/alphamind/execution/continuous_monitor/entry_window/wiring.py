@@ -290,9 +290,7 @@ def make_entry_cancel_target_resolver(
                 # pass ``None`` through so the canceller retries rather than
                 # cancelling a non-existent order.
                 alpaca_order_id=(
-                    AlpacaOrderId(row.alpaca_order_id)
-                    if row.alpaca_order_id is not None
-                    else None
+                    AlpacaOrderId(row.alpaca_order_id) if row.alpaca_order_id is not None else None
                 ),
                 has_recorded_fills=fill_count > 0,
             )

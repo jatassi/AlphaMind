@@ -15,9 +15,12 @@ from alphamind._kernel.money import price
 from alphamind.commands.command_models import (
     ComponentType,
     EquityInstrument,
+    EventLeg,
+    PriceLeg,
     StrategyInstrument,
     Target,
     Thesis,
+    TimeLeg,
 )
 from alphamind.commands.command_models import (
     StrategyLeg as WireStrategyLeg,
@@ -281,12 +284,11 @@ def test_single_leg_bracket_take_profit_build_unchanged() -> None:
     assert target_leg.trigger.threshold_usd == 160.0
 
 
-def _price_leg(trigger_price: float):
+def _price_leg(trigger_price: float) -> PriceLeg:
     """A wire PriceLeg with a stop-on-decline condition (LONG-stop shape)."""
     from alphamind.commands.command_models import (
         BracketOrderParameters,
         PriceCondition,
-        PriceLeg,
     )
 
     return PriceLeg(
@@ -299,11 +301,10 @@ def _price_leg(trigger_price: float):
     )
 
 
-def _time_leg(deadline: datetime):
+def _time_leg(deadline: datetime) -> TimeLeg:
     from alphamind.commands.command_models import (
         BracketOrderParameters,
         TimeCondition,
-        TimeLeg,
     )
 
     return TimeLeg(
@@ -314,8 +315,8 @@ def _time_leg(deadline: datetime):
     )
 
 
-def _event_leg():
-    from alphamind.commands.command_models import EventCondition, EventLeg
+def _event_leg() -> EventLeg:
+    from alphamind.commands.command_models import EventCondition
 
     return EventLeg(
         type="event",
@@ -347,19 +348,17 @@ def test_equity_open_first_stop_and_take_profit_are_broker_enforced() -> None:
         instrument=equity,
         entry_window_deadline=None,
     )
-    by_type = {leg.leg_type: leg for leg in bracket.protective_legs}
     legs = bracket.protective_legs
-    take_profit = next(l for l in legs if l.leg_type is BracketLegType.TAKE_PROFIT)
-    price_stops = [l for l in legs if l.leg_type is BracketLegType.PRICE_STOP]
-    time_leg = next(l for l in legs if l.leg_type is BracketLegType.TIME_EXPIRATION)
-    event_leg = next(l for l in legs if l.leg_type is BracketLegType.EVENT_INVALIDATION)
+    take_profit = next(leg for leg in legs if leg.leg_type is BracketLegType.TAKE_PROFIT)
+    price_stops = [leg for leg in legs if leg.leg_type is BracketLegType.PRICE_STOP]
+    time_leg = next(leg for leg in legs if leg.leg_type is BracketLegType.TIME_EXPIRATION)
+    event_leg = next(leg for leg in legs if leg.leg_type is BracketLegType.EVENT_INVALIDATION)
 
     assert take_profit.enforcement_binding is EnforcementBinding.BROKER_ENFORCED
     assert price_stops[0].enforcement_binding is EnforcementBinding.BROKER_ENFORCED
     assert price_stops[1].enforcement_binding is EnforcementBinding.MONITOR_ENFORCED
     assert time_leg.enforcement_binding is EnforcementBinding.MONITOR_ENFORCED
     assert event_leg.enforcement_binding is EnforcementBinding.MONITOR_ENFORCED
-    assert by_type  # silence unused
 
 
 def test_strategy_open_all_legs_are_monitor_enforced() -> None:
@@ -398,7 +397,7 @@ def test_build_pending_order_without_broker_id_carries_no_alpaca_id() -> None:
         order_class=OrderClass.OTO,
         direction=OrderDirection.SELL,
         order_type=OrderType.STOP,
-        price_parameters=PriceParameters(stop_trigger_price=150.0),
+        price_parameters=PriceParameters(stop_trigger_price=price(150.0)),
         ticker="AAPL",
         pm_command_id="inv-1.env.0.0",
         thesis_id="THE-AAPL-abc123",
@@ -433,7 +432,7 @@ def test_build_pending_order_with_override_carries_real_broker_id() -> None:
         order_class=OrderClass.OTO,
         direction=OrderDirection.SELL,
         order_type=OrderType.STOP,
-        price_parameters=PriceParameters(stop_trigger_price=150.0),
+        price_parameters=PriceParameters(stop_trigger_price=price(150.0)),
         ticker="AAPL",
         pm_command_id="inv-1.env.0.0",
         thesis_id="THE-AAPL-abc123",

@@ -485,8 +485,10 @@ def _build_entry_order_row(
         price_parameters_json="{}",
         duration=OrderDuration.DAY.value,
         status=OrderStatus.FILLED.value,
-        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
-        alpaca_order_id_chain_json=f'["alp-{order_id}"]',
+        # A FILLED entry had a real broker order — carry a deterministic
+        # broker-style id (ALP-847 deleted the synthetic ``alp-`` placeholder).
+        alpaca_order_id=AlpacaOrderId(f"brk-{order_id}"),
+        alpaca_order_id_chain_json=f'["brk-{order_id}"]',
         submission_timestamp=timestamp,
         last_update_timestamp=timestamp,
         filled_quantity=1.0,

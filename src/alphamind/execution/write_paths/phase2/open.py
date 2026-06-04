@@ -148,8 +148,8 @@ async def _writeback_open(
     PRICE_STOP order, so a later protective fill / OCO sibling-cancel resolves
     to the local leg row. Legs with no broker counterpart — TIME_STOP and the
     advisory EVENT legs (and any PRICE_STOP beyond the one Alpaca brackets,
-    which submits a single stop child) — keep the synthetic ``alp-{order_id}``
-    placeholder.
+    which submits a single stop child) — carry NO broker id (``alpaca_order_id``
+    NULL, ALP-847): they are monitor-enforced Intent, not Broker-Owned Fact.
     """
     leg_ids = submitted_leg_alpaca_order_ids or {}
     ticker = _instrument_ticker_key(command.instrument)
@@ -392,7 +392,8 @@ def _build_protective_orders(
     one stop child, mapped from the first PriceLeg by
     ``order_equity._bracket_params``). A TimeLeg (TIME_STOP), the advisory
     EVENT legs, and any PRICE_STOP beyond the first have no broker counterpart
-    and keep the synthetic ``alp-{order_id}`` placeholder.
+    and carry NO broker id (``alpaca_order_id`` NULL, ALP-847) — monitor-enforced
+    Intent.
     """
     c = context
     target_order = _build_take_profit_order(
@@ -457,8 +458,9 @@ def _build_take_profit_order(  # noqa: PLR0913 — distinct identifiers + sizing
     leg is persisted as the MLEG envelope that exits the strategy (ALP-614).
 
     ``alpaca_order_id_override`` (ALP-746) carries the native bracket / OTO's
-    take-profit child id captured at submission; ``None`` falls back to the
-    synthetic placeholder (no broker counterpart, e.g. a strategy MLEG exit).
+    take-profit child id captured at submission; ``None`` means NO broker id
+    (``alpaca_order_id`` NULL, ALP-847 — no broker counterpart, e.g. a strategy
+    MLEG exit's monitor-enforced take-profit).
     """
     if target.order_type == "market":
         order_type = OrderType.MARKET
@@ -507,7 +509,8 @@ def _build_invalidation_leg_order(  # noqa: PLR0913 — leg construction threads
 
     ``alpaca_order_id_override`` (ALP-746) carries the native bracket's stop
     child id for the PRICE_STOP leg; a TIME_STOP (TimeLeg) has no broker
-    counterpart and is always called with ``None`` (synthetic placeholder).
+    counterpart and is always called with ``None`` → NO broker id
+    (``alpaca_order_id`` NULL, ALP-847 — monitor-enforced Intent).
     """
     persisted_order_type = _BRACKET_ORDER_TYPE_TO_PERSISTED[wire_leg.order_parameters.order_type]
     if isinstance(wire_leg, PriceLeg):

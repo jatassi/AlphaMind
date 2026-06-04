@@ -105,9 +105,10 @@ class OrderStatus(StrEnum):
     # PENDING_SUBMIT (ALP-836) is the durable-intent state of an order whose row
     # has been committed locally but has NOT yet been accepted by the broker — the
     # atomicity-first window between the pre-dispatch commit and the post-submit
-    # ``alpaca_order_id`` backfill. The row carries the synthetic ``alp-{order_id}``
-    # placeholder until the real broker id is backfilled, at which point it
-    # transitions to PENDING. A row stuck in PENDING_SUBMIT means the broker never
+    # ``alpaca_order_id`` backfill. The row carries NO broker id (``alpaca_order_id``
+    # NULL, ALP-847 — the synthetic ``alp-`` placeholder is deleted) until the real
+    # broker id is backfilled, at which point it transitions to PENDING. A row
+    # stuck in PENDING_SUBMIT means the broker never
     # accepted the order (lost backfill, rejection, or process death between the
     # pre-commit and dispatch) — recoverable by the reconcile-by-``client_order_id``
     # backfill, and never a live-broker-order-without-a-local-row strand.
