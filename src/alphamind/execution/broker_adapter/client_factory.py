@@ -10,10 +10,12 @@ be shared across the adapter's lifetime.
 
 from __future__ import annotations
 
+import functools
 import os
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
+from alpaca.common.rest import RESTClient
 from alpaca.data.historical.corporate_actions import CorporateActionsClient
 from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.trading.client import TradingClient
@@ -22,6 +24,36 @@ from alpaca.trading.stream import TradingStream
 from alphamind.config.models.venue import AlpacaCredentials, VenueConfig
 
 ExecutionMode = Literal["paper", "live"]
+
+# Socket-level timeout (seconds) installed on every minted REST client. alpaca-py
+# issues blocking ``requests`` calls without a timeout, so a hung connection would
+# block its worker thread forever. The query layer already bounds the *event
+# loop* with ``asyncio.wait_for`` (the ALP-841 freeze fix); this timeout is the
+# matching floor on the thread side so an orphaned worker eventually unwinds
+# rather than leaking. Comfortably above ``queries._REST_TIMEOUT_SECONDS`` so the
+# loop-level bound is the one that normally fires.
+_SOCKET_TIMEOUT_SECONDS = 60.0
+
+
+def _install_socket_timeout(client: RESTClient) -> None:
+    """Default a connect/read timeout onto a REST client's ``requests`` session.
+
+    alpaca-py's ``RESTClient._one_request`` calls ``self._session.request(...)``
+    with no ``timeout``, so a stalled socket hangs the call indefinitely. We wrap
+    the session's ``request`` to inject :data:`_SOCKET_TIMEOUT_SECONDS` whenever
+    the caller did not pass one, bounding the blocking call at the transport
+    layer. The query layer's ``asyncio.wait_for`` is the primary loop-liveness
+    guarantee; this is the matching thread-side floor.
+    """
+    session: Any = client._session
+    original_request = session.request
+
+    @functools.wraps(original_request)
+    def request_with_timeout(*args: Any, **kwargs: Any) -> Any:
+        kwargs.setdefault("timeout", _SOCKET_TIMEOUT_SECONDS)
+        return original_request(*args, **kwargs)
+
+    session.request = request_with_timeout
 
 
 @dataclass(frozen=True)
@@ -80,13 +112,20 @@ class AlpacaClientFactory:
         return self._credentials
 
     def build_trading_client(self) -> TradingClient:
-        """Return a fresh ``TradingClient`` bound to the resolved credentials."""
-        return TradingClient(
+        """Return a fresh ``TradingClient`` bound to the resolved credentials.
+
+        Carries a socket-level timeout so a stalled connection cannot block its
+        worker thread indefinitely (the thread-side floor under the query
+        layer's event-loop ``wait_for`` bound — ALP-841).
+        """
+        client = TradingClient(
             api_key=self._credentials.api_key,
             secret_key=self._credentials.api_secret,
             paper=(self._credentials.mode == "paper"),
             url_override=self._credentials.rest_url,
         )
+        _install_socket_timeout(client)
+        return client
 
     def build_trading_stream(self) -> TradingStream:
         """Return a fresh ``TradingStream`` bound to the resolved credentials."""
@@ -105,11 +144,13 @@ class AlpacaClientFactory:
         (no separate market-data credential) and targets the documented Data API
         base URL, so we pass no ``url_override``.
         """
-        return StockHistoricalDataClient(
+        client = StockHistoricalDataClient(
             api_key=self._credentials.api_key,
             secret_key=self._credentials.api_secret,
             raw_data=False,
         )
+        _install_socket_timeout(client)
+        return client
 
     def build_corporate_actions_client(self) -> CorporateActionsClient:
         """Return a fresh ``CorporateActionsClient`` bound to the resolved credentials.
@@ -119,8 +160,10 @@ class AlpacaClientFactory:
         targets the documented Data API base URL so we pass no
         ``url_override``.
         """
-        return CorporateActionsClient(
+        client = CorporateActionsClient(
             api_key=self._credentials.api_key,
             secret_key=self._credentials.api_secret,
             raw_data=False,
         )
+        _install_socket_timeout(client)
+        return client

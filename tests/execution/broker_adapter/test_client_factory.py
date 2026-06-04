@@ -220,6 +220,66 @@ def test_build_corporate_actions_client_returns_live_client_when_mode_live(
     assert cast(Any, client)._api_key == "live-key"
 
 
+def test_install_socket_timeout_defaults_a_timeout_on_session_request() -> None:
+    """The wrapper forwards a default ``timeout`` when the caller omits one.
+
+    alpaca-py issues blocking ``requests`` calls with no ``timeout``; the factory
+    wraps the session's ``request`` so a stalled socket cannot hang the worker
+    thread forever (the thread-side floor under the query layer's event-loop
+    ``wait_for`` bound — ALP-841 / ALP-850).
+    """
+    import requests
+
+    from alphamind.execution.broker_adapter.client_factory import (
+        _SOCKET_TIMEOUT_SECONDS,
+        _install_socket_timeout,
+    )
+
+    captured: dict[str, Any] = {}
+
+    class _RecordingSession(requests.Session):
+        def request(self, *args: Any, **kwargs: Any) -> Any:
+            captured.update(kwargs)
+            return "ok"
+
+    client = cast(Any, type("FakeRest", (), {})())
+    client._session = _RecordingSession()
+
+    _install_socket_timeout(client)
+
+    # Caller omits timeout → wrapper supplies the default.
+    assert client._session.request("GET", "https://example/x") == "ok"
+    assert captured["timeout"] == _SOCKET_TIMEOUT_SECONDS
+
+    # Caller-supplied timeout is preserved (setdefault, not override).
+    captured.clear()
+    client._session.request("GET", "https://example/x", timeout=1.5)
+    assert captured["timeout"] == 1.5
+
+
+def test_build_trading_client_installs_socket_timeout_wrapper(
+    monkeypatch: pytest.MonkeyPatch, venue: VenueConfig
+) -> None:
+    """``build_trading_client`` wraps the session's ``request`` (timeout floor).
+
+    Behaviour of the wrapper itself is covered by
+    ``test_install_socket_timeout_defaults_a_timeout_on_session_request``; this
+    asserts the build path actually installs it (so a real client is protected).
+    """
+    from alphamind.execution.broker_adapter import AlpacaClientFactory
+
+    monkeypatch.setenv("ALPACA_PAPER_KEY", "paper-key")
+    monkeypatch.setenv("ALPACA_PAPER_SECRET", "paper-secret")
+
+    factory = AlpacaClientFactory(venue, mode="paper")
+    client = factory.build_trading_client()
+
+    session = cast(Any, client)._session
+    # An unwrapped requests.Session.request is the bound method on the class; the
+    # factory replaces the *instance* attribute with a wrapping closure.
+    assert "request" in vars(session), "factory did not install a per-instance request wrapper"
+
+
 def test_factory_credentials_are_frozen(
     monkeypatch: pytest.MonkeyPatch, venue: VenueConfig
 ) -> None:

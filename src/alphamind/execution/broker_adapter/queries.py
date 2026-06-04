@@ -15,8 +15,10 @@ async generators so callers can stop early without fetching every page.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
-from collections.abc import AsyncGenerator
+import functools
+from collections.abc import AsyncGenerator, Callable
 from decimal import Decimal
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
@@ -52,6 +54,38 @@ _TRADE_ACTIVITY_ADAPTER: TypeAdapter[TradeActivity] = TypeAdapter(TradeActivity)
 _NON_TRADE_ACTIVITY_ADAPTER: TypeAdapter[NonTradeActivity] = TypeAdapter(NonTradeActivity)
 
 _PAGE_SIZE = 500
+
+# Per-page wall-clock budget (seconds) for a synchronous Alpaca REST call run on
+# a worker thread. alpaca-py's ``TradingClient`` issues blocking ``requests``
+# calls with no socket timeout, so a hung connection would otherwise block its
+# worker thread forever; bounding the ``to_thread`` await with ``wait_for``
+# guarantees the *calling event loop* never freezes regardless of how long the
+# socket hangs (the ALP-841 lesson — a bare-sync ``get_orders`` froze the
+# monitor loop and its watchdog for ~4.5h). The client factory also installs a
+# matching socket-level timeout (defence in depth: that one lets the orphaned
+# worker thread eventually unwind rather than leak). Sized well above a healthy
+# round-trip yet short enough that a sweep iteration retries on the next
+# interval rather than wedging.
+_REST_TIMEOUT_SECONDS = 30.0
+
+
+async def _rest_call[T](fn: Callable[[], T]) -> T:
+    """Run a synchronous Alpaca REST call off the event loop, time-bounded.
+
+    The paginating query generators (:meth:`AccountStateQueries.get_orders`,
+    :meth:`~AccountStateQueries.get_account_activities`) are consumed from the
+    continuous monitor's recovery sweep and the account-activities poll — both
+    on an event loop shared with the fill stream and (pre-isolation) the safety
+    watchdog. alpaca-py is synchronous, so calling it inline would block that
+    loop for the full network round-trip; a *hung* call would freeze it
+    indefinitely (ALP-841). Offloading to a worker thread keeps the loop
+    running, and the :func:`asyncio.wait_for` bound guarantees the await resolves
+    within :data:`_REST_TIMEOUT_SECONDS` even if the socket never returns —
+    raising :class:`TimeoutError`, which the adapter's error classifier treats as
+    transient so the sweep retries on its next interval.
+    """
+    return await asyncio.wait_for(asyncio.to_thread(fn), timeout=_REST_TIMEOUT_SECONDS)
+
 
 # ---------------------------------------------------------------------------
 # Typed response records — all frozen
@@ -477,7 +511,11 @@ class AccountStateQueries:
                 until=until_cursor,
                 symbols=list(symbols) if symbols else None,
             )
-            page_result = self._client.get_orders(filter=req)
+            # Offload the blocking REST call off the event loop, time-bounded —
+            # a hung connection must not freeze the loop (ALP-841). ``partial``
+            # binds this page's request by value (the call is awaited before the
+            # next iteration rebinds ``req``).
+            page_result = await _rest_call(functools.partial(self._client.get_orders, filter=req))
             if not isinstance(page_result, list) or not page_result:
                 break
             page: list[Order] = page_result
@@ -515,7 +553,13 @@ class AccountStateQueries:
             params["until"] = until.isoformat()
 
         while True:
-            result = self._client.get("/account/activities", params)
+            # Offload the blocking REST call off the event loop, time-bounded —
+            # a hung connection must not freeze the loop (ALP-841). ``partial``
+            # binds this page's params by value (the call is awaited before the
+            # next iteration mutates them).
+            result = await _rest_call(
+                functools.partial(self._client.get, "/account/activities", params)
+            )
             if not isinstance(result, list) or not result:
                 break
             for raw in result:
