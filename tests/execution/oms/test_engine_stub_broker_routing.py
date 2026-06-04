@@ -2431,9 +2431,48 @@ def _seed_monitor_enforced_stop(
     async def _seed() -> None:
         async with factory() as sess:
             sess.add(order_record_to_row(record))
+            # The leg's typed enforcement_binding is what the router keys on
+            # (ALP-847) — seed the MONITOR_ENFORCED bracket_legs row alongside the
+            # order so the CANCEL routes local, not by id-nullity.
+            sess.add(
+                _monitor_enforced_leg_row(
+                    bracket_leg_id=f"{order_id}-leg",
+                    bracket_id=bracket_id,
+                    order_id=order_id,
+                )
+            )
             await sess.commit()
 
     return _seed()
+
+
+def _monitor_enforced_leg_row(*, bracket_leg_id: str, bracket_id: str, order_id: str) -> Any:
+    """Build a MONITOR_ENFORCED PRICE_STOP ``bracket_legs`` row for *order_id*."""
+    from alphamind.portfolio_state.records.orders import (
+        BracketLegEnforcement,
+        BracketLegStatus,
+        BracketLegType,
+        EnforcementBinding,
+    )
+    from alphamind.state.tables.bracket_legs import BracketLegRow
+
+    return BracketLegRow(
+        bracket_leg_id=bracket_leg_id,
+        bracket_id=bracket_id,
+        # leg_index 1 — _active_bracket already seeds the bracket's leg at 0.
+        leg_index=1,
+        leg_type=BracketLegType.PRICE_STOP.value,
+        order_id=order_id,
+        trigger_kind="PRICE",
+        trigger_payload_json=(
+            '{"trigger_type":"price","underlying_ticker":"NVDA",'
+            '"threshold_usd":130.0,"direction":"LTE"}'
+        ),
+        pl_anchor_json=None,
+        enforcement=BracketLegEnforcement.MECHANICAL.value,
+        enforcement_binding=EnforcementBinding.MONITOR_ENFORCED.value,
+        leg_status=BracketLegStatus.ACTIVE.value,
+    )
 
 
 class _RecordingBrokerDispatch:
@@ -2515,6 +2554,251 @@ async def test_cancel_of_monitor_enforced_leg_is_local_no_broker_call(
             assert row is not None
             assert row.status == "CANCELLED"
             assert row.alpaca_order_id is None
+    finally:
+        await async_engine.dispose()
+
+
+def _seed_broker_enforced_unacked_stop(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    order_id: str,
+    bracket_id: str,
+    position_id: str,
+    thesis_id: str,
+) -> Any:
+    """Seed a PENDING BROKER_ENFORCED PRICE_STOP with a NULL broker id.
+
+    Models the transient un-acked / PENDING_SUBMIT race: a broker-enforced leg
+    whose ``alpaca_order_id`` is not yet backfilled. The router must REJECT a
+    CANCEL of this leg, never silently local-cancel it. Returns a coroutine.
+    """
+    from alphamind.portfolio_state.records.orders import (
+        BracketLegEnforcement,
+        BracketLegStatus,
+        BracketLegType,
+        EnforcementBinding,
+        EquityInstrumentSpec,
+        OrderClass,
+        OrderDirection,
+        OrderDuration,
+        OrderRecord,
+        OrderRole,
+        OrderStatus,
+        OrderType,
+        PriceParameters,
+    )
+    from alphamind.state.tables.bracket_legs import BracketLegRow
+    from alphamind.state.tables.orders_codec import record_to_row as order_record_to_row
+
+    record = OrderRecord(
+        order_id=OrderId(order_id),
+        position_id=PositionId(position_id),
+        bracket_id=BracketId(bracket_id),
+        role=OrderRole.PRICE_STOP,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("NVDA")),
+        direction=OrderDirection.SELL,
+        order_type=OrderType.STOP,
+        order_class=OrderClass.OTO,
+        price_parameters=PriceParameters(stop_trigger_price=price("130.0")),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=None,  # broker-enforced but un-acked (no broker id yet)
+        alpaca_order_id_chain=(),
+        submission_timestamp=_NOW - timedelta(hours=1),
+        last_update_timestamp=_NOW - timedelta(hours=1),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=ThesisId(thesis_id),
+        originating_pm_command_id=None,
+        age_hours=1.0,
+    )
+
+    async def _seed() -> None:
+        async with factory() as sess:
+            sess.add(order_record_to_row(record))
+            sess.add(
+                BracketLegRow(
+                    bracket_leg_id=f"{order_id}-leg",
+                    bracket_id=bracket_id,
+                    leg_index=1,
+                    leg_type=BracketLegType.PRICE_STOP.value,
+                    order_id=order_id,
+                    trigger_kind="PRICE",
+                    trigger_payload_json=(
+                        '{"trigger_type":"price","underlying_ticker":"NVDA",'
+                        '"threshold_usd":130.0,"direction":"LTE"}'
+                    ),
+                    pl_anchor_json=None,
+                    enforcement=BracketLegEnforcement.MECHANICAL.value,
+                    enforcement_binding=EnforcementBinding.BROKER_ENFORCED.value,
+                    leg_status=BracketLegStatus.ACTIVE.value,
+                )
+            )
+            await sess.commit()
+
+    return _seed()
+
+
+def _seed_broker_enforced_stop_leg(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    order_id: str,
+    bracket_id: str,
+    leg_index: int,
+) -> Any:
+    """Seed a BROKER_ENFORCED PRICE_STOP ``bracket_legs`` row for an existing order."""
+    from alphamind.portfolio_state.records.orders import (
+        BracketLegEnforcement,
+        BracketLegStatus,
+        BracketLegType,
+        EnforcementBinding,
+    )
+    from alphamind.state.tables.bracket_legs import BracketLegRow
+
+    async def _seed() -> None:
+        async with factory() as sess:
+            sess.add(
+                BracketLegRow(
+                    bracket_leg_id=f"{order_id}-leg",
+                    bracket_id=bracket_id,
+                    leg_index=leg_index,
+                    leg_type=BracketLegType.PRICE_STOP.value,
+                    order_id=order_id,
+                    trigger_kind="PRICE",
+                    trigger_payload_json=(
+                        '{"trigger_type":"price","underlying_ticker":"NVDA",'
+                        '"threshold_usd":140.0,"direction":"LTE"}'
+                    ),
+                    pl_anchor_json=None,
+                    enforcement=BracketLegEnforcement.MECHANICAL.value,
+                    enforcement_binding=EnforcementBinding.BROKER_ENFORCED.value,
+                    leg_status=BracketLegStatus.ACTIVE.value,
+                )
+            )
+            await sess.commit()
+
+    return _seed()
+
+
+async def test_cancel_of_broker_enforced_unacked_order_is_rejected_not_local(
+    tmp_path: Path,
+) -> None:
+    """ALP-847 — a CANCEL of a BROKER_ENFORCED leg whose ``alpaca_order_id`` is
+    still NULL (un-acked / PENDING_SUBMIT) must be REJECTED, never silently
+    local-cancelled. Keying on id-nullity would have local-cancelled it while
+    the broker order proceeds; keying on the binding surfaces the rare race."""
+    from alphamind.commands.command_models import CancelCommand
+    from alphamind.commands.submission_results import SubmissionResult
+    from alphamind.decision.portfolio_manager.submit_envelope.dispatch import (
+        _route_through_broker,
+    )
+    from alphamind.execution.broker_adapter import AccountStateQueries
+    from alphamind.state.tables.orders import OrderRow as _OrderRow
+    from tests.execution.oms.test_submit_envelope_mcp import _make_analyst_envelope
+
+    async_engine, factory = _build_db_factory(tmp_path)
+    try:
+        await _seed_invocation_substrate(factory)
+        await _seed_cash_ledger(factory)
+        await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
+        await _seed_broker_enforced_unacked_stop(
+            factory,
+            order_id="ord-broker-unacked",
+            bracket_id="BRK-NVDA-1",
+            position_id="POS-NVDA-001",
+            thesis_id="THE-NVDA-0123456789abcdef0123456789abcdef",
+        )
+
+        cancel = CancelCommand(
+            command_type="cancel",
+            order_id=OrderId("ord-broker-unacked"),
+            cancel_reason="thesis invalidated",
+        )
+        envelope = _make_analyst_envelope(commands=(cancel,))
+        result = SubmissionResult(
+            command_ordinal=0, status="accepted", command_id="inv-X.ENV-C.0.0"
+        )
+
+        dispatch = _RecordingBrokerDispatch()
+        ctx, handle = await _open_handle(factory)
+        try:
+            updated, _dispatches, abandoned = await _route_through_broker(
+                envelope=envelope,
+                submission_results=(result,),
+                client=MagicMock(),
+                queries=MagicMock(spec=AccountStateQueries),
+                execution_config=_default_execution_config(),
+                invocation_handle=handle,
+                broker_dispatch=dispatch,
+            )
+        finally:
+            await ctx.__aexit__(None, None, None)
+
+        # Rejected — never dispatched and never local-cancelled.
+        assert dispatch.calls == []
+        assert updated[0].status == "rejected"
+        assert len(abandoned) == 1
+        assert updated[0].rejection_payload is not None
+        assert updated[0].rejection_payload.gateway_reason == "broker_enforced_not_yet_routable"
+
+        # The order row stays PENDING (the broker order is live / about to be).
+        async with factory() as sess:
+            row = await sess.get(_OrderRow, "ord-broker-unacked")
+            assert row is not None
+            assert row.status == "PENDING"
+    finally:
+        await async_engine.dispose()
+
+
+async def test_adjust_on_two_price_stop_bracket_targets_broker_enforced_leg(
+    tmp_path: Path,
+) -> None:
+    """ALP-847 — an ADJUST(stop) on a bracket carrying BOTH a broker-enforced
+    PRICE_STOP (real id) and a monitor-enforced PRICE_STOP (NULL id) selects the
+    BROKER_ENFORCED leg: the resolved context surfaces that leg's real
+    ``alpaca_order_id`` and ``broker_enforced`` binding (→ broker dispatch),
+    not the monitor leg's NULL id (which would leave the live Alpaca stop stale)."""
+    from alphamind.decision.portfolio_manager.submit_envelope import _adjust_command_context
+    from alphamind.portfolio_state.records.orders import EnforcementBinding
+
+    async_engine, factory = _build_db_factory(tmp_path)
+    try:
+        await _seed_invocation_substrate(factory)
+        await _seed_cash_ledger(factory)
+        await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
+        # Broker-enforced PRICE_STOP (real id) + its BROKER_ENFORCED leg.
+        await _seed_pending_protective_orders(
+            factory,
+            bracket_id=BracketId("BRK-NVDA-1"),
+            position_id=PositionId("POS-NVDA-001"),
+            thesis_id=ThesisId("THE-NVDA-0123456789abcdef0123456789abcdef"),
+        )
+        await _seed_broker_enforced_stop_leg(
+            factory, order_id="ord-stop", bracket_id="BRK-NVDA-1", leg_index=2
+        )
+        # Monitor-enforced second PRICE_STOP (NULL id) + its MONITOR_ENFORCED leg.
+        await _seed_monitor_enforced_stop(
+            factory,
+            order_id="ord-monitor-stop-2",
+            bracket_id="BRK-NVDA-1",
+            position_id="POS-NVDA-001",
+            thesis_id="THE-NVDA-0123456789abcdef0123456789abcdef",
+        )
+
+        ctx, handle = await _open_handle(factory)
+        try:
+            kwargs = await _adjust_command_context(
+                _adjust_stop_command("POS-NVDA-001"), invocation_handle=handle
+            )
+        finally:
+            await ctx.__aexit__(None, None, None)
+
+        # Selected the BROKER_ENFORCED leg — its real id, not the monitor leg's NULL.
+        assert kwargs["target_alpaca_order_id"] == "broker-uuid-ord-stop"
+        assert kwargs["target_enforcement_binding"] is EnforcementBinding.BROKER_ENFORCED
     finally:
         await async_engine.dispose()
 
