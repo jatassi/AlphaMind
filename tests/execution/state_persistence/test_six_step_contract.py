@@ -80,6 +80,10 @@ from alphamind.decision.portfolio_manager.submit_envelope import (
     Acknowledgment,
     SubmissionResult,
 )
+from alphamind.execution.oms.command_ids import (
+    derive_open_thesis_id,
+    derive_pm_command_id,
+)
 from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
 )
@@ -729,11 +733,22 @@ async def test_six_step_snapshot_isolation_contract(
 
     # ---- Phase 2 commit ---------------------------------------------------
     envelope = _open_envelope()
+    # The OPEN command id carries the broker-carried thesis link (ALP-844); the
+    # thesis is minted off the link-free base id, exactly as PM-submit derives
+    # it, and Phase-2 reads it back by parsing (single source of truth).
+    base_command_id = f"inv-{_INV_ID.removeprefix('inv-')}.{envelope.envelope_id}.0.0"
+    open_command_id = derive_pm_command_id(
+        invocation_id=_INV_ID,
+        envelope_id=str(envelope.envelope_id),
+        command_ordinal=0,
+        attempt_seq=0,
+        thesis_id=derive_open_thesis_id("NVDA", base_command_id),
+    )
     results: tuple[SubmissionResult, ...] = (
         SubmissionResult(
             command_ordinal=0,
             status="accepted",
-            command_id=f"inv-{_INV_ID}.{envelope.envelope_id}.0.0",
+            command_id=open_command_id,
             acknowledgment=Acknowledgment(),
         ),
     )

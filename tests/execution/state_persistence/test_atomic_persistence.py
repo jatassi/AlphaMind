@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from alphamind._kernel.money import price
 from alphamind.commands.command_models import EntryOrder, OpenCommand
 from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
+from alphamind.execution.oms.command_ids import derive_open_thesis_id, derive_pm_command_id
 from alphamind.execution.write_paths.phase2.atomic import (
     abandon_command,
     backfill_command_broker_ids,
@@ -87,6 +88,25 @@ def _limit_open() -> OpenCommand:
     )
 
 
+def _open_cid(envelope_id: str) -> str:
+    """A realistic broker-carried OPEN command id (ALP-844) for ``_limit_open``.
+
+    Phase-2 OPEN writeback (reached here via ``precommit_command`` →
+    ``dispatched_order_id`` → ``_new_open_ids``) resolves the thesis by parsing
+    the command id, so an OPEN's pre-commit must carry a thesis-bearing PM id.
+    Mints the thesis off the link-free base id with the canonical helper, exactly
+    as the production PM-submit path does, for ``_open_command``'s NVDA ticker.
+    """
+    base = f"inv-X.{envelope_id}.0.0"
+    return derive_pm_command_id(
+        invocation_id="inv-X",
+        envelope_id=envelope_id,
+        command_ordinal=0,
+        attempt_seq=0,
+        thesis_id=derive_open_thesis_id("NVDA", base),
+    )
+
+
 # ---------------------------------------------------------------------------
 # (A) pre-commit
 # ---------------------------------------------------------------------------
@@ -120,12 +140,13 @@ async def test_precommit_open_reserves_capital_and_marks_entry_pending_submit(
     await _seed_invocation_substrate(factory, invocation_id=_INV)
     await _seed_cash_ledger(factory)
     cmd = _limit_open()
-    result = _accepted_result(0, "inv-X.ENV-SA-2.0.0")
+    cid = _open_cid("ENV-SA-2")
+    result = _accepted_result(0, cid)
 
     landed = await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
 
     assert landed is True
-    row = await _read_order_by_client_order_id(factory, "inv-X.ENV-SA-2.0.0")
+    row = await _read_order_by_client_order_id(factory, cid)
     assert row is not None
     assert row.order_role == OrderRole.ENTRY.value
     assert row.status == OrderStatus.PENDING_SUBMIT.value
@@ -141,7 +162,8 @@ async def test_precommit_is_idempotent_no_double_reservation(
     await _seed_invocation_substrate(factory, invocation_id=_INV)
     await _seed_cash_ledger(factory)
     cmd = _limit_open()
-    result = _accepted_result(0, "inv-X.ENV-SA-3.0.0")
+    cid = _open_cid("ENV-SA-3")
+    result = _accepted_result(0, cid)
 
     assert await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
     # Replay — must be a no-op: one row, one reservation.
@@ -149,11 +171,7 @@ async def test_precommit_is_idempotent_no_double_reservation(
 
     async with factory() as sess:
         rows = (
-            (
-                await sess.execute(
-                    select(OrderRow).where(OrderRow.client_order_id == "inv-X.ENV-SA-3.0.0")
-                )
-            )
+            (await sess.execute(select(OrderRow).where(OrderRow.client_order_id == cid)))
             .scalars()
             .all()
         )
@@ -198,7 +216,8 @@ async def test_backfill_open_stamps_native_bracket_leg_ids(
     await _seed_invocation_substrate(factory, invocation_id=_INV)
     await _seed_cash_ledger(factory)
     cmd = _limit_open()
-    result = _accepted_result(0, "inv-X.ENV-SA-5.0.0")
+    cid = _open_cid("ENV-SA-5")
+    result = _accepted_result(0, cid)
     await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
 
     await backfill_command_broker_ids(
@@ -211,7 +230,7 @@ async def test_backfill_open_stamps_native_bracket_leg_ids(
         ),
     )
 
-    entry = await _read_order_by_client_order_id(factory, "inv-X.ENV-SA-5.0.0")
+    entry = await _read_order_by_client_order_id(factory, cid)
     assert entry is not None
     bracket_id = entry.bracket_id
     async with factory() as sess:
@@ -257,7 +276,8 @@ async def test_abandon_open_tears_down_graph_and_releases_capital(
     await _seed_invocation_substrate(factory, invocation_id=_INV)
     await _seed_cash_ledger(factory)
     cmd = _limit_open()
-    result = _accepted_result(0, "inv-X.ENV-SA-7.0.0")
+    cid = _open_cid("ENV-SA-7")
+    result = _accepted_result(0, cid)
     await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
     assert await _read_reserved_capital(factory) == pytest.approx(9000.0)
 
@@ -265,7 +285,7 @@ async def test_abandon_open_tears_down_graph_and_releases_capital(
         factory, invocation_id=_INV, command=cmd, result=result, reason="broker_gateway_failure"
     )
 
-    entry = await _read_order_by_client_order_id(factory, "inv-X.ENV-SA-7.0.0")
+    entry = await _read_order_by_client_order_id(factory, cid)
     assert entry is not None
     assert entry.status == OrderStatus.CANCELLED.value
     # No phantom open: the never-filled position is driven terminal, capital freed.

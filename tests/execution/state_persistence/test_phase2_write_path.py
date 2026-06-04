@@ -78,6 +78,11 @@ from alphamind.decision.portfolio_manager.submit_envelope import (
     SubmissionResult,
 )
 from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
+from alphamind.execution.oms.command_ids import (
+    derive_open_thesis_id,
+    derive_pm_command_id,
+    parse_pm_command_id,
+)
 from alphamind.persistence.session import (
     make_async_engine,
     make_async_session_factory,
@@ -522,6 +527,35 @@ def _accepted_result(command_ordinal: int, command_id: str) -> SubmissionResult:
         status="accepted",
         command_id=command_id,
         acknowledgment=Acknowledgment(),
+    )
+
+
+def _open_command_id(
+    *,
+    ticker: str = "NVDA",
+    envelope_id: str = "ENV-REC-1",
+    command_ordinal: int = 0,
+    attempt_seq: int = 0,
+) -> str:
+    """A realistic broker-carried OPEN command id (ALP-844).
+
+    Mirrors the production PM-submit path: mint the OPEN thesis off the
+    link-free *base* id via the single canonical helper, then embed it into the
+    command id. Phase-2 OPEN writeback resolves the thesis by parsing this id, so
+    every OPEN test must thread a thesis-bearing id (the broker-carried link is
+    the single source of truth for the OPEN thesis identity).
+    """
+    # Mirror the production PM-submit base-id shape exactly: the ``inv-`` prefix
+    # is added once (``_INV_ID`` already carries it), matching
+    # ``_resolve_originating_thesis``'s ``f"inv-{bare_invocation}.…"``.
+    bare_invocation = _INV_ID.removeprefix("inv-")
+    base = f"inv-{bare_invocation}.{envelope_id}.{command_ordinal}.{attempt_seq}"
+    return derive_pm_command_id(
+        invocation_id=_INV_ID,
+        envelope_id=envelope_id,
+        command_ordinal=command_ordinal,
+        attempt_seq=attempt_seq,
+        thesis_id=derive_open_thesis_id(ticker, base),
     )
 
 
@@ -1116,7 +1150,7 @@ async def test_open_command_writes_position_thesis_bracket_orders_and_events(
     results = (
         _accepted_result(
             command_ordinal=0,
-            command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0",
+            command_id=_open_command_id(),
         ),
     )
 
@@ -1163,6 +1197,48 @@ async def test_open_command_writes_position_thesis_bracket_orders_and_events(
     assert EventType.PM_DECISION.value in types
 
 
+async def test_open_persisted_thesis_id_equals_link_embedded_thesis(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """Single source of truth (ALP-844, A2): the ``thesis_id`` Phase-2 persists
+    on the OPEN's ``ThesisRecord`` EQUALS the thesis embedded in the broker-
+    carried ``client_order_id`` (``parse_pm_command_id(command_id).thesis_id``).
+
+    Phase-2 no longer re-constructs ``THE-{ticker}-{suffix}``; it reads the
+    thesis straight off the command id, so the embedded link is the one
+    authoritative copy. The position and entry order carry the SAME thesis_id,
+    binding the whole OPEN graph to that single identity.
+    """
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    envelope = _make_analyst_envelope(commands=(_open_command(underlying=Symbol("NVDA")),))
+    command_id = _open_command_id(ticker="NVDA")
+    embedded_thesis = parse_pm_command_id(command_id).thesis_id
+    results = (_accepted_result(command_ordinal=0, command_id=command_id),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        theses = (await sess.execute(select(ThesisRow))).scalars().all()
+        assert len(theses) == 1
+        assert theses[0].thesis_id == embedded_thesis
+
+        # The position binds to the same single identity — the whole OPEN graph
+        # threads one thesis_id, the one carried on the broker-carried link.
+        positions = (await sess.execute(select(PositionRow))).scalars().all()
+        assert positions[0].thesis_id == embedded_thesis
+
+
 async def test_open_command_threads_entry_window_deadline_onto_bracket(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
@@ -1192,7 +1268,7 @@ async def test_open_command_threads_entry_window_deadline_onto_bracket(
         ),
     )
     envelope = _make_analyst_envelope(commands=(command,))
-    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+    results = (_accepted_result(command_ordinal=0, command_id=_open_command_id()),)
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
@@ -1239,7 +1315,7 @@ async def test_open_command_persists_real_position_size_and_capital_reservation(
     )
     expected_notional = Decimal("1050.0") * Decimal("10.0")
     envelope = _make_analyst_envelope(commands=(cmd,))
-    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+    results = (_accepted_result(command_ordinal=0, command_id=_open_command_id()),)
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
@@ -1288,7 +1364,7 @@ async def test_persist_envelope_outcome_stamps_phase2_completion_on_invocation_r
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
 
     envelope = _make_analyst_envelope(commands=(_open_command(underlying=Symbol("NVDA")),))
-    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+    results = (_accepted_result(command_ordinal=0, command_id=_open_command_id()),)
 
     ctx, handle = await _open_handle(factory)
     invocation_id = handle.invocation_id
@@ -1917,7 +1993,7 @@ async def test_open_command_persists_target_and_invalidation_legs(
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
 
     envelope = _make_analyst_envelope(commands=(_open_command(underlying=Symbol("NVDA")),))
-    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+    results = (_accepted_result(command_ordinal=0, command_id=_open_command_id()),)
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
@@ -1973,10 +2049,10 @@ async def test_open_command_stamps_captured_leg_ids_on_protective_orders(
         ),
     )
     envelope = _make_analyst_envelope(commands=(command,))
-    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+    results = (_accepted_result(command_ordinal=0, command_id=_open_command_id()),)
     dispatch = BrokerDispatchResult(
         alpaca_order_id=AlpacaOrderId(entry_uuid),
-        client_order_id=ClientOrderId(f"inv-{_INV_ID}.ENV-REC-1.0.0"),
+        client_order_id=ClientOrderId(_open_command_id()),
         status="accepted",
         order_class="bracket",
         payload_kind="equity",
@@ -2042,10 +2118,10 @@ async def test_open_command_stamps_stop_id_on_first_price_leg_only(
         invalidation_legs=(_price_leg(750.0), _price_leg(700.0)),
     )
     envelope = _make_analyst_envelope(commands=(command,))
-    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+    results = (_accepted_result(command_ordinal=0, command_id=_open_command_id()),)
     dispatch = BrokerDispatchResult(
         alpaca_order_id=AlpacaOrderId("20bd94b5-8586-4bcc-a175-8490e29a17aa"),
-        client_order_id=ClientOrderId(f"inv-{_INV_ID}.ENV-REC-1.0.0"),
+        client_order_id=ClientOrderId(_open_command_id()),
         status="accepted",
         order_class="bracket",
         payload_kind="equity",
@@ -3456,7 +3532,7 @@ async def test_open_reprice_cancel_returns_reserved_capital_to_zero(
         entry_order=EntryOrder(type="limit", limit_price=price(1000.0), stop_price=None),
     )
     envelope = _make_analyst_envelope(commands=(cmd,))
-    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+    results = (_accepted_result(command_ordinal=0, command_id=_open_command_id()),)
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
@@ -3838,7 +3914,7 @@ async def test_command_abandoned_emission_survives_per_command_rollback(
     await _seed_cash_ledger(factory)
 
     envelope = _make_analyst_envelope(commands=(_open_command(),))
-    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+    results = (_accepted_result(command_ordinal=0, command_id=_open_command_id()),)
 
     # Open a transaction, persist outcome, then synthetically raise so the
     # InvocationContext rolls back.

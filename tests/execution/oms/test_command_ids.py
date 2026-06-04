@@ -48,7 +48,11 @@ from alphamind.execution.oms import (
     parse_engine_command_id,
     parse_pm_command_id,
 )
-from alphamind.execution.oms.command_ids import base_command_id, synthesize_id_suffix
+from alphamind.execution.oms.command_ids import (
+    base_command_id,
+    derive_open_thesis_id,
+    synthesize_id_suffix,
+)
 
 # ---------------------------------------------------------------------------
 # Fixture builders
@@ -682,3 +686,50 @@ class TestIdSuffixIgnoresBrokerCarriedLink:
             thesis_id=ThesisId(_THESIS_ID),
         )
         assert synthesize_id_suffix(linked) == synthesize_id_suffix(base)
+
+
+class TestDeriveOpenThesisId:
+    """``derive_open_thesis_id`` is the SOLE place the ``THE-{ticker}-{suffix}``
+    OPEN thesis identity is constructed (ALP-844, A2). The value it mints is the
+    one embedded in a PM OPEN command id, so it must round-trip through
+    ``parse_pm_command_id`` — the link is the single source of truth.
+    """
+
+    def test_round_trips_through_parse_pm_command_id(self) -> None:
+        """The thesis ``derive_open_thesis_id`` mints for an OPEN equals the
+        thesis ``parse_pm_command_id`` reads back out of the command id derived
+        with it — minted-once, read-everywhere."""
+        ticker = "NVDA"
+        base = "inv-2026-05-08T12:00:00Z-aaaa.ENV-REC-1.0.0"
+        thesis_id = derive_open_thesis_id(ticker, base)
+        command_id = derive_pm_command_id(
+            invocation_id="inv-2026-05-08T12:00:00Z-aaaa",
+            envelope_id="ENV-REC-1",
+            command_ordinal=0,
+            attempt_seq=0,
+            thesis_id=thesis_id,
+        )
+        assert parse_pm_command_id(command_id).thesis_id == thesis_id
+
+    def test_strips_link_so_base_and_full_command_id_are_equivalent(self) -> None:
+        """``synthesize_id_suffix`` strips the embedded link first, so passing
+        the base id or the full linked command id mints the same thesis — the
+        property that breaks the circularity (the link depends on the suffix,
+        the suffix depends only on the base)."""
+        ticker = "NVDA"
+        base = "inv-X.ENV-REC-1.0.0"
+        from_base = derive_open_thesis_id(ticker, base)
+        command_id = derive_pm_command_id(
+            invocation_id="inv-X",
+            envelope_id="ENV-REC-1",
+            command_ordinal=0,
+            attempt_seq=0,
+            thesis_id=from_base,
+        )
+        assert derive_open_thesis_id(ticker, command_id) == from_base
+
+    def test_matches_the_ticker_suffix_grammar(self) -> None:
+        """The minted thesis is ``THE-{ticker}-{32hex}`` — the same grammar the
+        broker-carried-link parser validates."""
+        thesis_id = derive_open_thesis_id("NVDA", "inv-X.ENV-REC-1.0.0")
+        assert thesis_id == ThesisId(f"THE-NVDA-{synthesize_id_suffix('inv-X.ENV-REC-1.0.0')}")
