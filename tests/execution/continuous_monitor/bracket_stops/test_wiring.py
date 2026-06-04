@@ -27,6 +27,7 @@ from alphamind.config.models.execution import OrderType as ExecOrderType
 from alphamind.execution.continuous_monitor.bracket_stops.wiring import (
     AlpacaBracketCloseSubmitter,
 )
+from alphamind.portfolio_state.events.activity_log import PositionExitMethod
 from alphamind.portfolio_state.records.positions import (
     Direction,
     OptionContractType,
@@ -192,6 +193,7 @@ async def test_bracket_strategy_close_submits_close_side_legs() -> None:
         position=position,
         details=position.details,
         client_order_id_base="MON.session.1.0~the-THE-SPY-0123456789abcdef0123456789abcdef~inv-X",
+        trigger_reason=PositionExitMethod.STOP_TRIGGERED,
     )
 
     assert result.mode == "strategy_combined"
@@ -221,6 +223,7 @@ async def test_bracket_strategy_close_leg_without_direction_raises() -> None:
             position=position,
             details=position.details,
             client_order_id_base="MON.session.1.0~the-THE-SPY-0123456789abcdef0123456789abcdef~inv-X",
+            trigger_reason=PositionExitMethod.STOP_TRIGGERED,
         )
 
 
@@ -245,4 +248,43 @@ async def test_per_leg_fallback_requires_explicit_leg_direction() -> None:
             position=position,
             details=position.details,
             client_order_id_base="MON.session.1.0~the-THE-SPY-0123456789abcdef0123456789abcdef~inv-X",
+            trigger_reason=PositionExitMethod.STOP_TRIGGERED,
         )
+
+
+# ---------------------------------------------------------------------------
+# Close-command framing — a fired Monitor-enforced leg is a thesis-shaped exit,
+# never an engine-envelope cascade close (ALP-853 AC 3).
+# ---------------------------------------------------------------------------
+
+
+class TestMonitorCloseCommandFraming:
+    """The fresh close a fired Monitor-enforced leg submits is framed by its
+    thesis-shaped exit reason — it must NOT carry the
+    ``risk_management_subtype="engine_guardrail"`` cascade marker, which signals
+    the engine-envelope close path a monitor fire never routes through."""
+
+    def test_stop_fire_builds_thesis_invalidated_close(self) -> None:
+        from alphamind.execution.continuous_monitor.bracket_stops.wiring import (
+            _build_monitor_close_command,
+        )
+
+        command = _build_monitor_close_command(
+            _strategy_position(), PositionExitMethod.STOP_TRIGGERED
+        )
+        assert command.close_rationale_type == "thesis_invalidated"
+        assert command.risk_management_subtype is None
+        assert command.invalidation_reason is not None
+        assert command.quantity == "all"
+        assert command.order_type == "market"
+
+    def test_target_fire_builds_target_reached_close(self) -> None:
+        from alphamind.execution.continuous_monitor.bracket_stops.wiring import (
+            _build_monitor_close_command,
+        )
+
+        command = _build_monitor_close_command(
+            _strategy_position(), PositionExitMethod.TARGET_REACHED
+        )
+        assert command.close_rationale_type == "target_reached"
+        assert command.risk_management_subtype is None
