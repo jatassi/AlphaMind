@@ -260,6 +260,30 @@ def occ_symbol_for_options(details: OptionsPositionDetails) -> str:
     return f"O:{details.underlying_ticker}{expiry}{cp}{strike_milli:08d}"
 
 
+def alpaca_occ_symbol(details: OptionsPositionDetails) -> str:
+    """Build the bare OCC contract symbol Alpaca keys an options position by.
+
+    Alpaca's ``GET /v2/positions`` and the account-activities stream key
+    ``us_option`` entries by the compact OCC symbol (e.g.
+    ``"AAPL250620C00200000"``) — no Polygon ``O:`` prefix and no space-padding
+    on the underlying root. Share-class tickers (``BRK.B``, ``BF.B``) are
+    encoded WITHOUT the dot per OCC convention, matching ``build_occ_symbol`` in
+    ``broker_adapter.order_options`` (which strips the dot for order submission,
+    so Alpaca's position-fetch returns the same dot-stripped form). This differs
+    from :func:`occ_symbol_for_options`, which prepends ``O:`` and is the
+    canonical Polygon key for greeks/price lookups.
+
+    The single builder both the corporate-actions reconciler and the
+    account-activities lifecycle handlers key local option positions against, so
+    a lifecycle event's ``occ_symbol`` matches the same form the reconciler builds.
+    """
+    underlying = details.underlying_ticker.replace(".", "")
+    expiry = details.expiration_date.strftime("%y%m%d")
+    cp = "C" if details.contract_type is OptionContractType.CALL else "P"
+    strike_milli = round(details.strike_price * 1000)
+    return f"{underlying}{expiry}{cp}{strike_milli:08d}"
+
+
 @dataclass(frozen=True, slots=True)
 class PositionRecord:
     """Persistent record for a single position across all instrument types.

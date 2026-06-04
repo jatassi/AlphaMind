@@ -17,13 +17,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from sqlalchemy import func, select
+
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.venue import VenueConfig
+from alphamind.execution.account_activities.handlers import event_key_for
 from alphamind.execution.account_activities.poll import (
     AccountActivitiesSource,
     PollResult,
     poll_account_activities,
 )
+from alphamind.execution.account_activities.records import LifecycleActivityType
 from alphamind.execution.broker_adapter.client_factory import (
     AlpacaClientFactory,
 )
@@ -32,8 +36,15 @@ from alphamind.execution.broker_adapter.client_factory import (
 )
 from alphamind.execution.broker_adapter.queries import AccountStateQueries
 from alphamind.state.invocation_context.context import InvocationHandle
+from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 
 ActivitiesSourceFactory = Callable[[VenueConfig | None, ExecutionMode], AccountActivitiesSource]
+
+# The ``event_key`` prefix the lifecycle handlers stamp on every account-activity
+# row (``event_key_for`` = ``activity:{id}``). Stripping it recovers the raw
+# Alpaca activity id the poll resumes from as ``page_token``.
+_EVENT_KEY_PREFIX = event_key_for("")
+_LIFECYCLE_EVENT_TYPES = tuple(t.value for t in LifecycleActivityType)
 
 
 def _default_activities_source_factory(
@@ -56,6 +67,30 @@ def _default_activities_source_factory(
     return AccountStateQueries(factory.build_trading_client())
 
 
+async def _resolve_resume_cursor(handle: InvocationHandle) -> str | None:
+    """Derive the resume cursor from the durable ``broker_event_log``.
+
+    The cursor home is the append-only event log itself — every booked
+    account-activity row carries ``event_key = activity:{id}`` (ADR-0005), so the
+    lexicographically-max account-activity ``event_key`` recovers the last
+    activity id seen across ALL prior pipeline runs (Alpaca activity ids are
+    timestamp-prefixed and sort by recency). Resuming the broker fetch from this
+    id as ``page_token`` advances the cursor without re-fetching the full
+    activity history every run — and needs no extra cursor table (no schema
+    change). ``event_key`` PK idempotency still backstops any overlap.
+
+    Returns ``None`` on a fresh DB (no prior account-activity rows) so the first
+    run fetches from the broker's default window.
+    """
+    stmt = select(func.max(BrokerEventLogRow.event_key)).where(
+        BrokerEventLogRow.event_type.in_(_LIFECYCLE_EVENT_TYPES)
+    )
+    max_event_key = (await handle.session.execute(stmt)).scalar_one_or_none()
+    if max_event_key is None:
+        return None
+    return max_event_key.removeprefix(_EVENT_KEY_PREFIX)
+
+
 async def run_account_activities_poll(
     handle: InvocationHandle,
     *,
@@ -68,12 +103,16 @@ async def run_account_activities_poll(
 
     Resolves the activities source (inline Alpaca default when
     *activities_source_factory* is ``None``) and drives
-    :func:`poll_account_activities`. Returns the poll result so the orchestrator
-    can log the count booked and advance the resume cursor.
+    :func:`poll_account_activities`. When *after* is not supplied, the resume
+    cursor is derived from the durable ``broker_event_log`` (see
+    :func:`_resolve_resume_cursor`) so each run resumes after the last booked
+    activity rather than re-fetching the full history. Returns the poll result so
+    the orchestrator can log the count booked.
     """
     source_factory = activities_source_factory or _default_activities_source_factory
     source = source_factory(venue_config, execution_mode)
-    return await poll_account_activities(handle, queries=source, after=after)
+    resume_after = after if after is not None else await _resolve_resume_cursor(handle)
+    return await poll_account_activities(handle, queries=source, after=resume_after)
 
 
 __all__ = ["ActivitiesSourceFactory", "run_account_activities_poll"]

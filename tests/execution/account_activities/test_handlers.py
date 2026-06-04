@@ -180,10 +180,16 @@ async def test_assignment_opens_equity_at_strike_with_thesis_link(
         assert details.share_count == 500.0
         assert details.average_cost_basis_per_share == pytest.approx(150.0)
 
-        # Both the OPASN and its paired OPTRD landed in the event log.
+        # Both the OPASN and its paired OPTRD landed in the event log, and BOTH
+        # carry the resolved thesis/position attribution (the OPTRD row must not
+        # be left NULL — 03c's per-thesis PnL join reads it).
         events = (await sess.execute(select(BrokerEventLogRow))).scalars().all()
-        types = {e.event_type for e in events}
-        assert types == {"OPASN", "OPTRD"}
+        by_type = {e.event_type: e for e in events}
+        assert set(by_type) == {"OPASN", "OPTRD"}
+        assert by_type["OPASN"].thesis_id == "thesis-1"
+        assert by_type["OPASN"].position_id == "pos-1"
+        assert by_type["OPTRD"].thesis_id == "thesis-1"
+        assert by_type["OPTRD"].position_id == "pos-1"
 
 
 async def test_exercise_books_strike_pnl_and_opens_equity_leg(

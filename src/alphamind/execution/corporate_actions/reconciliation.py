@@ -27,8 +27,9 @@ Position-matching keys:
   ``PositionSnapshot.symbol`` (both bare underlying for ``us_equity``).
 * Options — local ``OptionsPositionDetails`` matches Alpaca's snapshot by
   the bare OCC contract symbol (e.g. ``"AAPL250620C00200000"``) built via
-  :func:`_alpaca_occ_symbol`. Multiple held contracts on the same
-  underlying reconcile independently (ALP-637).
+  :func:`alphamind.portfolio_state.records.positions.alpaca_occ_symbol`.
+  Multiple held contracts on the same underlying reconcile independently
+  (ALP-637).
 
 Alpaca's ``PositionSnapshot.qty`` is signed (negative for shorts; ``side``
 carries the boolean direction). Local ``EquityPositionDetails.share_count``
@@ -119,9 +120,9 @@ from alphamind.portfolio_state.records.orders import OrderStatus
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    OptionContractType,
     OptionsPositionDetails,
     PositionStatus,
+    alpaca_occ_symbol,
 )
 from alphamind.state.invocation_context.activity_log import (
     append_activity_log_entry,
@@ -174,27 +175,6 @@ _LIVE_STATUSES = (PositionStatus.OPEN.value, PositionStatus.PENDING.value)
 def _direction_from_side(side: str) -> Direction:
     """Map Alpaca's ``side`` literal to the local ``Direction`` enum."""
     return Direction.LONG if side == "long" else Direction.SHORT
-
-
-def _alpaca_occ_symbol(details: OptionsPositionDetails) -> str:
-    """Build the bare OCC contract symbol Alpaca returns for an options position.
-
-    Alpaca's ``GET /v2/positions`` keys ``asset_class="us_option"`` entries by
-    the compact OCC symbol (e.g. ``"AAPL250620C00200000"``), with no Polygon
-    ``O:`` prefix and no space-padding on the underlying root. Share-class
-    tickers (``BRK.B``, ``BF.B``) are encoded WITHOUT the dot per OCC
-    convention — mirrors ``build_occ_symbol`` in
-    ``broker_adapter.order_options`` (which strips the dot for order
-    submission, so Alpaca's position-fetch returns the same dot-stripped
-    form). This differs from :func:`occ_symbol_for_options` in
-    ``portfolio_state.records.positions``, which prepends ``O:`` and is the
-    canonical Polygon key for greeks/price lookups.
-    """
-    underlying = details.underlying_ticker.replace(".", "")
-    expiry = details.expiration_date.strftime("%y%m%d")
-    cp = "C" if details.contract_type is OptionContractType.CALL else "P"
-    strike_milli = round(details.strike_price * 1000)
-    return f"{underlying}{expiry}{cp}{strike_milli:08d}"
 
 
 async def reconcile(
@@ -260,7 +240,7 @@ async def reconcile(
                 equity_evidence=autocorrect_equity,
             )
         elif isinstance(details, OptionsPositionDetails):
-            occ_symbol = _alpaca_occ_symbol(details)
+            occ_symbol = alpaca_occ_symbol(details)
             matched_symbols.add(occ_symbol)
             alert_count += await _reconcile_options(
                 handle,
@@ -475,8 +455,9 @@ async def _reconcile_options(
 
     Alpaca's options positions are keyed by OCC contract symbol (e.g.
     ``"AAPL250620C00200000"``) — the caller builds the matching key via
-    :func:`_alpaca_occ_symbol` and looks the snapshot up by it, so multiple
-    held contracts on the same underlying reconcile independently.
+    :func:`alphamind.portfolio_state.records.positions.alpaca_occ_symbol` and
+    looks the snapshot up by it, so multiple held contracts on the same
+    underlying reconcile independently.
 
     Mirrors the equity write-back path: on quantity drift, alert, then write
     Alpaca's ``abs(qty)`` back into ``contract_count`` and emit a paired

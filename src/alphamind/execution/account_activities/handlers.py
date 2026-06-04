@@ -9,6 +9,11 @@ option (no ``OPEN/0`` husk), and — for an assignment / exercise — open the
 resulting equity position at the strike with the option's thesis link (ADR-0002:
 the position→thesis Intent edge, never a parsed ``client_order_id``).
 
+The position/thesis link is resolved BEFORE the event-log append, so every
+event row — INCLUDING the paired ``OPTRD`` priced-equity leg — carries the
+resolved ``thesis_id`` / ``position_id`` in its INITIAL insert (no read-then-write
+backfill race). 03c's per-thesis PnL join reads the link off every row.
+
 All writes join the caller's open ``InvocationHandle`` transaction so the
 event-log append, the ledger booking, and the position transitions commit
 atomically (single-writer = pipeline, ADR-0005).
@@ -21,7 +26,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
-from alphamind._kernel.ids import PositionId
+from alphamind._kernel.ids import InvocationId, PositionId, ThesisId
 from alphamind._kernel.money import Money, money, signed_money
 from alphamind.execution.account_activities.booking import (
     book_assignment_or_exercise,
@@ -32,14 +37,16 @@ from alphamind.execution.account_activities.records import (
     LifecycleActivityType,
     LifecycleEvent,
 )
+from alphamind.execution.corporate_actions.handlers._shared import _persist_position_update
+from alphamind.execution.write_paths.broker_event_persistence import append_broker_event
 from alphamind.portfolio_state.records.positions import (
-    OptionContractType,
     OptionsPositionDetails,
     PositionRecord,
     PositionStatus,
+    alpaca_occ_symbol,
 )
 from alphamind.state.invocation_context.context import InvocationHandle
-from alphamind.state.records_broker_event_log import BrokerEventType
+from alphamind.state.records_broker_event_log import BrokerEventRecord, BrokerEventType
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.positions_codec import record_to_row, row_to_record
@@ -56,52 +63,38 @@ def event_key_for(activity_id: str) -> str:
     return f"activity:{activity_id}"
 
 
-def _occ_symbol_for_option(details: OptionsPositionDetails) -> str:
-    """Bare OCC symbol Alpaca keys an options position by (no ``O:`` prefix).
-
-    Mirrors
-    :func:`alphamind.execution.corporate_actions.reconciliation._alpaca_occ_symbol`
-    so the lifecycle event's ``occ_symbol`` matches a local option position.
-    """
-    underlying = details.underlying_ticker.replace(".", "")
-    expiry = details.expiration_date.strftime("%y%m%d")
-    cp = "C" if details.contract_type is OptionContractType.CALL else "P"
-    strike_milli = round(details.strike_price * 1000)
-    return f"{underlying}{expiry}{cp}{strike_milli:08d}"
-
-
-async def _append_event_idempotent(
+async def _append_lifecycle_event(
     handle: InvocationHandle,
     *,
     event_key: str,
     event_type: BrokerEventType,
-    position_id: str | None,
+    position_id: PositionId | None,
     thesis_id: str | None,
     raw_payload: dict[str, object],
     broker_timestamp: datetime | None,
 ) -> bool:
-    """Append one ``broker_event_log`` row; return whether it was newly inserted.
+    """Append one ``broker_event_log`` row carrying its resolved link; return newness.
 
-    Idempotent on the ``event_key`` PRIMARY KEY: a re-poll of the same activity
-    is a no-op and returns ``False`` so the caller does not double-book PnL.
+    Delegates to the canonical append-only helper
+    (:func:`alphamind.execution.write_paths.broker_event_persistence.append_broker_event`),
+    which is an atomic ``INSERT … ON CONFLICT DO NOTHING`` on the ``event_key``
+    PK — no non-atomic read-then-write existence check. The resolved
+    ``thesis_id`` / ``position_id`` ride the INITIAL insert (the position is
+    resolved before this call), so the row never lands with a NULL link to be
+    backfilled later. Returns ``True`` when newly inserted so the caller books
+    realized PnL exactly once.
     """
-    existing = await handle.session.get(BrokerEventLogRow, event_key)
-    if existing is not None:
-        return False
-    handle.session.add(
-        BrokerEventLogRow(
-            event_key=event_key,
-            event_type=event_type.value,
-            thesis_id=thesis_id,
-            invocation_id=handle.invocation_id,
-            position_id=position_id,
-            raw_payload_json=json.dumps(raw_payload, default=str, sort_keys=True),
-            broker_timestamp=broker_timestamp.isoformat() if broker_timestamp is not None else None,
-            captured_at=datetime.now(UTC).isoformat(),
-        )
+    record = BrokerEventRecord(
+        event_key=event_key,
+        event_type=event_type,
+        thesis_id=ThesisId(thesis_id) if thesis_id is not None else None,
+        invocation_id=InvocationId(handle.invocation_id),
+        position_id=position_id,
+        raw_payload_json=json.dumps(raw_payload, default=str, sort_keys=True),
+        broker_timestamp=broker_timestamp,
+        captured_at=datetime.now(UTC),
     )
-    await handle.session.flush()
-    return True
+    return await append_broker_event(handle.session, record)
 
 
 async def _find_open_option_position(
@@ -116,7 +109,7 @@ async def _find_open_option_position(
         record = row_to_record(row)
         details = record.details
         if isinstance(details, OptionsPositionDetails) and (
-            _occ_symbol_for_option(details) == occ_symbol
+            alpaca_occ_symbol(details) == occ_symbol
         ):
             return row, record
     return None
@@ -154,17 +147,6 @@ async def _book_realized_pnl(
     await handle.session.flush()
 
 
-def _persist_position_record(row: PositionRow, record: PositionRecord) -> None:
-    """Project a mutated ``PositionRecord`` back onto its existing row."""
-    new_row = record_to_row(record)
-    row.status = new_row.status
-    row.entry_timestamp = new_row.entry_timestamp
-    row.details_json = new_row.details_json
-    row.execution_history_json = new_row.execution_history_json
-    row.realized_pnl_to_date_usd = new_row.realized_pnl_to_date_usd
-    row.corporate_action_adjustment_needed = new_row.corporate_action_adjustment_needed
-
-
 async def _persist_booking(
     handle: InvocationHandle,
     *,
@@ -172,7 +154,7 @@ async def _persist_booking(
     result: BookingResult,
 ) -> None:
     """Persist a booking result: close the option, open the equity, book PnL."""
-    _persist_position_record(option_row, result.closed_option)
+    _persist_position_update(option_row, result.closed_option)
     if result.opened_equity is not None:
         handle.session.add(record_to_row(result.opened_equity))
     thesis_id = result.closed_option.thesis_id
@@ -183,18 +165,20 @@ async def _persist_booking(
     await handle.session.flush()
 
 
+async def _already_booked(handle: InvocationHandle, event_key: str) -> bool:
+    """Whether *event_key* is already in ``broker_event_log`` (a re-poll no-op).
+
+    A re-poll arrives after the first booking closed the option, so the open
+    position no longer exists to re-resolve — short-circuit on the durable
+    event-log row before position resolution. This is an idempotency guard, not
+    a link backfill: the link still rides the INITIAL insert on the first poll.
+    """
+    return await handle.session.get(BrokerEventLogRow, event_key) is not None
+
+
 async def handle_expiry(handle: InvocationHandle, event: LifecycleEvent) -> None:
     """Book an OTM expiry (``OPEXP``): realized PnL = -premium; close the option."""
-    newly = await _append_event_idempotent(
-        handle,
-        event_key=event_key_for(event.activity_id),
-        event_type=BrokerEventType.OPEXP,
-        position_id=None,
-        thesis_id=None,
-        raw_payload={"activity_id": event.activity_id, "occ_symbol": event.occ_symbol},
-        broker_timestamp=event.transaction_time,
-    )
-    if not newly:
+    if await _already_booked(handle, event_key_for(event.activity_id)):
         return
     found = await _find_open_option_position(handle, event.occ_symbol)
     if found is None:
@@ -204,7 +188,17 @@ async def handle_expiry(handle: InvocationHandle, event: LifecycleEvent) -> None
         )
         raise ValueError(msg)
     option_row, option_record = found
-    await _backfill_event_link(handle, event.activity_id, option_record)
+    newly = await _append_lifecycle_event(
+        handle,
+        event_key=event_key_for(event.activity_id),
+        event_type=BrokerEventType.OPEXP,
+        position_id=option_record.position_id,
+        thesis_id=option_record.thesis_id,
+        raw_payload={"activity_id": event.activity_id, "occ_symbol": event.occ_symbol},
+        broker_timestamp=event.transaction_time,
+    )
+    if not newly:
+        return
     result = book_expiry(option_record)
     await _persist_booking(handle, option_row=option_row, result=result)
 
@@ -222,35 +216,15 @@ async def handle_assignment_or_exercise(handle: InvocationHandle, event: Lifecyc
         )
         raise ValueError(msg)
 
-    event_type = (
-        BrokerEventType.OPASN
-        if event.activity_type is LifecycleActivityType.OPASN
-        else BrokerEventType.OPEXC
-    )
-    newly = await _append_event_idempotent(
-        handle,
-        event_key=event_key_for(event.activity_id),
-        event_type=event_type,
-        position_id=None,
-        thesis_id=None,
-        raw_payload={"activity_id": event.activity_id, "occ_symbol": event.occ_symbol},
-        broker_timestamp=event.transaction_time,
-    )
-    # The paired OPTRD is the second event-log row (the priced equity leg).
-    await _append_event_idempotent(
-        handle,
-        event_key=event_key_for(event.paired_trade.activity_id),
-        event_type=BrokerEventType.OPTRD,
-        position_id=None,
-        thesis_id=None,
-        raw_payload={
-            "activity_id": event.paired_trade.activity_id,
-            "equity_symbol": event.paired_trade.equity_symbol,
-        },
-        broker_timestamp=event.transaction_time,
-    )
-    if not newly:
+    # A re-poll arrives after the first booking closed the option; short-circuit
+    # on the durable event-log row before position resolution (idempotency guard).
+    if await _already_booked(handle, event_key_for(event.activity_id)):
         return
+
+    # Resolve the position/thesis link BEFORE appending either event row, so the
+    # OPASN/OPEXC row AND its paired OPTRD row both carry the resolved
+    # attribution in their initial insert (the OPTRD row must not be left NULL —
+    # 03c's per-thesis PnL join reads it).
     found = await _find_open_option_position(handle, event.occ_symbol)
     if found is None:
         msg = (
@@ -259,27 +233,42 @@ async def handle_assignment_or_exercise(handle: InvocationHandle, event: Lifecyc
         )
         raise ValueError(msg)
     option_row, option_record = found
-    await _backfill_event_link(handle, event.activity_id, option_record)
+
+    event_type = (
+        BrokerEventType.OPASN
+        if event.activity_type is LifecycleActivityType.OPASN
+        else BrokerEventType.OPEXC
+    )
+    newly = await _append_lifecycle_event(
+        handle,
+        event_key=event_key_for(event.activity_id),
+        event_type=event_type,
+        position_id=option_record.position_id,
+        thesis_id=option_record.thesis_id,
+        raw_payload={"activity_id": event.activity_id, "occ_symbol": event.occ_symbol},
+        broker_timestamp=event.transaction_time,
+    )
+    # The paired OPTRD is the second event-log row (the priced equity leg). It
+    # carries the SAME resolved thesis/position link as the OPASN/OPEXC row.
+    await _append_lifecycle_event(
+        handle,
+        event_key=event_key_for(event.paired_trade.activity_id),
+        event_type=BrokerEventType.OPTRD,
+        position_id=option_record.position_id,
+        thesis_id=option_record.thesis_id,
+        raw_payload={
+            "activity_id": event.paired_trade.activity_id,
+            "equity_symbol": event.paired_trade.equity_symbol,
+        },
+        broker_timestamp=event.transaction_time,
+    )
+    if not newly:
+        return
     equity_position_id = PositionId(f"pos-eq-{event.activity_id}")
     result = book_assignment_or_exercise(
         option_record, event, equity_position_id=equity_position_id
     )
     await _persist_booking(handle, option_row=option_row, result=result)
-
-
-async def _backfill_event_link(
-    handle: InvocationHandle, activity_id: str, option: PositionRecord
-) -> None:
-    """Stamp the resolved position/thesis link onto the activity's event-log row.
-
-    Lifecycle events carry no ``client_order_id`` (ADR-0002), so the link is
-    resolved from the matched option position's thesis edge once the position is
-    found, then written back onto the already-appended row.
-    """
-    row = await handle.session.get(BrokerEventLogRow, event_key_for(activity_id))
-    if row is not None:
-        row.position_id = option.position_id
-        row.thesis_id = option.thesis_id
 
 
 __all__ = [

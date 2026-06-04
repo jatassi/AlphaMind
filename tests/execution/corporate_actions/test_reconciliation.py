@@ -112,12 +112,14 @@ def _make_pending_equity_position(
 # auto-retags every test that plants an Alpaca-side snapshot — no scattered
 # string edits, no risk of the constant going stale silently.
 def _default_options_occ_symbol() -> str:
-    from alphamind.execution.corporate_actions.reconciliation import _alpaca_occ_symbol
-    from alphamind.portfolio_state.records.positions import OptionsPositionDetails
+    from alphamind.portfolio_state.records.positions import (
+        OptionsPositionDetails,
+        alpaca_occ_symbol,
+    )
 
     details = make_open_options_position().details
     assert isinstance(details, OptionsPositionDetails)
-    return _alpaca_occ_symbol(details)
+    return alpaca_occ_symbol(details)
 
 
 _DEFAULT_OPTIONS_OCC_SYMBOL = _default_options_occ_symbol()
@@ -155,14 +157,16 @@ def test_alpaca_occ_symbol_strips_dot_from_share_class_ticker() -> None:
     from dataclasses import replace as dc_replace
 
     from alphamind._kernel.ids import Symbol
-    from alphamind.execution.corporate_actions.reconciliation import _alpaca_occ_symbol
-    from alphamind.portfolio_state.records.positions import OptionsPositionDetails
+    from alphamind.portfolio_state.records.positions import (
+        OptionsPositionDetails,
+        alpaca_occ_symbol,
+    )
 
     details = make_open_options_position().details
     assert isinstance(details, OptionsPositionDetails)
     brk_b_details = dc_replace(details, underlying_ticker=Symbol("BRK.B"))
 
-    occ = _alpaca_occ_symbol(brk_b_details)
+    occ = alpaca_occ_symbol(brk_b_details)
     assert occ.startswith("BRKB"), f"expected dot-stripped root, got {occ!r}"
     assert "." not in occ
 
@@ -676,11 +680,11 @@ async def test_reconcile_multiple_options_same_underlying_reconcile_independentl
     from dataclasses import replace as dc_replace
     from datetime import date
 
-    from alphamind.execution.corporate_actions.reconciliation import (
-        _alpaca_occ_symbol,
-        reconcile,
+    from alphamind.execution.corporate_actions.reconciliation import reconcile
+    from alphamind.portfolio_state.records.positions import (
+        OptionsPositionDetails,
+        alpaca_occ_symbol,
     )
-    from alphamind.portfolio_state.records.positions import OptionsPositionDetails
     from alphamind.state.tables.positions import PositionRow
     from alphamind.state.tables.positions_codec import (
         row_to_record as position_row_to_record,
@@ -735,8 +739,8 @@ async def test_reconcile_multiple_options_same_underlying_reconcile_independentl
     await seed_cash_ledger(factory, current_cash_usd=100_000.0)
 
     assert isinstance(pos_a.details, OptionsPositionDetails)
-    occ_a = _alpaca_occ_symbol(pos_a.details)
-    occ_b = _alpaca_occ_symbol(pos_b_details)
+    occ_a = alpaca_occ_symbol(pos_a.details)
+    occ_b = alpaca_occ_symbol(pos_b_details)
     # Pre-condition: distinct OCC keys despite shared underlying.
     assert occ_a != occ_b
 

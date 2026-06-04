@@ -19,7 +19,10 @@ from alphamind.scheduler.account_activities_poll import run_account_activities_p
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
 from tests.execution.account_activities.test_handlers import _OCC, _TXN, _seed_open_option
-from tests.execution.account_activities.test_poll import FakeAccountActivitiesQueries
+from tests.execution.account_activities.test_poll import (
+    FakeAccountActivitiesQueries,
+    _open_handle_with_id,
+)
 from tests.execution.corporate_actions._handler_substrate import open_handle
 
 
@@ -67,3 +70,44 @@ async def test_scheduler_poll_runs_against_factory_source(
         ledger = await sess.get(ThesisPnlLedgerRow, "thesis-1")
         assert ledger is not None
         assert ledger.realized_pnl_usd == Decimal(-1250)
+
+
+async def test_scheduler_poll_advances_cursor_across_runs(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A2nd run resumes from the durable cursor (the last booked activity id).
+
+    The first run books ``act-exp-1`` (no ``after`` — fresh DB). The next run
+    must derive ``after`` from the durable ``broker_event_log`` so it does not
+    re-fetch the full activity history every pipeline run (02b AC: "advances its
+    cursor"). The cursor home is the durable event log — no schema change.
+    """
+    _engine, factory = db
+    await _seed_open_option(factory, contract_count=5.0, premium_paid_per_contract=250.0)
+    source = FakeAccountActivitiesQueries((_expiry_snapshot(),))
+
+    # First run — fresh DB, no prior cursor.
+    ctx, handle = await _open_handle_with_id(factory, "inv-cursor-0")
+    try:
+        await run_account_activities_poll(
+            handle,
+            venue_config=None,
+            execution_mode=ExecutionMode.paper,
+            activities_source_factory=lambda _venue, _mode: source,
+        )
+    finally:
+        await ctx.__aexit__(None, None, None)
+    assert source.calls[0][1] is None  # first call: no cursor
+
+    # Second run — must resume after the last booked activity id.
+    ctx2, handle2 = await _open_handle_with_id(factory, "inv-cursor-1")
+    try:
+        await run_account_activities_poll(
+            handle2,
+            venue_config=None,
+            execution_mode=ExecutionMode.paper,
+            activities_source_factory=lambda _venue, _mode: source,
+        )
+    finally:
+        await ctx2.__aexit__(None, None, None)
+    assert source.calls[1][1] == "act-exp-1"  # second call resumes from the cursor

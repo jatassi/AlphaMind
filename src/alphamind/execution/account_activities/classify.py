@@ -29,6 +29,10 @@ _OCC_ROOT_RE = re.compile(r"^(?P<root>[A-Z]+)\d{6}[CP]\d{8}$")
 
 _PAIRED_TYPES = frozenset({LifecycleActivityType.OPASN, LifecycleActivityType.OPEXC})
 
+# All lifecycle activity-type string values, hoisted to module level so the
+# classify loop does not rebuild the set per snapshot (mirrors ``_PAIRED_TYPES``).
+_LIFECYCLE_TYPE_VALUES = frozenset(t.value for t in LifecycleActivityType)
+
 
 def _underlying_root(occ_symbol: str) -> str | None:
     """Extract the underlying root from a bare OCC contract symbol.
@@ -79,7 +83,7 @@ def classify_lifecycle_activities(
 
     events: list[LifecycleEvent] = []
     for snap in snapshots:
-        if snap.activity_type not in {t.value for t in LifecycleActivityType}:
+        if snap.activity_type not in _LIFECYCLE_TYPE_VALUES:
             continue
         activity_type = LifecycleActivityType(snap.activity_type)
         if activity_type is LifecycleActivityType.OPTRD:
