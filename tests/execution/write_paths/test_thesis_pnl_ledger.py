@@ -188,3 +188,32 @@ async def test_rederive_is_idempotent_under_checkpoint(
 
     assert first.realized_pnl_usd == second.realized_pnl_usd == signed_money("300.00")
     assert first.cost_basis_usd == second.cost_basis_usd == money("0")
+
+
+async def test_derived_cost_basis_and_provenance_round_trip_through_codec(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """AC#3: the derived cost basis + provenance round-trip through the ledger codec."""
+    _engine, factory = db
+    await _seed(factory)
+    await _append(
+        factory,
+        _fill_event(event_key="fevt-open", side="buy", fill_price=100.0, fill_quantity=10.0),
+        _fill_event(
+            event_key="fevt-add", side="buy", fill_price=120.0, fill_quantity=10.0, at_seconds=60
+        ),
+    )
+
+    async with factory() as sess:
+        await rederive_thesis_pnl_ledger(sess, ThesisId(_THESIS), InvocationId(_INV))
+        await sess.commit()
+
+    async with factory() as sess:
+        row = await sess.get(ThesisPnlLedgerRow, _THESIS)
+        assert row is not None
+        record = row_to_record(row)
+
+    # 20 shares at an avg cost of 110 → 2200 capital tied up.
+    assert record.cost_basis_usd == money("2200.00")
+    assert json.loads(record.provenance_json)["event_keys"] == ["fevt-open", "fevt-add"]
+    assert record.derived_from_invocation_id == InvocationId(_INV)
