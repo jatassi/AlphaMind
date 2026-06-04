@@ -179,6 +179,7 @@ def _option_open_command(
     *,
     capital_protection_floor: CapitalProtectionFloor | None | object = _FLOOR_DEFAULT,
     nature: str = "directional",
+    invalidation_legs: tuple[PriceLeg, ...] | None = None,
 ) -> OpenCommand:
     floor = (
         _capital_protection_floor()
@@ -193,7 +194,7 @@ def _option_open_command(
             quantity=10.0, dollar_value=money(1_000.0), premium_at_risk=money(1_000.0)
         ),
         target=_target_absolute(),
-        invalidation_legs=(_price_leg(),),
+        invalidation_legs=invalidation_legs or (_price_leg(),),
         thesis=_thesis(nature=nature),
         capital_protection_floor=floor,  # type: ignore[arg-type]
     )
@@ -626,6 +627,24 @@ class TestThesisShapedInvalidationSignal:
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             )
+
+    def test_directional_and_non_directional_open_carry_documented_signal(self) -> None:
+        # AC2 end-to-end: a directional options OPEN carries the underlying
+        # signal on its invalidation leg; a non-directional one carries the
+        # option-price/net-mark signal. The thesis nature and the leg signal
+        # coexist coherently on a fully-built OPEN.
+        directional = _option_open_command(nature="directional")
+        assert directional.thesis.nature == "directional"
+        assert isinstance(directional.invalidation_legs[0], PriceLeg)
+        assert directional.invalidation_legs[0].trigger_signal == "underlying_price"
+
+        non_directional = _option_open_command(
+            nature="non_directional",
+            invalidation_legs=(_price_leg(trigger_signal="option_price"),),
+        )
+        assert non_directional.thesis.nature == "non_directional"
+        assert isinstance(non_directional.invalidation_legs[0], PriceLeg)
+        assert non_directional.invalidation_legs[0].trigger_signal == "option_price"
 
 
 class TestCapitalProtectionFloor:
