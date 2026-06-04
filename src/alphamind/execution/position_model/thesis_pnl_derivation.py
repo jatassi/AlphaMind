@@ -132,10 +132,28 @@ def _activity_realized_delta(event: BrokerEventRecord, lot: _Lot) -> Decimal:
 
 
 def _fill_side(payload: dict[str, object]) -> str:
-    """The broker order side (``buy`` / ``sell``) off a captured FillReport payload."""
+    """The broker order side (``buy`` / ``sell``) off a captured FillReport payload.
+
+    Two ``raw_event_payload`` shapes reach the log, and the side lives in a
+    different place in each:
+
+    * **websocket** fills (02a ``translate_trade_update``) dump an alpaca-py
+      ``TradeUpdate`` — the order is nested, so the side is at
+      ``raw_event_payload['order']['side']``;
+    * **REST-recovered** fills (03b ``recover_missed_fills_since``) dump an
+      :class:`~alphamind.execution.broker_adapter.queries.OrderSnapshot`, which
+      *is* the order — the side is top-level at ``raw_event_payload['side']``
+      and there is no nested ``order`` key.
+
+    Reading only the websocket path crashes the fold for any thesis carrying a
+    recovered fill, so both shapes are tried before surfacing.
+    """
     raw = payload.get("raw_event_payload")
-    order = raw.get("order") if isinstance(raw, dict) else None
-    side = order.get("side") if isinstance(order, dict) else None
+    if not isinstance(raw, dict):
+        raw = {}
+    nested_order = raw.get("order")
+    nested_side = nested_order.get("side") if isinstance(nested_order, dict) else None
+    side = nested_side if nested_side is not None else raw.get("side")
     if side not in ("buy", "sell"):
         msg = f"FILL event payload carries no buy/sell order side; got {side!r}"
         raise ValueError(msg)

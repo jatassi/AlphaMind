@@ -59,12 +59,45 @@ def _fill_event(
     fill_quantity: float,
     at_seconds: int = 0,
 ) -> BrokerEventRecord:
-    """A FILL event whose payload mirrors a ``FillReport`` raw order side."""
+    """A FILL event whose payload mirrors a websocket ``FillReport`` raw order side.
+
+    The websocket translator (``translate_trade_update``) sets
+    ``raw_event_payload = TradeUpdate.model_dump()`` — the side lives at
+    ``raw_event_payload['order']['side']``.
+    """
     payload = {
         "fill_price": fill_price,
         "fill_quantity": fill_quantity,
         "raw_event_payload": {"order": {"side": side}},
     }
+    return _fill_record(event_key, payload, at_seconds)
+
+
+def _rest_recovered_fill_event(
+    *,
+    event_key: str,
+    side: str,
+    fill_price: float,
+    fill_quantity: float,
+    at_seconds: int = 0,
+) -> BrokerEventRecord:
+    """A FILL event whose payload mirrors a REST-recovered ``FillReport``.
+
+    The recovery translator (``order_snapshot_to_fill_reports``) sets
+    ``raw_event_payload = OrderSnapshot.model_dump()`` — there is NO nested
+    ``order`` key; the side lives at the top level (``raw_event_payload['side']``).
+    """
+    payload = {
+        "fill_price": fill_price,
+        "fill_quantity": fill_quantity,
+        "raw_event_payload": {"side": side},
+    }
+    return _fill_record(event_key, payload, at_seconds)
+
+
+def _fill_record(
+    event_key: str, payload: dict[str, object], at_seconds: int
+) -> BrokerEventRecord:
     return BrokerEventRecord(
         event_key=event_key,
         event_type=BrokerEventType.FILL,
@@ -75,6 +108,33 @@ def _fill_event(
         broker_timestamp=_at(at_seconds),
         captured_at=_at(at_seconds),
     )
+
+
+def test_rest_recovered_fill_side_reads_from_top_level_order_snapshot() -> None:
+    """FIX 1: a REST-recovered fill (OrderSnapshot shape, top-level ``side``) folds.
+
+    03b's ``recover_missed_fills_since`` builds ``raw_event_payload`` from
+    ``OrderSnapshot.model_dump()`` — the side is top-level, with no nested
+    ``order`` key. Reading only the websocket ``order.side`` path crashes the
+    fold with ``ValueError`` for any thesis carrying a recovered fill.
+    """
+    events = (
+        _rest_recovered_fill_event(
+            event_key="rest-open", side="buy", fill_price=100.0, fill_quantity=10.0
+        ),
+        _rest_recovered_fill_event(
+            event_key="rest-close",
+            side="sell",
+            fill_price=130.0,
+            fill_quantity=10.0,
+            at_seconds=60,
+        ),
+    )
+
+    derivation = derive_thesis_pnl(_THESIS, events)
+
+    assert derivation.realized_pnl_usd == signed_money("300.00")
+    assert derivation.cost_basis_usd == money("0")
 
 
 def test_otm_expiry_books_negative_premium() -> None:
