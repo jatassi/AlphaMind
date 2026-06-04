@@ -166,6 +166,24 @@ class BracketLegStatus(StrEnum):
     CANCELLED = "CANCELLED"
 
 
+class TriggerSignal(StrEnum):
+    """Which signal a thesis-invalidation stop fires on (ALP-852 / ADR-0003).
+
+    The persisted counterpart of the wire ``PriceLeg.trigger_signal`` tag,
+    matched to the thesis nature: ``UNDERLYING_PRICE`` for a *directional* thesis
+    (the underlying crosses an invalidating level); ``OPTION_PRICE`` for a
+    *non-directional* single-option vol thesis (its own mark is the faithful
+    signal); ``NET_MARK`` for a *non-directional* multi-leg spread (the strategy
+    net mark). The continuous monitor reads this off the invalidation leg to
+    select the trigger evaluator — an underlying-level trigger is meaningless
+    for a spread whose PnL is nonlinear in the underlying.
+    """
+
+    UNDERLYING_PRICE = "underlying_price"
+    OPTION_PRICE = "option_price"
+    NET_MARK = "net_mark"
+
+
 # Mechanical leg types that satisfy the hard-backstop requirement
 _MECHANICAL_BACKSTOP_TYPES = frozenset(
     {BracketLegType.TAKE_PROFIT, BracketLegType.PRICE_STOP, BracketLegType.TIME_EXPIRATION}
@@ -596,11 +614,21 @@ class BracketLeg:
     # order); the broker-enforced legs (native equity bracket child, options
     # capital floor) are set explicitly by the later bracket stories.
     enforcement_binding: EnforcementBinding = EnforcementBinding.MONITOR_ENFORCED
+    # ALP-852 / ADR-0003 — which signal a thesis-invalidation PRICE_STOP fires
+    # on, matched to the thesis nature (set by the OPEN writeback from the wire
+    # ``PriceLeg.trigger_signal``). The continuous monitor reads it to select the
+    # trigger evaluator: ``UNDERLYING_PRICE`` (directional) vs ``OPTION_PRICE`` /
+    # ``NET_MARK`` (non-directional). ``None`` on a TAKE_PROFIT / TIME / EVENT leg
+    # — those carry no thesis-invalidation trigger signal — and on a legacy
+    # PRICE_STOP predating the tag (the monitor reads ``None`` as the legacy
+    # underlying-triggered shape).
+    trigger_signal: TriggerSignal | None = None
 
     def __post_init__(self) -> None:
         self._validate_event_invalidation()
         self._validate_trigger_matches_leg_type()
         self._validate_pl_anchor_compatibility()
+        self._validate_trigger_signal_leg_type()
 
     def _validate_event_invalidation(self) -> None:
         if self.leg_type == BracketLegType.EVENT_INVALIDATION and self.order_id is not None:
@@ -630,6 +658,18 @@ class BracketLeg:
             msg = (
                 f"leg_type={self.leg_type!r} requires pl_anchor.spec_type="
                 f"{expected_spec_type!r}; got {self.pl_anchor.spec_type!r}"
+            )
+            raise ValueError(msg)
+
+    def _validate_trigger_signal_leg_type(self) -> None:
+        # ALP-852 — ``trigger_signal`` names the thesis-invalidation stop's
+        # signal, so it is only meaningful on a PRICE_STOP leg. A TAKE_PROFIT
+        # leg fires on its own target geometry (price target or strategy net
+        # P/L), and a TIME / EVENT leg has no price signal at all.
+        if self.trigger_signal is not None and self.leg_type is not BracketLegType.PRICE_STOP:
+            msg = (
+                f"trigger_signal is only valid on a PRICE_STOP thesis-invalidation "
+                f"leg; got leg_type={self.leg_type!r}"
             )
             raise ValueError(msg)
 

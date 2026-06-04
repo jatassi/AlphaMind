@@ -344,6 +344,7 @@ class TestBracketLegsTable:
             ("enforcement", "OTHER_ENFORCEMENT"),
             ("enforcement_binding", "OTHER_BINDING"),
             ("leg_status", "OTHER_STATUS"),
+            ("trigger_signal", "OTHER_SIGNAL"),
         ],
     )
     def test_check_rejects_unknown_vocabulary_value(
@@ -492,6 +493,53 @@ class TestBracketCodecRoundTrip:
         legs = _read_legs(session, "brk-anchor")
         assert legs[0].pl_anchor_json is not None
         assert legs[1].pl_anchor_json is None
+
+    def test_trigger_signal_round_trips_on_invalidation_leg(self, session: Session) -> None:
+        """ALP-852 — a non-directional PRICE_STOP's trigger_signal survives the codec.
+
+        The continuous monitor reads ``trigger_signal`` off the rehydrated leg to
+        select the thesis-invalidation trigger evaluator, so it must round-trip
+        through the SQL layer faithfully.
+        """
+        from alphamind.portfolio_state.records.orders import TriggerSignal
+
+        leg = BracketLeg(
+            leg_id="brk-sig::0",
+            leg_type=BracketLegType.PRICE_STOP,
+            order_id=OrderId("ord-sig"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("NVDA"), threshold_usd=8.0, direction="LTE"
+            ),
+            enforcement=BracketLegEnforcement.MECHANICAL,
+            status=BracketLegStatus.PENDING_ACTIVATION,
+            trigger_signal=TriggerSignal.OPTION_PRICE,
+        )
+        original = BracketRecord(
+            bracket_id=BracketId("brk-sig"),
+            position_id=PositionId("pos-sig"),
+            status=BracketStatus.PENDING_ENTRY,
+            entry_order_id=OrderId("entry-sig"),
+            protective_legs=(leg,),
+            modification_history=(),
+            corporate_action_cancellation_reason=None,
+            entry_window_deadline=None,
+        )
+        rehydrated = _round_trip(session, original)
+        assert rehydrated == original
+        assert rehydrated.protective_legs[0].trigger_signal is TriggerSignal.OPTION_PRICE
+        # A leg with no trigger_signal persists NULL and rehydrates to None.
+        legs = _read_legs(session, "brk-sig")
+        assert legs[0].trigger_signal == TriggerSignal.OPTION_PRICE.value
+
+    def test_absent_trigger_signal_round_trips_as_none(self, session: Session) -> None:
+        """A leg with no trigger_signal persists NULL and rehydrates as None."""
+        original = _three_leg_bracket()
+        rehydrated = _round_trip(session, original)
+        assert rehydrated == original
+        for leg in rehydrated.protective_legs:
+            assert leg.trigger_signal is None
+        for row in _read_legs(session, "brk1"):
+            assert row.trigger_signal is None
 
     def test_leg_index_preserves_ordering(self) -> None:
         original = _three_leg_bracket()

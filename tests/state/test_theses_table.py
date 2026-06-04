@@ -252,6 +252,28 @@ class TestThesesTable:
         with pytest.raises(IntegrityError):
             session.commit()
 
+    def test_check_rejects_unknown_nature(self, session: Session) -> None:
+        """ALP-852 — the nature CHECK rejects an out-of-vocabulary thesis shape."""
+        from alphamind.state.tables.theses import ThesisRow
+
+        session.add(
+            ThesisRow(
+                thesis_id=ThesisId("t-1"),
+                position_id=PositionId("pos-1"),
+                status="ACTIVE",
+                nature="SIDEWAYS",
+                resolution_timestamp=None,
+                resolution_category=None,
+                summary="bad nature",
+                time_expectation_hours=12.0,
+                position_size_rationale=None,
+                generation_timestamp="2026-05-07T14:30:00Z",
+                narrative_json="{}",
+            )
+        )
+        with pytest.raises(IntegrityError):
+            session.commit()
+
     def test_resolution_category_accepts_cancelled_never_entered(self, session: Session) -> None:
         from alphamind.state.tables.theses import ThesisRow
         from tests.state._fk_substrate import stub_position_row
@@ -485,6 +507,28 @@ class TestThesisCodec:
         thesis_row, component_rows = record_to_rows(record)
         roundtripped = rows_to_record(thesis_row, component_rows)
         assert roundtripped == record
+
+    def test_round_trip_preserves_non_directional_nature(self) -> None:
+        """ALP-852 — a NON_DIRECTIONAL thesis nature persists and rehydrates faithfully.
+
+        The continuous monitor reads the thesis nature to make the invalidation
+        stop thesis-shaped, so the codec must round-trip the non-default value
+        rather than collapsing it to the DIRECTIONAL default.
+        """
+        import dataclasses
+
+        from alphamind.portfolio_state.records.theses import ThesisNature
+        from alphamind.state.tables.theses_codec import (
+            record_to_rows,
+            rows_to_record,
+        )
+
+        record = dataclasses.replace(_active_thesis(), nature=ThesisNature.NON_DIRECTIONAL)
+        thesis_row, component_rows = record_to_rows(record)
+        assert thesis_row.nature == ThesisNature.NON_DIRECTIONAL.value
+        roundtripped = rows_to_record(thesis_row, component_rows)
+        assert roundtripped == record
+        assert roundtripped.nature is ThesisNature.NON_DIRECTIONAL
 
     def test_round_trip_cancelled_with_zero_components(self) -> None:
         from alphamind.state.tables.theses_codec import (

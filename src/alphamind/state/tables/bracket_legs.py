@@ -27,6 +27,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegStatus,
     BracketLegType,
     EnforcementBinding,
+    TriggerSignal,
 )
 
 _LEG_TYPES = tuple(member.value for member in BracketLegType)
@@ -34,6 +35,7 @@ _TRIGGER_KINDS = ("PRICE", "TIME", "EVENT")
 _ENFORCEMENTS = tuple(member.value for member in BracketLegEnforcement)
 _ENFORCEMENT_BINDINGS = tuple(member.value for member in EnforcementBinding)
 _LEG_STATUSES = tuple(member.value for member in BracketLegStatus)
+_TRIGGER_SIGNALS = tuple(member.value for member in TriggerSignal)
 
 
 def _check_in(column: str, values: tuple[str, ...]) -> str:
@@ -82,6 +84,12 @@ class BracketLegRow(Base):
     # guarantee the typed record enforces.
     enforcement_binding: Mapped[str] = mapped_column(Text, nullable=False)
     leg_status: Mapped[str] = mapped_column(Text, nullable=False)
+    # ALP-852 / ADR-0003: which signal a thesis-invalidation PRICE_STOP fires on
+    # (underlying_price / option_price / net_mark), matched to the thesis nature.
+    # NULL on a TAKE_PROFIT / TIME / EVENT leg (no thesis-invalidation signal) and
+    # on a legacy PRICE_STOP predating the tag; the CHECK admits NULL or a member
+    # so a future direct-SQL writer faces the same fail-closed vocabulary.
+    trigger_signal: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         CheckConstraint(
@@ -103,6 +111,10 @@ class BracketLegRow(Base):
         CheckConstraint(
             _check_in("leg_status", _LEG_STATUSES),
             name="ck_bracket_legs_leg_status",
+        ),
+        CheckConstraint(
+            "trigger_signal IS NULL OR " + _check_in("trigger_signal", _TRIGGER_SIGNALS),
+            name="ck_bracket_legs_trigger_signal",
         ),
         Index("ix_bracket_legs_bracket_id", "bracket_id"),
         Index(

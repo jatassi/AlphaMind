@@ -583,3 +583,145 @@ def test_build_active_thesis_backfill_yields_unique_component_ids() -> None:
     assert len(ids) == len(set(ids)), f"duplicate component_ids: {ids}"
     # 2 wire invalidation components + 2 backfilled (entry + target) = 4.
     assert len(record.components) == 4
+
+
+# ---------------------------------------------------------------------------
+# Thesis nature + per-leg trigger signal persistence (ALP-852)
+# ---------------------------------------------------------------------------
+
+
+def _thesis_with_nature(nature: str) -> Thesis:
+    return Thesis(
+        summary="NVDA thesis",
+        nature=nature,  # type: ignore[arg-type]
+        components=(
+            _wire_component("entry_rationale", narrative="setup"),
+            _wire_component("target_rationale", narrative="resistance"),
+            _wire_component("invalidation_rationale", narrative="support break"),
+        ),
+    )
+
+
+def test_build_active_thesis_maps_directional_nature() -> None:
+    """ALP-852 — a wire ``directional`` nature persists as ThesisNature.DIRECTIONAL."""
+    from alphamind.portfolio_state.records.theses import ThesisNature
+
+    record = _build_active_thesis(
+        thesis_id="THE-NVDA-abc123",
+        position_id="POS-NVDA-abc123",
+        thesis=_thesis_with_nature("directional"),
+        timestamp=datetime(2026, 5, 26, 16, 24, 54, tzinfo=UTC),
+    )
+    assert record.nature is ThesisNature.DIRECTIONAL
+
+
+def test_build_active_thesis_maps_non_directional_nature() -> None:
+    """ALP-852 — a wire ``non_directional`` nature persists as NON_DIRECTIONAL."""
+    from alphamind.portfolio_state.records.theses import ThesisNature
+
+    record = _build_active_thesis(
+        thesis_id="THE-NVDA-abc123",
+        position_id="POS-NVDA-abc123",
+        thesis=_thesis_with_nature("non_directional"),
+        timestamp=datetime(2026, 5, 26, 16, 24, 54, tzinfo=UTC),
+    )
+    assert record.nature is ThesisNature.NON_DIRECTIONAL
+
+
+def _option_price_leg() -> PriceLeg:
+    """A non-directional wire PriceLeg firing on the option's own mark."""
+    from alphamind.commands.command_models import (
+        BracketOrderParameters,
+        PriceCondition,
+    )
+
+    return PriceLeg(
+        type="price",
+        is_hard=True,
+        trigger_signal="option_price",
+        condition=PriceCondition(
+            underlying_trigger="NVDA", comparator="<=", trigger_price=price(8.0)
+        ),
+        order_parameters=BracketOrderParameters(order_type="stop"),
+    )
+
+
+def test_invalidation_leg_carries_underlying_price_trigger_signal() -> None:
+    """ALP-852 — a directional wire PriceLeg persists trigger_signal=UNDERLYING_PRICE.
+
+    The monitor reads this off the leg to evaluate the directional stop against
+    the underlying.
+    """
+    from alphamind.portfolio_state.records.orders import TriggerSignal
+
+    equity = EquityInstrument(asset_type="equity", ticker="AAPL", direction="long")
+    bracket = _build_pending_bracket(
+        bracket_id="BRK-AAPL-abc123",
+        position_id="POS-AAPL-abc123",
+        entry_order_id="ORD-AAPL-entry-abc123",
+        target=Target(target_type="absolute_price", price=price(160.0), order_type="limit"),
+        target_order_id="ORD-AAPL-target-abc123",
+        invalidation_leg_orders=((_price_leg(150.0), "ORD-AAPL-inv0-abc123"),),
+        instrument=equity,
+        entry_window_deadline=None,
+    )
+    price_stop = next(
+        leg for leg in bracket.protective_legs if leg.leg_type is BracketLegType.PRICE_STOP
+    )
+    assert price_stop.trigger_signal is TriggerSignal.UNDERLYING_PRICE
+
+
+def test_non_directional_invalidation_leg_carries_option_price_trigger_signal() -> None:
+    """ALP-852 — a non-directional wire PriceLeg persists trigger_signal=OPTION_PRICE.
+
+    This is the field the monitor reads so a vol/spread thesis's invalidation
+    stop evaluates against the option mark rather than the underlying.
+    """
+    from alphamind.commands.command_models import OptionInstrument
+    from alphamind.portfolio_state.records.orders import TriggerSignal
+
+    option = OptionInstrument(
+        asset_type="option",
+        underlying="NVDA",
+        strike=price(850.0),
+        expiration="2026-06-19",
+        contract_type="call",
+        direction="long",
+    )
+    bracket = _build_pending_bracket(
+        bracket_id="BRK-NVDA-abc123",
+        position_id="POS-NVDA-abc123",
+        entry_order_id="ORD-NVDA-entry-abc123",
+        target=Target(target_type="absolute_price", price=price(60.0), order_type="limit"),
+        target_order_id="ORD-NVDA-target-abc123",
+        invalidation_leg_orders=((_option_price_leg(), "ORD-NVDA-inv0-abc123"),),
+        instrument=option,
+        entry_window_deadline=None,
+    )
+    price_stop = next(
+        leg for leg in bracket.protective_legs if leg.leg_type is BracketLegType.PRICE_STOP
+    )
+    assert price_stop.trigger_signal is TriggerSignal.OPTION_PRICE
+
+
+def test_time_and_event_legs_carry_no_trigger_signal() -> None:
+    """ALP-852 — TIME / EVENT legs carry no trigger_signal (no invalidation signal)."""
+    equity = EquityInstrument(asset_type="equity", ticker="AAPL", direction="long")
+    bracket = _build_pending_bracket(
+        bracket_id="BRK-AAPL-abc123",
+        position_id="POS-AAPL-abc123",
+        entry_order_id="ORD-AAPL-entry-abc123",
+        target=Target(target_type="absolute_price", price=price(160.0), order_type="limit"),
+        target_order_id="ORD-AAPL-target-abc123",
+        invalidation_leg_orders=(
+            (_time_leg(datetime(2026, 6, 1, tzinfo=UTC)), "ORD-AAPL-inv0-abc123"),
+            (_event_leg(), None),
+        ),
+        instrument=equity,
+        entry_window_deadline=None,
+    )
+    for leg in bracket.protective_legs:
+        if leg.leg_type in (BracketLegType.TIME_EXPIRATION, BracketLegType.EVENT_INVALIDATION):
+            assert leg.trigger_signal is None
+        if leg.leg_type is BracketLegType.TAKE_PROFIT:
+            assert leg.trigger_signal is None

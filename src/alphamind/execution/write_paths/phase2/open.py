@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, Literal
+from typing import Literal
 
 from alphamind._kernel.ids import (
     BracketId,
@@ -24,6 +24,7 @@ from alphamind.commands.command_models import (
     PriceLeg,
     StrategyInstrument,
     Target,
+    Thesis,
     TimeLeg,
 )
 from alphamind.commands.submission_results import SubmissionResult
@@ -66,6 +67,7 @@ from alphamind.portfolio_state.records.orders import (
     PriceParameters,
     PriceTrigger,
     TimeTrigger,
+    TriggerSignal,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -85,6 +87,7 @@ from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
     ThesisComponent,
     ThesisComponentType,
+    ThesisNature,
     ThesisRecord,
     ThesisRecordStatus,
 )
@@ -314,6 +317,19 @@ _CONTRACT_TYPE_FROM_WIRE: dict[str, OptionContractType] = {
 _DIRECTION_FROM_WIRE: dict[str, Direction] = {
     "long": Direction.LONG,
     "short": Direction.SHORT,
+}
+# ALP-852 / ADR-0003 — wire ``Thesis.nature`` tag → persisted ``ThesisNature``.
+_THESIS_NATURE_FROM_WIRE: dict[str, ThesisNature] = {
+    "directional": ThesisNature.DIRECTIONAL,
+    "non_directional": ThesisNature.NON_DIRECTIONAL,
+}
+# ALP-852 — wire ``PriceLeg.trigger_signal`` → persisted ``TriggerSignal``. The
+# continuous monitor reads this off the thesis-invalidation leg to select the
+# trigger evaluator (underlying vs option-price / net-mark).
+_TRIGGER_SIGNAL_FROM_WIRE: dict[str, TriggerSignal] = {
+    "underlying_price": TriggerSignal.UNDERLYING_PRICE,
+    "option_price": TriggerSignal.OPTION_PRICE,
+    "net_mark": TriggerSignal.NET_MARK,
 }
 
 
@@ -710,7 +726,7 @@ def _build_active_thesis(
     *,
     thesis_id: str,
     position_id: str,
-    thesis: Any,
+    thesis: Thesis,
     timestamp: datetime,
 ) -> ThesisRecord:
     """Build an ACTIVE thesis from the canonical command's :class:`Thesis`.
@@ -796,6 +812,7 @@ def _build_active_thesis(
         thesis_id=ThesisId(thesis_id),
         position_id=PositionId(position_id),
         summary=summary,
+        nature=_THESIS_NATURE_FROM_WIRE[thesis.nature],
         key_catalyst=summary,
         position_size_rationale=None,
         components=tuple(persisted_components),
@@ -851,6 +868,11 @@ def _wire_leg_to_bracket_leg(
             enforcement=BracketLegEnforcement.MECHANICAL,
             enforcement_binding=enforcement_binding,
             status=BracketLegStatus.PENDING_ACTIVATION,
+            # ALP-852 — carry the thesis-invalidation signal onto the leg so the
+            # continuous monitor selects the trigger evaluator by thesis nature
+            # (underlying vs option-price / net-mark). 02d's command validator
+            # already pins this consistent with the thesis nature.
+            trigger_signal=_TRIGGER_SIGNAL_FROM_WIRE[wire_leg.trigger_signal],
         )
     if isinstance(wire_leg, TimeLeg):
         return BracketLeg(
