@@ -697,11 +697,11 @@ async def backfill_pending_submit_orders(
     """Recover orders whose post-submit ``alpaca_order_id`` backfill was lost.
 
     Atomicity-first persistence commits a durable ``orders`` row in
-    ``PENDING_SUBMIT`` (carrying the deterministic ``client_order_id`` and a
-    synthetic ``alp-{order_id}`` placeholder) BEFORE the broker dispatch, then
-    backfills the real ``alpaca_order_id`` + flips to ``PENDING`` after. If that
-    post-submit commit is lost, the row survives in ``PENDING_SUBMIT`` with the
-    synthetic placeholder — a live broker order whose local row has no broker id.
+    ``PENDING_SUBMIT`` (carrying the deterministic ``client_order_id`` and NO
+    broker id — ``alpaca_order_id`` is NULL, ALP-847) BEFORE the broker dispatch,
+    then backfills the real ``alpaca_order_id`` + flips to ``PENDING`` after. If
+    that post-submit commit is lost, the row survives in ``PENDING_SUBMIT`` with
+    a NULL broker id — a live broker order whose local row has no broker id yet.
 
     This pass matches each such row against Alpaca's orders by
     ``client_order_id`` (Alpaca ``order.client_order_id == command_id``) and

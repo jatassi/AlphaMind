@@ -2,9 +2,9 @@
 
 The canceller decides dissolve-vs-skip from whether the entry **filled**, not
 from the broker's cancel response. These tests drive each branch with fakes:
-recorded fills, an un-routed synthetic id, the two broker classifications, and a
-missing order — asserting the returned outcome and whether the dissolve
-writeback ran.
+recorded fills, an un-routed entry (no broker id — None), the two broker
+classifications, and a missing order — asserting the returned outcome and
+whether the dissolve writeback ran.
 """
 
 from __future__ import annotations
@@ -114,13 +114,12 @@ async def test_recorded_fill_skips_cancel_and_writeback() -> None:
     assert rec.written_back == []
 
 
-async def test_synthetic_broker_id_is_retried_not_dissolved() -> None:
-    """An entry not yet routed to the broker carries a synthetic 'alp-' id; we
-    retry rather than misread a placeholder 404 as terminal."""
+async def test_unrouted_entry_is_retried_not_dissolved() -> None:
+    """An entry not yet routed to the broker carries NO broker id (None, ALP-847
+    — the synthetic 'alp-' placeholder is deleted); we retry rather than misread
+    a missing id as terminal."""
     rec = _Recorder(
-        target=EntryCancelTarget(
-            alpaca_order_id=AlpacaOrderId("alp-ORD-entry-1"), has_recorded_fills=False
-        ),
+        target=EntryCancelTarget(alpaca_order_id=None, has_recorded_fills=False),
     )
     outcome = await _canceller(rec).cancel(bracket=_bracket(), now=_NOW)
 

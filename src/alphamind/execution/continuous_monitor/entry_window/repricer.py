@@ -14,7 +14,8 @@ branches:
 1. order row missing → ``FAILED`` (retry).
 2. a fill is already recorded → ``SKIPPED_FILLED`` (reconciliation activates the
    bracket — never reprice or cancel a filled entry).
-3. broker id still synthetic (un-routed) → ``FAILED`` (retry once acked).
+3. broker id still absent (un-routed — ``alpaca_order_id is None``, ALP-847) →
+   ``FAILED`` (retry once acked).
 4. not a repriceable equity limit, **or** ``modification_count`` has reached the
    reprice budget → delegate to the terminal :class:`EntryWindowCanceller`
    (cancel + ALP-739 no-fill alert). ``modification_count`` is the loop bound:
@@ -58,7 +59,6 @@ from alphamind.execution.broker_adapter.entry_pricing import (
 from alphamind.execution.continuous_monitor.entry_window.canceller import (
     EntryWindowCanceller,
     EntryWindowDeadlineOutcome,
-    _is_synthetic,
 )
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
@@ -84,10 +84,12 @@ class RepriceTarget:
     equity-limit-only scope. ``direction`` is the position direction the marketable
     pricing keys off (short → price the bid, long → the ask) — only meaningful when
     ``is_equity_limit``. ``has_recorded_fills`` reflects ``fill_records`` written by
-    the fill-stream consumer ahead of reconciliation.
+    the fill-stream consumer ahead of reconciliation. ``alpaca_order_id`` is
+    ``None`` for a not-yet-routed entry (ALP-847 deleted the synthetic ``alp-``
+    placeholder) — the repricer retries rather than acting on a missing broker id.
     """
 
-    alpaca_order_id: AlpacaOrderId
+    alpaca_order_id: AlpacaOrderId | None
     has_recorded_fills: bool
     is_equity_limit: bool
     ticker: str
@@ -189,11 +191,10 @@ class BrokerEntryWindowRepricer:
                 bracket.bracket_id,
             )
             return EntryWindowDeadlineOutcome.SKIPPED_FILLED
-        if _is_synthetic(target.alpaca_order_id):
+        if target.alpaca_order_id is None:
             log.warning(
-                "entry_window: bracket %s entry %s not yet broker-routed; retrying",
+                "entry_window: bracket %s entry not yet broker-routed (no broker id); retrying",
                 bracket.bracket_id,
-                target.alpaca_order_id,
             )
             return EntryWindowDeadlineOutcome.FAILED
         if not target.is_equity_limit or target.modification_count >= self.max_reprice_count:
@@ -205,6 +206,9 @@ class BrokerEntryWindowRepricer:
     async def _reprice(
         self, *, bracket: BracketRecord, target: RepriceTarget, now: datetime
     ) -> EntryWindowDeadlineOutcome:
+        # _reprice is reached only past the un-routed guard in ``handle`` — a
+        # repriceable equity limit is, by construction, already broker-routed.
+        assert target.alpaca_order_id is not None
         quote = await self.quote_source.latest_quote(target.ticker)
         if quote is None:
             log.warning(
