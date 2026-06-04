@@ -201,17 +201,21 @@ async def handle_assignment_or_exercise(handle: InvocationHandle, event: Lifecyc
         )
         raise ValueError(msg)
 
-    # A re-poll arrives after the first booking closed the option; short-circuit
-    # on the durable event-log row before position resolution (idempotency guard).
-    if await _already_booked(handle, event_key_for(event.activity_id)):
-        return
-
     # Resolve the position/thesis link BEFORE appending either event row, so the
     # OPASN/OPEXC row AND its paired OPTRD row both carry the resolved
     # attribution in their initial insert (the OPTRD row must not be left NULL —
     # 03c's per-thesis PnL join reads it).
     found = await _find_open_option_position(handle, event.occ_symbol)
     if found is None:
+        # No OPEN/PENDING option to re-resolve. Two cases: (a) a clean post-booking
+        # re-poll — the prior invocation closed the option and durably committed
+        # BOTH event rows, so this is a no-op; or (b) a genuinely unknown event —
+        # the option never existed. The durable OPASN/OPEXC row distinguishes them:
+        # present → (a) no-op; absent → (b) surface. (The crash window the OPTRD
+        # re-append repairs leaves the option OPEN — the booking never committed —
+        # so it lands in the ``found is not None`` branch below.)
+        if await _already_booked(handle, event_key_for(event.activity_id)):
+            return
         msg = (
             f"{event.activity_type.value} {event.activity_id!r} references option "
             f"{event.occ_symbol!r} with no matching OPEN/PENDING local position"
@@ -232,7 +236,15 @@ async def handle_assignment_or_exercise(handle: InvocationHandle, event: Lifecyc
         if event.activity_type is LifecycleActivityType.OPASN
         else BrokerEventType.OPEXC
     )
-    newly = await _append_lifecycle_event(
+    # Append BOTH event rows on every invocation, independent of the booking
+    # guard. Each is idempotent (``append_broker_event`` is INSERT … ON CONFLICT
+    # DO NOTHING), so a retry after a crash that committed the OPASN/OPEXC row but
+    # not its paired OPTRD re-appends the missing OPTRD — its ``cost_basis_delta_usd``
+    # would otherwise be lost forever and the 03c fold would understate the
+    # assigned equity's cost basis. The booking (``_persist_booking``) runs once,
+    # gated by the option still being OPEN: once it closes the option a later
+    # re-poll resolves to ``found is None`` above and never reaches this branch.
+    await _append_lifecycle_event(
         handle,
         event_key=event_key_for(event.activity_id),
         event_type=event_type,
@@ -262,8 +274,6 @@ async def handle_assignment_or_exercise(handle: InvocationHandle, event: Lifecyc
         },
         broker_timestamp=event.transaction_time,
     )
-    if not newly:
-        return
     await _persist_booking(handle, option_row=option_row, result=result)
 
 

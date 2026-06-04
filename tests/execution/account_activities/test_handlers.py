@@ -38,6 +38,7 @@ from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.positions_codec import row_to_record
 from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
 from tests.execution.corporate_actions._handler_substrate import (
+    INV_ID,
     make_active_bracket,
     make_active_thesis,
     make_open_options_position,
@@ -253,6 +254,78 @@ async def test_exercise_books_strike_pnl_and_opens_equity_leg(
         ledger_record = await rederive_thesis_pnl_ledger(sess, ThesisId("thesis-1"), None)
         await sess.commit()
     assert ledger_record.realized_pnl_usd == signed_money("-1250.00")
+    assert ledger_record.cost_basis_usd == money("75000.00")
+
+
+async def test_repoll_reappends_optrd_after_crash_window(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A crash that committed OPASN but not its paired OPTRD re-appends on re-poll.
+
+    The narrow crash window: a prior invocation appended the OPASN row but died
+    before the paired OPTRD row (which carries ``cost_basis_delta_usd``) landed.
+    A naive ``_already_booked`` short-circuit on the OPASN key would skip the
+    OPTRD forever → the 03c fold understates the assigned equity's cost basis.
+
+    Simulated by committing only the OPASN row (carrying the resolved link) while
+    leaving the option OPEN (the booking transaction never committed). The re-poll
+    must re-append the missing OPTRD and book the equity leg.
+    """
+    _engine, factory = db
+    await _seed_open_option(factory, contract_count=5.0, premium_paid_per_contract=250.0)
+
+    # Pre-seed ONLY the OPASN row — the crash committed it but not the OPTRD.
+    async with factory() as sess:
+        sess.add(
+            BrokerEventLogRow(
+                event_key="activity:act-asn-1",
+                event_type="OPASN",
+                thesis_id="thesis-1",
+                invocation_id=INV_ID,
+                position_id="pos-1",
+                raw_payload_json=json.dumps(
+                    {
+                        "activity_id": "act-asn-1",
+                        "occ_symbol": _OCC,
+                        "realized_pnl_delta_usd": "-1250.00",
+                    },
+                    sort_keys=True,
+                ),
+                broker_timestamp=_TXN,
+                captured_at=_TXN,
+            )
+        )
+        await sess.commit()
+
+    # Re-poll the same assignment: the OPTRD must re-append (idempotent OPASN).
+    ctx, handle = await open_handle(factory)
+    try:
+        await integrate_lifecycle_event(handle, _assignment_event(LifecycleActivityType.OPASN))
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        events = (await sess.execute(select(BrokerEventLogRow))).scalars().all()
+        by_type = {e.event_type: e for e in events}
+        # The OPTRD is now present — the crash window is repaired on re-poll.
+        assert set(by_type) == {"OPASN", "OPTRD"}
+        assert by_type["OPTRD"].thesis_id == "thesis-1"
+        assert by_type["OPTRD"].position_id == "pos-1"
+        optrd_payload = json.loads(by_type["OPTRD"].raw_payload_json)
+        assert money(optrd_payload["cost_basis_delta_usd"]) == money("75000.00")
+        # The option booked (closed) and the equity leg opened.
+        option = await sess.get(PositionRow, "pos-1")
+        assert option is not None
+        assert option.status == "CLOSED"
+        equities = (
+            await sess.execute(select(PositionRow).where(PositionRow.status == "OPEN"))
+        ).scalars().all()
+        assert len(equities) == 1
+
+    # The derivation now folds the equity cost basis it would have lost.
+    async with factory() as sess:
+        ledger_record = await rederive_thesis_pnl_ledger(sess, ThesisId("thesis-1"), None)
+        await sess.commit()
     assert ledger_record.cost_basis_usd == money("75000.00")
 
 
