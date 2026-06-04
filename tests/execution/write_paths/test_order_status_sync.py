@@ -14,8 +14,15 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from alphamind._kernel.ids import InvocationId, PositionId, ThesisId
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    ClientOrderId,
+    InvocationId,
+    PositionId,
+    ThesisId,
+)
 from alphamind.execution.broker_adapter import FillReport
+from alphamind.execution.broker_adapter.fill_stream import OrderStatus as FillEventStatus
 from alphamind.execution.write_paths.order_status_sync import (
     derive_terminal_event_key,
     terminal_status_event_record,
@@ -26,10 +33,12 @@ from alphamind.state.records_broker_event_log import BrokerEventType
 _FILL_TS = datetime(2026, 5, 28, 20, 30, tzinfo=UTC)
 
 
-def _report(*, alpaca_order_id: str = "uuid-1", event_type: str = "canceled") -> FillReport:
+def _report(
+    *, alpaca_order_id: str = "uuid-1", event_type: FillEventStatus = "canceled"
+) -> FillReport:
     return FillReport(
-        client_order_id="inv-x.ENV-1.0.0",
-        alpaca_order_id=alpaca_order_id,
+        client_order_id=ClientOrderId("inv-x.ENV-1.0.0"),
+        alpaca_order_id=AlpacaOrderId(alpaca_order_id),
         parent_client_order_id=None,
         parent_alpaca_order_id=None,
         event_type=event_type,

@@ -145,8 +145,11 @@ async def test_passes_request_kwargs_through() -> None:
     }
 
 
-async def test_default_types_exclude_out_of_scope_members() -> None:
-    """When ``types`` is omitted, the request excludes out-of-scope event types."""
+async def test_default_types_request_captured_members_but_not_rights() -> None:
+    """When ``types`` is omitted, the request fetches every event-log CA type —
+    including the capture-only ``UnitSplit`` / ``Redemption`` / ``WorthlessRemoval``
+    (ALP-849 / W1c, so Phase 1 can append them to the log) — but still omits
+    ``RightsDistribution`` (no event-log CA vocabulary member)."""
     from alphamind.execution.broker_adapter.corporate_actions_queries import (
         CorporateActionsQueries,
     )
@@ -164,11 +167,13 @@ async def test_default_types_exclude_out_of_scope_members() -> None:
     (request,), _ = client.get_corporate_actions.call_args
     assert request.types is not None
     sent_types = set(request.types)
-    assert CorporateActionsType.UNIT_SPLIT not in sent_types
-    assert CorporateActionsType.REDEMPTION not in sent_types
-    assert CorporateActionsType.WORTHLESS_REMOVAL not in sent_types
+    # Capture-only types are now requested so Phase 1 captures them.
+    assert CorporateActionsType.UNIT_SPLIT in sent_types
+    assert CorporateActionsType.REDEMPTION in sent_types
+    assert CorporateActionsType.WORTHLESS_REMOVAL in sent_types
+    # RightsDistribution has no event-log CA vocabulary member — still omitted.
     assert CorporateActionsType.RIGHTS_DISTRIBUTION not in sent_types
-    # In-scope members must be present
+    # In-scope mutation members must be present.
     assert CorporateActionsType.FORWARD_SPLIT in sent_types
     assert CorporateActionsType.CASH_DIVIDEND in sent_types
     assert CorporateActionsType.NAME_CHANGE in sent_types

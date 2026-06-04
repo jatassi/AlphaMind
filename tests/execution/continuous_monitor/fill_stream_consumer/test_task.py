@@ -878,11 +878,7 @@ class TestTerminalStatusEventLog:
         # A second PENDING entry expires cleanly (zero fill) and acts as a
         # processing barrier: once its event lands, the earlier one is drained.
         async with session_factory() as db:
-            db.add(
-                stub_order_row(
-                    "order-2", "bracket-1", position_id="pos-1", status="PENDING"
-                )
-            )
+            db.add(stub_order_row("order-2", "bracket-1", position_id="pos-1", status="PENDING"))
             await db.commit()
 
         stream = _FakeStream()

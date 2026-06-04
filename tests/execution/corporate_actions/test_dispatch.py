@@ -12,7 +12,7 @@ from __future__ import annotations
 from alphamind.portfolio_state.events.activity_log import CorporateActionType
 
 
-def test_handlers_dict_has_exactly_nine_entries() -> None:
+def test_handlers_dict_has_one_entry_per_corporate_action_type() -> None:
     """``_HANDLERS`` has exactly one entry per ``CorporateActionType`` member."""
     from alphamind.execution.corporate_actions.dispatch import _HANDLERS
 
