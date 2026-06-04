@@ -131,3 +131,114 @@ async def test_re_polling_same_activity_does_not_double_book(
         assert ledger is not None
         # PnL booked once, not -2500.
         assert ledger.realized_pnl_usd == Decimal("-1250")
+
+
+def _assignment_event(activity_type: LifecycleActivityType) -> LifecycleEvent:
+    return LifecycleEvent(
+        activity_id="act-asn-1",
+        activity_type=activity_type,
+        occ_symbol=_OCC,
+        qty=5.0,
+        transaction_time=_TXN,
+        paired_trade=TradeLeg(
+            activity_id="act-trd-1",
+            equity_symbol="AAPL",
+            qty=500.0,
+            strike_price=price(150.0),
+            side="buy",
+            net_amount=signed_money(-75_000.0),
+        ),
+    )
+
+
+async def test_assignment_opens_equity_at_strike_with_thesis_link(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """An assignment opens the equity at the strike with the option's thesis link."""
+    _engine, factory = db
+    await _seed_open_option(factory, contract_count=5.0, premium_paid_per_contract=250.0)
+
+    ctx, handle = await open_handle(factory)
+    try:
+        await integrate_lifecycle_event(
+            handle, _assignment_event(LifecycleActivityType.OPASN)
+        )
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        # Option closed (no husk); equity opened at the strike with the thesis link.
+        option = await sess.get(PositionRow, "pos-1")
+        assert option is not None
+        assert option.status == "CLOSED"
+
+        stmt = select(PositionRow).where(PositionRow.status == "OPEN")
+        equities = (await sess.execute(stmt)).scalars().all()
+        assert len(equities) == 1
+        equity = row_to_record(equities[0])
+        assert equity.thesis_id == "thesis-1"
+        assert equity.parent_position_id == "pos-1"
+        assert equity.details.ticker == "AAPL"
+        assert equity.details.share_count == 500.0
+        assert equity.details.average_cost_basis_per_share == pytest.approx(150.0)
+
+        # Both the OPASN and its paired OPTRD landed in the event log.
+        events = (await sess.execute(select(BrokerEventLogRow))).scalars().all()
+        types = {e.event_type for e in events}
+        assert types == {"OPASN", "OPTRD"}
+
+
+async def test_exercise_books_strike_pnl_and_opens_equity_leg(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """An exercise books -premium and opens the resulting equity leg with the thesis link."""
+    _engine, factory = db
+    await _seed_open_option(factory, contract_count=5.0, premium_paid_per_contract=250.0)
+
+    ctx, handle = await open_handle(factory)
+    try:
+        await integrate_lifecycle_event(
+            handle, _assignment_event(LifecycleActivityType.OPEXC)
+        )
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        option = await sess.get(PositionRow, "pos-1")
+        assert option is not None
+        assert option.status == "CLOSED"
+
+        ledger = await sess.get(ThesisPnlLedgerRow, "thesis-1")
+        assert ledger is not None
+        assert ledger.realized_pnl_usd == Decimal("-1250")
+
+        stmt = select(PositionRow).where(PositionRow.status == "OPEN")
+        equities = (await sess.execute(stmt)).scalars().all()
+        assert len(equities) == 1
+        equity = row_to_record(equities[0])
+        assert equity.thesis_id == "thesis-1"
+        assert equity.details.average_cost_basis_per_share == pytest.approx(150.0)
+
+
+async def test_assignment_without_paired_optrd_surfaces(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A missing paired OPTRD surfaces (raises) — the equity leg is underspecified."""
+    _engine, factory = db
+    await _seed_open_option(factory)
+
+    unpaired = LifecycleEvent(
+        activity_id="act-asn-2",
+        activity_type=LifecycleActivityType.OPASN,
+        occ_symbol=_OCC,
+        qty=5.0,
+        transaction_time=_TXN,
+        paired_trade=None,
+    )
+
+    ctx, handle = await open_handle(factory)
+    try:
+        with pytest.raises(ValueError, match="no paired OPTRD"):
+            await integrate_lifecycle_event(handle, unpaired)
+    finally:
+        await ctx.__aexit__(None, None, None)

@@ -215,6 +215,17 @@ async def handle_assignment_or_exercise(
     handle: InvocationHandle, event: LifecycleEvent
 ) -> None:
     """Book an assignment / exercise: -premium on the option + open the equity leg."""
+    # Surface BEFORE any write: a missing paired OPTRD leaves the equity leg
+    # underspecified (parent ALP-842 surfacing condition). Raising here, before
+    # appending the event row, keeps a surfaced case from committing partial state.
+    if event.paired_trade is None:
+        msg = (
+            f"{event.activity_type.value} {event.activity_id!r} on {event.occ_symbol!r} "
+            f"has no paired OPTRD activity; the equity leg is underspecified — "
+            f"cannot book the assignment/exercise"
+        )
+        raise ValueError(msg)
+
     event_type = (
         BrokerEventType.OPASN
         if event.activity_type is LifecycleActivityType.OPASN
@@ -229,20 +240,19 @@ async def handle_assignment_or_exercise(
         raw_payload={"activity_id": event.activity_id, "occ_symbol": event.occ_symbol},
         broker_timestamp=event.transaction_time,
     )
-    # The paired OPTRD is the second event-log row (priced equity leg).
-    if event.paired_trade is not None:
-        await _append_event_idempotent(
-            handle,
-            event_key=event_key_for(event.paired_trade.activity_id),
-            event_type=BrokerEventType.OPTRD,
-            position_id=None,
-            thesis_id=None,
-            raw_payload={
-                "activity_id": event.paired_trade.activity_id,
-                "equity_symbol": event.paired_trade.equity_symbol,
-            },
-            broker_timestamp=event.transaction_time,
-        )
+    # The paired OPTRD is the second event-log row (the priced equity leg).
+    await _append_event_idempotent(
+        handle,
+        event_key=event_key_for(event.paired_trade.activity_id),
+        event_type=BrokerEventType.OPTRD,
+        position_id=None,
+        thesis_id=None,
+        raw_payload={
+            "activity_id": event.paired_trade.activity_id,
+            "equity_symbol": event.paired_trade.equity_symbol,
+        },
+        broker_timestamp=event.transaction_time,
+    )
     if not newly:
         return
     found = await _find_open_option_position(handle, event.occ_symbol)
