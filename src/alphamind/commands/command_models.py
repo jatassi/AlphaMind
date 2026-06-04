@@ -602,6 +602,35 @@ class OpenCommand(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_nature_trigger_signal_consistency(self) -> OpenCommand:
+        # ALP-848 / ADR-0003 — the thesis ``nature`` and each PriceLeg's
+        # ``trigger_signal`` are paired: a directional thesis is invalidated by
+        # an underlying price level (every PriceLeg fires on ``underlying_price``);
+        # a non-directional vol/spread thesis is nonlinear in the underlying, so
+        # its PriceLegs fire on the option's own mark (``option_price`` /
+        # ``net_mark``). An inconsistent OPEN silently mis-wires the 03d stop, so
+        # reject it at the command boundary.
+        price_legs = [leg for leg in self.invalidation_legs if isinstance(leg, PriceLeg)]
+        if self.thesis.nature == "directional":
+            for leg in price_legs:
+                if leg.trigger_signal != "underlying_price":
+                    raise ValueError(
+                        "OpenCommand with a directional thesis requires every "
+                        "PriceLeg trigger_signal='underlying_price' (the underlying "
+                        f"crosses an invalidating level); got {leg.trigger_signal!r}"
+                    )
+        else:  # non_directional
+            for leg in price_legs:
+                if leg.trigger_signal == "underlying_price":
+                    raise ValueError(
+                        "OpenCommand with a non_directional thesis forbids a "
+                        "PriceLeg trigger_signal='underlying_price' (a vol/spread "
+                        "thesis is nonlinear in the underlying — the invalidation "
+                        "signal must be option_price / net_mark)"
+                    )
+        return self
+
 
 class CloseCommand(BaseModel):
     """CLOSE command — exit a held position."""

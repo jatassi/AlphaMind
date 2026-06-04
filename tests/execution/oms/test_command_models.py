@@ -647,6 +647,45 @@ class TestThesisShapedInvalidationSignal:
         assert non_directional.invalidation_legs[0].trigger_signal == "option_price"
 
 
+class TestThesisNatureLegConsistency:
+    """ALP-848: OpenCommand cross-field validator pairs nature ⟺ trigger_signal.
+
+    A directional thesis is invalidated by an underlying price level, so every
+    PriceLeg must fire on ``underlying_price``; a non-directional (vol/spread)
+    thesis is nonlinear in the underlying, so its PriceLegs must fire on
+    ``option_price`` / ``net_mark``. An inconsistent OPEN silently mis-wires the
+    03d stop, so the command boundary rejects it.
+    """
+
+    def test_directional_with_underlying_signal_accepts(self) -> None:
+        cmd = _option_open_command(
+            nature="directional",
+            invalidation_legs=(_price_leg(trigger_signal="underlying_price"),),
+        )
+        assert cmd.thesis.nature == "directional"
+
+    def test_non_directional_with_option_price_signal_accepts(self) -> None:
+        cmd = _option_open_command(
+            nature="non_directional",
+            invalidation_legs=(_price_leg(trigger_signal="option_price"),),
+        )
+        assert cmd.thesis.nature == "non_directional"
+
+    def test_directional_with_non_underlying_signal_rejects(self) -> None:
+        with pytest.raises(ValueError, match="directional"):
+            _option_open_command(
+                nature="directional",
+                invalidation_legs=(_price_leg(trigger_signal="option_price"),),
+            )
+
+    def test_non_directional_with_underlying_signal_rejects(self) -> None:
+        with pytest.raises(ValueError, match="non_directional"):
+            _option_open_command(
+                nature="non_directional",
+                invalidation_legs=(_price_leg(trigger_signal="underlying_price"),),
+            )
+
+
 class TestCapitalProtectionFloor:
     """ALP-848: a PnL-denominated, PM-authored, options-mandatory capital floor."""
 
