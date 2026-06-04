@@ -30,6 +30,7 @@ __all__ = [
     "base_command_id",
     "compute_attempt_seq",
     "derive_engine_command_id",
+    "derive_open_thesis_id",
     "derive_pm_command_id",
     "is_engine_originated",
     "is_pm_originated",
@@ -350,3 +351,23 @@ def synthesize_id_suffix(command_id: str) -> str:
     command id alone and is unchanged by embedding the thesis / invocation FK.
     """
     return uuid.uuid5(uuid.NAMESPACE_OID, base_command_id(command_id)).hex
+
+
+def derive_open_thesis_id(ticker: str, command_id: str) -> ThesisId:
+    """Mint the deterministic OPEN thesis identity ``THE-{ticker}-{suffix}``.
+
+    This is the SOLE place the OPEN thesis-id format string is constructed
+    (ALP-844, A2 — the broker-carried link is the single source of truth for the
+    OPEN thesis identity). PM-submit embeds the value this returns into the
+    ``client_order_id`` (the *one authoritative* copy), and Phase-2 OPEN
+    writeback reads it back by *parsing* the command id — neither hand-writes the
+    format.
+
+    Because :func:`synthesize_id_suffix` strips any broker-carried link via
+    :func:`base_command_id` before hashing, the suffix is a function of the
+    *base* command id alone — so passing the base id or the full linked command
+    id mints the same thesis. That equivalence is exactly what breaks the
+    circularity: the link carries the thesis, yet the thesis depends only on the
+    link-free base id.
+    """
+    return ThesisId(f"THE-{ticker}-{synthesize_id_suffix(command_id)}")

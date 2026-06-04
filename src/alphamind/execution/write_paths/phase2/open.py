@@ -28,6 +28,7 @@ from alphamind.commands.command_models import (
 )
 from alphamind.commands.submission_results import SubmissionResult
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
+from alphamind.execution.oms.command_ids import parse_pm_command_id
 from alphamind.execution.write_paths.phase2._shared import (
     _OMS_COMPONENT_TYPE_TO_PERSISTED,
     _build_entry_order_from_command,
@@ -334,10 +335,21 @@ def _direction_from_instrument(
 
 
 def _new_open_ids(ticker: str, *, command_id: str) -> dict[str, str]:
+    """Mint the OPEN's local-graph ids from the PM OPEN ``command_id``.
+
+    Position / bracket / order ids are suffix-derived (``synthesize_id_suffix``
+    strips any broker-carried link, so they stay byte-identical to the pre-link
+    derivation). The ``thesis_id`` is NOT re-constructed here — it is read back
+    out of the broker-carried link by parsing the command id, so the embedded
+    thesis is the single source of truth for the OPEN thesis identity (ALP-844,
+    A2). ``parse_pm_command_id`` raises ``ValueError`` for a non-PM / thesis-less
+    id; for a real OPEN that is the correct fail-loud behavior — every
+    AlphaMind OPEN carries a parseable PM thesis-bearing command id.
+    """
     suffix = _id_suffix(command_id)
     return {
         "position_id": f"POS-{ticker}-{suffix}",
-        "thesis_id": f"THE-{ticker}-{suffix}",
+        "thesis_id": parse_pm_command_id(command_id).thesis_id,
         "bracket_id": f"BRK-{ticker}-{suffix}",
         "entry_order_id": f"ORD-{ticker}-entry-{suffix}",
         "stop_leg_order_id": f"ORD-{ticker}-stop-{suffix}",

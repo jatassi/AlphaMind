@@ -47,6 +47,7 @@ from alphamind.decision.portfolio_manager.submit_envelope.types import (
 )
 from alphamind.execution.oms.command_ids import (
     compute_attempt_seq,
+    derive_open_thesis_id,
     derive_pm_command_id,
     synthesize_id_suffix,
 )
@@ -509,9 +510,11 @@ def _resolve_originating_thesis(
     fill it rides on is self-attributing (ADR 0002). There is no thesis-less
     path:
 
-    * **OPEN** mints a *new* thesis; its id is deterministic from the base
-      command id exactly as Phase 2 derives it (``THE-{ticker}-{suffix}``), so
-      the embedded FK equals the thesis row Phase 2 will persist.
+    * **OPEN** mints a *new* thesis via :func:`derive_open_thesis_id` — the
+      single source of truth for the OPEN thesis identity (ALP-844, A2). The id
+      is deterministic from the base command id, so the FK embedded here is the
+      one authoritative copy: Phase-2 OPEN writeback reads it back by *parsing*
+      the command id rather than re-deriving it.
     * **CLOSE / ADD / ADJUST** act on an existing position; the FK is that
       position's persisted ``thesis_id``. A real such command reaching
       submission against a missing position, or one whose ``thesis_id is None``,
@@ -524,7 +527,7 @@ def _resolve_originating_thesis(
     """
     if isinstance(command, OpenCommand):
         ticker = _instrument_ticker_key(command.instrument)
-        return ThesisId(f"THE-{ticker}-{synthesize_id_suffix(base_command_id)}")
+        return derive_open_thesis_id(ticker, base_command_id)
     if isinstance(command, CancelCommand):
         thesis = order_thesis_lookup(command.order_id)
         if thesis is None:
@@ -576,9 +579,10 @@ def _process_one_command(
     """
     # The broker-carried thesis FK (ALP-844) rides on the same id-suffix as the
     # base command id, so resolve the OPEN's thesis off the base id (the
-    # link-stripped ``inv-…`` form) before the link is appended — keeping the
-    # embedded thesis equal to the ``THE-{ticker}-{suffix}`` thesis_id Phase 2
-    # mints from the same command id.
+    # link-stripped ``inv-…`` form) before the link is appended. The embedded
+    # value this mints is the single source of truth for the OPEN thesis
+    # identity — Phase 2 reads it back by parsing this command id rather than
+    # re-deriving it (A2).
     bare_invocation = state.invocation_id.removeprefix("inv-")
     base_command_id = (
         f"inv-{bare_invocation}.{envelope.envelope_id}.{command_ordinal}.{attempt_seq}"
