@@ -128,8 +128,9 @@ async def test_precommit_close_writes_pending_submit_row(
     assert row is not None
     assert row.status == OrderStatus.PENDING_SUBMIT.value
     assert row.order_role == OrderRole.CLOSE.value
-    # Synthetic placeholder until backfill — never a real broker id pre-dispatch.
-    assert row.alpaca_order_id.startswith("alp-")
+    # ALP-847 — a not-yet-routed order carries NO broker id (NULL), never a
+    # synthetic placeholder; the real id is backfilled on dispatch.
+    assert row.alpaca_order_id is None
 
 
 @pytest.mark.asyncio
@@ -368,13 +369,13 @@ async def test_backfill_pending_submit_orders_recovers_lost_link(
     await _seed_open_close_substrate(factory)
     cmd = _close_command()
     result = _accepted_result(0, "inv-X.ENV-SA-E.0.0")
-    # Pre-commit but NEVER backfill — the row is stuck in PENDING_SUBMIT with the
-    # synthetic placeholder (the lost-(C) state).
+    # Pre-commit but NEVER backfill — the row is stuck in PENDING_SUBMIT with NO
+    # broker id (the lost-(C) state, ALP-847).
     await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
     row = await _read_order_by_client_order_id(factory, "inv-X.ENV-SA-E.0.0")
     assert row is not None
     assert row.status == OrderStatus.PENDING_SUBMIT.value
-    assert row.alpaca_order_id.startswith("alp-")
+    assert row.alpaca_order_id is None
 
     snapshot = _order_snapshot(order_id="real-broker-uuid", client_order_id="inv-X.ENV-SA-E.0.0")
     async with factory() as session:
@@ -416,7 +417,7 @@ async def test_backfill_pending_submit_orders_noop_without_match(
     row = await _read_order_by_client_order_id(factory, "inv-X.ENV-SA-F.0.0")
     assert row is not None
     assert row.status == OrderStatus.PENDING_SUBMIT.value
-    assert row.alpaca_order_id.startswith("alp-")
+    assert row.alpaca_order_id is None
 
 
 # ---------------------------------------------------------------------------

@@ -54,6 +54,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
+    EnforcementBinding,
     EventTrigger,
     InstrumentSpec,
     OrderClass,
@@ -147,8 +148,8 @@ async def _writeback_open(
     PRICE_STOP order, so a later protective fill / OCO sibling-cancel resolves
     to the local leg row. Legs with no broker counterpart — TIME_STOP and the
     advisory EVENT legs (and any PRICE_STOP beyond the one Alpaca brackets,
-    which submits a single stop child) — keep the synthetic ``alp-{order_id}``
-    placeholder.
+    which submits a single stop child) — carry NO broker id (``alpaca_order_id``
+    NULL, ALP-847): they are monitor-enforced Intent, not Broker-Owned Fact.
     """
     leg_ids = submitted_leg_alpaca_order_ids or {}
     ticker = _instrument_ticker_key(command.instrument)
@@ -391,7 +392,8 @@ def _build_protective_orders(
     one stop child, mapped from the first PriceLeg by
     ``order_equity._bracket_params``). A TimeLeg (TIME_STOP), the advisory
     EVENT legs, and any PRICE_STOP beyond the first have no broker counterpart
-    and keep the synthetic ``alp-{order_id}`` placeholder.
+    and carry NO broker id (``alpaca_order_id`` NULL, ALP-847) — monitor-enforced
+    Intent.
     """
     c = context
     target_order = _build_take_profit_order(
@@ -456,8 +458,9 @@ def _build_take_profit_order(  # noqa: PLR0913 — distinct identifiers + sizing
     leg is persisted as the MLEG envelope that exits the strategy (ALP-614).
 
     ``alpaca_order_id_override`` (ALP-746) carries the native bracket / OTO's
-    take-profit child id captured at submission; ``None`` falls back to the
-    synthetic placeholder (no broker counterpart, e.g. a strategy MLEG exit).
+    take-profit child id captured at submission; ``None`` means NO broker id
+    (``alpaca_order_id`` NULL, ALP-847 — no broker counterpart, e.g. a strategy
+    MLEG exit's monitor-enforced take-profit).
     """
     if target.order_type == "market":
         order_type = OrderType.MARKET
@@ -506,7 +509,8 @@ def _build_invalidation_leg_order(  # noqa: PLR0913 — leg construction threads
 
     ``alpaca_order_id_override`` (ALP-746) carries the native bracket's stop
     child id for the PRICE_STOP leg; a TIME_STOP (TimeLeg) has no broker
-    counterpart and is always called with ``None`` (synthetic placeholder).
+    counterpart and is always called with ``None`` → NO broker id
+    (``alpaca_order_id`` NULL, ALP-847 — monitor-enforced Intent).
     """
     persisted_order_type = _BRACKET_ORDER_TYPE_TO_PERSISTED[wire_leg.order_parameters.order_type]
     if isinstance(wire_leg, PriceLeg):
@@ -813,6 +817,7 @@ def _wire_leg_to_bracket_leg(
     wire_leg: InvalidationLeg,
     leg_order_id: str | None,
     ticker: str,
+    enforcement_binding: EnforcementBinding,
 ) -> BracketLeg:
     """Translate a wire-format invalidation leg to a persisted :class:`BracketLeg`.
 
@@ -821,6 +826,12 @@ def _wire_leg_to_bracket_leg(
     :class:`PriceTrigger` against the underlying; time legs use
     :class:`TimeTrigger` with the deadline; event legs use
     :class:`EventTrigger` (advisory only — no broker order).
+
+    ``enforcement_binding`` (ADR-0003 / ALP-847) is the typed broker-vs-monitor
+    binding the caller computes from instrument type + leg position. A TIME /
+    EVENT leg has no broker counterpart, so the caller always passes
+    ``MONITOR_ENFORCED`` for those; a PRICE_STOP is broker-enforced only when it
+    is the first equity stop the native bracket carries.
     """
     if isinstance(wire_leg, PriceLeg):
         cmp = wire_leg.condition.comparator
@@ -838,6 +849,7 @@ def _wire_leg_to_bracket_leg(
                 direction=direction,
             ),
             enforcement=BracketLegEnforcement.MECHANICAL,
+            enforcement_binding=enforcement_binding,
             status=BracketLegStatus.PENDING_ACTIVATION,
         )
     if isinstance(wire_leg, TimeLeg):
@@ -847,6 +859,7 @@ def _wire_leg_to_bracket_leg(
             order_id=OrderId(leg_order_id) if leg_order_id is not None else None,
             trigger=TimeTrigger(deadline=wire_leg.condition.deadline),
             enforcement=BracketLegEnforcement.MECHANICAL,
+            enforcement_binding=enforcement_binding,
             status=BracketLegStatus.PENDING_ACTIVATION,
         )
     # EventLeg — soft, no broker order.
@@ -856,6 +869,7 @@ def _wire_leg_to_bracket_leg(
         order_id=None,
         trigger=EventTrigger(description=wire_leg.condition.event_description),
         enforcement=BracketLegEnforcement.ADVISORY,
+        enforcement_binding=enforcement_binding,
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
 
@@ -867,10 +881,14 @@ def _target_to_bracket_leg(
     target_order_id: str,
     ticker: str,
     direction: Direction,
+    enforcement_binding: EnforcementBinding,
 ) -> BracketLeg:
     """Translate the canonical :class:`Target` to a persisted TAKE_PROFIT leg.
 
     Long take-profit fires on price >= threshold (GTE); short on price <= (LTE).
+    ``enforcement_binding`` (ALP-847) is BROKER_ENFORCED for an equity native
+    bracket (the take-profit child Alpaca carries) and MONITOR_ENFORCED for an
+    options / strategy position (no native bracket).
     """
     # ALP-462 — Price → float at the legacy PriceTrigger surface.
     threshold_usd = float(target.price) if target.price is not None else 0.01
@@ -884,6 +902,7 @@ def _target_to_bracket_leg(
             direction="GTE" if direction == Direction.LONG else "LTE",
         ),
         enforcement=BracketLegEnforcement.MECHANICAL,
+        enforcement_binding=enforcement_binding,
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
 
@@ -940,6 +959,10 @@ def _strategy_target_to_bracket_leg(
             direction="GTE",  # inert for a strategy — pl_anchor drives firing
         ),
         enforcement=BracketLegEnforcement.MECHANICAL,
+        # ALP-847 — a strategy has no native bracket (Alpaca does not support
+        # complex order classes on options), so the take-profit is always
+        # monitor-enforced armed Intent.
+        enforcement_binding=EnforcementBinding.MONITOR_ENFORCED,
         status=BracketLegStatus.PENDING_ACTIVATION,
         pl_anchor=PLAnchorSpec(
             spec_type="target",
@@ -977,8 +1000,16 @@ def _build_pending_bracket(
     strategy's net P/L, not a single-sided underlying-price threshold. For
     equity / single-leg options the take-profit keeps its plain
     underlying-price :class:`PriceTrigger` (see :func:`_target_to_bracket_leg`).
+
+    Enforcement binding (ADR-0003 / ALP-847): only an **equity** OPEN has a
+    native Alpaca bracket, which carries exactly one take-profit child + one
+    stop child — so the take-profit and the FIRST price-stop are
+    broker-enforced. A secondary equity price-stop, every time/event leg, and
+    every options / strategy leg (no native bracket on options) are
+    monitor-enforced armed Intent.
     """
     ticker = _instrument_ticker_key(instrument)
+    is_equity = isinstance(instrument, EquityInstrument)
     if isinstance(instrument, StrategyInstrument):
         target_leg = _strategy_target_to_bracket_leg(
             leg_id=f"{bracket_id}-leg-target",
@@ -993,15 +1024,33 @@ def _build_pending_bracket(
             target_order_id=target_order_id,
             ticker=ticker,
             direction=Direction.LONG,
+            # Equity native bracket carries the take-profit child; options have
+            # no native bracket → monitor-enforced.
+            enforcement_binding=(
+                EnforcementBinding.BROKER_ENFORCED
+                if is_equity
+                else EnforcementBinding.MONITOR_ENFORCED
+            ),
         )
     invalidation_legs: list[BracketLeg] = []
+    # The native equity bracket carries exactly one stop child — the first
+    # PriceLeg (matching ``order_equity._bracket_params`` and the ALP-746 leg-id
+    # capture). It is broker-enforced; all subsequent stops and all time legs are
+    # monitor-enforced.
+    first_equity_stop_taken = False
     for idx, (wire_leg, leg_order_id) in enumerate(invalidation_leg_orders):
+        if is_equity and isinstance(wire_leg, PriceLeg) and not first_equity_stop_taken:
+            first_equity_stop_taken = True
+            leg_binding = EnforcementBinding.BROKER_ENFORCED
+        else:
+            leg_binding = EnforcementBinding.MONITOR_ENFORCED
         invalidation_legs.append(
             _wire_leg_to_bracket_leg(
                 leg_id=f"{bracket_id}-leg-inv{idx}",
                 wire_leg=wire_leg,
                 leg_order_id=leg_order_id,
                 ticker=ticker,
+                enforcement_binding=leg_binding,
             )
         )
     return BracketRecord(

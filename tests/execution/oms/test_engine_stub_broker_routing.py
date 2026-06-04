@@ -2115,8 +2115,10 @@ def _seed_pending_protective_orders(
             quantity=10.0,
             duration=OrderDuration.DAY,
             status=OrderStatus.PENDING,
-            alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
-            alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
+            # Broker-enforced legs (the native bracket's take-profit + first
+            # stop) carry the broker's real id, captured at submission (ALP-847).
+            alpaca_order_id=AlpacaOrderId(f"broker-uuid-{order_id}"),
+            alpaca_order_id_chain=(AlpacaOrderId(f"broker-uuid-{order_id}"),),
             submission_timestamp=_NOW - timedelta(hours=1),
             last_update_timestamp=_NOW - timedelta(hours=1),
             filled_quantity=0.0,
@@ -2224,7 +2226,7 @@ async def test_adjust_command_context_options_position_routes_us_option_simple(
 
         assert kwargs["target_asset_class"] == "us_option"
         assert kwargs["target_order_class"] == "simple"
-        assert kwargs["target_alpaca_order_id"] == "alp-ord-stop"
+        assert kwargs["target_alpaca_order_id"] == "broker-uuid-ord-stop"
     finally:
         await async_engine.dispose()
 
@@ -2271,7 +2273,7 @@ async def test_adjust_command_context_strategy_position_routes_mleg(
 
         assert kwargs["target_asset_class"] == "us_option_strategy"
         assert kwargs["target_order_class"] == "mleg"
-        assert kwargs["target_alpaca_order_id"] == "alp-ord-stop"
+        assert kwargs["target_alpaca_order_id"] == "broker-uuid-ord-stop"
     finally:
         await async_engine.dispose()
 
@@ -2365,10 +2367,154 @@ async def test_adjust_command_context_targets_take_profit_when_target_change(
         finally:
             await ctx.__aexit__(None, None, None)
 
-        assert kwargs["target_alpaca_order_id"] == "alp-ord-target"
+        assert kwargs["target_alpaca_order_id"] == "broker-uuid-ord-target"
         # Equity position keeps the simple/us_equity routing.
         assert kwargs["target_asset_class"] == "us_equity"
         assert kwargs["target_order_class"] == "simple"
+    finally:
+        await async_engine.dispose()
+
+
+def _seed_monitor_enforced_stop(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    order_id: str,
+    bracket_id: str,
+    position_id: str,
+    thesis_id: str,
+) -> Any:
+    """Seed a PENDING monitor-enforced PRICE_STOP order with NO broker id (None).
+
+    Models the ALP-847 monitor-enforced leg: armed Intent the continuous monitor
+    enforces, with no broker order — so ``alpaca_order_id`` is None. Returns a
+    coroutine to ``await``.
+    """
+    from alphamind.portfolio_state.records.orders import (
+        EquityInstrumentSpec,
+        OrderClass,
+        OrderDirection,
+        OrderDuration,
+        OrderRecord,
+        OrderRole,
+        OrderStatus,
+        OrderType,
+        PriceParameters,
+    )
+    from alphamind.state.tables.orders_codec import record_to_row as order_record_to_row
+
+    record = OrderRecord(
+        order_id=OrderId(order_id),
+        position_id=PositionId(position_id),
+        bracket_id=BracketId(bracket_id),
+        role=OrderRole.PRICE_STOP,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("NVDA")),
+        direction=OrderDirection.SELL,
+        order_type=OrderType.STOP,
+        order_class=OrderClass.OTO,
+        price_parameters=PriceParameters(stop_trigger_price=price("130.0")),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=None,  # monitor-enforced — no broker order
+        alpaca_order_id_chain=(),
+        submission_timestamp=_NOW - timedelta(hours=1),
+        last_update_timestamp=_NOW - timedelta(hours=1),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=ThesisId(thesis_id),
+        originating_pm_command_id=None,
+        age_hours=1.0,
+    )
+
+    async def _seed() -> None:
+        async with factory() as sess:
+            sess.add(order_record_to_row(record))
+            await sess.commit()
+
+    return _seed()
+
+
+class _RecordingBrokerDispatch:
+    """A BrokerDispatch fake that records every call — to assert it is NOT
+    invoked for a local (monitor-enforced) CANCEL."""
+
+    def __init__(self) -> None:
+        self.calls: list[Any] = []
+
+    async def __call__(self, command: Any, *, client_order_id: str, **context: Any) -> Any:
+        self.calls.append(command)
+        msg = "broker dispatch must not be invoked for a monitor-enforced leg CANCEL"
+        raise AssertionError(msg)
+
+
+async def test_cancel_of_monitor_enforced_leg_is_local_no_broker_call(
+    tmp_path: Path,
+) -> None:
+    """ALP-847 AC4/AC5 — a CANCEL of a monitor-enforced leg (no broker order)
+    is a local Intent state change: it never reaches the broker dispatch
+    (``_dispatch_cancel`` is not invoked), and the order row transitions to
+    CANCELLED locally. This makes the ALP-837 path (cancel of a synthetic-id
+    leg → 404) unreachable."""
+    from alphamind.commands.command_models import CancelCommand
+    from alphamind.commands.submission_results import SubmissionResult
+    from alphamind.decision.portfolio_manager.submit_envelope.dispatch import (
+        _route_through_broker,
+    )
+    from alphamind.execution.broker_adapter import AccountStateQueries
+    from alphamind.state.tables.orders import OrderRow as _OrderRow
+    from tests.execution.oms.test_submit_envelope_mcp import _make_analyst_envelope
+
+    async_engine, factory = _build_db_factory(tmp_path)
+    try:
+        await _seed_invocation_substrate(factory)
+        await _seed_cash_ledger(factory)
+        await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
+        await _seed_monitor_enforced_stop(
+            factory,
+            order_id="ord-monitor-stop",
+            bracket_id="BRK-NVDA-1",
+            position_id="POS-NVDA-001",
+            thesis_id="THE-NVDA-0123456789abcdef0123456789abcdef",
+        )
+
+        cancel = CancelCommand(
+            command_type="cancel",
+            order_id=OrderId("ord-monitor-stop"),
+            cancel_reason="thesis invalidated",
+        )
+        envelope = _make_analyst_envelope(commands=(cancel,))
+        result = SubmissionResult(
+            command_ordinal=0, status="accepted", command_id="inv-X.ENV-C.0.0"
+        )
+
+        dispatch = _RecordingBrokerDispatch()
+        ctx, handle = await _open_handle(factory)
+        try:
+            updated, _dispatches, abandoned = await _route_through_broker(
+                envelope=envelope,
+                submission_results=(result,),
+                client=MagicMock(),
+                queries=MagicMock(spec=AccountStateQueries),
+                execution_config=_default_execution_config(),
+                invocation_handle=handle,
+                broker_dispatch=dispatch,
+            )
+        finally:
+            await ctx.__aexit__(None, None, None)
+
+        # The broker dispatch was NEVER invoked — the cancel stayed local.
+        assert dispatch.calls == []
+        assert updated[0].status == "accepted"
+        assert abandoned == ()
+
+        # The order row transitioned to CANCELLED by the local writeback.
+        async with factory() as sess:
+            row = await sess.get(_OrderRow, "ord-monitor-stop")
+            assert row is not None
+            assert row.status == "CANCELLED"
+            assert row.alpaca_order_id is None
     finally:
         await async_engine.dispose()
 

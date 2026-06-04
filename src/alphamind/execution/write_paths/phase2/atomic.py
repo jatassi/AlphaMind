@@ -12,8 +12,8 @@ Phase-2 extension of the ALP-824 fix):
 * :func:`precommit_command` — (A) durable pre-broker intent. Writes the command's
   full local graph (OPEN: position + thesis + bracket + protective legs + entry;
   CLOSE/ADD/ADJUST: the order against an existing position) with the **dispatched**
-  order in ``PENDING_SUBMIT`` carrying the synthetic ``alp-{order_id}`` placeholder
-  and ``client_order_id = command_id``, and reserves capital. Idempotent on
+  order in ``PENDING_SUBMIT`` carrying NO broker id (``alpaca_order_id`` NULL,
+  ALP-847) and ``client_order_id = command_id``, and reserves capital. Idempotent on
   ``client_order_id`` — a replay finds the existing row and re-reserves nothing.
 * :func:`backfill_command_broker_ids` — (C) after a successful dispatch, stamp the
   real ``alpaca_order_id`` (+ ALP-746 native-bracket leg ids) and flip the
@@ -149,7 +149,8 @@ async def precommit_command(
             return True
 
         handle = InvocationHandle(session=session, invocation_id=invocation_id)
-        # Build the full local graph with synthetic ids (no broker id yet).
+        # Build the full local graph with NO broker ids yet (ALP-847 — the real
+        # alpaca_order_id is backfilled on dispatch; no synthetic placeholder).
         await _dispatch_command_writeback(
             handle, command=command, result=result, dispatch_result=None
         )
@@ -226,8 +227,8 @@ async def _backfill_open_leg_ids(
     Take-profit → the bracket's TAKE_PROFIT order; stop-loss → the first
     PRICE_STOP order (Alpaca's native bracket submits exactly one stop child,
     mapped from the first PriceLeg). Legs with no broker counterpart (TIME_STOP,
-    advisory EVENT legs, any PRICE_STOP beyond the first) keep their synthetic
-    placeholder.
+    advisory EVENT legs, any PRICE_STOP beyond the first) keep NO broker id
+    (``alpaca_order_id`` NULL, ALP-847) — they are monitor-enforced Intent.
     """
     rows = list(
         (

@@ -235,8 +235,11 @@ this runs. The bootstrap fetches Alpaca's reported cash, writes the
 `cash_ledger` + `drawdown_state` singletons, and runs one `market_open`
 invocation. The invocation drives the full pipeline (Phase 1 → analysis →
 decision → Phase 2 broker dispatch) — the PM's accepted commands must land
-on Alpaca with real broker order ids, not synthetic `alp-{order_id}`
-placeholders. Refuses to run if either singleton already exists.
+on Alpaca with real broker order ids. The synthetic `alp-{order_id}`
+placeholder is deleted (ALP-847): an order with no broker counterpart — a
+monitor-enforced protective leg (armed Intent the continuous monitor
+enforces) or a not-yet-routed order — carries a NULL `alpaca_order_id`, never
+a placeholder. Refuses to run if either singleton already exists.
 
 ```bash
 set -a && source <(tr -d '\r' < .env) && set +a && \
@@ -248,8 +251,10 @@ set -a && source <(tr -d '\r' < .env) && set +a && \
 
 Expected: one full invocation followed by the process exiting 0. Both
 singletons committed to the DB, and — if the PM produced any envelopes —
-the corresponding orders + protective legs should appear on the Alpaca
-side with real UUIDs (not synthetic `alp-…` placeholders). Wall-clock is
+the corresponding entry + broker-enforced protective legs (the native
+equity bracket's take-profit + first stop) should appear on the Alpaca side
+with real UUIDs; monitor-enforced legs carry a NULL `alpaca_order_id` (no
+broker order — they are not on Alpaca, by design). Wall-clock is
 **~25–35 min** on a cold-cache cold-start — every SDK call pays first-fill
 `cache_write` cost (no warm prompt cache), the deterministic distillation
 step takes ~3–5 min against the full prod data layer, and at least one of
@@ -269,18 +274,21 @@ print('cash_ledger:', db.execute('SELECT current_cash_usd FROM cash_ledger').fet
 print('drawdown_state:', db.execute('SELECT equity_high_water_mark_usd FROM drawdown_state').fetchone())
 print('order_count:', db.execute('SELECT COUNT(*) FROM orders').fetchone())
 print('synthetic_id_count:', db.execute(\"SELECT COUNT(*) FROM orders WHERE alpaca_order_id LIKE 'alp-%'\").fetchone())
+print('orphan_pending_no_broker_id:', db.execute(\"SELECT COUNT(*) FROM orders o WHERE o.alpaca_order_id IS NULL AND o.status NOT IN ('PENDING_SUBMIT','CANCELLED','REJECTED') AND NOT EXISTS (SELECT 1 FROM bracket_legs bl WHERE bl.order_id = o.order_id AND bl.enforcement_binding = 'monitor_enforced')\").fetchone())
 "
 ```
 
 Both singleton rows should match Alpaca's reported cash on the freshly-reset
-account to the cent. **`synthetic_id_count` must be `0`** — every persisted
-order should carry a real Alpaca UUID. A non-zero count indicates broker
-dispatch was bypassed (the invocation did not reach Alpaca); regression
-checking should also confirm via `TradingClient.get_orders(status=ALL)`
-that the same orders are visible on the Alpaca side. Pre-ALP-711 the
-bootstrap silently persisted synthetic placeholders without ever calling
-Alpaca; that class of regression is detectable here before completing the
-bootstrap.
+account to the cent. **`synthetic_id_count` must be `0` — by construction**:
+ALP-847 deleted the `alp-{order_id}` mint, so no code can persist a synthetic
+placeholder; a non-zero count would mean a stale pre-ALP-847 DB (re-baseline
+it). A NULL `alpaca_order_id` is now the *expected* steady state for a
+monitor-enforced leg or a not-yet-routed (`PENDING_SUBMIT`) order — NOT a
+defect. The meaningful check is **`orphan_pending_no_broker_id` must be `0`**:
+an active order with no broker id that is *not* a monitor-enforced leg means
+broker dispatch was bypassed (the invocation did not reach Alpaca). Regression
+checking should also confirm via `TradingClient.get_orders(status=ALL)` that
+the broker-enforced orders are visible on the Alpaca side.
 
 **Hard-fail paths.** `--fresh-start` refuses to run when:
 

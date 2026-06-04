@@ -467,8 +467,8 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
     # Step 5: append to submission log (post-broker outcome). ALP-711 scope (C):
     # ``dispatch_results`` rides on the log entry so the orchestrator's
     # Phase 2 dispatcher can forward broker outcomes (real Alpaca order ids,
-    # broker rejection codes) to :func:`persist_envelope_outcome` instead
-    # of falling back to synthetic ``alp-{order_id}`` placeholders.
+    # broker rejection codes) to :func:`persist_envelope_outcome`; without it
+    # the order persists with NO broker id (NULL, ALP-847 — never a placeholder).
     state = dataclasses.replace(
         state,
         submission_log=(

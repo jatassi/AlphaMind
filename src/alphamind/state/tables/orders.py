@@ -1,10 +1,13 @@
 """SQLAlchemy mapping for the ``orders`` table (story 04c / ALP-360).
 
 One row per order — the most write-heavy entity in the OMS. Mirrors the
-non-null shape of ``OrderRecord``: ``alpaca_order_id``, ``bracket_id``, and
-``submission_timestamp`` are NOT NULL because pre-submission orders are not
-representable as ``OrderRecord`` (they live in the activity log / PM-decision
-provenance instead, not at the SQL layer).
+non-null shape of ``OrderRecord``: ``bracket_id`` and ``submission_timestamp``
+are NOT NULL because pre-submission orders are not representable as
+``OrderRecord`` (they live in the activity log / PM-decision provenance
+instead, not at the SQL layer). ``alpaca_order_id`` is NULLABLE (ALP-847): an
+order with no broker counterpart — a not-yet-routed order or a monitor-enforced
+protective leg (armed Intent) — carries NO broker id, never a synthetic
+``alp-{order_id}`` placeholder (invariant 5).
 
 CHECK constraints on ``order_role`` / ``order_class`` / ``direction`` /
 ``order_type`` / ``duration`` / ``status`` enforce the same enum vocabularies
@@ -51,9 +54,9 @@ class OrderRow(Base):
     """Forward-mutable per-order row.
 
     Tightened-schema fields (NOT NULL, mirroring ``OrderRecord``):
-    ``alpaca_order_id``, ``alpaca_order_id_chain_json``, ``bracket_id``,
-    ``submission_timestamp``. ``position_id`` and ``average_fill_price``
-    remain nullable per the typed record.
+    ``alpaca_order_id_chain_json``, ``bracket_id``, ``submission_timestamp``.
+    ``alpaca_order_id`` (ALP-847), ``position_id``, and ``average_fill_price``
+    are nullable per the typed record.
     """
 
     __tablename__ = "orders"
@@ -90,7 +93,14 @@ class OrderRow(Base):
     price_parameters_json: Mapped[str] = mapped_column(Text, nullable=False)
     duration: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
-    alpaca_order_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # ALP-847 — nullable: an order with no broker counterpart carries NO broker
+    # id (NULL), never a synthetic ``alp-{order_id}`` placeholder. Two cases:
+    # a not-yet-routed order (PENDING_SUBMIT — durable Intent keyed by
+    # ``client_order_id``, backfilled with the real id on dispatch) and a
+    # monitor-enforced protective leg (armed Intent the continuous monitor
+    # enforces — it never has a broker order). The chain JSON is ``"[]"`` when
+    # absent. The ``ix_orders_alpaca_order_id`` index admits the NULLs.
+    alpaca_order_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     alpaca_order_id_chain_json: Mapped[str] = mapped_column(Text, nullable=False)
     submission_timestamp: Mapped[str] = mapped_column(Text, nullable=False)
     last_update_timestamp: Mapped[str] = mapped_column(Text, nullable=False)

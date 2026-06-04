@@ -105,9 +105,10 @@ class OrderStatus(StrEnum):
     # PENDING_SUBMIT (ALP-836) is the durable-intent state of an order whose row
     # has been committed locally but has NOT yet been accepted by the broker — the
     # atomicity-first window between the pre-dispatch commit and the post-submit
-    # ``alpaca_order_id`` backfill. The row carries the synthetic ``alp-{order_id}``
-    # placeholder until the real broker id is backfilled, at which point it
-    # transitions to PENDING. A row stuck in PENDING_SUBMIT means the broker never
+    # ``alpaca_order_id`` backfill. The row carries NO broker id (``alpaca_order_id``
+    # NULL, ALP-847 — the synthetic ``alp-`` placeholder is deleted) until the real
+    # broker id is backfilled, at which point it transitions to PENDING. A row
+    # stuck in PENDING_SUBMIT means the broker never
     # accepted the order (lost backfill, rejection, or process death between the
     # pre-commit and dispatch) — recoverable by the reconcile-by-``client_order_id``
     # backfill, and never a live-broker-order-without-a-local-row strand.
@@ -244,7 +245,17 @@ class OrderRecord:
     quantity: float
     duration: OrderDuration
     status: OrderStatus
-    alpaca_order_id: AlpacaOrderId
+    # ADR-0003 / ALP-847: the broker's real Alpaca order id, or ``None`` for an
+    # order with no broker counterpart. ``None`` covers two cases: a not-yet-
+    # routed order (PENDING_SUBMIT — durable Intent keyed by ``client_order_id``,
+    # backfilled with the real id on dispatch) and a monitor-enforced protective
+    # leg (armed Intent the continuous monitor enforces — it never has a broker
+    # order). The synthetic ``alp-{order_id}`` placeholder is deleted: a leg with
+    # no broker order has NO broker id (invariant 5), never a counterfeit one.
+    alpaca_order_id: AlpacaOrderId | None
+    # Empty for an order with no broker id; otherwise the lineage of real broker
+    # ids (cancel-and-replace ADJUST appends). The last element equals
+    # ``alpaca_order_id`` when both are present.
     alpaca_order_id_chain: tuple[AlpacaOrderId, ...]
     submission_timestamp: datetime
     last_update_timestamp: datetime
@@ -387,8 +398,16 @@ class OrderRecord:
                 raise ValueError(msg)
 
     def _check_alpaca_chain(self) -> None:
+        # ALP-847 — an order with no broker id (a not-yet-routed order or a
+        # monitor-enforced protective leg) carries ``alpaca_order_id=None`` and an
+        # empty chain; the two are bound together so a stray half-state can't form.
+        if self.alpaca_order_id is None:
+            if self.alpaca_order_id_chain:
+                msg = "alpaca_order_id is None requires an empty alpaca_order_id_chain"
+                raise ValueError(msg)
+            return
         if not self.alpaca_order_id_chain:
-            msg = "alpaca_order_id_chain must be non-empty"
+            msg = "alpaca_order_id_chain must be non-empty when alpaca_order_id is set"
             raise ValueError(msg)
         if self.alpaca_order_id != self.alpaca_order_id_chain[-1]:
             msg = (

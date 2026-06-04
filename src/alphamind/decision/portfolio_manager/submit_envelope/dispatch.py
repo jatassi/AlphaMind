@@ -271,10 +271,6 @@ async def _route_one_command(
     by the self-guarding ``_precommit_if_atomic`` / ``_abandon_if_atomic`` /
     ``_finalize_dispatch_if_persisting`` helpers (no-ops on the fixture path).
     """
-    from alphamind.execution.broker_adapter import GatewaySubmissionFailed, Submitted
-    from alphamind.execution.broker_adapter.errors import classify_alpaca_error
-    from alphamind.execution.broker_adapter.order_options import PermanentRejectionError
-
     # ALP-747 stale-anchor coherence backstop — rejected before any pre-commit.
     if ctx.quote_source is not None:
         stale_reason = await _stale_anchor_rejection_reason(command, quote_source=ctx.quote_source)
@@ -299,6 +295,38 @@ async def _route_one_command(
     # pre-commit does not mutate. A resolution failure (missing position/leg)
     # propagates before any pre-commit, leaving no half-mutated graph.
     context_kwargs = await _dispatcher_context_for(command, invocation_handle=ctx.invocation_handle)
+
+    # ALP-847 — a CANCEL/ADJUST whose target leg is monitor-enforced (no broker
+    # order → ``target_alpaca_order_id`` resolves to None) is a LOCAL Intent
+    # state change. It never reaches the broker dispatch (no synthetic id is ever
+    # sent to Alpaca — the ALP-837 path is unrepresentable). Run only the local
+    # writeback and return accepted.
+    if isinstance(command, CancelCommand | AdjustCommand) and (
+        context_kwargs.get("target_alpaca_order_id") is None
+    ):
+        return await _route_monitor_enforced_local(ctx, command=command, result=result)
+
+    return await _dispatch_to_broker(
+        ctx, command=command, result=result, context_kwargs=context_kwargs
+    )
+
+
+async def _dispatch_to_broker(
+    ctx: _BrokerRouteCtx,
+    *,
+    command: OMSCommand,
+    result: SubmissionResult,
+    context_kwargs: dict[str, Any],
+) -> tuple[SubmissionResult, BrokerDispatchResult | None, _AbandonedCommandEntry | None]:
+    """(A) pre-commit → (B) dispatch → (C) backfill / (F) teardown for one command.
+
+    The broker-routing body of :func:`_route_one_command`, reached once the
+    stale-anchor backstop and the ALP-847 monitor-enforced-local branch have both
+    passed. ``context_kwargs`` is the resolved per-command dispatcher context.
+    """
+    from alphamind.execution.broker_adapter import GatewaySubmissionFailed, Submitted
+    from alphamind.execution.broker_adapter.errors import classify_alpaca_error
+    from alphamind.execution.broker_adapter.order_options import PermanentRejectionError
 
     # (A) Pre-commit the durable order row before dispatch. If it cannot land, the
     # command aborts without dispatching — never a broker order without a row.
@@ -466,6 +494,61 @@ async def _finalize_dispatch_if_persisting(
             dispatch_result=dispatch_result,
         )
     )
+
+
+async def _route_monitor_enforced_local(
+    ctx: _BrokerRouteCtx,
+    *,
+    command: CancelCommand | AdjustCommand,
+    result: SubmissionResult,
+) -> tuple[SubmissionResult, BrokerDispatchResult | None, _AbandonedCommandEntry | None]:
+    """Apply a monitor-enforced leg's CANCEL/ADJUST as a LOCAL Intent change (ALP-847).
+
+    A monitor-enforced leg has no broker order, so its CANCEL/ADJUST never goes to
+    the broker — there is no synthetic id to send (the ALP-837 path is
+    unrepresentable). The local writeback alone realizes the change:
+
+    * CANCEL → ``persist_cancel_writeback`` marks the leg's order CANCELLED and
+      releases nothing (a protective leg reserves no capital).
+    * ADJUST → ``precommit_command`` runs the ADJUST writeback, which cancels the
+      old leg and inserts a fresh monitor-enforced replacement (``alpaca_order_id``
+      None — no broker dispatch follows, so the precommit IS the final state).
+
+    No-op writeback on the fixture path (no ``session_factory``); the result is
+    still ``accepted`` so the submission log reflects the local action. Returns no
+    dispatch entry and no abandoned entry.
+    """
+    if ctx.session_factory is not None and ctx.invocation_id is not None:
+        from alphamind.execution.write_paths.phase2.atomic import (
+            persist_cancel_writeback,
+            precommit_command,
+        )
+
+        if isinstance(command, CancelCommand):
+            await run_with_sqlite_busy_retry(
+                partial(
+                    persist_cancel_writeback,
+                    ctx.session_factory,
+                    invocation_id=ctx.invocation_id,
+                    command=command,
+                )
+            )
+        else:
+            await run_with_sqlite_busy_retry(
+                partial(
+                    precommit_command,
+                    ctx.session_factory,
+                    invocation_id=ctx.invocation_id,
+                    command=command,
+                    result=result,
+                )
+            )
+    logger.info(
+        "broker_dispatch: %s on a monitor-enforced leg applied locally (no broker call) — %s",
+        command.command_type.upper(),
+        result.command_id,
+    )
+    return result, None, None
 
 
 def _abandoned(

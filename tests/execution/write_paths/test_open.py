@@ -15,9 +15,12 @@ from alphamind._kernel.money import price
 from alphamind.commands.command_models import (
     ComponentType,
     EquityInstrument,
+    EventLeg,
+    PriceLeg,
     StrategyInstrument,
     Target,
     Thesis,
+    TimeLeg,
 )
 from alphamind.commands.command_models import (
     StrategyLeg as WireStrategyLeg,
@@ -279,6 +282,166 @@ def test_single_leg_bracket_take_profit_build_unchanged() -> None:
     assert isinstance(target_leg.trigger, PriceTrigger)
     assert target_leg.trigger.direction == "GTE"
     assert target_leg.trigger.threshold_usd == 160.0
+
+
+def _price_leg(trigger_price: float) -> PriceLeg:
+    """A wire PriceLeg with a stop-on-decline condition (LONG-stop shape)."""
+    from alphamind.commands.command_models import (
+        BracketOrderParameters,
+        PriceCondition,
+    )
+
+    return PriceLeg(
+        type="price",
+        is_hard=True,
+        condition=PriceCondition(
+            underlying_trigger="AAPL", comparator="<=", trigger_price=price(trigger_price)
+        ),
+        order_parameters=BracketOrderParameters(order_type="stop"),
+    )
+
+
+def _time_leg(deadline: datetime) -> TimeLeg:
+    from alphamind.commands.command_models import (
+        BracketOrderParameters,
+        TimeCondition,
+    )
+
+    return TimeLeg(
+        type="time",
+        is_hard=True,
+        condition=TimeCondition(deadline=deadline),
+        order_parameters=BracketOrderParameters(order_type="market"),
+    )
+
+
+def _event_leg() -> EventLeg:
+    from alphamind.commands.command_models import EventCondition
+
+    return EventLeg(
+        type="event",
+        is_hard=False,
+        condition=EventCondition(event_description="FOMC surprise hike"),
+    )
+
+
+def test_equity_open_first_stop_and_take_profit_are_broker_enforced() -> None:
+    """ALP-847 AC3 — on an equity OPEN, the take-profit and the FIRST price-stop
+    are broker-enforced (Alpaca's native bracket carries exactly one stop +
+    one take-profit child); a secondary price-stop and any time/event leg are
+    monitor-enforced (no broker counterpart)."""
+    from alphamind.portfolio_state.records.orders import EnforcementBinding
+
+    equity = EquityInstrument(asset_type="equity", ticker="AAPL", direction="long")
+    bracket = _build_pending_bracket(
+        bracket_id="BRK-AAPL-abc123",
+        position_id="POS-AAPL-abc123",
+        entry_order_id="ORD-AAPL-entry-abc123",
+        target=Target(target_type="absolute_price", price=price(160.0), order_type="limit"),
+        target_order_id="ORD-AAPL-target-abc123",
+        invalidation_leg_orders=(
+            (_price_leg(150.0), "ORD-AAPL-inv0-abc123"),
+            (_price_leg(145.0), "ORD-AAPL-inv1-abc123"),
+            (_time_leg(datetime(2026, 6, 1, tzinfo=UTC)), "ORD-AAPL-inv2-abc123"),
+            (_event_leg(), None),
+        ),
+        instrument=equity,
+        entry_window_deadline=None,
+    )
+    legs = bracket.protective_legs
+    take_profit = next(leg for leg in legs if leg.leg_type is BracketLegType.TAKE_PROFIT)
+    price_stops = [leg for leg in legs if leg.leg_type is BracketLegType.PRICE_STOP]
+    time_leg = next(leg for leg in legs if leg.leg_type is BracketLegType.TIME_EXPIRATION)
+    event_leg = next(leg for leg in legs if leg.leg_type is BracketLegType.EVENT_INVALIDATION)
+
+    assert take_profit.enforcement_binding is EnforcementBinding.BROKER_ENFORCED
+    assert price_stops[0].enforcement_binding is EnforcementBinding.BROKER_ENFORCED
+    assert price_stops[1].enforcement_binding is EnforcementBinding.MONITOR_ENFORCED
+    assert time_leg.enforcement_binding is EnforcementBinding.MONITOR_ENFORCED
+    assert event_leg.enforcement_binding is EnforcementBinding.MONITOR_ENFORCED
+
+
+def test_strategy_open_all_legs_are_monitor_enforced() -> None:
+    """ALP-847 AC3 — options/strategy positions have NO native bracket (Alpaca
+    does not support complex order classes on options), so every protective leg
+    is monitor-enforced — armed Intent the continuous monitor enforces."""
+    from alphamind.portfolio_state.records.orders import EnforcementBinding
+
+    bracket = _build_strategy_bracket()
+    for leg in bracket.protective_legs:
+        assert leg.enforcement_binding is EnforcementBinding.MONITOR_ENFORCED
+
+
+def test_build_pending_order_without_broker_id_carries_no_alpaca_id() -> None:
+    """ALP-847 — a protective leg with no broker order carries NO broker id.
+
+    The synthetic ``alp-{order_id}`` mint is deleted (invariant 5): with no
+    ``alpaca_order_id_override`` the built order's ``alpaca_order_id`` is None
+    and its chain is empty — never a placeholder. This is what renders the
+    ALP-837 cancel-of-a-non-existent-order path unrepresentable.
+    """
+    from alphamind.execution.write_paths.phase2._shared import _build_pending_order
+    from alphamind.portfolio_state.records.orders import (
+        OrderClass,
+        OrderDirection,
+        OrderRole,
+        OrderType,
+        PriceParameters,
+    )
+
+    order = _build_pending_order(
+        order_id="ORD-AAPL-inv0-abc123",
+        position_id="POS-AAPL-abc123",
+        bracket_id="BRK-AAPL-abc123",
+        role=OrderRole.PRICE_STOP,
+        order_class=OrderClass.OTO,
+        direction=OrderDirection.SELL,
+        order_type=OrderType.STOP,
+        price_parameters=PriceParameters(stop_trigger_price=price(150.0)),
+        ticker="AAPL",
+        pm_command_id="inv-1.env.0.0",
+        thesis_id="THE-AAPL-abc123",
+        timestamp=datetime(2026, 5, 29, 17, 30, tzinfo=UTC),
+        quantity=10.0,
+    )
+    assert order.alpaca_order_id is None
+    assert order.alpaca_order_id_chain == ()
+
+
+def test_build_pending_order_with_override_carries_real_broker_id() -> None:
+    """ALP-847 — a leg WITH a real broker order carries the broker's id.
+
+    The override (the broker's real Alpaca id captured at submission) stamps
+    both ``alpaca_order_id`` and the single-element chain — a leg backed by a
+    Broker-Owned Fact, the broker-enforced case.
+    """
+    from alphamind.execution.write_paths.phase2._shared import _build_pending_order
+    from alphamind.portfolio_state.records.orders import (
+        OrderClass,
+        OrderDirection,
+        OrderRole,
+        OrderType,
+        PriceParameters,
+    )
+
+    order = _build_pending_order(
+        order_id="ORD-AAPL-inv0-abc123",
+        position_id="POS-AAPL-abc123",
+        bracket_id="BRK-AAPL-abc123",
+        role=OrderRole.PRICE_STOP,
+        order_class=OrderClass.OTO,
+        direction=OrderDirection.SELL,
+        order_type=OrderType.STOP,
+        price_parameters=PriceParameters(stop_trigger_price=price(150.0)),
+        ticker="AAPL",
+        pm_command_id="inv-1.env.0.0",
+        thesis_id="THE-AAPL-abc123",
+        timestamp=datetime(2026, 5, 29, 17, 30, tzinfo=UTC),
+        quantity=10.0,
+        alpaca_order_id_override="real-broker-uuid-1234",
+    )
+    assert order.alpaca_order_id == "real-broker-uuid-1234"
+    assert order.alpaca_order_id_chain == ("real-broker-uuid-1234",)
 
 
 def test_build_pending_bracket_carries_entry_window_deadline() -> None:

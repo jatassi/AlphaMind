@@ -747,7 +747,8 @@ async def invoke_portfolio_manager_in_subprocess(  # noqa: PLR0913 — signature
     Production callers (the scheduler orchestrator) pass the triple;
     debug-e2e / non-prod callers leave all three at ``None`` so the
     submit_envelope wrapper's broker-routing gate stays False and the
-    log-only path persists (synthetic ``alp-{order_id}`` placeholders).
+    log-only path persists orders with NO broker id (NULL, ALP-847 — never a
+    synthetic placeholder).
 
     A non-``None`` ``broker_dispatch`` is still rejected when routed
     through the subprocess: a live callable cannot pickle. Tests that
