@@ -45,14 +45,19 @@ def build_client() -> TradingClient:
 def load_local() -> dict[str, Any]:
     db = sqlite3.connect(DB_PATH)
     db.row_factory = sqlite3.Row
+    # Keyed by the local ``order_id`` PK (ALP-847): a monitor-enforced leg or a
+    # not-yet-routed order carries ``alpaca_order_id IS NULL`` (the synthetic
+    # ``alp-`` placeholder is deleted), so keying by the broker id would collapse
+    # every such row onto a single NULL key. The broker id rides on each value.
     orders = {}
     for r in db.execute(
         "SELECT order_id, order_role, direction, status, quantity, filled_quantity, "
         "remaining_quantity, average_fill_price, alpaca_order_id FROM orders"
     ):
         m = _ORD_SYM.match(r["order_id"] or "")
-        orders[r["alpaca_order_id"]] = {
+        orders[r["order_id"]] = {
             "order_id": r["order_id"],
+            "alpaca_order_id": r["alpaca_order_id"],
             "sym": m.group(1) if m else "?",
             "role": r["order_role"],
             "dir": r["direction"],
@@ -129,16 +134,19 @@ def _report_positions(apos: dict[str, Any], local: dict[str, Any]) -> None:
 def _report_orders(aorders: dict[str, Any], local: dict[str, Any]) -> None:
     print("=" * 78)
     print("ORDERS  (local order -> alpaca status/fill)")
-    for aid, lo in sorted(local["orders"].items(), key=lambda kv: kv[1]["order_id"]):
-        synthetic = aid.startswith("alp-")
-        ao = aorders.get(aid)
-        if synthetic:
-            seen = "NOT-ON-ALPACA (synthetic, never dispatched)"
+    for _oid, lo in sorted(local["orders"].items(), key=lambda kv: kv[1]["order_id"]):
+        aid = lo["alpaca_order_id"]
+        # ALP-847 — a NULL broker id is the expected steady state for a
+        # monitor-enforced leg (armed Intent the continuous monitor enforces) or a
+        # not-yet-routed order; it is NOT a divergence. The synthetic ``alp-``
+        # placeholder is deleted, so there is no "synthetic, never dispatched" row.
+        if aid is None:
             print(
                 f"  {lo['sym']:5} {lo['role']:11} {lo['status']:9} local_filled={lo['filled']} "
-                f"| {seen}  <<< SYNTHETIC"
+                f"| NO BROKER ORDER (monitor-enforced leg / not-yet-routed)"
             )
             continue
+        ao = aorders.get(aid)
         if ao is None:
             print(
                 f"  {lo['sym']:5} {lo['role']:11} {lo['status']:9} local_filled={lo['filled']} "
@@ -156,8 +164,8 @@ def _report_orders(aorders: dict[str, Any], local: dict[str, Any]) -> None:
         )
 
     # Alpaca orders with no local record (broker-side orphans), recent first
-    local_ids = set(local["orders"])
-    orphans = [o for oid, o in aorders.items() if oid not in local_ids]
+    local_broker_ids = {lo["alpaca_order_id"] for lo in local["orders"].values()}
+    orphans = [o for oid, o in aorders.items() if oid not in local_broker_ids]
     if orphans:
         print("-" * 78)
         print(f"ALPACA orders with NO local record ({len(orphans)}):")
