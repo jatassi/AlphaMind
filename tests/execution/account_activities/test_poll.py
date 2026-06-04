@@ -9,18 +9,18 @@ mocked.
 from __future__ import annotations
 
 import datetime as dt
+import json
 from collections.abc import AsyncIterator
-from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.money import signed_money
 from alphamind.execution.account_activities.poll import poll_account_activities
 from alphamind.execution.broker_adapter.queries import ActivitySnapshot
 from alphamind.state.invocation_context.context import InvocationContext, InvocationHandle
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.positions import PositionRow
-from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
 from tests.execution.account_activities.test_handlers import _OCC, _TXN, _seed_open_option
 from tests.execution.corporate_actions._handler_substrate import (
     make_invocation_record,
@@ -108,9 +108,13 @@ async def test_poll_books_expiry_from_broker_stream(
         pos = await sess.get(PositionRow, "pos-1")
         assert pos is not None
         assert pos.status == "CLOSED"
-        ledger = await sess.get(ThesisPnlLedgerRow, "thesis-1")
-        assert ledger is not None
-        assert ledger.realized_pnl_usd == Decimal(-1250)
+        # The poll lands the OPEXP on the event log carrying its -premium delta;
+        # the per-thesis ledger is then derived from the log (03c), so the poll's
+        # responsibility ends at the booked event.
+        events = (await sess.execute(select(BrokerEventLogRow))).scalars().all()
+        assert len(events) == 1
+        payload = json.loads(events[0].raw_payload_json)
+        assert signed_money(payload["realized_pnl_delta_usd"]) == signed_money("-1250.00")
 
 
 async def test_poll_is_idempotent_across_two_runs(
@@ -129,8 +133,7 @@ async def test_poll_is_idempotent_across_two_runs(
             await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
+        # The event_key idempotency collapses the re-poll to one OPEXP row, so a
+        # later derivation books -premium exactly once (no double-count).
         events = (await sess.execute(select(BrokerEventLogRow))).scalars().all()
         assert len(events) == 1
-        ledger = await sess.get(ThesisPnlLedgerRow, "thesis-1")
-        assert ledger is not None
-        assert ledger.realized_pnl_usd == Decimal(-1250)

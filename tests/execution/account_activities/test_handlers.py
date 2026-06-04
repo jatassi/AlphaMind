@@ -1,28 +1,37 @@
 """Integration tests for the option-lifecycle handlers against a real DB.
 
 These exercise the shell: load the open option position by OCC symbol, append
-the lifecycle activity to ``broker_event_log``, book the realized PnL into
-``thesis_pnl_ledger``, and persist the position transitions — all in the open
+the lifecycle activity to ``broker_event_log`` **carrying its realized-PnL delta
+on the payload**, and persist the position transitions — all in the open
 ``InvocationHandle`` transaction. The DB is real (a sanctioned boundary); no
 internal collaborator is mocked.
+
+The handler does **not** write ``thesis_pnl_ledger``: per-thesis PnL is a
+derived view of the event log, written solely by the 03c derivation
+(:func:`alphamind.execution.write_paths.thesis_pnl_ledger.rederive_thesis_pnl_ledger`),
+so the handler books the figure onto the log and the derivation aggregates it
+(one coherent derived view, no double-count). These tests assert the delta lands
+on the event payload and that re-deriving reproduces it.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-from decimal import Decimal
+import json
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from alphamind._kernel.money import price, signed_money
+from alphamind._kernel.ids import ThesisId
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.account_activities.dispatch import integrate_lifecycle_event
 from alphamind.execution.account_activities.records import (
     LifecycleActivityType,
     LifecycleEvent,
     TradeLeg,
 )
+from alphamind.execution.write_paths.thesis_pnl_ledger import rederive_thesis_pnl_ledger
 from alphamind.portfolio_state.records.positions import EquityPositionDetails
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.positions import PositionRow
@@ -77,10 +86,10 @@ def _expiry_event() -> LifecycleEvent:
     )
 
 
-async def test_expiry_closes_option_and_books_negative_premium(
+async def test_expiry_closes_option_and_books_negative_premium_on_the_log(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """An OTM expiry closes the option (no OPEN/0 husk) and books -premium."""
+    """An OTM expiry closes the option (no OPEN/0 husk) and books -premium on the event log."""
     _engine, factory = db
     await _seed_open_option(factory, contract_count=5.0, premium_paid_per_contract=250.0)
 
@@ -97,14 +106,23 @@ async def test_expiry_closes_option_and_books_negative_premium(
         assert record.status.value == "CLOSED"
         assert record.realized_pnl_to_date_usd == pytest.approx(-1250.0)
 
-        ledger = await sess.get(ThesisPnlLedgerRow, "thesis-1")
-        assert ledger is not None
-        assert ledger.realized_pnl_usd == Decimal(-1250)
-
         events = (await sess.execute(select(BrokerEventLogRow))).scalars().all()
         assert len(events) == 1
         assert events[0].event_type == "OPEXP"
         assert events[0].position_id == "pos-1"
+        # The realized-PnL delta rides the event payload so the 03c derivation
+        # reproduces it from the log alone.
+        payload = json.loads(events[0].raw_payload_json)
+        assert signed_money(payload["realized_pnl_delta_usd"]) == signed_money("-1250.00")
+
+        # The handler does NOT write the ledger — that is the derivation's job.
+        assert await sess.get(ThesisPnlLedgerRow, "thesis-1") is None
+
+    # Re-deriving from the event log reproduces the -premium realized PnL.
+    async with factory() as sess:
+        ledger_record = await rederive_thesis_pnl_ledger(sess, ThesisId("thesis-1"), None)
+        await sess.commit()
+    assert ledger_record.realized_pnl_usd == signed_money("-1250.00")
 
 
 async def test_re_polling_same_activity_does_not_double_book(
@@ -125,10 +143,13 @@ async def test_re_polling_same_activity_does_not_double_book(
     async with factory() as sess:
         events = (await sess.execute(select(BrokerEventLogRow))).scalars().all()
         assert len(events) == 1  # one row, not two
-        ledger = await sess.get(ThesisPnlLedgerRow, "thesis-1")
-        assert ledger is not None
-        # PnL booked once, not -2500.
-        assert ledger.realized_pnl_usd == Decimal(-1250)
+
+    # The event-log row is idempotent (one OPEXP), so re-deriving books -premium
+    # exactly once — not -2500 — the double-count the old RMW accumulation risked.
+    async with factory() as sess:
+        ledger_record = await rederive_thesis_pnl_ledger(sess, ThesisId("thesis-1"), None)
+        await sess.commit()
+    assert ledger_record.realized_pnl_usd == signed_money("-1250.00")
 
 
 def _assignment_event(activity_type: LifecycleActivityType) -> LifecycleEvent:
@@ -210,9 +231,13 @@ async def test_exercise_books_strike_pnl_and_opens_equity_leg(
         assert option is not None
         assert option.status == "CLOSED"
 
-        ledger = await sess.get(ThesisPnlLedgerRow, "thesis-1")
-        assert ledger is not None
-        assert ledger.realized_pnl_usd == Decimal(-1250)
+        # The OPEXC carries -premium; the paired OPTRD carries the equity cost
+        # basis (qty x strike). Both ride the event payloads for the derivation.
+        events = (await sess.execute(select(BrokerEventLogRow))).scalars().all()
+        by_type = {e.event_type: json.loads(e.raw_payload_json) for e in events}
+        assert signed_money(by_type["OPEXC"]["realized_pnl_delta_usd"]) == signed_money("-1250.00")
+        assert money(by_type["OPTRD"]["cost_basis_delta_usd"]) == money("75000.00")
+        assert await sess.get(ThesisPnlLedgerRow, "thesis-1") is None
 
         stmt = select(PositionRow).where(PositionRow.status == "OPEN")
         equities = (await sess.execute(stmt)).scalars().all()
@@ -222,6 +247,13 @@ async def test_exercise_books_strike_pnl_and_opens_equity_leg(
         details = equity.details
         assert isinstance(details, EquityPositionDetails)
         assert details.average_cost_basis_per_share == pytest.approx(150.0)
+
+    # Re-deriving folds the -premium and the equity cost basis into the ledger.
+    async with factory() as sess:
+        ledger_record = await rederive_thesis_pnl_ledger(sess, ThesisId("thesis-1"), None)
+        await sess.commit()
+    assert ledger_record.realized_pnl_usd == signed_money("-1250.00")
+    assert ledger_record.cost_basis_usd == money("75000.00")
 
 
 async def test_assignment_without_paired_optrd_surfaces(
