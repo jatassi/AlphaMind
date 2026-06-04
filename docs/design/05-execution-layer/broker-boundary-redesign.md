@@ -44,7 +44,7 @@ floor under every exit, and gives every fact one writer.
 - Schema: `state/tables/*`, new Alembic baseline under `persistence/migrations/`.
 - Decision layer: `commands/` + OMS command schema (thesis-nature tag, thesis-shaped exits, capital floor), `decision/{portfolio_manager,strategist}/`.
 - Cutover: `scheduler/fresh_start.py` (extend precondition).
-- Operator docs: `scripts/RUNBOOK_production.md` (service inventory, first-run bootstrap, monitor-wedge §8.9, reconciliation notes) — updated in lockstep per its own living-document rule (`RUNBOOK_production.md:26`); siblings `RUNBOOK_command_center.md` / `RUNBOOK_end_to_end_verification.md` where they enumerate services.
+- Operator surface: `scripts/RUNBOOK_production.md` (service inventory, bootstrap, monitor-wedge §8.9, reconciliation notes) — updated in lockstep per its living-document rule (`RUNBOOK_production.md:26`); sibling runbooks `RUNBOOK_command_center.md` (services), `RUNBOOK_position_thesis_model.md` (`alp-` / Intent restructure), `RUNBOOK_end_to_end_verification.md`; operator scripts `reconcile_alpaca_state.py` (standalone reconcile + `alp-` handling — **obsoleted/repurposed** by W2a/W3a), `verify_bootstrap*.py` (genesis), `install_/uninstall_*_service.ps1` + a new `install_safety_core_service.ps1` (W4b).
 
 ---
 
@@ -206,7 +206,7 @@ parallel off W0 and rejoin at W4b/W5.
 - **Tests:** mock only at the four sanctioned boundaries (LLM, broker, clock, DB). Each invariant in §4 gets a failing-for-a-unique-reason test. CI (Windows, `-n auto`) is the gate; the begin-mode/schema changes touch transaction emission broadly, so full-suite is authoritative.
 - **Lint/imports:** new modules respect the downward-only `.importlinter` layering (capture → projection/Intent → decision; safety core depends on neither pipeline nor monitor internals).
 - **Cutover:** [genesis-cutover runbook](../../runbooks/genesis-cutover.md).
-- **Operator runbooks (living-document rule, `RUNBOOK_production.md:26`).** The redesign invalidates concrete operator procedures; each workstream updates the affected sections **in the same change** (no story lands prod-behavior changes leaving the runbook stale):
+- **Operator surface — runbooks + scripts (living-document rule, `RUNBOOK_production.md:26`).** The redesign invalidates concrete operator procedures; each workstream updates the affected files **in the same change** (no story lands prod-behavior changes leaving them stale):
 
   | Redesign change | `RUNBOOK_production.md` sections to update |
   |---|---|
@@ -216,7 +216,7 @@ parallel off W0 and rejoin at W4b/W5.
   | in-process → out-of-process watchdog, fail-safe (W4b) | §7 "Running ≠ healthy", §8.9 post-ALP-825 hardening model |
   | fresh-DB genesis cutover (W5) | §2.2 "do not delete the DB / migrations additive" (reconcile with the genesis-cutover runbook — the new-design first-run supersedes §2), §2.1 account swap, §2.4 `--fresh-start` precondition |
 
-  W5 owns the final end-to-end coherence pass so the runbook reads as one consistent operator workflow post-cutover.
+  Operator scripts move with their workstreams too: `reconcile_alpaca_state.py` (standalone reconcile + `alp-` handling — obsolete or repurposed under W2a/W3a), `verify_bootstrap*.py` (W5a genesis verify), `install_*_service.ps1` + a new `install_safety_core_service.ps1` (W4b). W5 owns the final end-to-end coherence pass so the runbook + scripts read as one consistent operator workflow post-cutover.
 
 ## 8. Out of scope / deferred
 
