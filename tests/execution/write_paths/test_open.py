@@ -281,6 +281,78 @@ def test_single_leg_bracket_take_profit_build_unchanged() -> None:
     assert target_leg.trigger.threshold_usd == 160.0
 
 
+def test_build_pending_order_without_broker_id_carries_no_alpaca_id() -> None:
+    """ALP-847 — a protective leg with no broker order carries NO broker id.
+
+    The synthetic ``alp-{order_id}`` mint is deleted (invariant 5): with no
+    ``alpaca_order_id_override`` the built order's ``alpaca_order_id`` is None
+    and its chain is empty — never a placeholder. This is what renders the
+    ALP-837 cancel-of-a-non-existent-order path unrepresentable.
+    """
+    from alphamind.execution.write_paths.phase2._shared import _build_pending_order
+    from alphamind.portfolio_state.records.orders import (
+        OrderClass,
+        OrderDirection,
+        OrderRole,
+        OrderType,
+        PriceParameters,
+    )
+
+    order = _build_pending_order(
+        order_id="ORD-AAPL-inv0-abc123",
+        position_id="POS-AAPL-abc123",
+        bracket_id="BRK-AAPL-abc123",
+        role=OrderRole.PRICE_STOP,
+        order_class=OrderClass.OTO,
+        direction=OrderDirection.SELL,
+        order_type=OrderType.STOP,
+        price_parameters=PriceParameters(stop_trigger_price=150.0),
+        ticker="AAPL",
+        pm_command_id="inv-1.env.0.0",
+        thesis_id="THE-AAPL-abc123",
+        timestamp=datetime(2026, 5, 29, 17, 30, tzinfo=UTC),
+        quantity=10.0,
+    )
+    assert order.alpaca_order_id is None
+    assert order.alpaca_order_id_chain == ()
+
+
+def test_build_pending_order_with_override_carries_real_broker_id() -> None:
+    """ALP-847 — a leg WITH a real broker order carries the broker's id.
+
+    The override (the broker's real Alpaca id captured at submission) stamps
+    both ``alpaca_order_id`` and the single-element chain — a leg backed by a
+    Broker-Owned Fact, the broker-enforced case.
+    """
+    from alphamind.execution.write_paths.phase2._shared import _build_pending_order
+    from alphamind.portfolio_state.records.orders import (
+        OrderClass,
+        OrderDirection,
+        OrderRole,
+        OrderType,
+        PriceParameters,
+    )
+
+    order = _build_pending_order(
+        order_id="ORD-AAPL-inv0-abc123",
+        position_id="POS-AAPL-abc123",
+        bracket_id="BRK-AAPL-abc123",
+        role=OrderRole.PRICE_STOP,
+        order_class=OrderClass.OTO,
+        direction=OrderDirection.SELL,
+        order_type=OrderType.STOP,
+        price_parameters=PriceParameters(stop_trigger_price=150.0),
+        ticker="AAPL",
+        pm_command_id="inv-1.env.0.0",
+        thesis_id="THE-AAPL-abc123",
+        timestamp=datetime(2026, 5, 29, 17, 30, tzinfo=UTC),
+        quantity=10.0,
+        alpaca_order_id_override="real-broker-uuid-1234",
+    )
+    assert order.alpaca_order_id == "real-broker-uuid-1234"
+    assert order.alpaca_order_id_chain == ("real-broker-uuid-1234",)
+
+
 def test_build_pending_bracket_carries_entry_window_deadline() -> None:
     """``_build_pending_bracket`` stamps the supplied ``entry_window_deadline``
     onto the bracket (ALP-737) — the seam the OPEN writeback feeds from
