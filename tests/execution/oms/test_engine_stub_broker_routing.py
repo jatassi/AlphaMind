@@ -248,7 +248,7 @@ async def _seed_cash_ledger(
 def _open_position(
     position_id: str = "POS-NVDA-001",
     *,
-    thesis_id: str = "THE-NVDA-1",
+    thesis_id: str = "THE-NVDA-0123456789abcdef0123456789abcdef",
     bracket_id: str = "BRK-NVDA-1",
     ticker: str = "NVDA",
 ) -> PositionRecord:
@@ -285,7 +285,7 @@ def _open_position(
 
 
 def _active_thesis(
-    thesis_id: str = "THE-NVDA-1", position_id: str = "POS-NVDA-001"
+    thesis_id: str = "THE-NVDA-0123456789abcdef0123456789abcdef", position_id: str = "POS-NVDA-001"
 ) -> ThesisRecord:
     components = tuple(
         PersistedThesisComponent(
@@ -1959,7 +1959,7 @@ def _options_open_position(
     )
     return PositionRecord(
         position_id=PositionId(position_id),
-        thesis_id=ThesisId("THE-OPT-1"),
+        thesis_id=ThesisId("THE-OPT-fedcba9876543210fedcba9876543210"),
         bracket_id=BracketId(bracket_id) if bracket_id else None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
@@ -2059,7 +2059,7 @@ def _strategy_open_position(
     )
     return PositionRecord(
         position_id=PositionId(position_id),
-        thesis_id=ThesisId("THE-STRAT-1"),
+        thesis_id=ThesisId("THE-STRAT-00112233445566778899aabbccddeeff"),
         bracket_id=BracketId(bracket_id) if bracket_id else None,
         status=PositionStatus.OPEN,
         direction=None,
@@ -2199,7 +2199,10 @@ async def test_adjust_command_context_options_position_routes_us_option_simple(
         await _seed_position_cluster(
             factory,
             _options_open_position(),
-            _active_thesis(thesis_id=ThesisId("THE-OPT-1"), position_id=PositionId("POS-OPT-001")),
+            _active_thesis(
+                thesis_id=ThesisId("THE-OPT-fedcba9876543210fedcba9876543210"),
+                position_id=PositionId("POS-OPT-001"),
+            ),
             _active_bracket(
                 bracket_id=BracketId("BRK-OPT-1"), position_id=PositionId("POS-OPT-001")
             ),
@@ -2208,7 +2211,7 @@ async def test_adjust_command_context_options_position_routes_us_option_simple(
             factory,
             bracket_id=BracketId("BRK-OPT-1"),
             position_id=PositionId("POS-OPT-001"),
-            thesis_id=ThesisId("THE-OPT-1"),
+            thesis_id=ThesisId("THE-OPT-fedcba9876543210fedcba9876543210"),
         )
 
         ctx, handle = await _open_handle(factory)
@@ -2244,7 +2247,8 @@ async def test_adjust_command_context_strategy_position_routes_mleg(
             factory,
             _strategy_open_position(),
             _active_thesis(
-                thesis_id=ThesisId("THE-STRAT-1"), position_id=PositionId("POS-STRAT-001")
+                thesis_id=ThesisId("THE-STRAT-00112233445566778899aabbccddeeff"),
+                position_id=PositionId("POS-STRAT-001"),
             ),
             _active_bracket(
                 bracket_id=BracketId("BRK-STRAT-1"), position_id=PositionId("POS-STRAT-001")
@@ -2254,7 +2258,7 @@ async def test_adjust_command_context_strategy_position_routes_mleg(
             factory,
             bracket_id=BracketId("BRK-STRAT-1"),
             position_id=PositionId("POS-STRAT-001"),
-            thesis_id=ThesisId("THE-STRAT-1"),
+            thesis_id=ThesisId("THE-STRAT-00112233445566778899aabbccddeeff"),
         )
 
         ctx, handle = await _open_handle(factory)
@@ -2295,7 +2299,8 @@ async def test_close_command_context_strategy_position_threads_close_side_legs(
             factory,
             _strategy_open_position(),
             _active_thesis(
-                thesis_id=ThesisId("THE-STRAT-1"), position_id=PositionId("POS-STRAT-001")
+                thesis_id=ThesisId("THE-STRAT-00112233445566778899aabbccddeeff"),
+                position_id=PositionId("POS-STRAT-001"),
             ),
             _active_bracket(
                 bracket_id=BracketId("BRK-STRAT-1"), position_id=PositionId("POS-STRAT-001")
@@ -2349,7 +2354,7 @@ async def test_adjust_command_context_targets_take_profit_when_target_change(
             factory,
             bracket_id=BracketId("BRK-NVDA-1"),
             position_id=PositionId("POS-NVDA-001"),
-            thesis_id=ThesisId("THE-NVDA-1"),
+            thesis_id=ThesisId("THE-NVDA-0123456789abcdef0123456789abcdef"),
         )
 
         ctx, handle = await _open_handle(factory)

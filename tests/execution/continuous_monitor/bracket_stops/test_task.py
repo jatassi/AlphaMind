@@ -111,7 +111,7 @@ def _options_position(
 ) -> PositionRecord:
     return PositionRecord(
         position_id=PositionId(position_id),
-        thesis_id=ThesisId("THESIS-1"),
+        thesis_id=ThesisId("THE-NVDA-0123456789abcdef0123456789abcdef"),
         bracket_id=BracketId(bracket_id),
         status=PositionStatus.OPEN,
         direction=direction,
@@ -432,10 +432,17 @@ class TestTriggerIdsSharedWithCascade:
         )
 
         # The bracket fire took the next slot (2) from the shared generator.
+        # The engine client_order_id carries the broker-carried link (ALP-844):
+        # the position's thesis + the current invocation.
         assert len(submitter.options_calls) == 1
         _, client_order_id = submitter.options_calls[0]
+        assert position.thesis_id is not None
         expected_brk = derive_engine_command_id(
-            monitor_session_id="mon-X", trigger_id=2, command_ordinal=0
+            monitor_session_id="mon-X",
+            trigger_id=2,
+            command_ordinal=0,
+            thesis_id=position.thesis_id,
+            invocation_id="inv-001",
         )
         assert client_order_id == expected_brk
 
@@ -545,7 +552,7 @@ def _strategy_leg(*, leg_id: str, strike: float, direction: Direction) -> Strate
 def _credit_strategy_position(*, net_premium_usd: float) -> PositionRecord:
     return PositionRecord(
         position_id=PositionId("pos-strat-1"),
-        thesis_id=ThesisId("THESIS-1"),
+        thesis_id=ThesisId("THE-NVDA-0123456789abcdef0123456789abcdef"),
         bracket_id=BracketId("brk-strat-1"),
         status=PositionStatus.OPEN,
         direction=None,
