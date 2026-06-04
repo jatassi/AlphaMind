@@ -166,15 +166,16 @@ class TestOrdersTableShape:
         assert pk["constrained_columns"] == ["order_id"]
 
     def test_required_columns_are_not_null(self, engine: Engine) -> None:
-        """Tightened-schema columns: alpaca_order_id, bracket_id, submission_timestamp."""
+        """Tightened-schema columns: bracket_id, submission_timestamp, chain_json."""
         insp = inspect(engine)
         cols = {c["name"]: c for c in insp.get_columns("orders")}
-        # Per the OrderRecord shape: these three are NOT NULL (post-submission only).
-        assert cols["alpaca_order_id"]["nullable"] is False
+        # Per the OrderRecord shape: these are NOT NULL (post-submission only).
         assert cols["bracket_id"]["nullable"] is False
         assert cols["submission_timestamp"]["nullable"] is False
         assert cols["alpaca_order_id_chain_json"]["nullable"] is False
-        # OrderRecord-nullable fields stay nullable.
+        # OrderRecord-nullable fields stay nullable; alpaca_order_id is nullable
+        # (ALP-847: a monitor-enforced / un-routed leg carries no broker id).
+        assert cols["alpaca_order_id"]["nullable"] is True
         assert cols["position_id"]["nullable"] is True
         assert cols["average_fill_price"]["nullable"] is True
 

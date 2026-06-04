@@ -294,6 +294,7 @@ def _price_leg(trigger_price: float) -> PriceLeg:
     return PriceLeg(
         type="price",
         is_hard=True,
+        trigger_signal="underlying_price",
         condition=PriceCondition(
             underlying_trigger="AAPL", comparator="<=", trigger_price=price(trigger_price)
         ),
