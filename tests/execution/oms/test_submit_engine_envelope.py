@@ -509,7 +509,9 @@ async def test_happy_path_persists_close_order_and_emits_activity_log(
     assert derived.monitor_session_id == "session-abc"
     assert derived.trigger_id == 42
     assert derived.thesis_id == "THE-NVDA-0123456789abcdef0123456789abcdef"
-    assert derived.invocation_id == handle.invocation_id.removeprefix("inv-")
+    # The parsed invocation_id is the FULL inv-prefixed form (FK-valid against
+    # invocations.invocation_id) — it equals the handle's invocation id verbatim.
+    assert derived.invocation_id == handle.invocation_id
     assert result.acknowledgment is not None
     assert result.acknowledgment.position_id == "POS-NVDA-001"
 
@@ -569,7 +571,9 @@ async def test_derives_command_id_when_embedded_close_lacks_one(
     assert derived.monitor_session_id == "session-abc"
     assert derived.trigger_id == 42
     assert derived.thesis_id == "THE-NVDA-0123456789abcdef0123456789abcdef"
-    assert derived.invocation_id == handle.invocation_id.removeprefix("inv-")
+    # The parsed invocation_id is the FULL inv-prefixed form (FK-valid against
+    # invocations.invocation_id) — it equals the handle's invocation id verbatim.
+    assert derived.invocation_id == handle.invocation_id
 
 
 async def test_validates_command_id_consistency_with_envelope(

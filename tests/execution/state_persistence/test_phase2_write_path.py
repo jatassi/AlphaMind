@@ -80,6 +80,7 @@ from alphamind.decision.portfolio_manager.submit_envelope import (
 from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
 from alphamind.execution.oms.command_ids import (
     derive_open_thesis_id,
+    derive_pm_base_command_id,
     derive_pm_command_id,
     parse_pm_command_id,
 )
@@ -545,11 +546,15 @@ def _open_command_id(
     every OPEN test must thread a thesis-bearing id (the broker-carried link is
     the single source of truth for the OPEN thesis identity).
     """
-    # Mirror the production PM-submit base-id shape exactly: the ``inv-`` prefix
-    # is added once (``_INV_ID`` already carries it), matching
-    # ``_resolve_originating_thesis``'s ``f"inv-{bare_invocation}.…"``.
-    bare_invocation = _INV_ID.removeprefix("inv-")
-    base = f"inv-{bare_invocation}.{envelope_id}.{command_ordinal}.{attempt_seq}"
+    # Mirror the production PM-submit base-id shape exactly via the single
+    # canonical helper ``derive_pm_base_command_id`` (the same one PM-submit
+    # uses), so this fixture can never drift from the production base format.
+    base = derive_pm_base_command_id(
+        invocation_id=_INV_ID,
+        envelope_id=envelope_id,
+        command_ordinal=command_ordinal,
+        attempt_seq=attempt_seq,
+    )
     return derive_pm_command_id(
         invocation_id=_INV_ID,
         envelope_id=envelope_id,

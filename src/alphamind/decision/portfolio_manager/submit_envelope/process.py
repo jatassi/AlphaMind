@@ -48,6 +48,7 @@ from alphamind.decision.portfolio_manager.submit_envelope.types import (
 from alphamind.execution.oms.command_ids import (
     compute_attempt_seq,
     derive_open_thesis_id,
+    derive_pm_base_command_id,
     derive_pm_command_id,
     synthesize_id_suffix,
 )
@@ -582,10 +583,14 @@ def _process_one_command(
     # link-stripped ``inv-…`` form) before the link is appended. The embedded
     # value this mints is the single source of truth for the OPEN thesis
     # identity — Phase 2 reads it back by parsing this command id rather than
-    # re-deriving it (A2).
-    bare_invocation = state.invocation_id.removeprefix("inv-")
-    base_command_id = (
-        f"inv-{bare_invocation}.{envelope.envelope_id}.{command_ordinal}.{attempt_seq}"
+    # re-deriving it (A2). ``derive_pm_base_command_id`` is the SOLE definition
+    # of the base-id format, shared with ``derive_pm_command_id`` so the two can
+    # never diverge.
+    base_command_id = derive_pm_base_command_id(
+        invocation_id=state.invocation_id,
+        envelope_id=envelope.envelope_id,
+        command_ordinal=command_ordinal,
+        attempt_seq=attempt_seq,
     )
     thesis_id = _resolve_originating_thesis(
         command,

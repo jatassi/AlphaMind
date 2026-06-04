@@ -401,8 +401,11 @@ def _command_id_prefix(invocation_id: str) -> str:
     """The ``client_order_id`` prefix for this invocation's commands.
 
     Mirrors :func:`alphamind.execution.oms.command_ids.derive_pm_command_id`: a
-    PM command_id is ``inv-{invocation_id}.{envelope}.{ordinal}.{seq}``, with the
-    ``inv-`` prefix added only when absent.
+    PM command_id is ``inv-{invocation_id}.{envelope}.{ordinal}.{seq}``
+    ``~the-{thesis}`` — the base id plus the ALP-844 broker-carried link suffix,
+    with the ``inv-`` prefix added only when absent. This prefix check matches on
+    the ``inv-{invocation_id}.`` head, which precedes the ``~the-`` suffix, so it
+    is unaffected by the broker-carried link.
     """
     prefix = invocation_id if invocation_id.startswith("inv-") else f"inv-{invocation_id}"
     return f"{prefix}."

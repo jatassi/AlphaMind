@@ -361,7 +361,9 @@ class TestSingleLegClose:
         assert components.trigger_id == 42
         assert components.command_ordinal == 0
         assert components.thesis_id == _OPTIONS_THESIS_ID
-        assert components.invocation_id == "20260511T143000Z-aabbccdd"
+        # The parsed invocation_id is the FULL inv-prefixed form (FK-valid
+        # against invocations.invocation_id) — it equals the provider's id.
+        assert components.invocation_id == "inv-20260511T143000Z-aabbccdd"
 
     async def test_thesis_less_position_raises(self) -> None:
         """A bracket-stop close on a position with no thesis_id raises rather

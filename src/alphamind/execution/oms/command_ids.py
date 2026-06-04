@@ -31,6 +31,7 @@ __all__ = [
     "compute_attempt_seq",
     "derive_engine_command_id",
     "derive_open_thesis_id",
+    "derive_pm_base_command_id",
     "derive_pm_command_id",
     "is_engine_originated",
     "is_pm_originated",
@@ -95,9 +96,12 @@ _LINK_DELIMITER = "~"
 class PMCommandIdComponents:
     """Decomposed PM-originated command ID — output of :func:`parse_pm_command_id`.
 
-    ``invocation_id`` is returned **without** the ``inv-`` prefix to match the
-    parameter shape that :func:`derive_pm_command_id` accepts when the prefix
-    is omitted. ``thesis_id`` is the broker-carried Intent FK (ALP-844) that
+    ``invocation_id`` is returned in its **full ``inv-``-prefixed form** — the
+    same shape as the ``invocations.invocation_id`` primary key — so a parsed
+    value is directly FK-valid against ``invocations`` (e.g. when story 02a
+    stores it into ``broker_event_log.invocation_id``). ``derive_pm_command_id``
+    normalizes the prefix internally, so ``derive(parse(id).invocation_id)``
+    round-trips. ``thesis_id`` is the broker-carried Intent FK (ALP-844) that
     makes a fill self-attributing.
     """
 
@@ -115,6 +119,8 @@ class EngineCommandIdComponents:
 
     Carries the broker-carried Intent FK (ALP-844) so an engine-originated
     close self-attributes by thesis (*why*) + invocation (*when*) too.
+    ``invocation_id`` is returned in its **full ``inv-``-prefixed form** so a
+    parsed value is directly FK-valid against ``invocations.invocation_id``.
     """
 
     monitor_session_id: str
@@ -168,6 +174,40 @@ def _require_invocation(invocation_id: str) -> str:
     return bare
 
 
+def derive_pm_base_command_id(
+    *,
+    invocation_id: str,
+    envelope_id: str,
+    command_ordinal: int,
+    attempt_seq: int,
+) -> str:
+    """Format the PM-originated *base* command ID — no broker-carried link.
+
+    Pattern: ``inv-{invocation_id}.{envelope_id}.{command_ordinal}.{attempt_seq}``.
+    This is the SOLE definition of the base-id format string: both
+    :func:`derive_pm_command_id` (which appends the ``~the-`` link) and the
+    Phase-2 OPEN-submit path (which resolves the originating thesis off the
+    base id before the link exists) build it through this function, so the
+    format can never silently diverge between the two call sites.
+
+    Prefixes ``inv-`` only if ``invocation_id`` does not already start with it
+    (mirrors the gate in the submit_envelope helper). Raises :class:`ValueError`
+    for negative ``command_ordinal`` / ``attempt_seq``, an ``envelope_id`` that
+    does not match ``^ENV-(REC|SA|SA-ORD)-[0-9]+$``, or an empty / dotted
+    ``invocation_id``.
+    """
+    if command_ordinal < 0:
+        raise ValueError(f"command_ordinal must be non-negative, got {command_ordinal}")
+    if attempt_seq < 0:
+        raise ValueError(f"attempt_seq must be non-negative, got {attempt_seq}")
+    if not _ENVELOPE_ID_PATTERN.match(envelope_id):
+        raise ValueError(
+            f"envelope_id must match ^ENV-(REC|SA|SA-ORD)-[0-9]+$, got {envelope_id!r}"
+        )
+    bare_invocation = _require_invocation(invocation_id)
+    return f"inv-{bare_invocation}.{envelope_id}.{command_ordinal}.{attempt_seq}"
+
+
 def derive_pm_command_id(
     *,
     invocation_id: str,
@@ -179,27 +219,25 @@ def derive_pm_command_id(
     """Format a PM-originated command ID carrying the broker-carried Intent FK.
 
     Pattern: ``inv-{invocation_id}.{envelope_id}.{command_ordinal}.{attempt_seq}``
-    ``~the-{thesis_id}``. Prefixes ``inv-`` only if ``invocation_id`` does not
-    already start with it (mirrors the gate in the submit_envelope helper). The
-    ``~the-`` segment carries the durable thesis FK (*why*); the ``invocation``
-    segment is the *when*, so the derived id round-trips both (ALP-844).
+    ``~the-{thesis_id}``. The base id is built by
+    :func:`derive_pm_base_command_id` (its sole definition); this function
+    appends the ``~the-`` link. The ``~the-`` segment carries the durable thesis
+    FK (*why*); the ``invocation`` segment is the *when*, so the derived id
+    round-trips both (ALP-844).
 
     Raises :class:`ValueError` for negative ``command_ordinal`` / ``attempt_seq``,
     an ``envelope_id`` that does not match ``^ENV-(REC|SA|SA-ORD)-[0-9]+$``, an
     empty / dotted ``invocation_id``, or a missing / malformed ``thesis_id``. A
     thesis-less order is unrepresentable — there is no sentinel fallback.
     """
-    if command_ordinal < 0:
-        raise ValueError(f"command_ordinal must be non-negative, got {command_ordinal}")
-    if attempt_seq < 0:
-        raise ValueError(f"attempt_seq must be non-negative, got {attempt_seq}")
-    if not _ENVELOPE_ID_PATTERN.match(envelope_id):
-        raise ValueError(
-            f"envelope_id must match ^ENV-(REC|SA|SA-ORD)-[0-9]+$, got {envelope_id!r}"
-        )
-    bare_invocation = _require_invocation(invocation_id)
+    base = derive_pm_base_command_id(
+        invocation_id=invocation_id,
+        envelope_id=envelope_id,
+        command_ordinal=command_ordinal,
+        attempt_seq=attempt_seq,
+    )
     thesis = _require_thesis(thesis_id)
-    return f"inv-{bare_invocation}.{envelope_id}.{command_ordinal}.{attempt_seq}~the-{thesis}"
+    return f"{base}~the-{thesis}"
 
 
 def derive_engine_command_id(
@@ -265,15 +303,16 @@ def compute_attempt_seq(envelope: PMEnvelope) -> int:
 def parse_pm_command_id(command_id: str) -> PMCommandIdComponents:
     """Inverse of :func:`derive_pm_command_id`.
 
-    Returns the decomposed components with the ``inv-`` prefix stripped from
-    ``invocation_id`` and the broker-carried ``thesis_id`` resolved. Raises
-    :class:`ValueError` for any malformed input.
+    Returns the decomposed components with ``invocation_id`` in its full
+    ``inv-``-prefixed form (FK-valid against ``invocations.invocation_id``) and
+    the broker-carried ``thesis_id`` resolved. Raises :class:`ValueError` for
+    any malformed input.
     """
     match = _PM_COMMAND_ID_PATTERN.match(command_id)
     if match is None:
         raise ValueError(f"command_id does not match PM-originated pattern, got {command_id!r}")
     return PMCommandIdComponents(
-        invocation_id=InvocationId(match["inv"]),
+        invocation_id=InvocationId(f"inv-{match['inv']}"),
         envelope_id=EnvelopeId(match["env"]),
         command_ordinal=int(match["ord"]),
         attempt_seq=int(match["seq"]),
@@ -284,8 +323,9 @@ def parse_pm_command_id(command_id: str) -> PMCommandIdComponents:
 def parse_engine_command_id(command_id: str) -> EngineCommandIdComponents:
     """Inverse of :func:`derive_engine_command_id`.
 
-    Resolves the broker-carried ``thesis_id`` + ``invocation_id`` (the latter
-    without the ``inv-`` prefix). Raises :class:`ValueError` for any malformed
+    Resolves the broker-carried ``thesis_id`` + ``invocation_id`` (the latter in
+    its full ``inv-``-prefixed form, FK-valid against
+    ``invocations.invocation_id``). Raises :class:`ValueError` for any malformed
     input.
     """
     match = _ENGINE_COMMAND_ID_PATTERN.match(command_id)
@@ -296,7 +336,7 @@ def parse_engine_command_id(command_id: str) -> EngineCommandIdComponents:
         trigger_id=int(match["trigger"]),
         command_ordinal=int(match["ord"]),
         thesis_id=ThesisId(match["thesis"]),
-        invocation_id=InvocationId(match["inv"]),
+        invocation_id=InvocationId(f"inv-{match['inv']}"),
     )
 
 

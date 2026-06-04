@@ -51,6 +51,7 @@ from alphamind.execution.oms import (
 from alphamind.execution.oms.command_ids import (
     base_command_id,
     derive_open_thesis_id,
+    derive_pm_base_command_id,
     synthesize_id_suffix,
 )
 
@@ -312,7 +313,8 @@ class TestParsePMCommandId:
     def test_full_decomposition(self) -> None:
         components = parse_pm_command_id(f"inv-2026-04-23T14-30Z.ENV-REC-2.0.1~the-{_THESIS_ID}")
         assert components == PMCommandIdComponents(
-            invocation_id=InvocationId("2026-04-23T14-30Z"),
+            # Full inv-prefixed form (FK-valid against invocations.invocation_id).
+            invocation_id=InvocationId("inv-2026-04-23T14-30Z"),
             envelope_id=EnvelopeId("ENV-REC-2"),
             command_ordinal=0,
             attempt_seq=1,
@@ -358,7 +360,8 @@ class TestParseEngineCommandId:
             trigger_id=42,
             command_ordinal=0,
             thesis_id=ThesisId(_THESIS_ID),
-            invocation_id=InvocationId("2026-04-23T14-30Z"),
+            # Full inv-prefixed form (FK-valid against invocations.invocation_id).
+            invocation_id=InvocationId("inv-2026-04-23T14-30Z"),
         )
 
     def test_pm_id_rejected(self) -> None:
@@ -514,7 +517,9 @@ class TestPMCommandIdCarriesThesis:
         )
         components = parse_pm_command_id(cid)
         assert components.thesis_id == ThesisId(_THESIS_ID)
-        assert components.invocation_id == InvocationId("2026-04-23T14-30Z")
+        # The parsed invocation_id is the FULL inv-prefixed form (FK-valid
+        # against invocations.invocation_id) — it equals the input I verbatim.
+        assert components.invocation_id == InvocationId("inv-2026-04-23T14-30Z")
 
     def test_absent_thesis_raises(self) -> None:
         """An ABSENT (None) thesis raises ValueError — the thesis-less order
@@ -576,6 +581,45 @@ class TestPMCommandIdCarriesThesis:
         assert first != retry
         assert first == again
 
+    def test_parsed_invocation_id_round_trips_through_derive(self) -> None:
+        """The full inv-prefixed invocation_id a parse yields feeds straight
+        back into derive (which re-normalizes the prefix) and reconstructs the
+        identical command id — so a value stored as an FK and later re-derived
+        never diverges (FIX 1)."""
+        original = derive_pm_command_id(
+            invocation_id="inv-2026-04-23T14-30Z",
+            envelope_id="ENV-REC-2",
+            command_ordinal=0,
+            attempt_seq=0,
+            thesis_id=ThesisId(_THESIS_ID),
+        )
+        parsed = parse_pm_command_id(original)
+        rederived = derive_pm_command_id(
+            invocation_id=parsed.invocation_id,
+            envelope_id=parsed.envelope_id,
+            command_ordinal=parsed.command_ordinal,
+            attempt_seq=parsed.attempt_seq,
+            thesis_id=parsed.thesis_id,
+        )
+        assert rederived == original
+
+    def test_derived_command_id_starts_with_base(self) -> None:
+        """The linked PM command id is its base id (``derive_pm_base_command_id``)
+        with the ``~the-{thesis}`` suffix appended — so the base format has a
+        single definition shared with the OPEN-submit path (FIX 5)."""
+        shared = {
+            "invocation_id": "inv-2026-04-23T14-30Z",
+            "envelope_id": "ENV-REC-2",
+            "command_ordinal": 1,
+            "attempt_seq": 3,
+        }
+        base = derive_pm_base_command_id(**shared)  # type: ignore[arg-type]
+        full = derive_pm_command_id(thesis_id=ThesisId(_THESIS_ID), **shared)  # type: ignore[arg-type]
+        assert full.startswith(base)
+        assert full == f"{base}~the-{_THESIS_ID}"
+        # The base id is exactly the link-stripped form ``base_command_id`` yields.
+        assert base_command_id(full) == base
+
 
 class TestEngineCommandIdCarriesThesis:
     def test_round_trips_thesis_and_invocation(self) -> None:
@@ -589,7 +633,9 @@ class TestEngineCommandIdCarriesThesis:
         )
         components = parse_engine_command_id(cid)
         assert components.thesis_id == ThesisId(_THESIS_ID)
-        assert components.invocation_id == InvocationId("2026-04-23T14-30Z")
+        # The parsed invocation_id is the FULL inv-prefixed form (FK-valid
+        # against invocations.invocation_id) — it equals the input I verbatim.
+        assert components.invocation_id == InvocationId("inv-2026-04-23T14-30Z")
         assert components.monitor_session_id == "mon-20260423T143000Z-abcd1234"
         assert components.trigger_id == 7
 
