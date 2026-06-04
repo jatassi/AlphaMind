@@ -23,9 +23,7 @@ def record_to_row(record: CapitalReservationRecord) -> CapitalReservationRow:
         reserved_capital_usd=record.reserved_capital_usd,
         reserved_by_invocation_id=record.reserved_by_invocation_id,
         reserved_at=record.reserved_at.isoformat(),
-        released_at=(
-            record.released_at.isoformat() if record.released_at is not None else None
-        ),
+        released_at=(record.released_at.isoformat() if record.released_at is not None else None),
     )
 
 

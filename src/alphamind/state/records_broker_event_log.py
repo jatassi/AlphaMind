@@ -2,7 +2,7 @@
 
 The broker-event log is the sole substrate for realized PnL (ADR-0002): the
 complete stream of broker→local events that change a Broker-Owned Fact —
-**fills ∪ account-activities ∪ corporate-actions ∪ terminal order status**.
+**fills + account-activities + corporate-actions + terminal order status**.
 It is append-only by construction (ADR-0005): no update path, every row is
 captured once. ``event_key`` is the idempotency key — the websocket delivery
 and a later REST recovery sweep of the *same* event collapse to one row.

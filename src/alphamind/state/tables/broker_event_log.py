@@ -1,7 +1,7 @@
 """SQLAlchemy mapping for the append-only ``broker_event_log`` (ALP-843 / W0a).
 
-Every broker→local event that changes a Broker-Owned Fact — fills ∪
-account-activities ∪ corporate-actions ∪ terminal order status — lands here as
+Every broker→local event that changes a Broker-Owned Fact — fills +
+account-activities + corporate-actions + terminal order status — lands here as
 one immutable row (ADR-0005: append-only, the only sanctioned cross-process
 write). ``event_key`` carries a UNIQUE constraint so the websocket delivery and
 a later REST recovery replay of the *same* event collapse to one row (the

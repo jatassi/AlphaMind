@@ -28,9 +28,7 @@ def record_to_row(record: BrokerEventRecord) -> BrokerEventLogRow:
         position_id=record.position_id,
         raw_payload_json=record.raw_payload_json,
         broker_timestamp=(
-            record.broker_timestamp.isoformat()
-            if record.broker_timestamp is not None
-            else None
+            record.broker_timestamp.isoformat() if record.broker_timestamp is not None else None
         ),
         captured_at=record.captured_at.isoformat(),
     )

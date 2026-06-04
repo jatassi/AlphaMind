@@ -413,8 +413,7 @@ class TestBracketCodecRoundTrip:
         rehydrated = _round_trip(session, original)
         assert rehydrated == original
         assert (
-            rehydrated.protective_legs[0].enforcement_binding
-            is EnforcementBinding.BROKER_ENFORCED
+            rehydrated.protective_legs[0].enforcement_binding is EnforcementBinding.BROKER_ENFORCED
         )
 
     def test_event_invalidation_advisory_leg_round_trips(self, session: Session) -> None:

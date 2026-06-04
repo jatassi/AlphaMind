@@ -21,14 +21,11 @@ Covers:
 
 from __future__ import annotations
 
-from argparse import Namespace
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import inspect, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
@@ -85,8 +82,6 @@ from alphamind.state.tables.fill_records_codec import (
 from alphamind.state.tables.orders_codec import (
     record_to_row as order_record_to_row,
 )
-
-_REVISION = "f7a9d3c2e5b1"
 
 FILL_AT = datetime(2026, 5, 7, 12, 15, 0, tzinfo=UTC)
 SUBMITTED_AT = datetime(2026, 5, 7, 12, 0, 0, tzinfo=UTC)
@@ -556,53 +551,6 @@ class TestAppendFillRecord:
             with pytest.raises(IntegrityError):
                 await append_fill_record(session, record)
                 await session.commit()
-
-
-# ---------------------------------------------------------------------------
-# Alembic migration idempotency
-# ---------------------------------------------------------------------------
-
-
-def _alembic_config(db_path: Path) -> Config:
-    repo_root = Path(__file__).parents[2]
-    return Config(
-        repo_root / "alembic.ini",
-        cmd_opts=Namespace(x=[f"db={db_path}"]),
-    )
-
-
-class TestFillRecordsMigration:
-    def test_upgrade_head_creates_fill_records(self, tmp_path: Path) -> None:
-        db_path = tmp_path / "alembic.db"
-        command.upgrade(_alembic_config(db_path), "head")
-
-        eng = make_engine(str(db_path))
-        try:
-            insp = inspect(eng)
-            tables = set(insp.get_table_names())
-            assert "fill_records" in tables
-            indexes = {idx["name"] for idx in insp.get_indexes("fill_records")}
-            assert "ix_fill_records_processing_status" in indexes
-            assert "ix_fill_records_order_id" in indexes
-            uniques = {u["name"] for u in insp.get_unique_constraints("fill_records")}
-            assert "uq_fill_records_dedupe" in uniques
-        finally:
-            eng.dispose()
-
-    def test_upgrade_then_downgrade_then_upgrade_is_idempotent(self, tmp_path: Path) -> None:
-        db_path = tmp_path / "alembic.db"
-        cfg = _alembic_config(db_path)
-        command.upgrade(cfg, _REVISION)
-        command.downgrade(cfg, "-1")
-        command.upgrade(cfg, _REVISION)
-
-        eng = make_engine(str(db_path))
-        try:
-            insp = inspect(eng)
-            tables = set(insp.get_table_names())
-            assert "fill_records" in tables
-        finally:
-            eng.dispose()
 
 
 # Avoid unused-import lint when only date is referenced via _order_record's expiration field

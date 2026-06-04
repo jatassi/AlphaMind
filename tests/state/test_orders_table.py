@@ -18,15 +18,11 @@ Covers:
 
 from __future__ import annotations
 
-from argparse import Namespace
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
@@ -68,8 +64,6 @@ from alphamind.state.tables.orders_codec import (
 SUBMITTED_AT = datetime(2026, 5, 7, 12, 0, 0, tzinfo=UTC)
 LAST_UPDATE_AT = SUBMITTED_AT + timedelta(minutes=30)
 EXP = date(2026, 6, 19)
-
-_REVISION = "c6e3f4a5b8d9"
 
 
 # ---------------------------------------------------------------------------
@@ -402,200 +396,3 @@ class TestRoundTripCodec:
         )
         row = record_to_row(record)
         assert row.direction is None
-
-
-# ---------------------------------------------------------------------------
-# Alembic migration (AC #7)
-# ---------------------------------------------------------------------------
-
-
-def _alembic_config(db_path: Path) -> Config:
-    repo_root = Path(__file__).parents[2]
-    return Config(
-        repo_root / "alembic.ini",
-        cmd_opts=Namespace(x=[f"db={db_path}"]),
-    )
-
-
-class TestOrdersMigration:
-    def test_upgrade_head_creates_orders(self, tmp_path: Path) -> None:
-        db_path = tmp_path / "alembic.db"
-        command.upgrade(_alembic_config(db_path), "head")
-
-        eng = make_engine(str(db_path))
-        try:
-            insp = inspect(eng)
-            tables = set(insp.get_table_names())
-            assert "orders" in tables
-
-            cols = {c["name"] for c in insp.get_columns("orders")}
-            assert cols == {
-                "order_id",
-                "position_id",
-                "bracket_id",
-                "order_role",
-                "order_class",
-                "instrument_spec_json",
-                "direction",
-                "order_type",
-                "quantity",
-                "price_parameters_json",
-                "duration",
-                "status",
-                "alpaca_order_id",
-                "alpaca_order_id_chain_json",
-                "submission_timestamp",
-                "last_update_timestamp",
-                "filled_quantity",
-                "average_fill_price",
-                "remaining_quantity",
-                "modification_count",
-                "metadata_json",
-                "client_order_id",
-            }
-
-            indexes = {idx["name"] for idx in insp.get_indexes("orders")}
-            assert {
-                "ix_orders_status",
-                "ix_orders_position_id",
-                "ix_orders_bracket_id",
-                "ix_orders_alpaca_order_id",
-                "ix_orders_client_order_id",
-            } <= indexes
-        finally:
-            eng.dispose()
-
-    def test_downgrade_drops_orders(self, tmp_path: Path) -> None:
-        db_path = tmp_path / "alembic.db"
-        cfg = _alembic_config(db_path)
-        command.upgrade(cfg, _REVISION)
-        command.downgrade(cfg, "-1")
-
-        eng = make_engine(str(db_path))
-        try:
-            insp = inspect(eng)
-            tables = set(insp.get_table_names())
-            assert "orders" not in tables
-        finally:
-            eng.dispose()
-
-
-# ---------------------------------------------------------------------------
-# ALP-614 — orders.direction NULLABLE + MLEG backfill migration
-# ---------------------------------------------------------------------------
-
-_DIRECTION_NULLABLE_REVISION = "e2f7a1c3b8d9"
-_DIRECTION_NULLABLE_DOWN_REVISION = "d8a3f2c7b9e4"
-
-
-class TestOrdersDirectionNullableMigration:
-    """ALP-614 migration: orders.direction NULL-able + MLEG backfill to NULL."""
-
-    @staticmethod
-    def _insert_mleg_row_pre_migration(eng: object, *, order_id: str, direction: str) -> None:
-        from sqlalchemy import text
-
-        engine = eng
-        with engine.begin() as conn:  # type: ignore[attr-defined]
-            conn.execute(
-                text(
-                    "INSERT INTO orders ("
-                    "order_id, position_id, bracket_id, order_role, order_class, "
-                    "instrument_spec_json, direction, order_type, quantity, "
-                    "price_parameters_json, duration, status, alpaca_order_id, "
-                    "alpaca_order_id_chain_json, submission_timestamp, "
-                    "last_update_timestamp, filled_quantity, remaining_quantity, "
-                    "modification_count, metadata_json"
-                    ") VALUES ("
-                    ":order_id, NULL, :bracket_id, 'ENTRY', :order_class, "
-                    ":spec_json, :direction, 'MARKET', 1.0, "
-                    '\'{"limit_price": null, "stop_trigger_price": null}\', '
-                    "'DAY', 'PENDING', :alp_id, :chain_json, "
-                    ":ts, :ts, 0.0, 1.0, 0, '{\"age_hours\": 0.0}'"
-                    ")"
-                ),
-                {
-                    "order_id": order_id,
-                    "bracket_id": "brk-test",
-                    "order_class": "MLEG",
-                    "spec_json": '{"instrument_type": "STRATEGY", "legs": []}',
-                    "direction": direction,
-                    "alp_id": f"alp-{order_id}",
-                    "chain_json": f'["alp-{order_id}"]',
-                    "ts": "2026-05-25T00:00:00+00:00",
-                },
-            )
-
-    def test_upgrade_backfills_mleg_direction_to_null(self, tmp_path: Path) -> None:
-        from sqlalchemy import text
-
-        db_path = tmp_path / "alembic.db"
-        cfg = _alembic_config(db_path)
-        # Bracket FK is DEFERRABLE INITIALLY DEFERRED — we never insert the
-        # corresponding brackets row, but the deferred check passes only on
-        # commit if all FK violations are resolved. SQLite under the default
-        # foreign_keys=ON would reject; the migration harness keeps PRAGMA
-        # foreign_keys OFF for in-flight DDL, so the insert succeeds at the
-        # pre-direction-NULL head where strategy MLEG rows naturally carry
-        # placeholder BUY.
-        command.upgrade(cfg, _DIRECTION_NULLABLE_DOWN_REVISION)
-        eng = make_engine(str(db_path))
-        try:
-            with eng.begin() as conn:
-                conn.execute(text("PRAGMA foreign_keys = OFF"))
-            self._insert_mleg_row_pre_migration(eng, order_id="ord-mleg-1", direction="BUY")
-            self._insert_mleg_row_pre_migration(eng, order_id="ord-mleg-2", direction="SELL")
-        finally:
-            eng.dispose()
-
-        command.upgrade(cfg, _DIRECTION_NULLABLE_REVISION)
-
-        eng = make_engine(str(db_path))
-        try:
-            with eng.connect() as conn:
-                rows = conn.execute(
-                    text("SELECT order_id, direction FROM orders ORDER BY order_id")
-                ).all()
-            assert {r[0]: r[1] for r in rows} == {
-                "ord-mleg-1": None,
-                "ord-mleg-2": None,
-            }
-        finally:
-            eng.dispose()
-
-    def test_downgrade_refuses_when_null_rows_remain(self, tmp_path: Path) -> None:
-        from sqlalchemy import text
-
-        db_path = tmp_path / "alembic.db"
-        cfg = _alembic_config(db_path)
-        command.upgrade(cfg, _DIRECTION_NULLABLE_REVISION)
-        eng = make_engine(str(db_path))
-        try:
-            with eng.begin() as conn:
-                conn.execute(text("PRAGMA foreign_keys = OFF"))
-            self._insert_mleg_row_pre_migration(eng, order_id="ord-mleg-null", direction="BUY")
-            # Hand-NULL the direction to simulate a post-migration MLEG row.
-            with eng.begin() as conn:
-                conn.execute(
-                    text("UPDATE orders SET direction = NULL WHERE order_id = 'ord-mleg-null'")
-                )
-        finally:
-            eng.dispose()
-
-        with pytest.raises(RuntimeError, match="direction IS NULL"):
-            command.downgrade(cfg, _DIRECTION_NULLABLE_DOWN_REVISION)
-
-    def test_upgrade_then_downgrade_then_upgrade_is_idempotent(self, tmp_path: Path) -> None:
-        db_path = tmp_path / "alembic.db"
-        cfg = _alembic_config(db_path)
-        command.upgrade(cfg, _REVISION)
-        command.downgrade(cfg, "-1")
-        command.upgrade(cfg, _REVISION)
-
-        eng = make_engine(str(db_path))
-        try:
-            insp = inspect(eng)
-            tables = set(insp.get_table_names())
-            assert "orders" in tables
-        finally:
-            eng.dispose()

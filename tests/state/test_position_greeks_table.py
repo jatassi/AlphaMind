@@ -88,8 +88,7 @@ class TestPositionGreeksTableShape:
         assert pk["constrained_columns"] == ["position_id"]
         fks = insp.get_foreign_keys("position_greeks")
         assert any(
-            fk["referred_table"] == "positions"
-            and fk["constrained_columns"] == ["position_id"]
+            fk["referred_table"] == "positions" and fk["constrained_columns"] == ["position_id"]
             for fk in fks
         )
 
