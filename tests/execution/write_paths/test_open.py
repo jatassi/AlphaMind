@@ -281,6 +281,98 @@ def test_single_leg_bracket_take_profit_build_unchanged() -> None:
     assert target_leg.trigger.threshold_usd == 160.0
 
 
+def _price_leg(trigger_price: float):
+    """A wire PriceLeg with a stop-on-decline condition (LONG-stop shape)."""
+    from alphamind.commands.command_models import (
+        BracketOrderParameters,
+        PriceCondition,
+        PriceLeg,
+    )
+
+    return PriceLeg(
+        type="price",
+        is_hard=True,
+        condition=PriceCondition(
+            underlying_trigger="AAPL", comparator="<=", trigger_price=price(trigger_price)
+        ),
+        order_parameters=BracketOrderParameters(order_type="stop"),
+    )
+
+
+def _time_leg(deadline: datetime):
+    from alphamind.commands.command_models import (
+        BracketOrderParameters,
+        TimeCondition,
+        TimeLeg,
+    )
+
+    return TimeLeg(
+        type="time",
+        is_hard=True,
+        condition=TimeCondition(deadline=deadline),
+        order_parameters=BracketOrderParameters(order_type="market"),
+    )
+
+
+def _event_leg():
+    from alphamind.commands.command_models import EventCondition, EventLeg
+
+    return EventLeg(
+        type="event",
+        is_hard=False,
+        condition=EventCondition(event_description="FOMC surprise hike"),
+    )
+
+
+def test_equity_open_first_stop_and_take_profit_are_broker_enforced() -> None:
+    """ALP-847 AC3 — on an equity OPEN, the take-profit and the FIRST price-stop
+    are broker-enforced (Alpaca's native bracket carries exactly one stop +
+    one take-profit child); a secondary price-stop and any time/event leg are
+    monitor-enforced (no broker counterpart)."""
+    from alphamind.portfolio_state.records.orders import EnforcementBinding
+
+    equity = EquityInstrument(asset_type="equity", ticker="AAPL", direction="long")
+    bracket = _build_pending_bracket(
+        bracket_id="BRK-AAPL-abc123",
+        position_id="POS-AAPL-abc123",
+        entry_order_id="ORD-AAPL-entry-abc123",
+        target=Target(target_type="absolute_price", price=price(160.0), order_type="limit"),
+        target_order_id="ORD-AAPL-target-abc123",
+        invalidation_leg_orders=(
+            (_price_leg(150.0), "ORD-AAPL-inv0-abc123"),
+            (_price_leg(145.0), "ORD-AAPL-inv1-abc123"),
+            (_time_leg(datetime(2026, 6, 1, tzinfo=UTC)), "ORD-AAPL-inv2-abc123"),
+            (_event_leg(), None),
+        ),
+        instrument=equity,
+        entry_window_deadline=None,
+    )
+    by_type = {leg.leg_type: leg for leg in bracket.protective_legs}
+    legs = bracket.protective_legs
+    take_profit = next(l for l in legs if l.leg_type is BracketLegType.TAKE_PROFIT)
+    price_stops = [l for l in legs if l.leg_type is BracketLegType.PRICE_STOP]
+    time_leg = next(l for l in legs if l.leg_type is BracketLegType.TIME_EXPIRATION)
+    event_leg = next(l for l in legs if l.leg_type is BracketLegType.EVENT_INVALIDATION)
+
+    assert take_profit.enforcement_binding is EnforcementBinding.BROKER_ENFORCED
+    assert price_stops[0].enforcement_binding is EnforcementBinding.BROKER_ENFORCED
+    assert price_stops[1].enforcement_binding is EnforcementBinding.MONITOR_ENFORCED
+    assert time_leg.enforcement_binding is EnforcementBinding.MONITOR_ENFORCED
+    assert event_leg.enforcement_binding is EnforcementBinding.MONITOR_ENFORCED
+    assert by_type  # silence unused
+
+
+def test_strategy_open_all_legs_are_monitor_enforced() -> None:
+    """ALP-847 AC3 — options/strategy positions have NO native bracket (Alpaca
+    does not support complex order classes on options), so every protective leg
+    is monitor-enforced — armed Intent the continuous monitor enforces."""
+    from alphamind.portfolio_state.records.orders import EnforcementBinding
+
+    bracket = _build_strategy_bracket()
+    for leg in bracket.protective_legs:
+        assert leg.enforcement_binding is EnforcementBinding.MONITOR_ENFORCED
+
+
 def test_build_pending_order_without_broker_id_carries_no_alpaca_id() -> None:
     """ALP-847 — a protective leg with no broker order carries NO broker id.
 
