@@ -171,6 +171,7 @@ def _full_thesis() -> Thesis:
     """Minimal canonical thesis with one entry-rationale component."""
     return Thesis(
         summary="Long NVDA on continued AI capex tailwind.",
+        nature="directional",
         components=(
             ThesisComponent(
                 component_type="entry_rationale",
@@ -188,6 +189,7 @@ def _hard_price_invalidation_leg() -> PriceLeg:
     return PriceLeg(
         type="price",
         is_hard=True,
+        trigger_signal="underlying_price",
         condition=PriceCondition(
             underlying_trigger="NVDA",
             comparator="<=",

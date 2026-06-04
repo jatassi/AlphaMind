@@ -62,6 +62,7 @@ def _analyst_superset_open_command() -> dict[str, Any]:
                 "leg_id": "INV-1",
                 "type": "price",
                 "is_hard": True,
+                "trigger_signal": "underlying_price",
                 "condition": {
                     "underlying_trigger": "MRVL",
                     "comparator": "<=",
@@ -79,6 +80,7 @@ def _analyst_superset_open_command() -> dict[str, Any]:
         ],
         "thesis": {
             "summary": "Post-earnings continuation long MRVL.",
+            "nature": "directional",
             "components": [
                 {
                     "component_type": "entry_rationale",

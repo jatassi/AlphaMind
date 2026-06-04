@@ -378,6 +378,7 @@ def _open_command(
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="underlying_price",
                 condition=PriceCondition(
                     underlying_trigger=underlying,
                     comparator="<=",
@@ -388,6 +389,7 @@ def _open_command(
         ),
         thesis=Thesis(
             summary=f"Long {underlying}.",
+            nature="directional",
             components=(
                 OMSThesisComponent(
                     component_type="entry_rationale",
