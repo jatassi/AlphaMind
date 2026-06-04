@@ -25,9 +25,12 @@ from __future__ import annotations
 import datetime as dt
 from enum import StrEnum
 
+from dataclasses import dataclass
+
 from pydantic import BaseModel, ConfigDict
 
 from alphamind._kernel.money import Money, Price
+from alphamind.portfolio_state.records.positions import PositionRecord
 
 
 class LifecycleActivityType(StrEnum):
@@ -87,7 +90,25 @@ class LifecycleEvent(BaseModel):
     paired_trade: TradeLeg | None
 
 
+@dataclass(frozen=True, slots=True)
+class BookingResult:
+    """Pure output of the booking math for one lifecycle event.
+
+    ``realized_pnl_usd`` is the signed realized PnL to book in the
+    ``thesis_pnl_ledger`` (negative for an OTM expiry loss). ``closed_option``
+    is the option ``PositionRecord`` transitioned to ``CLOSED`` (no ``OPEN/0``
+    husk). ``opened_equity`` is the resulting equity position for an assignment
+    / exercise, opened at the strike with the correct cost basis and the
+    option's thesis link; ``None`` for an expiry.
+    """
+
+    realized_pnl_usd: Money
+    closed_option: PositionRecord
+    opened_equity: PositionRecord | None
+
+
 __all__ = [
+    "BookingResult",
     "LifecycleActivityType",
     "LifecycleEvent",
     "TradeLeg",
