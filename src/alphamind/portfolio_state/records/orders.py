@@ -139,6 +139,25 @@ class BracketLegEnforcement(StrEnum):
     ADVISORY = "ADVISORY"
 
 
+class EnforcementBinding(StrEnum):
+    """How a protective leg's exit is *enforced* — a Broker-Owned Fact or Intent.
+
+    The typed broker-vs-monitor distinction from ADR-0003. Orthogonal to
+    ``BracketLegEnforcement`` (MECHANICAL/ADVISORY, the leg's semantic role):
+    this names *who* enforces the leg.
+
+    * ``BROKER_ENFORCED`` — backed by a real broker order (an equity native
+      bracket/OTO child, or an options capital-protection ``stop_limit``); its
+      execution is a Broker-Owned Fact and survives a monitor outage.
+    * ``MONITOR_ENFORCED`` — armed Intent with no broker order; the continuous
+      monitor watches the condition and submits a fresh self-attributing close
+      when it fires. "Cancel" is a local Intent state change, not a broker call.
+    """
+
+    BROKER_ENFORCED = "broker_enforced"
+    MONITOR_ENFORCED = "monitor_enforced"
+
+
 class BracketLegStatus(StrEnum):
     PENDING_ACTIVATION = "PENDING_ACTIVATION"
     ACTIVE = "ACTIVE"
@@ -553,6 +572,11 @@ class BracketLeg:
     enforcement: BracketLegEnforcement
     status: BracketLegStatus
     pl_anchor: PLAnchorSpec | None = None
+    # ADR-0003: the typed broker-vs-monitor binding. Defaults to
+    # MONITOR_ENFORCED — the conservative case (armed Intent with no broker
+    # order); the broker-enforced legs (native equity bracket child, options
+    # capital floor) are set explicitly by the later bracket stories.
+    enforcement_binding: EnforcementBinding = EnforcementBinding.MONITOR_ENFORCED
 
     def __post_init__(self) -> None:
         self._validate_event_invalidation()

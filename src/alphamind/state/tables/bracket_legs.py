@@ -26,11 +26,13 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegEnforcement,
     BracketLegStatus,
     BracketLegType,
+    EnforcementBinding,
 )
 
 _LEG_TYPES = tuple(member.value for member in BracketLegType)
 _TRIGGER_KINDS = ("PRICE", "TIME", "EVENT")
 _ENFORCEMENTS = tuple(member.value for member in BracketLegEnforcement)
+_ENFORCEMENT_BINDINGS = tuple(member.value for member in EnforcementBinding)
 _LEG_STATUSES = tuple(member.value for member in BracketLegStatus)
 
 
@@ -75,6 +77,10 @@ class BracketLegRow(Base):
     trigger_payload_json: Mapped[str] = mapped_column(Text, nullable=False)
     pl_anchor_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     enforcement: Mapped[str] = mapped_column(Text, nullable=False)
+    # ADR-0003: the typed broker-vs-monitor enforcement binding. CHECK covers
+    # both members so a future direct-SQL writer faces the same fail-closed
+    # guarantee the typed record enforces.
+    enforcement_binding: Mapped[str] = mapped_column(Text, nullable=False)
     leg_status: Mapped[str] = mapped_column(Text, nullable=False)
 
     __table_args__ = (
@@ -89,6 +95,10 @@ class BracketLegRow(Base):
         CheckConstraint(
             _check_in("enforcement", _ENFORCEMENTS),
             name="ck_bracket_legs_enforcement",
+        ),
+        CheckConstraint(
+            _check_in("enforcement_binding", _ENFORCEMENT_BINDINGS),
+            name="ck_bracket_legs_enforcement_binding",
         ),
         CheckConstraint(
             _check_in("leg_status", _LEG_STATUSES),

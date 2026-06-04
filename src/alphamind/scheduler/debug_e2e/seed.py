@@ -33,6 +33,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegStatus,
     BracketLegType,
     BracketStatus,
+    EnforcementBinding,
     OrderClass,
     OrderDirection,
     OrderDuration,
@@ -546,6 +547,7 @@ def _build_time_expiration_leg_row(
         trigger_payload_json=json.dumps({"trigger_type": "time", "deadline": deadline.isoformat()}),
         pl_anchor_json=None,
         enforcement=BracketLegEnforcement.MECHANICAL.value,
+        enforcement_binding=EnforcementBinding.MONITOR_ENFORCED.value,
         leg_status=BracketLegStatus.ACTIVE.value,
     )
 

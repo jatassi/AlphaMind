@@ -41,6 +41,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
+    EnforcementBinding,
     EventTrigger,
     PLAnchorSpec,
     PriceTrigger,
@@ -112,6 +113,7 @@ def _price_stop_leg(
     leg_id: str = "brk1::1",
     order_id: str | None = "ord-ps",
     pl_anchor: PLAnchorSpec | None = None,
+    enforcement_binding: EnforcementBinding = EnforcementBinding.MONITOR_ENFORCED,
 ) -> BracketLeg:
     return BracketLeg(
         leg_id=leg_id,
@@ -125,6 +127,7 @@ def _price_stop_leg(
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
         pl_anchor=pl_anchor,
+        enforcement_binding=enforcement_binding,
     )
 
 
@@ -300,6 +303,7 @@ class TestBracketLegsTable:
                 trigger_payload_json="{}",
                 pl_anchor_json=None,
                 enforcement=BracketLegEnforcement.MECHANICAL.value,
+                enforcement_binding=EnforcementBinding.MONITOR_ENFORCED.value,
                 leg_status=BracketLegStatus.PENDING_ACTIVATION.value,
             )
         )
@@ -324,6 +328,7 @@ class TestBracketLegsTable:
                 trigger_payload_json="{}",
                 pl_anchor_json=None,
                 enforcement=BracketLegEnforcement.MECHANICAL.value,
+                enforcement_binding=EnforcementBinding.MONITOR_ENFORCED.value,
                 leg_status=BracketLegStatus.PENDING_ACTIVATION.value,
             )
         )
@@ -336,6 +341,7 @@ class TestBracketLegsTable:
             ("leg_type", "UNKNOWN_LEG_TYPE"),
             ("trigger_kind", "OTHER"),
             ("enforcement", "OTHER_ENFORCEMENT"),
+            ("enforcement_binding", "OTHER_BINDING"),
             ("leg_status", "OTHER_STATUS"),
         ],
     )
@@ -359,6 +365,7 @@ class TestBracketLegsTable:
             "trigger_payload_json": "{}",
             "pl_anchor_json": None,
             "enforcement": BracketLegEnforcement.MECHANICAL.value,
+            "enforcement_binding": EnforcementBinding.MONITOR_ENFORCED.value,
             "leg_status": BracketLegStatus.PENDING_ACTIVATION.value,
         }
         kwargs[field] = bad_value
@@ -385,6 +392,30 @@ class TestBracketCodecRoundTrip:
     def test_three_leg_mechanical_bracket_round_trips(self, session: Session) -> None:
         original = _three_leg_bracket()
         assert _round_trip(session, original) == original
+
+    def test_broker_enforced_binding_round_trips(self, session: Session) -> None:
+        """ADR-0003: the typed broker-vs-monitor binding survives the codec."""
+        original = BracketRecord(
+            bracket_id=BracketId("brk-binding"),
+            position_id=PositionId("pos-binding"),
+            status=BracketStatus.PENDING_ENTRY,
+            entry_order_id=OrderId("entry-binding"),
+            protective_legs=(
+                _price_stop_leg(
+                    leg_id="brk-binding::0",
+                    enforcement_binding=EnforcementBinding.BROKER_ENFORCED,
+                ),
+            ),
+            modification_history=(),
+            corporate_action_cancellation_reason=None,
+            entry_window_deadline=None,
+        )
+        rehydrated = _round_trip(session, original)
+        assert rehydrated == original
+        assert (
+            rehydrated.protective_legs[0].enforcement_binding
+            is EnforcementBinding.BROKER_ENFORCED
+        )
 
     def test_event_invalidation_advisory_leg_round_trips(self, session: Session) -> None:
         # An event-invalidation advisory leg has no order_id; the bracket still
