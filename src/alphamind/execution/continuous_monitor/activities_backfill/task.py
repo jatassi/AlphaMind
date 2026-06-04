@@ -132,17 +132,12 @@ async def _run_sweep(
     The ``since`` bound is independent of ``fill_records`` state — a generous
     ``now - lookback`` so a fill dropped earlier in the swing-trading horizon
     is still in-window. Each recovered ``FillReport`` flows through the shared
-    :func:`persist_fill_report` (resolve → append OR quarantine), so a fill
-    whose order row exists is appended (dedupe collapses re-feeds of
-    already-persisted fills) and one whose row is still missing is parked. The
-    trailing :func:`drain_unattributed_fills` then integrates any previously
-    quarantined fill whose order row has since materialized.
-
-    ``retry_resolve=False``: the backfill skips the live consumer's
-    sub-second in-process retry. The backfill is itself the slow path and
-    recovers fills that may never resolve (out-of-band orders); paying a
-    multi-second sleep per unresolved fill is pure waste here. A fill whose
-    row commits late is integrated by the trailing drain instead.
+    :func:`persist_fill_report`, which self-attributes via the broker-carried
+    link and appends to the event log (dedupe collapses re-feeds of
+    already-captured fills), only quarantining a genuinely out-of-band fill that
+    carries no link. The trailing :func:`drain_unattributed_fills` then
+    integrates any previously-quarantined fill whose order row has since
+    materialized into ``fill_records``.
     """
     until = now()
     since = until - lookback
@@ -155,7 +150,6 @@ async def _run_sweep(
             report,
             session_factory=session_factory,
             enrichment_callable=enrichment_callable,
-            retry_resolve=False,
         )
     await drain_unattributed_fills(
         session_factory=session_factory,
