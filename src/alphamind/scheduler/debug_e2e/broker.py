@@ -16,8 +16,9 @@ the run log.
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from datetime import date
 from decimal import Decimal
 
@@ -27,6 +28,7 @@ from alpaca.data.models.corporate_actions import CorporateAction
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.broker_adapter.entry_pricing import TouchQuote
 from alphamind.execution.broker_adapter.queries import (
+    ActivitySnapshot,
     PositionSnapshot,
     TradeAccountSnapshot,
 )
@@ -163,6 +165,28 @@ class LogOnlyAccountStateQueries:
     def get_positions(self) -> tuple[PositionSnapshot, ...]:
         log.info("[debug_e2e] LogOnlyAccountStateQueries.get_positions()")
         return tuple(_position_snapshot(p) for p in self._portfolio.positions)
+
+    async def get_account_activities(
+        self,
+        *,
+        activity_types: tuple[str, ...] | None = None,
+        after: str | None = None,
+        until: dt.datetime | None = None,
+    ) -> AsyncIterator[ActivitySnapshot]:
+        """Yield no account activities — the synthetic portfolio has no lifecycle events.
+
+        Satisfies the ``AccountActivitiesSource`` Protocol (ALP-846) so the
+        debug-e2e account-activities poll runs offline and books nothing.
+        """
+        log.info(
+            "[debug_e2e] LogOnlyAccountStateQueries.get_account_activities("
+            "activity_types=%s after=%s until=%s)",
+            activity_types,
+            after,
+            until.isoformat() if until is not None else None,
+        )
+        return
+        yield  # pragma: no cover — makes this an async generator
 
 
 class LogOnlyCorporateActionsQueries:

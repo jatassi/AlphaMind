@@ -136,6 +136,7 @@ from alphamind.risk_guardrails.state_delivery.config import (
     StateDeliveryConfig,
     load_state_delivery_config,
 )
+from alphamind.scheduler.account_activities_poll import run_account_activities_poll
 from alphamind.scheduler.control.events import SSEEventEmitter
 from alphamind.scheduler.control.models import (
     InvocationEndedEvent,
@@ -434,6 +435,24 @@ def _ca_queries_factory_from_debug_e2e(
     return lambda _venue, _mode: debug_settings.ca_queries
 
 
+def _activities_source_factory_from_debug_e2e(
+    context: RunInvocationContext,
+) -> Any:
+    """``AccountActivitiesSource`` factory derived from ``context.debug_e2e`` (ALP-846).
+
+    Mirrors :func:`_account_queries_factory_from_debug_e2e`; ``None`` on the
+    production path (``run_account_activities_poll`` builds the Alpaca-backed
+    ``AccountStateQueries``), the bundle's log-only account queries on debug-e2e
+    so the harness stays offline. The log-only stand-in's
+    ``get_account_activities`` yields nothing — the synthetic portfolio carries
+    no option-lifecycle events.
+    """
+    debug_settings = context.debug_e2e
+    if debug_settings is None:
+        return None
+    return lambda _venue, _mode: debug_settings.account_queries
+
+
 def _quote_source_factory_from_debug_e2e(
     context: RunInvocationContext,
 ) -> Any:
@@ -728,6 +747,20 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
                 config=state_persistence_config,
                 borrow_cost_resolver=borrow_cost_resolver,
                 alpaca_orders=phase1_inputs.alpaca_orders,
+            )
+            # ALP-846 / W1b — option-lifecycle account-activities poll. A
+            # pipeline-cadence task (ADR-0004 evicts it from the always-on
+            # monitor): it appends OPEXP/OPEXC/OPASN/OPTRD events to the
+            # broker-event log and books realized PnL inside this same write
+            # transaction (single writer = pipeline). A booking error (a missing
+            # local position, or the surfacing condition where an assignment is
+            # not fully described by the paired OPTRD) propagates to abort the
+            # write unit — it is a real inconsistency, not a transient.
+            await run_account_activities_poll(
+                write_handle,
+                venue_config=venue_config,
+                execution_mode=execution_mode,
+                activities_source_factory=_activities_source_factory_from_debug_e2e(context),
             )
             await _update_row_phase1(
                 write_handle,

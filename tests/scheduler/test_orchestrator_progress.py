@@ -368,8 +368,17 @@ def _patch_no_op_pipeline_with_progress_emit(monkeypatch: pytest.MonkeyPatch) ->
     def _regime_stub(**_kw: Any) -> Any:
         return make_regime_output(now=_NOW)
 
+    async def _activities_poll_stub(*_args: Any, **_kw: Any) -> Any:
+        # ALP-846 — the activity poll touches the broker; stub it alongside the
+        # other broker callee (gather_phase1_inputs) so this no-op pipeline does
+        # not build a live Alpaca client.
+        from alphamind.execution.account_activities.poll import PollResult
+
+        return PollResult(activities_booked=0, cursor=None)
+
     monkeypatch.setattr(module, "gather_phase1_inputs", _gather_stub)
     monkeypatch.setattr(module, "process_unprocessed_fills", _process_stub)
+    monkeypatch.setattr(module, "run_account_activities_poll", _activities_poll_stub)
     monkeypatch.setattr(module, "run_analysis_pipeline", _analysis_stub)
     monkeypatch.setattr(module, "run_decision_pipeline", _decision_stub)
     monkeypatch.setattr(module, "dispatch_phase2", _dispatch_stub)
