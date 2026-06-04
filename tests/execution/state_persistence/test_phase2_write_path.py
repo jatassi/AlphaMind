@@ -2018,10 +2018,10 @@ async def test_open_command_persists_target_and_invalidation_legs(
 async def test_open_command_stamps_captured_leg_ids_on_protective_orders(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """ALP-746 — a dispatch result's ``leg_alpaca_order_ids`` stamp the real
-    broker child ids onto the TAKE_PROFIT and PRICE_STOP orders; the entry
-    carries its own captured id and the TIME_STOP keeps the synthetic
-    placeholder (no broker counterpart)."""
+    """ALP-746 / ALP-847 — a dispatch result's ``leg_alpaca_order_ids`` stamp the
+    real broker child ids onto the TAKE_PROFIT and PRICE_STOP orders; the entry
+    carries its own captured id and the TIME_STOP carries NO broker id (None —
+    no broker counterpart, monitor-enforced Intent)."""
     from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
@@ -2084,8 +2084,9 @@ async def test_open_command_stamps_captured_leg_ids_on_protective_orders(
         assert by_role["ENTRY"].alpaca_order_id == entry_uuid
         assert by_role["TAKE_PROFIT"].alpaca_order_id == tp_uuid
         assert by_role["PRICE_STOP"].alpaca_order_id == sl_uuid
-        # TIME_STOP has no broker counterpart → synthetic placeholder retained.
-        assert by_role["TIME_STOP"].alpaca_order_id.startswith("alp-")
+        # TIME_STOP has no broker counterpart → NO broker id (None, ALP-847).
+        assert by_role["TIME_STOP"].alpaca_order_id is None
+        assert by_role["TIME_STOP"].alpaca_order_id_chain_json == "[]"
         # The chain head must match the stamped id (OrderRecord invariant).
         assert by_role["TAKE_PROFIT"].alpaca_order_id_chain_json == f'["{tp_uuid}"]'
         assert by_role["PRICE_STOP"].alpaca_order_id_chain_json == f'["{sl_uuid}"]'
@@ -2094,10 +2095,10 @@ async def test_open_command_stamps_captured_leg_ids_on_protective_orders(
 async def test_open_command_stamps_stop_id_on_first_price_leg_only(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """ALP-746 — Alpaca's native bracket carries exactly one stop child (mapped
-    from the first PriceLeg by ``order_equity._bracket_params``). With two
+    """ALP-746 / ALP-847 — Alpaca's native bracket carries exactly one stop child
+    (mapped from the first PriceLeg by ``order_equity._bracket_params``). With two
     PriceLegs, only the first PRICE_STOP gets the captured stop UUID; the second
-    keeps the synthetic placeholder."""
+    carries NO broker id (None — monitor-enforced Intent)."""
     from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
@@ -2152,9 +2153,10 @@ async def test_open_command_stamps_stop_id_on_first_price_leg_only(
         )
         assert len(stop_rows) == 2
         stop_ids = {r.alpaca_order_id for r in stop_rows}
-        # Exactly one carries the real broker stop id; the other keeps synthetic.
+        # Exactly one carries the real broker stop id; the other carries NO
+        # broker id (None, ALP-847 — monitor-enforced Intent).
         assert sl_uuid in stop_ids
-        assert any(sid.startswith("alp-") for sid in stop_ids)
+        assert None in stop_ids
 
 
 async def test_adjust_command_cancels_old_protective_order_and_submits_new(
