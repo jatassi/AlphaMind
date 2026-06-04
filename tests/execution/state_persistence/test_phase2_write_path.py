@@ -378,6 +378,7 @@ def _open_command(
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="underlying_price",
                 condition=PriceCondition(
                     underlying_trigger=underlying,
                     comparator="<=",
@@ -388,6 +389,7 @@ def _open_command(
         ),
         thesis=Thesis(
             summary=f"Long {underlying}.",
+            nature="directional",
             components=(
                 OMSThesisComponent(
                     component_type="entry_rationale",
@@ -2040,6 +2042,7 @@ async def test_open_command_stamps_captured_leg_ids_on_protective_orders(
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="underlying_price",
                 condition=PriceCondition(
                     underlying_trigger="NVDA", comparator="<=", trigger_price=price(750.0)
                 ),
@@ -2112,6 +2115,7 @@ async def test_open_command_stamps_stop_id_on_first_price_leg_only(
         return PriceLeg(
             type="price",
             is_hard=True,
+            trigger_signal="underlying_price",
             condition=PriceCondition(
                 underlying_trigger="NVDA", comparator="<=", trigger_price=price(trigger)
             ),

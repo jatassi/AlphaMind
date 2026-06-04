@@ -104,6 +104,7 @@ def _make_execution_config() -> ExecutionConfig:
 def _make_thesis() -> Thesis:
     return Thesis(
         summary="Test thesis",
+        nature="directional",
         components=(
             ThesisComponent(
                 component_type="entry_rationale",
@@ -120,6 +121,7 @@ def _make_price_leg(ticker: str = "AAPL", trigger: float = 150.0) -> PriceLeg:
     return PriceLeg(
         type="price",
         is_hard=True,
+        trigger_signal="underlying_price",
         condition=PriceCondition(
             underlying_trigger=ticker,
             comparator="<=",
@@ -439,6 +441,7 @@ async def test_open_with_target_and_price_stop_produces_bracket() -> None:
     price_leg = PriceLeg(
         type="price",
         is_hard=True,
+        trigger_signal="underlying_price",
         condition=PriceCondition(
             underlying_trigger="AAPL", comparator="<=", trigger_price=price(150.0)
         ),

@@ -1228,6 +1228,7 @@ async def test_submission_log_threads_from_engine_stub_state_cell(
                     PriceLeg(
                         type="price",
                         is_hard=True,
+                        trigger_signal="underlying_price",
                         condition=PriceCondition(
                             underlying_trigger="NVDA",
                             comparator="<=",
@@ -1240,6 +1241,7 @@ async def test_submission_log_threads_from_engine_stub_state_cell(
                 ),
                 thesis=Thesis(
                     summary="Long NVDA.",
+                    nature="directional",
                     components=(
                         OMSThesisComponent(
                             component_type="entry_rationale",

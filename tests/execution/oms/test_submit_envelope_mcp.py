@@ -37,6 +37,7 @@ from alphamind.analysis.synthesizer.models import BriefSource
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.commands.command_models import (
     BracketOrderParameters,
+    CapitalProtectionFloor,
     EntryOrder,
     EquityInstrument,
     PositionSize,
@@ -378,6 +379,7 @@ def _open_command(
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="underlying_price",
                 condition=PriceCondition(
                     underlying_trigger=underlying,
                     comparator="<=",
@@ -388,6 +390,7 @@ def _open_command(
         ),
         thesis=Thesis(
             summary=f"Long {underlying}.",
+            nature="directional",
             components=(
                 OMSThesisComponent(
                     component_type="entry_rationale",
@@ -2459,6 +2462,7 @@ def test_strategy_open_validation_request_carries_per_leg_directions() -> None:
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="net_mark",
                 condition=PriceCondition(
                     underlying_trigger="NVDA",
                     comparator="<=",
@@ -2469,6 +2473,7 @@ def test_strategy_open_validation_request_carries_per_leg_directions() -> None:
         ),
         thesis=Thesis(
             summary="Spread.",
+            nature="non_directional",
             components=(
                 OMSThesisComponent(
                     component_type="entry_rationale",
@@ -2479,6 +2484,7 @@ def test_strategy_open_validation_request_carries_per_leg_directions() -> None:
                 ),
             ),
         ),
+        capital_protection_floor=CapitalProtectionFloor(max_loss=money(500.0)),
     )
     request = _build_constructive_request_from_open(command)
     assert request.instrument.asset_type is InstrumentType.STRATEGY

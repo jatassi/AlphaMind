@@ -35,6 +35,7 @@ from alphamind._kernel.money import money, price
 from alphamind.commands.command_models import (
     AddCommand,
     BracketOrderParameters,
+    CapitalProtectionFloor,
     CloseCommand,
     EntryOrder,
     EquityInstrument,
@@ -130,6 +131,7 @@ def _equity_instrument() -> EquityInstrument:
 def _thesis() -> Thesis:
     return Thesis(
         summary="Long NVDA calls.",
+        nature="directional",
         components=(
             ThesisComponent(
                 component_type="entry_rationale",
@@ -146,6 +148,7 @@ def _hard_price_leg(*, trigger_price: float = 750.0) -> PriceLeg:
     return PriceLeg(
         type="price",
         is_hard=True,
+        trigger_signal="underlying_price",
         condition=PriceCondition(
             underlying_trigger="NVDA",
             comparator="<=",
@@ -193,6 +196,7 @@ def _open_options_command(
         ),
         invalidation_legs=(_hard_price_leg(),),
         thesis=_thesis(),
+        capital_protection_floor=CapitalProtectionFloor(max_loss=money(2_000.0)),
     )
 
 
@@ -470,6 +474,7 @@ async def test_submit_options_open_always_simple_regardless_of_bracket_shape() -
         ),
         invalidation_legs=_hard_event_legs(),  # multi-leg bracket structure
         thesis=_thesis(),
+        capital_protection_floor=CapitalProtectionFloor(max_loss=money(2_000.0)),
     )
     client, captured = _capturing_client()
 

@@ -64,6 +64,7 @@ from alphamind._kernel.regime import (
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.commands.command_models import (
     BracketOrderParameters,
+    CapitalProtectionFloor,
     EntryOrder,
     OptionInstrument,
     PositionSize,
@@ -393,6 +394,7 @@ def _open_options_command() -> OpenCommand:
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="underlying_price",
                 condition=PriceCondition(
                     underlying_trigger=_TICKER,
                     comparator="<=",
@@ -403,6 +405,7 @@ def _open_options_command() -> OpenCommand:
         ),
         thesis=Thesis(
             summary=f"Long {_TICKER} call.",
+            nature="directional",
             components=(
                 ThesisComponent(
                     component_type="entry_rationale",
@@ -413,6 +416,7 @@ def _open_options_command() -> OpenCommand:
                 ),
             ),
         ),
+        capital_protection_floor=CapitalProtectionFloor(max_loss=money(500.0)),
     )
 
 

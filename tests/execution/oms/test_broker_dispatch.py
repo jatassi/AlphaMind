@@ -51,6 +51,7 @@ from alphamind.commands.command_models import (
     AdjustCommand,
     BracketOrderParameters,
     CancelCommand,
+    CapitalProtectionFloor,
     CloseCommand,
     EntryOrder,
     EquityInstrument,
@@ -124,6 +125,7 @@ def _execution_config() -> ExecutionConfig:
 def _thesis(ticker: str = "AAPL") -> Thesis:
     return Thesis(
         summary="Test thesis",
+        nature="directional",
         components=(
             ThesisComponent(
                 component_type="entry_rationale",
@@ -147,6 +149,7 @@ def _equity_open_command(ticker: str = "AAPL") -> OpenCommand:
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="underlying_price",
                 condition=PriceCondition(
                     underlying_trigger=ticker,
                     comparator="<=",
@@ -177,6 +180,7 @@ def _option_open_command(underlying: str = "NVDA") -> OpenCommand:
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="underlying_price",
                 condition=PriceCondition(
                     underlying_trigger=underlying,
                     comparator="<=",
@@ -186,6 +190,7 @@ def _option_open_command(underlying: str = "NVDA") -> OpenCommand:
             ),
         ),
         thesis=_thesis(underlying),
+        capital_protection_floor=CapitalProtectionFloor(max_loss=money(500.0)),
     )
 
 
@@ -223,6 +228,7 @@ def _strategy_open_command(underlying: str = "SPY") -> OpenCommand:
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="underlying_price",
                 condition=PriceCondition(
                     underlying_trigger=underlying,
                     comparator="<=",
@@ -232,6 +238,7 @@ def _strategy_open_command(underlying: str = "SPY") -> OpenCommand:
             ),
         ),
         thesis=_thesis(underlying),
+        capital_protection_floor=CapitalProtectionFloor(max_loss=money(500.0)),
     )
 
 

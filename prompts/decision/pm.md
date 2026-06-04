@@ -234,6 +234,7 @@ When you modify an exposure-changing parameter, re-validate to the final PASS ca
           {
             "type": "price",
             "is_hard": true,
+            "trigger_signal": "underlying_price",
             "condition": {
               "underlying_trigger": "NVDA",
               "comparator": "<=",
@@ -244,6 +245,7 @@ When you modify an exposure-changing parameter, re-validate to the final PASS ca
         ],
         "thesis": {
           "summary": "Pre-earnings long on NVDA; AI capex tailwind sustained.",
+          "nature": "directional",
           "components": [
             {
               "component_type": "entry_rationale",
