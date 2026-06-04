@@ -14,6 +14,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from alphamind._kernel.ids import PositionId
+
 
 class PositionGreeksRecord(BaseModel):
     """Frozen per-position greeks snapshot. Single-writer = monitor.
@@ -24,7 +26,7 @@ class PositionGreeksRecord(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    position_id: str
+    position_id: PositionId
     delta: float
     gamma: float
     theta: float

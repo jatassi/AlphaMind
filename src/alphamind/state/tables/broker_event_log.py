@@ -3,9 +3,10 @@
 Every broker→local event that changes a Broker-Owned Fact — fills +
 account-activities + corporate-actions + terminal order status — lands here as
 one immutable row (ADR-0005: append-only, the only sanctioned cross-process
-write). ``event_key`` carries a UNIQUE constraint so the websocket delivery and
-a later REST recovery replay of the *same* event collapse to one row (the
-idempotency guarantee ADR-0002's gap-free log relies on).
+write). ``event_key`` is the PRIMARY KEY, so the websocket delivery and a later
+REST recovery replay of the *same* event collapse to one row (the idempotency
+guarantee ADR-0002's gap-free log relies on) — and the PK is the unambiguous
+ON-CONFLICT target story 02a's idempotency upsert binds to.
 
 The broker-carried link columns (``thesis_id`` / ``invocation_id`` /
 ``position_id``) are the decoded FK that rides ``client_order_id``; they FK to
@@ -30,7 +31,6 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Text,
-    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -90,12 +90,12 @@ class BrokerEventLogRow(Base):
     captured_at: Mapped[str] = mapped_column(Text, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("event_key", name="uq_broker_event_log_event_key"),
         CheckConstraint(
             _check_in("event_type", _EVENT_TYPES),
             name="ck_broker_event_log_event_type",
         ),
         Index("ix_broker_event_log_event_type", "event_type"),
         Index("ix_broker_event_log_thesis_id", "thesis_id"),
+        Index("ix_broker_event_log_invocation_id", "invocation_id"),
         Index("ix_broker_event_log_position_id", "position_id"),
     )

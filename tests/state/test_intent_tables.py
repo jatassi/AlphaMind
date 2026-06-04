@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import ThesisId
 from alphamind._kernel.money import money, signed_money
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine, make_session_factory
@@ -62,7 +63,7 @@ class TestThesisPnlLedgerRoundTrip:
     def test_profit_entry_round_trips(self, session: Session) -> None:
         seed_position_cluster(session)
         record = ThesisPnlLedgerRecord(
-            thesis_id="thesis-1",
+            thesis_id=ThesisId("thesis-1"),
             realized_pnl_usd=signed_money("1234.56"),
             cost_basis_usd=money("10000.00"),
             provenance_json='{"event_keys":["evt-1","evt-2"]}',
@@ -79,7 +80,7 @@ class TestThesisPnlLedgerRoundTrip:
     def test_realized_loss_round_trips_signed(self, session: Session) -> None:
         seed_position_cluster(session)
         record = ThesisPnlLedgerRecord(
-            thesis_id="thesis-1",
+            thesis_id=ThesisId("thesis-1"),
             realized_pnl_usd=signed_money("-987.65"),
             cost_basis_usd=money("5000.00"),
             provenance_json="{}",
@@ -99,7 +100,7 @@ class TestCapitalReservationRoundTrip:
         seed_position_cluster(session)
         record = CapitalReservationRecord(
             reservation_id="res-1",
-            thesis_id="thesis-1",
+            thesis_id=ThesisId("thesis-1"),
             reserved_capital_usd=money("2500.00"),
             reserved_by_invocation_id=None,
             reserved_at=UPDATED,
@@ -117,7 +118,7 @@ class TestCapitalReservationRoundTrip:
         released = datetime(2026, 6, 4, 18, 0, 0, tzinfo=UTC)
         record = CapitalReservationRecord(
             reservation_id="res-2",
-            thesis_id="thesis-1",
+            thesis_id=ThesisId("thesis-1"),
             reserved_capital_usd=money("2500.00"),
             reserved_by_invocation_id=None,
             reserved_at=UPDATED,

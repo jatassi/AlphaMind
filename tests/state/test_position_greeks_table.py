@@ -16,6 +16,7 @@ from sqlalchemy import inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import PositionId
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.state.records_position_greeks import PositionGreeksRecord
@@ -47,7 +48,7 @@ class TestPositionGreeksRoundTrip:
     def test_greeks_round_trip(self, session: Session) -> None:
         seed_position_cluster(session)
         record = PositionGreeksRecord(
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             delta=0.55,
             gamma=0.012,
             theta=-0.08,
@@ -65,7 +66,7 @@ class TestPositionGreeksRoundTrip:
     def test_null_iv_round_trips(self, session: Session) -> None:
         seed_position_cluster(session)
         record = PositionGreeksRecord(
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             delta=-0.40,
             gamma=0.01,
             theta=-0.05,

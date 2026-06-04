@@ -21,6 +21,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import InvocationId, PositionId, ThesisId
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.state.records_broker_event_log import (
@@ -40,9 +41,9 @@ def _event(
     *,
     event_key: str = "evt-1",
     event_type: BrokerEventType = BrokerEventType.FILL,
-    thesis_id: str | None = None,
-    invocation_id: str | None = None,
-    position_id: str | None = None,
+    thesis_id: ThesisId | None = None,
+    invocation_id: InvocationId | None = None,
+    position_id: PositionId | None = None,
     broker_timestamp: datetime | None = BROKER_TS,
 ) -> BrokerEventRecord:
     return BrokerEventRecord(
@@ -87,8 +88,8 @@ class TestBrokerEventLogRoundTrip:
         seed_position_cluster(session)
         record = _event(
             event_key="evt-linked",
-            thesis_id="thesis-1",
-            position_id="pos-1",
+            thesis_id=ThesisId("thesis-1"),
+            position_id=PositionId("pos-1"),
         )
         session.add(record_to_row(record))
         session.commit()

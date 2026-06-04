@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from alphamind._kernel.ids import InvocationId, ThesisId
 from alphamind._kernel.money import money, signed_money
 from alphamind.state.records_intent import ThesisPnlLedgerRecord
 from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
@@ -30,11 +31,15 @@ def record_to_row(record: ThesisPnlLedgerRecord) -> ThesisPnlLedgerRow:
 def row_to_record(row: ThesisPnlLedgerRow) -> ThesisPnlLedgerRecord:
     """Rehydrate a ``ThesisPnlLedgerRow`` back into the typed record."""
     return ThesisPnlLedgerRecord(
-        thesis_id=row.thesis_id,
+        thesis_id=ThesisId(row.thesis_id),
         realized_pnl_usd=signed_money(row.realized_pnl_usd),
         cost_basis_usd=money(row.cost_basis_usd),
         provenance_json=row.provenance_json,
-        derived_from_invocation_id=row.derived_from_invocation_id,
+        derived_from_invocation_id=(
+            InvocationId(row.derived_from_invocation_id)
+            if row.derived_from_invocation_id is not None
+            else None
+        ),
         updated_at=datetime.fromisoformat(row.updated_at),
     )
 

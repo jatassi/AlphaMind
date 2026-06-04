@@ -21,6 +21,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
+from alphamind._kernel.ids import InvocationId, PositionId, ThesisId
+
 
 class BrokerEventType(StrEnum):
     """The full event-type vocabulary the log discriminates on.
@@ -73,9 +75,9 @@ class BrokerEventRecord(BaseModel):
 
     event_key: str
     event_type: BrokerEventType
-    thesis_id: str | None
-    invocation_id: str | None
-    position_id: str | None
+    thesis_id: ThesisId | None
+    invocation_id: InvocationId | None
+    position_id: PositionId | None
     raw_payload_json: str
     broker_timestamp: datetime | None
     captured_at: datetime

@@ -22,6 +22,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from alphamind._kernel.ids import InvocationId, ThesisId
 from alphamind._kernel.money import Money
 
 
@@ -38,11 +39,11 @@ class ThesisPnlLedgerRecord(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    thesis_id: str
+    thesis_id: ThesisId
     realized_pnl_usd: Money
     cost_basis_usd: Money
     provenance_json: str
-    derived_from_invocation_id: str | None
+    derived_from_invocation_id: InvocationId | None
     updated_at: datetime
 
 
@@ -57,9 +58,9 @@ class CapitalReservationRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     reservation_id: str
-    thesis_id: str
+    thesis_id: ThesisId
     reserved_capital_usd: Money
-    reserved_by_invocation_id: str | None
+    reserved_by_invocation_id: InvocationId | None
     reserved_at: datetime
     released_at: datetime | None
 

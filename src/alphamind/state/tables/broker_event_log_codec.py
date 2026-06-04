@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from alphamind._kernel.ids import InvocationId, PositionId, ThesisId
 from alphamind.state.records_broker_event_log import (
     BrokerEventRecord,
     BrokerEventType,
@@ -39,9 +40,9 @@ def row_to_record(row: BrokerEventLogRow) -> BrokerEventRecord:
     return BrokerEventRecord(
         event_key=row.event_key,
         event_type=BrokerEventType(row.event_type),
-        thesis_id=row.thesis_id,
-        invocation_id=row.invocation_id,
-        position_id=row.position_id,
+        thesis_id=ThesisId(row.thesis_id) if row.thesis_id is not None else None,
+        invocation_id=(InvocationId(row.invocation_id) if row.invocation_id is not None else None),
+        position_id=PositionId(row.position_id) if row.position_id is not None else None,
         raw_payload_json=row.raw_payload_json,
         broker_timestamp=(
             datetime.fromisoformat(row.broker_timestamp)

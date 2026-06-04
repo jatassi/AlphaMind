@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from alphamind._kernel.ids import PositionId
 from alphamind.state.records_position_greeks import PositionGreeksRecord
 from alphamind.state.tables.position_greeks import PositionGreeksRow
 
@@ -28,7 +29,7 @@ def record_to_row(record: PositionGreeksRecord) -> PositionGreeksRow:
 def row_to_record(row: PositionGreeksRow) -> PositionGreeksRecord:
     """Rehydrate a ``PositionGreeksRow`` back into the typed record."""
     return PositionGreeksRecord(
-        position_id=row.position_id,
+        position_id=PositionId(row.position_id),
         delta=row.delta,
         gamma=row.gamma,
         theta=row.theta,

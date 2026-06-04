@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from alphamind._kernel.ids import InvocationId, ThesisId
 from alphamind._kernel.money import money
 from alphamind.state.records_intent import CapitalReservationRecord
 from alphamind.state.tables.capital_reservations import CapitalReservationRow
@@ -31,9 +32,13 @@ def row_to_record(row: CapitalReservationRow) -> CapitalReservationRecord:
     """Rehydrate a ``CapitalReservationRow`` back into the typed record."""
     return CapitalReservationRecord(
         reservation_id=row.reservation_id,
-        thesis_id=row.thesis_id,
+        thesis_id=ThesisId(row.thesis_id),
         reserved_capital_usd=money(row.reserved_capital_usd),
-        reserved_by_invocation_id=row.reserved_by_invocation_id,
+        reserved_by_invocation_id=(
+            InvocationId(row.reserved_by_invocation_id)
+            if row.reserved_by_invocation_id is not None
+            else None
+        ),
         reserved_at=datetime.fromisoformat(row.reserved_at),
         released_at=(
             datetime.fromisoformat(row.released_at) if row.released_at is not None else None
