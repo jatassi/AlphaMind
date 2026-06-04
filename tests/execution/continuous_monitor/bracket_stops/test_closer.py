@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 
@@ -53,7 +54,7 @@ from alphamind.portfolio_state.records.positions import (
 _NOW = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
 
 
-def _const_str(value: str):  # type: ignore[no-untyped-def]
+def _const_str(value: str) -> Callable[[], Awaitable[str]]:
     """Async-callable returning *value* — async-native provider seam for tests."""
 
     async def _inner() -> str:

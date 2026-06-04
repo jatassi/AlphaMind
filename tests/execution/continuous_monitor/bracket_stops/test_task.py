@@ -8,6 +8,7 @@ broker-call submitter, and the activity-log emitter.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
@@ -64,7 +65,7 @@ from alphamind.portfolio_state.records.positions import (
 _NOW = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
 
 
-def _const_str(value: str):  # type: ignore[no-untyped-def]
+def _const_str(value: str) -> Callable[[], Awaitable[str]]:
     """Async-callable returning *value* — async-native provider seam for tests."""
 
     async def _inner() -> str:
@@ -73,7 +74,7 @@ def _const_str(value: str):  # type: ignore[no-untyped-def]
     return _inner
 
 
-def _const_float(value: float):  # type: ignore[no-untyped-def]
+def _const_float(value: float) -> Callable[[], Awaitable[float]]:
     """Async-callable returning *value* — async-native provider seam for tests."""
 
     async def _inner() -> float:
@@ -1359,7 +1360,7 @@ class TestRunForeverLoop:
         activity = FakeActivityLog()
         iterations = 0
 
-        async def _fake_loop():  # type: ignore[no-untyped-def]
+        async def _fake_loop() -> AsyncIterator[None]:
             nonlocal iterations
             for _ in range(3):
                 iterations += 1

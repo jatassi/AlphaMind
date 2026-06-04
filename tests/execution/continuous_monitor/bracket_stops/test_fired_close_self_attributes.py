@@ -15,7 +15,7 @@ schema (the DB is a sanctioned mock boundary; here it is real).
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -98,7 +98,7 @@ _MONITOR_SESSION_ID = "mon-20260511T143000Z-aabbccdd"
 _NOW = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
 
 
-def _const_str(value: str):  # type: ignore[no-untyped-def]
+def _const_str(value: str) -> Callable[[], Awaitable[str]]:
     async def _inner() -> str:
         return value
 
