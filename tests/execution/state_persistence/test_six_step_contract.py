@@ -655,6 +655,7 @@ def _open_envelope(envelope_id: str = "ENV-REC-7") -> PMEnvelope:
                     PriceLeg(
                         type="price",
                         is_hard=True,
+                        trigger_signal="underlying_price",
                         condition=PriceCondition(
                             underlying_trigger="NVDA",
                             comparator="<=",
@@ -667,6 +668,7 @@ def _open_envelope(envelope_id: str = "ENV-REC-7") -> PMEnvelope:
                 ),
                 thesis=Thesis(
                     summary="Long NVDA.",
+                    nature="directional",
                     components=(
                         OMSThesisComponent(
                             component_type="entry_rationale",

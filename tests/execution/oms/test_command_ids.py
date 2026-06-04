@@ -95,6 +95,7 @@ def _open_command() -> OpenCommand:
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="underlying_price",
                 condition=PriceCondition(
                     underlying_trigger="NVDA",
                     comparator="<=",
@@ -105,6 +106,7 @@ def _open_command() -> OpenCommand:
         ),
         thesis=Thesis(
             summary="Long NVDA.",
+            nature="directional",
             components=(
                 ThesisComponent(
                     component_type="entry_rationale",

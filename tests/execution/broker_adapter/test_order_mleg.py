@@ -34,6 +34,7 @@ from alphamind._kernel.money import money, price
 from alphamind.commands.command_models import (
     AddCommand,
     BracketOrderParameters,
+    CapitalProtectionFloor,
     CloseCommand,
     EntryOrder,
     EquityInstrument,
@@ -139,6 +140,7 @@ def _strategy_open_command(
         PriceLeg(
             type="price",
             is_hard=True,
+            trigger_signal="underlying_price",
             condition=PriceCondition(
                 underlying_trigger=underlying, comparator="<=", trigger_price=price(780.0)
             ),
@@ -147,6 +149,7 @@ def _strategy_open_command(
     )
     thesis = Thesis(
         summary="test thesis",
+        nature="directional",
         components=(
             ThesisComponent(
                 component_type="entry_rationale",
@@ -166,6 +169,7 @@ def _strategy_open_command(
         target=target,
         invalidation_legs=invalidation,
         thesis=thesis,
+        capital_protection_floor=CapitalProtectionFloor(max_loss=money(500.0)),
     )
 
 
@@ -1020,6 +1024,7 @@ async def test_open_with_equity_instrument_raises_type_error() -> None:
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="underlying_price",
                 condition=PriceCondition(
                     underlying_trigger="NVDA", comparator="<=", trigger_price=price(780.0)
                 ),
@@ -1028,6 +1033,7 @@ async def test_open_with_equity_instrument_raises_type_error() -> None:
         ),
         thesis=Thesis(
             summary="x",
+            nature="directional",
             components=(
                 ThesisComponent(
                     component_type="entry_rationale",
@@ -1071,6 +1077,7 @@ async def test_open_with_single_leg_option_instrument_raises_type_error() -> Non
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="underlying_price",
                 condition=PriceCondition(
                     underlying_trigger="NVDA", comparator="<=", trigger_price=price(780.0)
                 ),
@@ -1079,6 +1086,7 @@ async def test_open_with_single_leg_option_instrument_raises_type_error() -> Non
         ),
         thesis=Thesis(
             summary="x",
+            nature="directional",
             components=(
                 ThesisComponent(
                     component_type="entry_rationale",
@@ -1089,6 +1097,7 @@ async def test_open_with_single_leg_option_instrument_raises_type_error() -> Non
                 ),
             ),
         ),
+        capital_protection_floor=CapitalProtectionFloor(max_loss=money(200.0)),
     )
     client = _CapturingClient(response=_fake_alpaca_order(client_order_id="inv-x"))
 
