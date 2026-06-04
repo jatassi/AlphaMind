@@ -22,7 +22,6 @@ rejections`` (``options_level_not_approved``, ``contract_expired``,
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal, cast
@@ -55,6 +54,7 @@ from alphamind.execution.broker_adapter.retry import (
     GatewaySubmissionFailed,
     SubmissionOutcome,
     Submitted,
+    bounded_broker_call,
     submit_with_retry,
 )
 from alphamind.execution.oms.command_ids import is_engine_originated, is_pm_originated
@@ -385,8 +385,10 @@ async def _submit(
         # branch only fires in raw-data mode, which the adapter never enables
         # (``AlpacaClientFactory.build_trading_client`` does not pass
         # ``raw_data=True``). Cast at the boundary keeps the rest of the
-        # function strictly typed.
-        return cast(Order, await asyncio.to_thread(client.submit_order, request))
+        # function strictly typed. ``bounded_broker_call`` time-bounds the
+        # offloaded sync call so a hung socket cannot park the caller (e.g. the
+        # monitor's fire-close) for the full client-factory socket timeout.
+        return cast(Order, await bounded_broker_call(lambda: client.submit_order(request)))
 
     try:
         outcome = await submit_with_retry(

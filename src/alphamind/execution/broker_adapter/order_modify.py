@@ -13,7 +13,6 @@ modification`` for the full contract.
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from typing import Literal, cast
 
@@ -28,6 +27,7 @@ from alphamind.config.models.execution import ExecutionConfig
 from alphamind.execution.broker_adapter.errors import classify_alpaca_error
 from alphamind.execution.broker_adapter.retry import (
     SubmissionOutcome,
+    bounded_broker_call,
     submit_with_retry,
 )
 
@@ -256,10 +256,11 @@ async def submit_replace(
         # surface as APIError exceptions before the return value is used.
         response = cast(
             Order,
-            await asyncio.to_thread(
-                client.replace_order_by_id,
-                target_alpaca_order_id,
-                order_data=replace_request,
+            await bounded_broker_call(
+                lambda: client.replace_order_by_id(
+                    target_alpaca_order_id,
+                    order_data=replace_request,
+                )
             ),
         )
         return ReplacementAck(
@@ -299,7 +300,7 @@ async def submit_cancel(
         # worker thread so the caller's event loop keeps draining other tasks
         # while the HTTP round-trip runs. Mirrors the equity / options / mleg
         # submission paths.
-        await asyncio.to_thread(client.cancel_order_by_id, target_alpaca_order_id)
+        await bounded_broker_call(lambda: client.cancel_order_by_id(target_alpaca_order_id))
         return CancellationAck(alpaca_order_id=target_alpaca_order_id, accepted=True)
 
     return await submit_with_retry(

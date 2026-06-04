@@ -57,6 +57,31 @@ class GatewaySubmissionFailed:
 type SubmissionOutcome[T] = Submitted[T] | GatewaySubmissionFailed
 
 
+# Per-attempt wall-clock bound (seconds) for a single synchronous Alpaca write
+# call offloaded to a worker thread (``submit_order`` / ``replace_order_by_id`` /
+# ``cancel_order_by_id``). alpaca-py issues blocking ``requests`` calls; the
+# client factory installs a matching 60s socket-level floor so an orphaned worker
+# eventually unwinds, but a single hung attempt would otherwise park the calling
+# task — including the continuous monitor's fire-close path — for the full socket
+# timeout. Mirroring ``queries._rest_call`` (the read side), this ``wait_for``
+# is the event-loop-level bound that resolves the await within a tight budget and
+# raises ``TimeoutError`` (classified transient → retried) — the ALP-841 lesson
+# applied to the write side. Below the 60s socket floor so this bound fires first.
+_SUBMIT_TIMEOUT_SECONDS = 30.0
+
+
+async def bounded_broker_call[T](fn: Callable[[], T]) -> T:
+    """Run a synchronous Alpaca write call off the event loop, time-bounded.
+
+    Offloads the blocking SDK call to a worker thread and bounds the await with
+    :func:`asyncio.wait_for` at :data:`_SUBMIT_TIMEOUT_SECONDS`, so a hung socket
+    cannot park the calling task (e.g. the monitor's fire-close submission) for
+    the full client-factory socket timeout. Raises :class:`TimeoutError` on
+    expiry, which :func:`submit_with_retry`'s transient classifier retries.
+    """
+    return await asyncio.wait_for(asyncio.to_thread(fn), timeout=_SUBMIT_TIMEOUT_SECONDS)
+
+
 # Backoff schedule per the story: 0.5s, 1s, 2s, 4s, capped at half the
 # remaining window. Tuned for Alpaca's brief transient envelope (single-digit
 # seconds typical) inside the ~30s default window.
