@@ -51,6 +51,7 @@ from alphamind.persistence.session import (
     make_engine,
     make_session_factory,
 )
+from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.fill_records import FillRecordRow
 from tests.state._fk_substrate import seed_position_cluster, stub_order_row
 
@@ -179,6 +180,14 @@ async def _read_fill_records(
 ) -> list[FillRecordRow]:
     async with session_factory() as session:
         result = await session.execute(select(FillRecordRow))
+        return list(result.scalars().all())
+
+
+async def _read_broker_events(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> list[BrokerEventLogRow]:
+    async with session_factory() as session:
+        result = await session.execute(select(BrokerEventLogRow))
         return list(result.scalars().all())
 
 
@@ -319,9 +328,11 @@ class TestIdempotent:
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         """The same Alpaca order surfaces in every sweep (its terminal snapshot
-        persists in the broker's get_orders window). The first sweep appends one
-        fill; subsequent sweeps over the identical snapshot must collapse to the
-        same dedupe key and add no duplicate row."""
+        persists in the broker's get_orders window). The first sweep recovers it
+        into the gap-free ``broker_event_log`` exactly once; subsequent sweeps
+        over the identical snapshot collapse on the ``event_key`` PK and add no
+        duplicate row — neither in the event log (the AC's named substrate) nor
+        in the ``fill_records`` projection."""
         entry_uuid = str(uuid4())
         await _seed_order_row(session_factory, order_id="ORD-IDEM-1", alpaca_order_id=entry_uuid)
         # A single stable snapshot returned on EVERY get_orders call — its
@@ -349,7 +360,8 @@ class TestIdempotent:
         with pytest.raises(asyncio.CancelledError):
             await task
 
-        # Many sweeps over the same snapshot → still exactly one fill row.
+        # Many sweeps over the same snapshot → recovered exactly once.
+        assert len(await _read_broker_events(session_factory)) == 1
         assert len(await _read_fill_records(session_factory)) == 1
 
 
