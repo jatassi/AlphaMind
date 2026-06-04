@@ -6,7 +6,8 @@ Covers:
   on ``status``.
 - ``BracketLegRow`` SQLAlchemy model: column shape, indexes (incl. UNIQUE
   on ``(bracket_id, leg_index)``), CHECK constraints on ``leg_type`` /
-  ``trigger_kind`` / ``enforcement`` / ``leg_status``, FK to ``brackets``.
+  ``trigger_kind`` / ``enforcement`` / ``enforcement_binding`` /
+  ``leg_status``, FK to ``brackets``.
 - Round-trip codec: ``record_to_rows`` / ``rows_to_record`` faithful for
   every leg type, every trigger kind, with and without ``PLAnchorSpec``,
   with and without modification history.

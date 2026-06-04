@@ -47,9 +47,9 @@ class BracketLegRow(Base):
     Mirrors the field list in
     ``docs/design/05-execution-layer/state-persistence.md`` § Brackets.
     CHECK constraints on ``leg_type`` / ``trigger_kind`` / ``enforcement``
-    / ``leg_status`` encode the same vocabularies the typed
-    ``BracketLeg`` enforces, so a future direct-SQL writer faces the
-    same fail-closed guarantees the application path enforces.
+    / ``enforcement_binding`` / ``leg_status`` encode the same vocabularies
+    the typed ``BracketLeg`` enforces, so a future direct-SQL writer faces
+    the same fail-closed guarantees the application path enforces.
     """
 
     __tablename__ = "bracket_legs"
