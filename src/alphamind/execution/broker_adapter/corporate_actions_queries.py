@@ -29,11 +29,12 @@ from alpaca.data.historical.corporate_actions import CorporateActionsClient
 from alpaca.data.models.corporate_actions import CorporateAction, CorporateActionsSet
 from alpaca.data.requests import CorporateActionsRequest
 
-# In-scope v1beta1 action types. The four omitted members
-# (UNIT_SPLIT / REDEMPTION / WORTHLESS_REMOVAL / RIGHTS_DISTRIBUTION) do not
-# map onto a ``CorporateActionType`` AlphaMind handles natively; they're
-# filtered server-side by omitting them here, and dropped client-side as
-# defense in depth if the API returns them anyway.
+# In-scope v1beta1 action types — every type with an event-log CA vocabulary
+# member (ALP-849 / W1c). The first nine carry a position / cash mutation; the
+# trailing three (UNIT_SPLIT / REDEMPTION / WORTHLESS_REMOVAL) are capture-only —
+# fetched so Phase 1 appends them to the gap-free ``broker_event_log`` even though
+# they carry no mutation. Only RIGHTS_DISTRIBUTION is omitted (no vocabulary
+# member); it is dropped client-side as defense in depth if the API returns it.
 _DEFAULT_TYPES: tuple[CorporateActionsType, ...] = (
     CorporateActionsType.FORWARD_SPLIT,
     CorporateActionsType.REVERSE_SPLIT,
@@ -44,6 +45,10 @@ _DEFAULT_TYPES: tuple[CorporateActionsType, ...] = (
     CorporateActionsType.STOCK_MERGER,
     CorporateActionsType.STOCK_AND_CASH_MERGER,
     CorporateActionsType.NAME_CHANGE,
+    # Capture-only (W1c): event-log capture, no position-mutation handler.
+    CorporateActionsType.UNIT_SPLIT,
+    CorporateActionsType.REDEMPTION,
+    CorporateActionsType.WORTHLESS_REMOVAL,
 )
 
 

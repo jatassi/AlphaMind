@@ -170,7 +170,15 @@ class CashCreditReason(StrEnum):
 
 
 class CorporateActionType(StrEnum):
-    """Per-action-type matrix from corporate-actions.md."""
+    """Per-action-type matrix from corporate-actions.md.
+
+    The first nine members carry a position / cash mutation (an integration
+    handler). The trailing capture-only members (``WORTHLESS_REMOVAL`` /
+    ``UNIT_SPLIT`` / ``REDEMPTION``, ALP-849 / W1c) are the v1beta1 types the
+    fetcher used to drop: they have no defined position-mutation math, so they
+    are captured onto the append-only ``broker_event_log`` (gap-free broker fact)
+    without a state mutation.
+    """
 
     SPLIT = "SPLIT"
     REVERSE_SPLIT = "REVERSE_SPLIT"
@@ -181,6 +189,10 @@ class CorporateActionType(StrEnum):
     STOCK_MERGER = "STOCK_MERGER"
     SPIN_OFF = "SPIN_OFF"
     SYMBOL_CHANGE = "SYMBOL_CHANGE"
+    # Capture-only (no position-mutation handler) — gap-free broker fact only.
+    WORTHLESS_REMOVAL = "WORTHLESS_REMOVAL"
+    UNIT_SPLIT = "UNIT_SPLIT"
+    REDEMPTION = "REDEMPTION"
 
 
 class PMVerdict(StrEnum):

@@ -672,11 +672,14 @@ class EntryNoFillCondition:
     order* the OMS submitted to the broker expires/cancels having never
     filled. Distinct upstreams, distinct debounce keys — no double alert.
 
-    The terminal status reaches ``orders.status`` via the fill-stream
-    consumer's terminal-status sync (``sync_terminal_order_status``), which
-    is scoped to zero-fill terminals; this predicate fires *because* that
-    sync landed, wiring ALP-739's "reflect terminal broker statuses locally"
-    and "alert on a no-fill entry" criteria through the same column.
+    The terminal status reaches ``orders.status`` as a projection derived from
+    the append-only ``broker_event_log`` (ALP-849 / W1c): the fill-stream
+    consumer captures a zero-fill ``canceled`` / ``expired`` event as a
+    ``TERMINAL_ORDER_STATUS`` row — it no longer RMWs ``orders.status`` (ADR-0005
+    invariant 1) — and the single (pipeline) writer projects that row onto the
+    ``orders`` status column. This predicate fires *because* the projection
+    landed, wiring ALP-739's "reflect terminal broker statuses locally" and
+    "alert on a no-fill entry" criteria through the same column.
     """
 
     name: AlertRuleName = _RULE_ENTRY_NO_FILL

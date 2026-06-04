@@ -49,7 +49,7 @@ from alphamind.execution.oms.command_ids import (
 )
 from alphamind.execution.write_paths.broker_event_persistence import append_broker_event
 from alphamind.execution.write_paths.fill_persistence import append_fill_record
-from alphamind.execution.write_paths.order_status_sync import sync_terminal_order_status
+from alphamind.execution.write_paths.order_status_sync import terminal_status_event_record
 from alphamind.execution.write_paths.unattributed_fill_persistence import (
     append_unattributed_fill,
     mark_unattributed_fill_alerted,
@@ -376,23 +376,27 @@ async def _sync_terminal_status_if_any(
     *,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Reflect a broker terminal non-fill event in ``orders.status`` (ALP-739).
+    """Append a zero-fill terminal order-status event to the log (ALP-739 / W1c).
 
-    ``canceled`` / ``expired`` events append no fill but must update the local
-    order row — otherwise an accepted entry that expires / cancels unfilled
-    stays ``PENDING`` and the ``entry_no_fill`` alert never fires. Every other
-    non-fill event (``new`` / ``replaced`` / …) carries no terminal
-    disposition and no-ops here. Its own short-lived transaction, mirroring
-    the per-fill write.
+    ``canceled`` / ``expired`` events append no fill but the order has reached a
+    terminal disposition — otherwise an accepted entry that expires / cancels
+    unfilled stays ``PENDING`` and the ``entry_no_fill`` alert never fires. Every
+    other non-fill event (``new`` / ``replaced`` / …) carries no terminal
+    disposition and no-ops here.
+
+    **The monitor no longer RMWs ``orders.status``** (ADR-0005 invariant 1, the
+    named second-writer being removed). A terminal event lands as one immutable
+    ``TERMINAL_ORDER_STATUS`` row on the append-only ``broker_event_log``
+    (idempotent on the ``event_key`` PK), carrying the resolved broker-carried
+    link on its INITIAL insert. The ``orders.status`` projection is derived from
+    the log by the single (pipeline) writer (04a). Own short-lived transaction,
+    mirroring the per-fill write.
 
     Scoped to **zero-fill** terminals (``cumulative_filled_quantity == 0``): a
     partially-filled-then-terminal order is left to the fill path + Phase 1,
-    which own ``filled_quantity`` and integrate the partials. Stamping a
-    terminal status here for a partially-filled order would (a) read
-    ``filled_quantity == 0`` until Phase 1 catches up and fire a false
-    no-fill alert, and (b) be reverted to ``PARTIALLY_FILLED`` by Phase 1's
-    fill integration anyway. The no-fill case is the one the fill path does
-    not cover, so it is the only one this sync owns.
+    which own ``filled_quantity`` and integrate the partials. The no-fill case is
+    the one the fill path does not cover, so it is the only one this path owns
+    (the ALP-739 zero-fill scoping, preserved).
     """
     terminal_status = terminal_order_status_for(report)
     if terminal_status is None:
@@ -400,12 +404,12 @@ async def _sync_terminal_status_if_any(
     if report.cumulative_filled_quantity > 0:
         return
     async with session_factory() as db:
-        # Resolve by broker UUID when the client_order_id doesn't name a local
-        # PK — this is the path an OCO sibling-cancel takes (the broker cancels
-        # the unfired protective leg, whose client_order_id Alpaca generated;
-        # only the captured leg UUID locates the local row). ALP-746.
-        order_id = await _resolve_oms_order_id(db, report)
-        if order_id is None:
+        attribution = await _resolve_terminal_attribution(db, report)
+        if attribution is None:
+            # Neither a parseable link nor a resolvable local order row — a
+            # genuinely out-of-band / manually-placed order's terminal event.
+            # No AlphaMind fact to record; skip (mirrors the fill path's
+            # decline-to-attribute, ADR-0002).
             log.debug(
                 "terminal status for unknown order: client_order_id=%s alpaca_order_id=%s "
                 "status=%s — skipping",
@@ -414,19 +418,61 @@ async def _sync_terminal_status_if_any(
                 terminal_status.value,
             )
             return
-        transitioned = await sync_terminal_order_status(
+        newly = await append_broker_event(
             db,
-            order_id=order_id,
-            terminal_status=terminal_status,
-            observed_at=datetime.now(UTC),
+            terminal_status_event_record(
+                report,
+                terminal_status,
+                thesis_id=attribution.thesis_id,
+                invocation_id=attribution.invocation_id,
+                position_id=attribution.position_id,
+            ),
         )
         await db.commit()
-    if transitioned:
+    if newly:
         log.info(
-            "synced terminal order status: order_id=%s status=%s",
-            order_id,
+            "appended terminal order-status event: alpaca_order_id=%s status=%s",
+            report.alpaca_order_id,
             terminal_status.value,
         )
+
+
+async def _resolve_terminal_attribution(
+    db: AsyncSession, report: FillReport
+) -> _FillAttribution | None:
+    """Resolve the link a zero-fill terminal event attributes to, or ``None``.
+
+    Mirrors :func:`_resolve_attribution` but for a non-fill event (there is no
+    fill to quarantine, so it never returns the "uncommitted edge" quarantine
+    signal — it carries whatever link resolves):
+
+    * **Broker-carried link** (linked entry whose ``client_order_id`` is the PM /
+      engine command id) → thesis + invocation off the link; position off the
+      thesis's ``positions`` edge.
+    * **Order-row projection cache** (an OCO sibling-cancel of a native-bracket
+      protective child, whose ``client_order_id`` Alpaca generated, resolved by
+      broker UUID, ALP-746) → thesis + position off the order's position edge;
+      invocation ``NULL`` (no link carries the *when*).
+    * Neither → ``None`` (a genuinely out-of-band order's terminal event).
+    """
+    link = _parse_broker_carried_link(report.client_order_id)
+    if link is not None:
+        return _FillAttribution(
+            thesis_id=link.thesis_id,
+            invocation_id=link.invocation_id,
+            position_id=await _resolve_position_id_for_thesis(db, link.thesis_id),
+            oms_order_id=None,
+        )
+    oms_order_id = await _resolve_oms_order_id(db, report)
+    if oms_order_id is None:
+        return None
+    thesis_id, position_id = await _resolve_thesis_for_order(db, oms_order_id)
+    return _FillAttribution(
+        thesis_id=thesis_id,
+        invocation_id=None,
+        position_id=position_id,
+        oms_order_id=oms_order_id,
+    )
 
 
 async def _resolve_oms_order_id(db: AsyncSession, report: FillReport) -> str | None:
