@@ -82,8 +82,9 @@ class EquityLegAck:
     captured here at submission, classified by ``order_type`` (LIMIT →
     take-profit, STOP / STOP_LIMIT → stop-loss). The Phase 2 OPEN writeback
     then stamps each captured id onto the matching protective-leg ``orders``
-    row, replacing the synthetic ``alp-…`` placeholder so a later protective
-    fill / OCO sibling-cancel resolves to the local row (ALP-746).
+    row, which carries a NULL ``alpaca_order_id`` until backfilled (ALP-847 — no
+    synthetic ``alp-…`` placeholder), so a later protective fill / OCO
+    sibling-cancel resolves to the local row (ALP-746).
     """
 
     alpaca_order_id: AlpacaOrderId

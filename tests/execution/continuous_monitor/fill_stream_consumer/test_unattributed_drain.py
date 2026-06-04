@@ -209,6 +209,41 @@ class TestFillBeforeOrderCommitRace:
         async with session_factory() as session:
             assert await list_unattributed_fills(session) == []
 
+    async def test_drain_resolved_fill_also_reaches_the_broker_event_log(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """When the drain resolves a quarantined fill it must ALSO append to
+        ``broker_event_log`` — not just ``fill_records`` — so a native-bracket
+        child fill that was quarantined (B1) and later resolves reaches the
+        gap-free PnL substrate (B2)."""
+        from alphamind.state.tables.broker_event_log import BrokerEventLogRow
+
+        entry_uuid = uuid4()
+        report = _fill_report(
+            order_id=entry_uuid,
+            client_order_id="alpaca-generated-native-child",
+            price=150.0,
+            qty=1.0,
+        )
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
+
+        # The order materializes carrying the position→thesis edge.
+        await _seed_order_row_for(
+            session_factory,
+            order_id="ORD-DEFERRED-2",
+            alpaca_order_id=str(entry_uuid),
+        )
+
+        integrated = await drain_unattributed_fills(session_factory=session_factory)
+        assert integrated == 1
+
+        async with session_factory() as session:
+            events = list((await session.execute(select(BrokerEventLogRow))).scalars().all())
+        assert len(events) == 1
+        assert events[0].event_type == "FILL"
+        assert events[0].thesis_id == "thesis-1"
+        assert events[0].position_id == "pos-1"
+
 
 class TestTrulyUnknownOrder:
     async def test_unknown_order_stays_queued_and_alerted(

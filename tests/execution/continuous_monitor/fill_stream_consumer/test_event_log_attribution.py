@@ -62,6 +62,7 @@ from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from tests.state._fk_substrate import (
     seed_position_cluster,
     stub_invocation_row,
+    stub_order_row,
     stub_process_lifetime_row,
 )
 
@@ -243,6 +244,48 @@ class TestSelfAttribution:
         (row,) = rows
         assert row.thesis_id == _THESIS_ID
         assert row.invocation_id == f"inv-{_INVOCATION_ID}"
+
+
+class TestNativeLegStrandHole:
+    async def test_projection_cache_with_unresolved_link_is_quarantined_not_null_fk(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A native-bracket child fill that resolves an order row whose
+        position→thesis link is not yet committed (both thesis_id and
+        position_id None) must be QUARANTINED — never land a NULL-FK
+        ``broker_event_log`` row (append-only, never enriched). The drain
+        retries it once the link commits (B1)."""
+        from alphamind.execution.write_paths.unattributed_fill_persistence import (
+            list_unattributed_fills,
+        )
+
+        # An order row that resolves by broker UUID but carries NO position link
+        # yet (position_id NULL) — the native-bracket child whose parent OPEN
+        # writeback has not committed the position→thesis edge.
+        broker_uuid = uuid4()
+        async with session_factory() as session:
+            session.add(
+                stub_order_row(
+                    "order-native-child",
+                    "bracket-1",
+                    position_id=None,
+                    alpaca_order_id=str(broker_uuid),
+                )
+            )
+            await session.commit()
+
+        # The native-bracket child carries an Alpaca-generated (link-less)
+        # client_order_id, so it takes the projection-cache path.
+        report = _fill_report(client_order_id="alpaca-generated-native", order_id=broker_uuid)
+
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
+
+        # No NULL-FK event-log row landed.
+        assert await _read_event_log(session_factory) == []
+        # It was quarantined for the drain to retry.
+        async with session_factory() as session:
+            queued = await list_unattributed_fills(session)
+        assert len(queued) == 1
 
 
 class TestEventLogIdempotency:

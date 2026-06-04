@@ -28,11 +28,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alphamind.execution.broker_adapter import FillReport
 from alphamind.execution.continuous_monitor.fill_stream_consumer.persistence import (
     EnrichmentCallable,
-    _resolve_oms_order_id,
+    _fill_event_record,
+    _resolve_attribution,
 )
 from alphamind.execution.continuous_monitor.fill_stream_consumer.translation import (
     fill_report_to_fill_record,
 )
+from alphamind.execution.write_paths.broker_event_persistence import append_broker_event
 from alphamind.execution.write_paths.fill_persistence import append_fill_record
 from alphamind.execution.write_paths.phase1 import integrate_recovered_fills
 from alphamind.execution.write_paths.unattributed_fill_persistence import (
@@ -57,12 +59,15 @@ async def drain_unattributed_fills(
     """Re-resolve every queued unattributed fill; return the count integrated.
 
     For each queued row, rehydrate the serialized :class:`FillReport` and
-    re-attempt resolution via the shared :func:`_resolve_oms_order_id` (the
-    same two-step PK / broker-UUID lookup the live path uses). On success the
-    fill is appended to ``fill_records`` (enriched first if a paper-mode
-    ``enrichment_callable`` is supplied, mirroring ``persist_fill_report``) and
-    the queue row deleted. On failure the row is touched (``retry_count``
-    bumped) and alerted once, then left queued.
+    re-attempt resolution via the shared :func:`_resolve_attribution` (the same
+    full thesis/invocation/position resolution the live path uses). On success
+    the fill is appended to ``broker_event_log`` (the gap-free PnL substrate,
+    B2) AND — when an order row resolves — to ``fill_records`` (enriched first if
+    a paper-mode ``enrichment_callable`` is supplied, mirroring
+    ``persist_fill_report``), then the queue row is deleted. On failure (still
+    not attributable — order missing, or its position→thesis edge uncommitted)
+    the row is touched (``retry_count`` bumped) and alerted once, then left
+    queued.
 
     When *process_lifetime_id* is supplied and at least one fill was integrated,
     :func:`integrate_recovered_fills` is called immediately after the drain so
@@ -83,8 +88,13 @@ async def drain_unattributed_fills(
     for queued_fill in queued:
         report = FillReport.model_validate_json(queued_fill.raw_report_json)
         async with session_factory() as db:
-            oms_order_id = await _resolve_oms_order_id(db, report)
-            if oms_order_id is None:
+            # Full re-resolution (B2): the same thesis/invocation/position
+            # attribution the live path resolves — so a resolved fill reaches
+            # BOTH ``broker_event_log`` (the gap-free PnL substrate) and
+            # ``fill_records``. ``None`` means still not attributable (order
+            # missing, or its position→thesis edge uncommitted, B1) — keep queued.
+            attribution = await _resolve_attribution(db, report)
+            if attribution is None:
                 observed_at = _now()
                 await touch_unattributed_fill_retry(
                     db, queued_fill.broker_fill_key, observed_at=observed_at
@@ -121,20 +131,25 @@ async def drain_unattributed_fills(
                 await db.commit()
                 continue
 
-            record = fill_report_to_fill_record(report, oms_order_id=oms_order_id)
-            if record is None:  # pragma: no cover — only fill-bearing reports are queued
-                await db.commit()
-                continue
-            if enrichment_callable is not None:
-                record = await enrichment_callable(record)
-            await append_fill_record(db, record)
+            # The gap-free PnL substrate gets the event-log row first (B2): a
+            # resolved fill reaches ``broker_event_log`` carrying its decoded
+            # thesis/position, mirroring the live persist path.
+            await append_broker_event(db, _fill_event_record(report, attribution))
+            oms_order_id = attribution.oms_order_id
+            if oms_order_id is not None:
+                record = fill_report_to_fill_record(report, oms_order_id=oms_order_id)
+                # Only fill-bearing reports are queued, so the re-derive is non-None.
+                assert record is not None
+                if enrichment_callable is not None:
+                    record = await enrichment_callable(record)
+                await append_fill_record(db, record)
             await delete_unattributed_fill(db, queued_fill.broker_fill_key)
             await db.commit()
         integrated += 1
         log.info(
             "integrated previously-unattributed fill: broker_fill_key=%s order_id=%s",
             queued_fill.broker_fill_key,
-            oms_order_id,
+            attribution.oms_order_id,
         )
 
     if integrated > 0 and process_lifetime_id is not None:

@@ -175,25 +175,28 @@ async def persist_fill_report(
         await _sync_terminal_status_if_any(report, session_factory=session_factory)
         return
 
+    # One session spans resolution AND the append/commit, removing the TOCTOU
+    # window between resolving attribution and writing the event/fill rows (B4).
     async with session_factory() as db:
         attribution = await _resolve_attribution(db, report)
-
-    if attribution is None:
-        # No link AND no order-row projection cache — a genuinely out-of-band /
-        # manually-placed order. Park it on the queue and alert once.
-        await _quarantine_unattributed_fill(report, session_factory=session_factory)
-        return
-
-    async with session_factory() as db:
+        if attribution is None:
+            # No link AND no resolvable+attributable order-row projection cache —
+            # a genuinely out-of-band fill, or a native-bracket child whose
+            # position→thesis edge has not committed yet (B1). Quarantine it; the
+            # drain retries an order that later resolves.
+            await _quarantine_unattributed_fill(report, session_factory=session_factory)
+            return
         await append_broker_event(db, _fill_event_record(report, attribution))
         if attribution.oms_order_id is not None:
             if attribution.oms_order_id != record.order_id:
                 # Re-derive so ``order_id`` + ``fill_id`` reflect the resolved PK.
                 record = fill_report_to_fill_record(report, oms_order_id=attribution.oms_order_id)
-            if record is not None:
-                if enrichment_callable is not None:
-                    record = await enrichment_callable(record)
-                await append_fill_record(db, record)
+            # ``record`` is non-None here: only fill-bearing reports reach this
+            # block, and the re-derive preserves that (same fill-bearing report).
+            assert record is not None
+            if enrichment_callable is not None:
+                record = await enrichment_callable(record)
+            await append_fill_record(db, record)
         await db.commit()
 
 
@@ -203,21 +206,35 @@ async def _resolve_attribution(db: AsyncSession, report: FillReport) -> _FillAtt
     The broker-carried link is the primary source (thesis + invocation); the
     order-row projection cache (ALP-746) is the fallback for a link-less
     native-bracket protective child (thesis + position via the order's position
-    edge, no invocation). Returns ``None`` only when neither resolves — a
-    genuinely out-of-band order.
+    edge, no invocation). Returns ``None`` — so the fill is quarantined to
+    ``unattributed_fills`` for the drain to retry — in two cases:
+
+    * neither a link nor a resolvable order row — a genuinely out-of-band order;
+    * the projection-cache path resolves an order row but BOTH its thesis_id and
+      position_id are still None (the order's position→thesis edge has not
+      committed yet, ALP-845/B1). A ``broker_event_log`` row is append-only and
+      never enriched, so landing one with a NULL link strands the fill forever —
+      treat it as not-yet-attributable and let the drain re-resolve it once the
+      edge commits.
     """
     link = _parse_broker_carried_link(report.client_order_id)
-    oms_order_id = await _resolve_oms_order_id(db, report)
     if link is not None:
+        # The linked path needs the thesis (from the link) and its position; the
+        # order-row resolution hop is only relevant on the projection-cache path.
         position_id = await _resolve_position_id_for_thesis(db, link.thesis_id)
         return _FillAttribution(
             thesis_id=link.thesis_id,
             invocation_id=link.invocation_id,
             position_id=position_id,
-            oms_order_id=oms_order_id,
+            oms_order_id=await _resolve_oms_order_id(db, report),
         )
+    oms_order_id = await _resolve_oms_order_id(db, report)
     if oms_order_id is not None:
         thesis_id, position_id = await _resolve_thesis_for_order(db, oms_order_id)
+        if thesis_id is None and position_id is None:
+            # Order resolves but its position→thesis edge is uncommitted — not
+            # yet attributable. Quarantine (return None); the drain retries.
+            return None
         return _FillAttribution(
             thesis_id=thesis_id,
             invocation_id=None,
@@ -251,9 +268,11 @@ async def _resolve_position_id_for_thesis(
 
     The broker-carried link names the thesis (*why*); the position is the
     thesis's one-to-one ``positions`` row (ADR-0002 § position→thesis Intent
-    edge). Optional enrichment: a fill arriving before the thesis row commits
+    edge). A linked fill arriving before the thesis's position row commits
     (genesis OPEN) leaves ``position_id`` NULL on the event-log row — the thesis
-    FK still attributes it, and the position fills in on a later read.
+    FK still attributes it, and the row STAYS NULL (append-only, never enriched,
+    ADR-0005). A read-time JOIN through ``theses → positions`` recovers the
+    position from the thesis FK; the column itself is not backfilled.
     """
     stmt = select(ThesisRow.position_id).where(ThesisRow.thesis_id == thesis_id)
     position_id = (await db.execute(stmt)).scalars().one_or_none()

@@ -1,10 +1,15 @@
 """Periodic fill-backfill backstop (ALP-763).
 
-A fast Phase-2 entry fill can be dropped / quarantined before its ``orders``
-row commits. The websocket disconnect-recovery
+A PM- or engine-originated fill self-attributes off its broker-carried link
+(ADR-0002), so it no longer depends on a committed ``orders`` row — the prior
+PM fast-fill race is closed. What this backstop now catches is the link-LESS
+native-bracket protective child: its ``client_order_id`` is Alpaca-generated, so
+it attributes only through the order-row projection cache, and a fill that
+arrives before that row's position→thesis edge commits is quarantined (B1) until
+the edge lands. The websocket disconnect-recovery
 (:func:`recover_missed_fills_since`) only runs on a websocket RECONNECT and
 keys its ``since`` off ``max(fill_records.fill_timestamp)`` — which, once a
-LATER fill lands, permanently excludes the earlier dropped fill.
+LATER fill lands, permanently excludes the earlier quarantined fill.
 
 This task is the backstop: a sweep that runs ON AN INTERVAL (no disconnect
 needed) with an INDEPENDENT, generous lookback bound (``now - lookback``,
