@@ -4,30 +4,41 @@ Each handler loads the open option ``PositionRow`` the lifecycle event refers to
 (matched by OCC symbol), runs the pure booking math
 (:mod:`alphamind.execution.account_activities.booking`), and persists the
 result: append the activity to ``broker_event_log`` (idempotent on
-``event_key``), book the realized PnL into ``thesis_pnl_ledger``, close the
+``event_key``) **carrying its realized-PnL delta on the payload**, close the
 option (no ``OPEN/0`` husk), and — for an assignment / exercise — open the
 resulting equity position at the strike with the option's thesis link (ADR-0002:
 the position→thesis Intent edge, never a parsed ``client_order_id``).
 
+The realized PnL is booked onto the **event log**, not directly into
+``thesis_pnl_ledger`` — per-thesis PnL is a *derived view* of the log, written
+solely by the 03c derivation
+(:func:`alphamind.execution.write_paths.thesis_pnl_ledger.rederive_thesis_pnl_ledger`,
+ADR-0005 single writer). So the handler stamps the realized-PnL delta
+(``realized_pnl_delta_usd``) onto the ``OPEXP`` / ``OPASN`` / ``OPEXC`` payload
+and the opened-equity cost basis (``cost_basis_delta_usd``) onto the paired
+``OPTRD`` payload; the derivation aggregates them with the fills into one
+coherent ledger (no double-count, invariant 3).
+
 The position/thesis link is resolved BEFORE the event-log append, so every
 event row — INCLUDING the paired ``OPTRD`` priced-equity leg — carries the
 resolved ``thesis_id`` / ``position_id`` in its INITIAL insert (no read-then-write
-backfill race). 03c's per-thesis PnL join reads the link off every row.
+backfill race). The 03c derivation reads the link off every row.
 
 All writes join the caller's open ``InvocationHandle`` transaction so the
-event-log append, the ledger booking, and the position transitions commit
-atomically (single-writer = pipeline, ADR-0005).
+event-log append and the position transitions commit atomically (single-writer =
+pipeline, ADR-0005).
 """
 
 from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from sqlalchemy import select
 
 from alphamind._kernel.ids import InvocationId, PositionId, ThesisId
-from alphamind._kernel.money import Money, money, signed_money
+from alphamind._kernel.money import Money
 from alphamind.execution.account_activities.booking import (
     book_assignment_or_exercise,
     book_expiry,
@@ -40,6 +51,7 @@ from alphamind.execution.account_activities.records import (
 from alphamind.execution.corporate_actions.handlers._shared import _persist_position_update
 from alphamind.execution.write_paths.broker_event_persistence import append_broker_event
 from alphamind.portfolio_state.records.positions import (
+    EquityPositionDetails,
     OptionsPositionDetails,
     PositionRecord,
     PositionStatus,
@@ -50,7 +62,6 @@ from alphamind.state.records_broker_event_log import BrokerEventRecord, BrokerEv
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.positions_codec import record_to_row, row_to_record
-from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
 
 
 def event_key_for(activity_id: str) -> str:
@@ -115,53 +126,21 @@ async def _find_open_option_position(
     return None
 
 
-async def _book_realized_pnl(
-    handle: InvocationHandle,
-    *,
-    thesis_id: str,
-    realized_pnl_usd: Money,
-) -> None:
-    """Accumulate *realized_pnl_usd* into the thesis's ``thesis_pnl_ledger`` row.
-
-    Reads the existing entry (if any) and adds — the ledger is a per-thesis
-    running total (single-writer = pipeline, ADR-0005). Cost basis is not
-    touched here; the per-thesis cost-basis derivation is story 03c's concern.
-    """
-    row = await handle.session.get(ThesisPnlLedgerRow, thesis_id)
-    now = datetime.now(UTC).isoformat()
-    if row is None:
-        handle.session.add(
-            ThesisPnlLedgerRow(
-                thesis_id=thesis_id,
-                realized_pnl_usd=realized_pnl_usd,
-                cost_basis_usd=money(0),
-                provenance_json=json.dumps({"source": "account_activities"}),
-                derived_from_invocation_id=handle.invocation_id,
-                updated_at=now,
-            )
-        )
-    else:
-        row.realized_pnl_usd = signed_money(row.realized_pnl_usd + realized_pnl_usd)
-        row.derived_from_invocation_id = handle.invocation_id
-        row.updated_at = now
-    await handle.session.flush()
-
-
 async def _persist_booking(
     handle: InvocationHandle,
     *,
     option_row: PositionRow,
     result: BookingResult,
 ) -> None:
-    """Persist a booking result: close the option, open the equity, book PnL."""
+    """Persist a booking result: close the option and open the resulting equity.
+
+    The realized PnL is **not** written to ``thesis_pnl_ledger`` here — it rides
+    the event-log payload (stamped at append time) and the 03c derivation
+    aggregates it into the ledger as the single writer (ADR-0005, invariant 3).
+    """
     _persist_position_update(option_row, result.closed_option)
     if result.opened_equity is not None:
         handle.session.add(record_to_row(result.opened_equity))
-    thesis_id = result.closed_option.thesis_id
-    if thesis_id is not None:
-        await _book_realized_pnl(
-            handle, thesis_id=thesis_id, realized_pnl_usd=result.realized_pnl_usd
-        )
     await handle.session.flush()
 
 
@@ -188,18 +167,24 @@ async def handle_expiry(handle: InvocationHandle, event: LifecycleEvent) -> None
         )
         raise ValueError(msg)
     option_row, option_record = found
+    # Compute the booking first (pure) so the realized-PnL delta can ride the
+    # event-log payload — the 03c derivation reproduces it from the log alone.
+    result = book_expiry(option_record)
     newly = await _append_lifecycle_event(
         handle,
         event_key=event_key_for(event.activity_id),
         event_type=BrokerEventType.OPEXP,
         position_id=option_record.position_id,
         thesis_id=option_record.thesis_id,
-        raw_payload={"activity_id": event.activity_id, "occ_symbol": event.occ_symbol},
+        raw_payload={
+            "activity_id": event.activity_id,
+            "occ_symbol": event.occ_symbol,
+            "realized_pnl_delta_usd": str(result.realized_pnl_usd),
+        },
         broker_timestamp=event.transaction_time,
     )
     if not newly:
         return
-    result = book_expiry(option_record)
     await _persist_booking(handle, option_row=option_row, result=result)
 
 
@@ -234,6 +219,14 @@ async def handle_assignment_or_exercise(handle: InvocationHandle, event: Lifecyc
         raise ValueError(msg)
     option_row, option_record = found
 
+    # Compute the booking first (pure) so the realized-PnL delta and the
+    # opened-equity cost basis can ride the OPASN/OPEXC and OPTRD payloads — the
+    # 03c derivation reproduces both from the log alone (invariant 3).
+    equity_position_id = PositionId(f"pos-eq-{event.activity_id}")
+    result = book_assignment_or_exercise(
+        option_record, event, equity_position_id=equity_position_id
+    )
+
     event_type = (
         BrokerEventType.OPASN
         if event.activity_type is LifecycleActivityType.OPASN
@@ -245,11 +238,17 @@ async def handle_assignment_or_exercise(handle: InvocationHandle, event: Lifecyc
         event_type=event_type,
         position_id=option_record.position_id,
         thesis_id=option_record.thesis_id,
-        raw_payload={"activity_id": event.activity_id, "occ_symbol": event.occ_symbol},
+        raw_payload={
+            "activity_id": event.activity_id,
+            "occ_symbol": event.occ_symbol,
+            "realized_pnl_delta_usd": str(result.realized_pnl_usd),
+        },
         broker_timestamp=event.transaction_time,
     )
     # The paired OPTRD is the second event-log row (the priced equity leg). It
-    # carries the SAME resolved thesis/position link as the OPASN/OPEXC row.
+    # carries the SAME resolved thesis/position link as the OPASN/OPEXC row, plus
+    # the opened-equity cost basis (qty x strike) so the derivation folds the
+    # strike economics into cost basis without double-counting the option PnL.
     await _append_lifecycle_event(
         handle,
         event_key=event_key_for(event.paired_trade.activity_id),
@@ -259,16 +258,29 @@ async def handle_assignment_or_exercise(handle: InvocationHandle, event: Lifecyc
         raw_payload={
             "activity_id": event.paired_trade.activity_id,
             "equity_symbol": event.paired_trade.equity_symbol,
+            "cost_basis_delta_usd": str(_equity_cost_basis(result)),
         },
         broker_timestamp=event.transaction_time,
     )
     if not newly:
         return
-    equity_position_id = PositionId(f"pos-eq-{event.activity_id}")
-    result = book_assignment_or_exercise(
-        option_record, event, equity_position_id=equity_position_id
-    )
     await _persist_booking(handle, option_row=option_row, result=result)
+
+
+def _equity_cost_basis(result: BookingResult) -> Money:
+    """Cost basis (qty x strike) of the equity leg an assignment / exercise opened.
+
+    The paired ``OPTRD`` event carries this so the 03c derivation folds the
+    strike economics into the thesis's cost basis from the log alone. Zero when
+    the booking opened no equity leg (it always does for an assignment / exercise).
+    """
+    equity = result.opened_equity
+    if equity is None or not isinstance(equity.details, EquityPositionDetails):
+        return Money(Decimal(0))
+    details = equity.details
+    return Money(
+        Decimal(str(details.share_count)) * Decimal(str(details.average_cost_basis_per_share))
+    )
 
 
 __all__ = [

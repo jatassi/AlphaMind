@@ -2,7 +2,7 @@
 
 Invariant 3 (ADR-0001 / ADR-0002): per-thesis realized PnL and cost basis are
 **Intent**, derivable from a thesis's :data:`broker_event_log` events **alone**
-(fills ∪ activities), never a join to a lose-able ``orders`` table and never
+(fills + activities), never a join to a lose-able ``orders`` table and never
 overwritten by a broker snapshot. :func:`derive_thesis_pnl` is the functional
 core — a pure, deterministic fold over the event records (plain values, no I/O):
 the same event set always yields the same figures. The imperative shell

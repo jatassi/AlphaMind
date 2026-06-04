@@ -3,7 +3,7 @@
 The imperative shell around the pure fold
 (:func:`alphamind.execution.position_model.thesis_pnl_derivation.derive_thesis_pnl`).
 It is the **sole writer** of ``thesis_pnl_ledger`` (ADR-0005, invariant 3):
-read a thesis's ``broker_event_log`` events (fills ∪ activities), fold them into
+read a thesis's ``broker_event_log`` events (fills + activities), fold them into
 realized PnL + cost basis, and upsert the ledger row — authored by the pipeline,
 never by a broker snapshot.
 

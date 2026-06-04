@@ -1,7 +1,7 @@
 """Pure per-thesis PnL/cost-basis derivation from the broker-event log (ALP-851).
 
 Invariant 3 (ADR-0001/0002): per-thesis realized PnL + cost basis reproduces
-from a thesis's ``broker_event_log`` events alone (fills ∪ activities), with no
+from a thesis's ``broker_event_log`` events alone (fills + activities), with no
 join to a lose-able ``orders`` table. The fold is pure and deterministic for a
 fixed event set — these tests pin that contract.
 """

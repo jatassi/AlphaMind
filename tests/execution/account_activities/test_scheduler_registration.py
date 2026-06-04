@@ -9,15 +9,12 @@ Alpaca client while tests / debug-e2e substitute a fake without monkey-patching.
 
 from __future__ import annotations
 
-from decimal import Decimal
-
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind.config.models.main import ExecutionMode
 from alphamind.execution.broker_adapter.queries import ActivitySnapshot
 from alphamind.scheduler.account_activities_poll import run_account_activities_poll
 from alphamind.state.tables.positions import PositionRow
-from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
 from tests.execution.account_activities.test_handlers import _OCC, _TXN, _seed_open_option
 from tests.execution.account_activities.test_poll import (
     FakeAccountActivitiesQueries,
@@ -64,12 +61,12 @@ async def test_scheduler_poll_runs_against_factory_source(
     assert result.activities_booked == 1
 
     async with factory() as sess:
+        # The scheduler seam drove the poll, which closed the option and booked
+        # the lifecycle event (the event-payload -premium delta is asserted in
+        # test_poll; the ledger is then derived from the log, story 03c).
         pos = await sess.get(PositionRow, "pos-1")
         assert pos is not None
         assert pos.status == "CLOSED"
-        ledger = await sess.get(ThesisPnlLedgerRow, "thesis-1")
-        assert ledger is not None
-        assert ledger.realized_pnl_usd == Decimal(-1250)
 
 
 async def test_scheduler_poll_advances_cursor_across_runs(

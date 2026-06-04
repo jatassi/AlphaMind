@@ -34,7 +34,6 @@ from alphamind.persistence.session import (
 from alphamind.state.records_broker_event_log import BrokerEventRecord, BrokerEventType
 from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
 from alphamind.state.tables.thesis_pnl_ledger_codec import row_to_record
-
 from tests.state._fk_substrate import (
     seed_position_cluster,
     stub_invocation_row,
