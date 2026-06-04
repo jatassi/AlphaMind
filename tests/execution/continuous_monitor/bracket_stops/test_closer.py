@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 
@@ -19,6 +20,7 @@ from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     CloseSubmissionResult,
     submit_options_bracket_close,
 )
+from alphamind.execution.oms.command_ids import parse_engine_command_id
 from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventGroup,
@@ -60,10 +62,14 @@ def _const_str(value: str):  # type: ignore[no-untyped-def]
     return _inner
 
 
+_OPTIONS_THESIS_ID = "THE-NVDA-0123456789abcdef0123456789abcdef"
+_STRATEGY_THESIS_ID = "THE-SPY-fedcba9876543210fedcba9876543210"
+
+
 def _options_position(*, position_id: str = "pos-1") -> PositionRecord:
     return PositionRecord(
         position_id=PositionId(position_id),
-        thesis_id=ThesisId("THESIS-1"),
+        thesis_id=ThesisId(_OPTIONS_THESIS_ID),
         bracket_id=BracketId("brk-1"),
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
@@ -138,7 +144,7 @@ def _strategy_position(*, position_id: str = "pos-st") -> PositionRecord:
     )
     return PositionRecord(
         position_id=PositionId(position_id),
-        thesis_id=ThesisId("THESIS-ST"),
+        thesis_id=ThesisId(_STRATEGY_THESIS_ID),
         bracket_id=BracketId("brk-st"),
         status=PositionStatus.OPEN,
         direction=None,
@@ -328,8 +334,11 @@ class TestSingleLegClose:
         entry = log.entries[0]
         assert entry.detail.exit_method is PositionExitMethod.TARGET_REACHED
 
-    async def test_client_order_id_engine_originated(self) -> None:
-        """Closer must use the engine-command-id pattern ``MON.<session>.<trigger>.0``."""
+    async def test_client_order_id_carries_thesis_and_invocation(self) -> None:
+        """The closer's engine client_order_id carries the broker-carried link
+        (ALP-844): the closed position's thesis (*why*) + the current invocation
+        (*when*) woven into the canonical ``MON.<session>.<trigger>.0`` id, so
+        the resulting Alpaca order self-attributes."""
         position = _options_position()
         submitter = FakeSubmitter()
         log = FakeActivityLog()
@@ -339,7 +348,7 @@ class TestSingleLegClose:
             trigger_reason=PositionExitMethod.STOP_TRIGGERED,
             submitter=submitter,
             activity_log=log.emit,
-            invocation_id_provider=_const_str("inv-001"),
+            invocation_id_provider=_const_str("inv-20260511T143000Z-aabbccdd"),
             monitor_session_id="mon-20260511T143000Z-aabbccdd",
             trigger_id=42,
             now=_NOW,
@@ -347,7 +356,35 @@ class TestSingleLegClose:
             realized_pnl_usd=-200.0,
         )
         client_order_id = submitter.options_calls[0][1]
-        assert client_order_id == "MON.mon-20260511T143000Z-aabbccdd.42.0"
+        components = parse_engine_command_id(client_order_id)
+        assert components.monitor_session_id == "mon-20260511T143000Z-aabbccdd"
+        assert components.trigger_id == 42
+        assert components.command_ordinal == 0
+        assert components.thesis_id == _OPTIONS_THESIS_ID
+        assert components.invocation_id == "20260511T143000Z-aabbccdd"
+
+    async def test_thesis_less_position_raises(self) -> None:
+        """A bracket-stop close on a position with no thesis_id raises rather
+        than minting a thesis-less engine client_order_id (ALP-844) — the
+        sentinel path the prior attempt introduced is gone."""
+        position = dataclasses.replace(_options_position(), thesis_id=None)
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+        with pytest.raises(ValueError, match="no thesis_id"):
+            await submit_options_bracket_close(
+                position=position,
+                bracket=_bracket(),
+                trigger_reason=PositionExitMethod.STOP_TRIGGERED,
+                submitter=submitter,
+                activity_log=log.emit,
+                invocation_id_provider=_const_str("inv-20260511T143000Z-aabbccdd"),
+                monitor_session_id="mon-20260511T143000Z-aabbccdd",
+                trigger_id=42,
+                now=_NOW,
+                estimated_exit_price=10.0,
+                realized_pnl_usd=-200.0,
+            )
+        assert submitter.options_calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +455,7 @@ class TestUnsupportedInstrument:
 
         equity = PositionRecord(
             position_id=PositionId("pos-eq"),
-            thesis_id=None,
+            thesis_id=ThesisId("THE-AAPL-0123456789abcdef0123456789abcdef"),
             bracket_id=BracketId("brk-eq"),
             status=PositionStatus.OPEN,
             direction=Direction.LONG,

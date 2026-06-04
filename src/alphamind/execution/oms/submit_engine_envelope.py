@@ -46,6 +46,7 @@ from alphamind._kernel.ids import (
     ClientOrderId,
     OrderId,
     PositionId,
+    ThesisId,
 )
 from alphamind.commands.engine_envelope import EngineEnvelope
 from alphamind.commands.submission_results import (
@@ -193,9 +194,18 @@ async def submit_engine_envelope(
 
     # Derive or validate the embedded command_id.
     if embedded.command_id is None:
+        # Broker-carried link (ALP-844): the derived engine command id carries
+        # the closed position's thesis (*why*) + this invocation's id (*when*),
+        # so the resulting Alpaca order self-attributes end-to-end. The thesis
+        # is read off the targeted position record; the invocation is the OMS
+        # invocation handle's id (the engine envelope itself carries
+        # invocation_id=None by design — the *when* is the OMS write).
+        thesis_id = await _resolve_engine_close_thesis(handle, position_id=embedded.position_id)
         command_id = derive_engine_command_id(
             monitor_session_id=envelope_session,
             trigger_id=envelope_trigger,
+            thesis_id=thesis_id,
+            invocation_id=handle.invocation_id,
             command_ordinal=0,
         )
     else:
@@ -331,6 +341,39 @@ async def submit_engine_envelope(
         ),
         new_state,
     )
+
+
+# ---------------------------------------------------------------------------
+# Broker-carried link resolution (ALP-844)
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_engine_close_thesis(
+    handle: InvocationHandle, *, position_id: PositionId
+) -> ThesisId:
+    """Read the originating thesis FK off the engine-close's target position.
+
+    The engine envelope carries only ``position_id``; its broker-carried link
+    (ALP-844) reaches the thesis through the position→thesis Intent edge. A
+    monitor-fired close acts on an AlphaMind-managed position, which always
+    carries a thesis (ADR 0002); a missing position or a ``thesis_id is None``
+    is a structural error and raises :class:`ValueError` rather than minting a
+    thesis-less id.
+    """
+    from alphamind.state.tables.positions import PositionRow
+
+    pos_row = await handle.session.get(PositionRow, position_id)
+    if pos_row is None:
+        msg = f"engine CLOSE references missing position_id={position_id!r}"
+        raise ValueError(msg)
+    if pos_row.thesis_id is None:
+        msg = (
+            f"engine CLOSE on position_id={position_id!r} has no originating thesis_id; "
+            "an AlphaMind-managed position always carries a thesis (ADR 0002) — refusing "
+            "to derive a thesis-less engine command id."
+        )
+        raise ValueError(msg)
+    return ThesisId(pos_row.thesis_id)
 
 
 # ---------------------------------------------------------------------------

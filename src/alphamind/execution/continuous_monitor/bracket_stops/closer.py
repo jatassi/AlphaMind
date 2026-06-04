@@ -132,9 +132,15 @@ async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-ou
     the firing event.
     """
     del bracket  # bracket_id flows through trigger_id; leg_id is in the rationale
+    # Resolve the invocation once and weave it (with the position's thesis) into
+    # the engine client_order_id so the resulting Alpaca order self-attributes
+    # by thesis (*why*) + invocation (*when*) — the broker-carried link (ALP-844).
+    invocation_id = await invocation_id_provider()
     client_order_id_base = _build_engine_client_order_id(
         monitor_session_id=monitor_session_id,
         trigger_id=trigger_id,
+        position=position,
+        invocation_id=invocation_id,
     )
     details = position.details
     if isinstance(details, OptionsPositionDetails):
@@ -160,7 +166,7 @@ async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-ou
             position=position,
             order_ids=result.order_ids,
             trigger_reason=trigger_reason,
-            invocation_id=await invocation_id_provider(),
+            invocation_id=invocation_id,
             now=now,
             estimated_exit_price=estimated_exit_price,
             realized_pnl_usd=realized_pnl_usd,
@@ -169,19 +175,40 @@ async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-ou
     return result
 
 
-def _build_engine_client_order_id(*, monitor_session_id: str, trigger_id: int) -> str:
+def _build_engine_client_order_id(
+    *,
+    monitor_session_id: str,
+    trigger_id: int,
+    position: PositionRecord,
+    invocation_id: str,
+) -> str:
     """Derive the engine-originated client_order_id for a bracket-stop fire.
 
     Reuses :func:`alphamind.execution.oms.command_ids.derive_engine_command_id`
     so the produced ID is structurally identical to those the engine-envelope
     cascade dispatcher emits — single canonical pattern keyed off the live
-    monitor session and a per-trigger sequence.
+    monitor session and a per-trigger sequence — and carries the broker-carried
+    link (ALP-844): the closed position's ``thesis_id`` (*why*) plus the current
+    ``invocation_id`` (*when*), so the resulting Alpaca order self-attributes.
+
+    A bracket-stop fires on an AlphaMind-managed position, which always carries
+    a thesis; a ``thesis_id is None`` is a structural error and raises
+    :class:`ValueError` rather than minting a thesis-less id.
     """
     from alphamind.execution.oms.command_ids import derive_engine_command_id
 
+    if position.thesis_id is None:
+        msg = (
+            f"bracket-stop close on position_id={position.position_id!r} has no thesis_id; "
+            "an AlphaMind-managed position always carries a thesis (ADR 0002) — refusing "
+            "to derive a thesis-less engine client_order_id."
+        )
+        raise ValueError(msg)
     return derive_engine_command_id(
         monitor_session_id=monitor_session_id,
         trigger_id=trigger_id,
+        thesis_id=position.thesis_id,
+        invocation_id=invocation_id,
         command_ordinal=0,
     )
 

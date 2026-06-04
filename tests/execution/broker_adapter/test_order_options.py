@@ -76,7 +76,9 @@ from alphamind.portfolio_state.records.positions import OptionContractType
 # ---------------------------------------------------------------------------
 
 
-_VALID_PM_COMMAND_ID = "inv-2026-04-23T14-30Z.ENV-REC-1.1.1"
+_VALID_PM_COMMAND_ID = (
+    "inv-2026-04-23T14-30Z.ENV-REC-1.1.1~the-THE-NVDA-0123456789abcdef0123456789abcdef"
+)
 
 
 def _execution_config(window_seconds: int = 30) -> ExecutionConfig:
@@ -814,8 +816,8 @@ async def test_submit_options_open_rejects_malformed_client_order_id(bad_id: str
 @pytest.mark.parametrize(
     "good_id",
     [
-        "inv-2026-04-23T14-30Z.ENV-REC-1.1.1",
-        "MON.NVDA.42.7",
+        "inv-2026-04-23T14-30Z.ENV-REC-1.1.1~the-THE-NVDA-0123456789abcdef0123456789abcdef",
+        "MON.NVDA.42.7~the-THE-NVDA-fedcba9876543210fedcba9876543210~inv-X",
     ],
 )
 @pytest.mark.asyncio

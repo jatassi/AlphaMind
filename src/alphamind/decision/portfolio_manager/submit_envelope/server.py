@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 from pydantic import ValidationError
 
-from alphamind._kernel.ids import CommandId, EnvelopeId
+from alphamind._kernel.ids import CommandId, EnvelopeId, ThesisId
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.commands.pm_envelope import PMEnvelope
 from alphamind.commands.protocols import BrokerDispatch
@@ -36,6 +36,7 @@ from alphamind.decision.portfolio_manager.submit_envelope.persist import (
     _persist_envelope_rejection_via_phase2,
 )
 from alphamind.decision.portfolio_manager.submit_envelope.process import (
+    OrderThesisLookup,
     PositionLookup,
     _build_envelope_level_rejection,
     _format_first_error,
@@ -426,6 +427,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
         state=state,
         sector_resolver=sector_resolver,
         position_lookup=_build_position_lookup(pm_view),
+        order_thesis_lookup=_build_order_thesis_lookup(pm_view),
     )
 
     # Step 4: optionally re-price enter-now entries + route accepted commands
@@ -659,10 +661,28 @@ def _build_position_lookup(pm_view: PortfolioManagerView) -> PositionLookup:
     return positions_by_id.get
 
 
+def _build_order_thesis_lookup(pm_view: PortfolioManagerView) -> OrderThesisLookup:
+    """Build an ``order_id`` → originating-thesis FK lookup for CANCEL routing.
+
+    A CANCEL carries only an ``order_id``; its broker-carried link (ALP-844)
+    needs the originating thesis off the targeted pending order. Scans the PM
+    view's per-position ``pending_orders`` — the same scope the LLM sees — so a
+    CANCEL against an order outside that view resolves to ``None`` and the
+    derive site raises rather than minting a thesis-less id.
+    """
+    thesis_by_order_id: dict[str, ThesisId] = {}
+    for view in pm_view.positions:
+        for order in view.pending_orders:
+            if order.originating_thesis_id is not None:
+                thesis_by_order_id[order.order_id] = order.originating_thesis_id
+    return thesis_by_order_id.get
+
+
 __all__ = [
     "_SERVER_NAME",
     "_SUBMIT_ENVELOPE_INPUT_SCHEMA",
     "_TOOL_NAME",
+    "_build_order_thesis_lookup",
     "_build_position_lookup",
     "_handle_submit_envelope",
     "build_submit_envelope_mcp_server",

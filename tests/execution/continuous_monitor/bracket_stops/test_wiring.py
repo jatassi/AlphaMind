@@ -85,7 +85,7 @@ class _FakeOrder:
 
     def __init__(self) -> None:
         self.id = "alpaca-mleg-bracket-1"
-        self.client_order_id = "MON.session.1.0"
+        self.client_order_id = "MON.session.1.0~the-THE-SPY-0123456789abcdef0123456789abcdef~inv-X"
         self.status = _FakeEnum("accepted")
         self.order_class = _FakeEnum("mleg")
         self.legs: Any = None
@@ -191,7 +191,7 @@ async def test_bracket_strategy_close_submits_close_side_legs() -> None:
     result = await submitter.submit_strategy_close(
         position=position,
         details=position.details,
-        client_order_id_base="MON.session.1.0",
+        client_order_id_base="MON.session.1.0~the-THE-SPY-0123456789abcdef0123456789abcdef~inv-X",
     )
 
     assert result.mode == "strategy_combined"
@@ -220,7 +220,7 @@ async def test_bracket_strategy_close_leg_without_direction_raises() -> None:
         await submitter.submit_strategy_close(
             position=position,
             details=position.details,
-            client_order_id_base="MON.session.1.0",
+            client_order_id_base="MON.session.1.0~the-THE-SPY-0123456789abcdef0123456789abcdef~inv-X",
         )
 
 
@@ -244,5 +244,5 @@ async def test_per_leg_fallback_requires_explicit_leg_direction() -> None:
         await submitter._per_leg_fallback(
             position=position,
             details=position.details,
-            client_order_id_base="MON.session.1.0",
+            client_order_id_base="MON.session.1.0~the-THE-SPY-0123456789abcdef0123456789abcdef~inv-X",
         )
