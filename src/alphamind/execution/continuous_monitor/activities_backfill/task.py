@@ -15,14 +15,16 @@ It REUSES the tested primitives rather than inventing a parallel translator:
 
 * :func:`recover_missed_fills_since` (ALP-389) — the get_orders → OrderSnapshot
   → FillReport recovery routine;
-* :func:`persist_fill_report` (the shared persist entry) — resolve → append OR
-  quarantine, never drops (``retry_resolve=False`` here: no per-fill retry);
+* :func:`persist_fill_report` (the shared persist entry) — self-attribute via
+  the broker-carried link → append to the event log (+ ``fill_records`` when an
+  order row resolves), only quarantining a genuinely out-of-band fill; never
+  drops;
 * :func:`drain_unattributed_fills` — integrate any queued fill whose order row
   now exists.
 
-``append_fill_record``'s dedupe makes re-feeding an already-persisted fill a
-no-op, so the generous lookback window costs only redundant reads, never
-duplicate rows.
+The event-log + ``fill_records`` idempotency (``event_key`` / dedupe key) makes
+re-feeding an already-captured fill a no-op, so the generous lookback window
+costs only redundant reads, never duplicate rows.
 
 The loop owns the run-forever lifecycle: a sweep error logs and continues to
 the next interval (matching the reconnect-supervisor tolerance in the fill

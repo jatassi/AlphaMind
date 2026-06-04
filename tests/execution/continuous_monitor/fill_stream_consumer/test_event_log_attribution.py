@@ -41,6 +41,7 @@ from alphamind._kernel.ids import (
     PositionId,
     ThesisId,
 )
+from alphamind.execution.broker_adapter import FillReport
 from alphamind.execution.broker_adapter.fill_stream import translate_trade_update
 from alphamind.execution.continuous_monitor.fill_stream_consumer.persistence import (
     persist_fill_report,
@@ -126,7 +127,7 @@ def _fill_report(
     qty: float | None = 1.0,
     event: str = "fill",
     timestamp: datetime | None = None,
-):
+) -> FillReport:
     reports = translate_trade_update(
         TradeUpdate(
             event=event,
@@ -207,12 +208,15 @@ class TestSelfAttribution:
     ) -> None:
         """A PM-originated fill whose ``client_order_id`` carries the link
         attributes to its thesis / invocation / position and appends a
-        ``broker_event_log`` row — with no ``orders`` row resolving it."""
+        ``broker_event_log`` row — with no ``orders`` row resolving it, and
+        without ever reaching the ``unattributed_fills`` strand path (AC 1 + 4)."""
+        from alphamind.execution.write_paths.unattributed_fill_persistence import (
+            list_unattributed_fills,
+        )
+
         report = _fill_report(client_order_id=_PM_LINKED_COMMAND_ID, order_id=uuid4())
 
-        await persist_fill_report(
-            report, session_factory=session_factory, enrichment_callable=None
-        )
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
 
         rows = await _read_event_log(session_factory)
         assert len(rows) == 1
@@ -221,6 +225,9 @@ class TestSelfAttribution:
         assert row.thesis_id == _THESIS_ID
         assert row.invocation_id == f"inv-{_INVOCATION_ID}"
         assert row.position_id == "pos-1"
+        # The strand path is unreachable for an AlphaMind-submitted (linked) fill.
+        async with session_factory() as session:
+            assert await list_unattributed_fills(session) == []
 
     async def test_engine_linked_fill_self_attributes(
         self, session_factory: async_sessionmaker[AsyncSession]
@@ -229,9 +236,7 @@ class TestSelfAttribution:
         through the same link parse — exercising the engine form, not just PM."""
         report = _fill_report(client_order_id=_ENGINE_LINKED_COMMAND_ID, order_id=uuid4())
 
-        await persist_fill_report(
-            report, session_factory=session_factory, enrichment_callable=None
-        )
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
 
         rows = await _read_event_log(session_factory)
         assert len(rows) == 1
@@ -277,9 +282,7 @@ class TestOutOfBandQuarantine:
 
         report = _fill_report(client_order_id="totally-out-of-band", order_id=uuid4())
 
-        await persist_fill_report(
-            report, session_factory=session_factory, enrichment_callable=None
-        )
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
 
         assert await _read_event_log(session_factory) == []
         async with session_factory() as session:
@@ -313,23 +316,3 @@ class TestOutOfBandQuarantine:
         # One row, alerted once — the re-park did not re-insert or re-alert.
         assert len(queued) == 1
         assert queued[0].retry_count == 0
-
-    async def test_alphamind_submitted_fill_never_quarantined(
-        self, session_factory: async_sessionmaker[AsyncSession]
-    ) -> None:
-        """A linked (AlphaMind-submitted) fill with no ``orders`` row present is
-        attributed via the link — the strand path is unreachable for it."""
-        from alphamind.execution.write_paths.unattributed_fill_persistence import (
-            list_unattributed_fills,
-        )
-
-        report = _fill_report(client_order_id=_PM_LINKED_COMMAND_ID, order_id=uuid4())
-
-        await persist_fill_report(
-            report, session_factory=session_factory, enrichment_callable=None
-        )
-
-        async with session_factory() as session:
-            queued = await list_unattributed_fills(session)
-        assert queued == []
-        assert len(await _read_event_log(session_factory)) == 1

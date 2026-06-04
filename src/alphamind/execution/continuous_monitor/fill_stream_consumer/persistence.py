@@ -189,9 +189,7 @@ async def persist_fill_report(
         if attribution.oms_order_id is not None:
             if attribution.oms_order_id != record.order_id:
                 # Re-derive so ``order_id`` + ``fill_id`` reflect the resolved PK.
-                record = fill_report_to_fill_record(
-                    report, oms_order_id=attribution.oms_order_id
-                )
+                record = fill_report_to_fill_record(report, oms_order_id=attribution.oms_order_id)
             if record is not None:
                 if enrichment_callable is not None:
                     record = await enrichment_callable(record)
