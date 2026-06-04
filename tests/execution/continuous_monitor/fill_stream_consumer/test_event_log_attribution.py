@@ -125,18 +125,22 @@ def _fill_report(
     price: float | None = 189.42,
     qty: float | None = 1.0,
     event: str = "fill",
+    timestamp: datetime | None = None,
 ):
     reports = translate_trade_update(
         TradeUpdate(
             event=event,
             order=_build_order(client_order_id=client_order_id, order_id=order_id),
-            timestamp=_now_utc(),
+            timestamp=timestamp or _now_utc(),
             price=price,
             qty=qty,
         )
     )
     assert len(reports) == 1
     return reports[0]
+
+
+_FIXED_TS = datetime(2026, 6, 3, 14, 30, tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -217,3 +221,115 @@ class TestSelfAttribution:
         assert row.thesis_id == _THESIS_ID
         assert row.invocation_id == f"inv-{_INVOCATION_ID}"
         assert row.position_id == "pos-1"
+
+    async def test_engine_linked_fill_self_attributes(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """An engine-originated close fill (``MON.…~the-…~inv-…``) self-attributes
+        through the same link parse — exercising the engine form, not just PM."""
+        report = _fill_report(client_order_id=_ENGINE_LINKED_COMMAND_ID, order_id=uuid4())
+
+        await persist_fill_report(
+            report, session_factory=session_factory, enrichment_callable=None
+        )
+
+        rows = await _read_event_log(session_factory)
+        assert len(rows) == 1
+        (row,) = rows
+        assert row.thesis_id == _THESIS_ID
+        assert row.invocation_id == f"inv-{_INVOCATION_ID}"
+
+
+class TestEventLogIdempotency:
+    async def test_same_fill_delivered_twice_collapses_to_one_row(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """The same fill delivered twice (websocket + recovery replay) collapses
+        to one ``broker_event_log`` row, keyed on the ``event_key`` PK."""
+        order_uuid = uuid4()
+        first = _fill_report(
+            client_order_id=_PM_LINKED_COMMAND_ID, order_id=order_uuid, timestamp=_FIXED_TS
+        )
+        # A re-delivered copy of the SAME broker fact — same order UUID, price,
+        # qty, timestamp; its derived event_key is identical, so the insert
+        # collapses onto the existing row.
+        replay = _fill_report(
+            client_order_id=_PM_LINKED_COMMAND_ID, order_id=order_uuid, timestamp=_FIXED_TS
+        )
+
+        await persist_fill_report(first, session_factory=session_factory, enrichment_callable=None)
+        await persist_fill_report(replay, session_factory=session_factory, enrichment_callable=None)
+
+        rows = await _read_event_log(session_factory)
+        assert len(rows) == 1
+
+
+class TestOutOfBandQuarantine:
+    async def test_unlinked_fill_quarantined_and_not_in_event_log(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A fill whose ``client_order_id`` carries no parseable link (an
+        out-of-band / manually-placed order) is parked on ``unattributed_fills``
+        and alerted once — and never reaches ``broker_event_log``."""
+        from alphamind.execution.write_paths.unattributed_fill_persistence import (
+            list_unattributed_fills,
+        )
+
+        report = _fill_report(client_order_id="totally-out-of-band", order_id=uuid4())
+
+        await persist_fill_report(
+            report, session_factory=session_factory, enrichment_callable=None
+        )
+
+        assert await _read_event_log(session_factory) == []
+        async with session_factory() as session:
+            queued = await list_unattributed_fills(session)
+        assert len(queued) == 1
+        assert queued[0].alerted is True
+
+    async def test_redelivered_out_of_band_fill_does_not_realert(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A re-delivered copy of the same out-of-band fill collapses onto the
+        existing queue row (idempotent on ``broker_fill_key``) and does NOT
+        re-fire the one-time alert."""
+        from alphamind.execution.write_paths.unattributed_fill_persistence import (
+            list_unattributed_fills,
+        )
+
+        order_uuid = uuid4()
+        report = _fill_report(
+            client_order_id="totally-out-of-band", order_id=order_uuid, timestamp=_FIXED_TS
+        )
+        replay = _fill_report(
+            client_order_id="totally-out-of-band", order_id=order_uuid, timestamp=_FIXED_TS
+        )
+
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
+        await persist_fill_report(replay, session_factory=session_factory, enrichment_callable=None)
+
+        async with session_factory() as session:
+            queued = await list_unattributed_fills(session)
+        # One row, alerted once — the re-park did not re-insert or re-alert.
+        assert len(queued) == 1
+        assert queued[0].retry_count == 0
+
+    async def test_alphamind_submitted_fill_never_quarantined(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A linked (AlphaMind-submitted) fill with no ``orders`` row present is
+        attributed via the link — the strand path is unreachable for it."""
+        from alphamind.execution.write_paths.unattributed_fill_persistence import (
+            list_unattributed_fills,
+        )
+
+        report = _fill_report(client_order_id=_PM_LINKED_COMMAND_ID, order_id=uuid4())
+
+        await persist_fill_report(
+            report, session_factory=session_factory, enrichment_callable=None
+        )
+
+        async with session_factory() as session:
+            queued = await list_unattributed_fills(session)
+        assert queued == []
+        assert len(await _read_event_log(session_factory)) == 1

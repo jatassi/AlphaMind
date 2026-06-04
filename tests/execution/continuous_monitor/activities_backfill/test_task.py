@@ -358,43 +358,22 @@ class TestIdempotent:
 # ---------------------------------------------------------------------------
 
 
-class TestBackfillSkipsRetrySleep:
-    """ALP-763 #5 — the backfill calls the shared persist with
-    ``retry_resolve=False``, so an unresolved fill is quarantined IMMEDIATELY
-    without paying the live consumer's multi-second in-process retry sleep."""
+class TestBackfillQuarantinesOutOfBand:
+    """A backfill-recovered fill that carries no broker-carried link AND has no
+    local order row (a genuinely out-of-band / manually-placed order) is parked
+    on ``unattributed_fills`` — never dropped — by the shared persist path."""
 
-    async def test_unresolved_fill_quarantines_without_sleeping(
+    async def test_unresolved_out_of_band_fill_is_quarantined(
         self,
         session_factory: async_sessionmaker[AsyncSession],
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # A fill whose order row does NOT exist (the live consumer would retry
-        # with sleeps before giving up; the backfill must not).
+        # A fill with a link-less client_order_id and no local order row: there
+        # is nothing to self-attribute it to, so it is quarantined.
         entry_uuid = str(uuid4())
         queries = _FakeAccountStateQueries(
             snapshots=[
-                _order_snapshot(order_id=entry_uuid, client_order_id="inv.CMD-NOROW.0.0"),
+                _order_snapshot(order_id=entry_uuid, client_order_id="out-of-band-manual"),
             ]
-        )
-
-        from alphamind.execution.continuous_monitor.fill_stream_consumer.persistence import (
-            _RESOLVE_RETRY_DELAYS,
-        )
-
-        sleeps: list[float] = []
-        real_sleep = asyncio.sleep
-
-        async def recording_sleep(seconds: float) -> None:
-            sleeps.append(seconds)
-            # Preserve real yielding so the test's own poll loop still advances.
-            await real_sleep(0)
-
-        # The retry path lives in the shared persistence module; monkeypatching
-        # ``persistence.asyncio.sleep`` patches the asyncio module globally, so
-        # we filter for the retry-specific delays rather than any sleep.
-        monkeypatch.setattr(
-            "alphamind.execution.continuous_monitor.fill_stream_consumer.persistence.asyncio.sleep",
-            recording_sleep,
         )
 
         task = asyncio.create_task(
@@ -410,13 +389,10 @@ class TestBackfillSkipsRetrySleep:
         with pytest.raises(asyncio.CancelledError):
             await task
 
-        # Quarantined immediately, no fill row, and crucially NO retry sleeps:
-        # none of the recorded sleeps are the persistence retry delays.
         assert await _read_fill_records(session_factory) == []
         async with session_factory() as session:
             queued = await list_unattributed_fills(session)
         assert len(queued) == 1
-        assert not any(s in _RESOLVE_RETRY_DELAYS for s in sleeps)
 
 
 class TestDrainsQueue:

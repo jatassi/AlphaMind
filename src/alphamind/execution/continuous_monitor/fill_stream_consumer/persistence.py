@@ -57,6 +57,7 @@ from alphamind.execution.write_paths.unattributed_fill_persistence import (
 from alphamind.state.records import FillRecord, UnattributedFill
 from alphamind.state.records_broker_event_log import BrokerEventRecord, BrokerEventType
 from alphamind.state.tables.orders import OrderRow
+from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.theses import ThesisRow
 
 log = logging.getLogger(__name__)
@@ -102,6 +103,38 @@ def _parse_broker_carried_link(client_order_id: str) -> _BrokerCarriedLink | Non
     return None
 
 
+class _FillAttribution:
+    """The thesis/invocation/position a fill attributes to, plus its order PK.
+
+    Two resolution sources (ADR-0002):
+
+    * the **broker-carried link** parsed out of ``client_order_id`` — the primary
+      path, carrying both thesis (*why*) and invocation (*when*);
+    * the **order-row projection cache** (resolved by broker UUID / pre-committed
+      ``client_order_id``, ALP-746) — the path a native-bracket protective child
+      takes (Alpaca generates its link-less ``client_order_id``), attributing via
+      the order's position→thesis edge with no invocation.
+
+    ``oms_order_id`` is the local ``orders`` PK when one resolves (the optional
+    ``fill_records`` enrichment hop), else ``None``.
+    """
+
+    __slots__ = ("invocation_id", "oms_order_id", "position_id", "thesis_id")
+
+    def __init__(
+        self,
+        *,
+        thesis_id: ThesisId | None,
+        invocation_id: InvocationId | None,
+        position_id: PositionId | None,
+        oms_order_id: str | None,
+    ) -> None:
+        self.thesis_id = thesis_id
+        self.invocation_id = invocation_id
+        self.position_id = position_id
+        self.oms_order_id = oms_order_id
+
+
 async def persist_fill_report(
     report: FillReport,
     *,
@@ -110,22 +143,26 @@ async def persist_fill_report(
 ) -> None:
     """Self-attribute a single ``FillReport`` and persist it in its own transaction.
 
-    A fill-bearing report self-attributes by parsing the broker-carried link
-    (story 01b) out of its ``client_order_id``:
+    A fill-bearing report self-attributes (ADR-0002) and appends to the
+    append-only ``broker_event_log`` (idempotent on the ``event_key`` PK)
+    carrying the decoded ``thesis_id`` / ``invocation_id`` / ``position_id`` —
+    **no local ``orders`` row is required for attribution**:
 
-    * **Linked** (PM- or engine-originated) → append to ``broker_event_log``
-      (idempotent on ``event_key``) carrying the decoded ``thesis_id`` /
-      ``invocation_id`` / ``position_id`` — no ``orders`` row required. The order
-      row, if it resolves, is an optional projection cache that *also* yields a
-      ``fill_records`` row so Phase 1 integrates the fill.
-    * **No parseable link** (out-of-band / manually-placed order) → quarantine to
-      ``unattributed_fills`` and alert once. No AlphaMind-submitted fill reaches
-      this branch — the link always resolves it (ADR-0002).
+    * **Linked** (PM- or engine-originated ``client_order_id``) → thesis +
+      invocation come straight off the link; the position is the thesis's
+      ``positions`` row.
+    * **Order-row projection cache** (a link-less native-bracket protective
+      child) → thesis + position come off the resolved order's position edge;
+      invocation is ``NULL`` (no link carries the *when*).
+    * **Neither a link nor a resolvable order row** → a genuinely out-of-band /
+      manually-placed order → quarantine to ``unattributed_fills`` and alert once.
+      No AlphaMind-submitted fill reaches this branch (ADR-0002).
 
-    Paper-mode wiring (per ALP-528) injects ``enrichment_callable`` so each
-    translated :class:`FillRecord` is enriched with a ``live_execution_estimate``
-    before the ``fill_records`` append. Live mode passes ``None``; the column
-    persists as NULL and the hot path is unchanged.
+    When the ``orders`` row resolves it is *also* appended to ``fill_records`` so
+    Phase 1 integrates the fill. Paper-mode wiring (per ALP-528) injects
+    ``enrichment_callable`` so each translated :class:`FillRecord` is enriched
+    with a ``live_execution_estimate`` before that append; live mode passes
+    ``None`` and the column persists as NULL.
     """
     record = fill_report_to_fill_record(report)
     log.debug(
@@ -138,25 +175,23 @@ async def persist_fill_report(
         await _sync_terminal_status_if_any(report, session_factory=session_factory)
         return
 
-    link = _parse_broker_carried_link(report.client_order_id)
-    if link is None:
-        # No broker-carried link — a genuinely out-of-band / manually-placed
-        # order. Park it on the queue and alert once; an AlphaMind-submitted
-        # fill never reaches here (its link always parses).
+    async with session_factory() as db:
+        attribution = await _resolve_attribution(db, report)
+
+    if attribution is None:
+        # No link AND no order-row projection cache — a genuinely out-of-band /
+        # manually-placed order. Park it on the queue and alert once.
         await _quarantine_unattributed_fill(report, session_factory=session_factory)
         return
 
-    # Self-attribute via the link: append the broker-fact to the event log with
-    # the decoded thesis/invocation, the position resolved off the thesis edge.
-    # The ``orders`` row is optional — only an enrichment hop for ``fill_records``.
     async with session_factory() as db:
-        position_id = await _resolve_position_id(db, link.thesis_id)
-        await append_broker_event(db, _fill_event_record(report, link, position_id))
-        oms_order_id = await _resolve_oms_order_id(db, report)
-        if oms_order_id is not None:
-            if oms_order_id != record.order_id:
+        await append_broker_event(db, _fill_event_record(report, attribution))
+        if attribution.oms_order_id is not None:
+            if attribution.oms_order_id != record.order_id:
                 # Re-derive so ``order_id`` + ``fill_id`` reflect the resolved PK.
-                record = fill_report_to_fill_record(report, oms_order_id=oms_order_id)
+                record = fill_report_to_fill_record(
+                    report, oms_order_id=attribution.oms_order_id
+                )
             if record is not None:
                 if enrichment_callable is not None:
                     record = await enrichment_callable(record)
@@ -164,36 +199,94 @@ async def persist_fill_report(
         await db.commit()
 
 
+async def _resolve_attribution(db: AsyncSession, report: FillReport) -> _FillAttribution | None:
+    """Resolve the thesis/invocation/position a fill attributes to, or ``None``.
+
+    The broker-carried link is the primary source (thesis + invocation); the
+    order-row projection cache (ALP-746) is the fallback for a link-less
+    native-bracket protective child (thesis + position via the order's position
+    edge, no invocation). Returns ``None`` only when neither resolves — a
+    genuinely out-of-band order.
+    """
+    link = _parse_broker_carried_link(report.client_order_id)
+    oms_order_id = await _resolve_oms_order_id(db, report)
+    if link is not None:
+        position_id = await _resolve_position_id_for_thesis(db, link.thesis_id)
+        return _FillAttribution(
+            thesis_id=link.thesis_id,
+            invocation_id=link.invocation_id,
+            position_id=position_id,
+            oms_order_id=oms_order_id,
+        )
+    if oms_order_id is not None:
+        thesis_id, position_id = await _resolve_thesis_for_order(db, oms_order_id)
+        return _FillAttribution(
+            thesis_id=thesis_id,
+            invocation_id=None,
+            position_id=position_id,
+            oms_order_id=oms_order_id,
+        )
+    return None
+
+
 def _fill_event_record(
     report: FillReport,
-    link: _BrokerCarriedLink,
-    position_id: PositionId | None,
+    attribution: _FillAttribution,
 ) -> BrokerEventRecord:
     """Project a self-attributed fill into its append-only event-log record."""
     return BrokerEventRecord(
         event_key=derive_broker_event_key(report),
         event_type=BrokerEventType.FILL,
-        thesis_id=link.thesis_id,
-        invocation_id=link.invocation_id,
-        position_id=position_id,
+        thesis_id=attribution.thesis_id,
+        invocation_id=attribution.invocation_id,
+        position_id=attribution.position_id,
         raw_payload_json=report.model_dump_json(),
         broker_timestamp=report.fill_timestamp,
         captured_at=datetime.now(UTC),
     )
 
 
-async def _resolve_position_id(db: AsyncSession, thesis_id: ThesisId) -> PositionId | None:
-    """Resolve the ``position_id`` a fill attributes to off the thesis edge.
+async def _resolve_position_id_for_thesis(
+    db: AsyncSession, thesis_id: ThesisId
+) -> PositionId | None:
+    """Resolve the ``position_id`` a thesis owns (the thesis→position edge).
 
     The broker-carried link names the thesis (*why*); the position is the
     thesis's one-to-one ``positions`` row (ADR-0002 § position→thesis Intent
     edge). Optional enrichment: a fill arriving before the thesis row commits
-    (genesis OPEN) leaves ``position_id`` NULL on the event-log row — the
-    thesis FK still attributes it, and the position fills in on a later read.
+    (genesis OPEN) leaves ``position_id`` NULL on the event-log row — the thesis
+    FK still attributes it, and the position fills in on a later read.
     """
     stmt = select(ThesisRow.position_id).where(ThesisRow.thesis_id == thesis_id)
     position_id = (await db.execute(stmt)).scalars().one_or_none()
     return PositionId(position_id) if position_id is not None else None
+
+
+async def _resolve_thesis_for_order(
+    db: AsyncSession, oms_order_id: str
+) -> tuple[ThesisId | None, PositionId | None]:
+    """Resolve ``(thesis_id, position_id)`` off a resolved order's position edge.
+
+    The link-less native-bracket protective child attributes through the
+    projection cache: the order row's ``position_id`` names the position, whose
+    ``thesis_id`` names the thesis (ADR-0002). Either may be ``NULL`` on the
+    event-log row when the order row is not yet position-linked.
+    """
+    stmt = (
+        select(ThesisRow.thesis_id, OrderRow.position_id)
+        .select_from(OrderRow)
+        .outerjoin(PositionRow, OrderRow.position_id == PositionRow.position_id)
+        .outerjoin(ThesisRow, PositionRow.thesis_id == ThesisRow.thesis_id)
+        .where(OrderRow.order_id == oms_order_id)
+    )
+    row = (await db.execute(stmt)).one_or_none()
+    if row is None:
+        return None, None
+    thesis_id, position_id = row
+    return (
+        ThesisId(thesis_id) if thesis_id is not None else None,
+        PositionId(position_id) if position_id is not None else None,
+    )
 
 
 async def _quarantine_unattributed_fill(

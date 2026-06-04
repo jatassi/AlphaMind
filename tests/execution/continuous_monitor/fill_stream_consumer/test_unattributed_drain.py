@@ -283,49 +283,6 @@ class TestTrulyUnknownOrder:
         assert rows[0].live_execution_estimate_json is not None
 
 
-class TestRetryAbsorbsRace:
-    async def test_fill_persists_when_order_appears_within_retry_window(
-        self,
-        session_factory: async_sessionmaker[AsyncSession],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """If the order row appears within the short in-process retry window,
-        the fill persists straight to fill_records without ever queuing."""
-        entry_uuid = uuid4()
-        report = _fill_report(
-            order_id=entry_uuid,
-            client_order_id="inv-20260601.CMD-3.0.0",
-            price=150.0,
-            qty=1.0,
-        )
-
-        # Simulate the order row committing mid-retry: the first resolution
-        # attempt sees no row, then a "sleep" seeds it before the next attempt.
-        seeded = {"done": False}
-
-        async def fake_sleep(_seconds: float) -> None:
-            if not seeded["done"]:
-                await _seed_order_row_for(
-                    session_factory,
-                    order_id="ORD-RACE-1",
-                    alpaca_order_id=str(entry_uuid),
-                )
-                seeded["done"] = True
-
-        monkeypatch.setattr(
-            "alphamind.execution.continuous_monitor.fill_stream_consumer.persistence.asyncio.sleep",
-            fake_sleep,
-        )
-
-        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
-
-        rows = await _read_fill_records(session_factory)
-        assert len(rows) == 1
-        assert rows[0].order_id == "ORD-RACE-1"
-        async with session_factory() as session:
-            assert await list_unattributed_fills(session) == []
-
-
 class TestQuarantineAlertOnce:
     """ALP-763 #3 — the loud QUARANTINED warning + alerted mark fire exactly
     once, on the genuine first park, not on every re-delivery of the same
