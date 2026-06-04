@@ -117,16 +117,37 @@ def _fill_realized_delta(event: BrokerEventRecord, lot: _Lot) -> Decimal:
 def _activity_realized_delta(event: BrokerEventRecord, lot: _Lot) -> Decimal:
     """Apply an option-lifecycle activity; return its realized-PnL delta.
 
-    The activity carries its realized-PnL contribution
-    (``realized_pnl_delta_usd``) and any opened-equity cost basis
-    (``cost_basis_delta_usd``) on the payload, booked at capture time — so the
-    fold reproduces the figure from the log without re-deriving option math it
-    cannot see (the option's premium lives on the position, not the event).
+    Three activity shapes fold here, all reproducing their figures from the
+    payload (booked at capture time) without re-deriving option math the log
+    cannot see (the option's premium lives on the position, not the event):
+
+    * **OPEXP / OPASN / OPEXC** — the option-exit legs. They carry the
+      realized-PnL contribution (``realized_pnl_delta_usd``) AND the closed
+      option contract quantity (``closed_contract_qty``). The quantity closes
+      the option lot the buy FILL opened — without it the option would still
+      show as held (phantom cost basis, and a later equity sell mis-classified
+      as opening a short).
+    * **OPTRD** — the paired equity leg of an assignment / exercise. It carries
+      the opened-equity cost basis (``cost_basis_delta_usd``) and the equity
+      share count (``equity_qty``); together they open the equity lot at the
+      strike (avg cost = basis / qty) so a later equity sell closes it and the
+      cost basis releases. (An OPTRD without ``equity_qty`` falls back to an
+      unpriced external-basis addend — cleared on full close, FIX 3.)
     """
     payload = json.loads(event.raw_payload_json)
+
+    closed_qty = payload.get("closed_contract_qty")
+    if closed_qty is not None:
+        lot.close_quantity(Decimal(str(closed_qty)))
+
     cost_basis_delta = payload.get("cost_basis_delta_usd")
     if cost_basis_delta is not None:
-        lot.add_external_basis(Decimal(str(cost_basis_delta)))
+        equity_qty = payload.get("equity_qty")
+        if equity_qty is not None:
+            lot.open_priced_basis(Decimal(str(cost_basis_delta)), Decimal(str(equity_qty)))
+        else:
+            lot.add_external_basis(Decimal(str(cost_basis_delta)))
+
     realized = payload.get("realized_pnl_delta_usd")
     return Decimal(str(realized)) if realized is not None else DECIMAL_ZERO
 
@@ -201,15 +222,55 @@ class _Lot:
         realized = (price - self._avg_cost) * direction * closing_abs
         self._net_qty += signed_qty
         if self._net_qty == 0:
-            self._avg_cost = DECIMAL_ZERO
+            self._reset_to_flat()
         elif not _same_sign(self._net_qty, direction):
             # Flipped through zero: residual opens a fresh lot at the fill price.
             self._avg_cost = price
         return realized
 
+    def close_quantity(self, qty: Decimal) -> None:
+        """Close *qty* of the open lot with no realized PnL (a lifecycle exit).
+
+        An OPEXP / OPASN / OPEXC carries its realized PnL on the payload, so the
+        lot only needs to release the closed contracts: reduce the magnitude of
+        ``net_qty`` toward zero (clamped — never flipping sign), and reset the
+        lot to flat when it reaches zero (FIX 2 / FIX 3). The realized figure is
+        booked by the caller from the payload, not re-derived here.
+        """
+        if qty <= 0 or self._net_qty == 0:
+            return
+        close_abs = min(qty, abs(self._net_qty))
+        direction = Decimal(1) if self._net_qty > 0 else Decimal(-1)
+        self._net_qty -= direction * close_abs
+        if self._net_qty == 0:
+            self._reset_to_flat()
+
+    def open_priced_basis(self, basis: Decimal, qty: Decimal) -> None:
+        """Open a priced lot of *qty* shares whose total cost basis is *basis*.
+
+        The OPTRD equity leg of an assignment / exercise: ``qty`` shares enter
+        the lot at avg cost ``basis / qty`` (the strike), so a later equity sell
+        closes against them and the basis releases proportionally. Falls back to
+        an unpriced external addend only when ``qty`` is non-positive.
+        """
+        if qty <= 0:
+            self.add_external_basis(basis)
+            return
+        self.apply(qty, basis / qty)
+
     def add_external_basis(self, basis: Decimal) -> None:
-        """Add cost basis sourced outside the fill stream (an OPTRD equity leg)."""
+        """Add cost basis sourced outside the fill stream (an unpriced OPTRD leg)."""
         self._external_basis += basis
+
+    def _reset_to_flat(self) -> None:
+        """Return the lot to flat: no open quantity, no residual basis (FIX 3).
+
+        Clearing ``external_basis`` on a full close is what FIX 3 repairs — left
+        intact, ``cost_basis()`` would return a phantom non-zero basis for a
+        fully-exited thesis (``0 * 0 + external_basis``).
+        """
+        self._avg_cost = DECIMAL_ZERO
+        self._external_basis = DECIMAL_ZERO
 
     def cost_basis(self) -> Decimal:
         """Capital tied up in the still-open lot, plus any external basis."""

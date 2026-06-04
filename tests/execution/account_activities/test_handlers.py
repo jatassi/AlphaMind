@@ -111,10 +111,12 @@ async def test_expiry_closes_option_and_books_negative_premium_on_the_log(
         assert len(events) == 1
         assert events[0].event_type == "OPEXP"
         assert events[0].position_id == "pos-1"
-        # The realized-PnL delta rides the event payload so the 03c derivation
-        # reproduces it from the log alone.
+        # The realized-PnL delta AND the closed contract count ride the event
+        # payload so the 03c derivation reproduces the figure AND releases the
+        # option lot (closing the bought option) from the log alone.
         payload = json.loads(events[0].raw_payload_json)
         assert signed_money(payload["realized_pnl_delta_usd"]) == signed_money("-1250.00")
+        assert payload["closed_contract_qty"] == pytest.approx(5.0)
 
         # The handler does NOT write the ledger — that is the derivation's job.
         assert await sess.get(ThesisPnlLedgerRow, "thesis-1") is None
@@ -238,6 +240,11 @@ async def test_exercise_books_strike_pnl_and_opens_equity_leg(
         by_type = {e.event_type: json.loads(e.raw_payload_json) for e in events}
         assert signed_money(by_type["OPEXC"]["realized_pnl_delta_usd"]) == signed_money("-1250.00")
         assert money(by_type["OPTRD"]["cost_basis_delta_usd"]) == money("75000.00")
+        # The closed option contracts (OPEXC) and the opened equity share count
+        # (OPTRD) ride the payloads so the 03c fold closes the option lot and
+        # opens the equity lot at the strike — releasable by a later equity sell.
+        assert by_type["OPEXC"]["closed_contract_qty"] == pytest.approx(5.0)
+        assert by_type["OPTRD"]["equity_qty"] == pytest.approx(500.0)
         assert await sess.get(ThesisPnlLedgerRow, "thesis-1") is None
 
         stmt = select(PositionRow).where(PositionRow.status == "OPEN")

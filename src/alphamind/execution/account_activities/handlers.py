@@ -183,6 +183,10 @@ async def handle_expiry(handle: InvocationHandle, event: LifecycleEvent) -> None
             "activity_id": event.activity_id,
             "occ_symbol": event.occ_symbol,
             "realized_pnl_delta_usd": str(result.realized_pnl_usd),
+            # The closed contract count lets the 03c fold release the option lot
+            # the buy FILL opened — without it the expired option stays "held"
+            # (phantom cost basis).
+            "closed_contract_qty": event.qty,
         },
         broker_timestamp=event.transaction_time,
     )
@@ -257,13 +261,19 @@ async def handle_assignment_or_exercise(handle: InvocationHandle, event: Lifecyc
             "activity_id": event.activity_id,
             "occ_symbol": event.occ_symbol,
             "realized_pnl_delta_usd": str(result.realized_pnl_usd),
+            # The closed contract count lets the 03c fold release the option lot
+            # the buy FILL opened, so the assigned/exercised option does not
+            # linger in the equity leg's cost basis.
+            "closed_contract_qty": event.qty,
         },
         broker_timestamp=event.transaction_time,
     )
     # The paired OPTRD is the second event-log row (the priced equity leg). It
     # carries the SAME resolved thesis/position link as the OPASN/OPEXC row, plus
-    # the opened-equity cost basis (qty x strike) so the derivation folds the
-    # strike economics into cost basis without double-counting the option PnL.
+    # the opened-equity cost basis (qty x strike) AND the equity share count so
+    # the derivation opens the equity lot at the strike (avg cost = basis / qty)
+    # — a later equity sell then closes it and the basis releases — without
+    # double-counting the option PnL.
     await _append_lifecycle_event(
         handle,
         event_key=event_key_for(event.paired_trade.activity_id),
@@ -274,6 +284,7 @@ async def handle_assignment_or_exercise(handle: InvocationHandle, event: Lifecyc
             "activity_id": event.paired_trade.activity_id,
             "equity_symbol": event.paired_trade.equity_symbol,
             "cost_basis_delta_usd": str(_equity_cost_basis(result)),
+            "equity_qty": event.paired_trade.qty,
         },
         broker_timestamp=event.transaction_time,
     )

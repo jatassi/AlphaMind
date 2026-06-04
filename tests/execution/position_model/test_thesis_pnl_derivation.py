@@ -32,6 +32,8 @@ def _lifecycle_event(
     event_type: BrokerEventType,
     realized_pnl_delta_usd: str | None = None,
     cost_basis_delta_usd: str | None = None,
+    closed_contract_qty: float | None = None,
+    equity_qty: float | None = None,
     at_seconds: int = 0,
 ) -> BrokerEventRecord:
     payload: dict[str, object] = {"activity_id": event_key}
@@ -39,6 +41,10 @@ def _lifecycle_event(
         payload["realized_pnl_delta_usd"] = realized_pnl_delta_usd
     if cost_basis_delta_usd is not None:
         payload["cost_basis_delta_usd"] = cost_basis_delta_usd
+    if closed_contract_qty is not None:
+        payload["closed_contract_qty"] = closed_contract_qty
+    if equity_qty is not None:
+        payload["equity_qty"] = equity_qty
     return BrokerEventRecord(
         event_key=event_key,
         event_type=event_type,
@@ -95,9 +101,7 @@ def _rest_recovered_fill_event(
     return _fill_record(event_key, payload, at_seconds)
 
 
-def _fill_record(
-    event_key: str, payload: dict[str, object], at_seconds: int
-) -> BrokerEventRecord:
+def _fill_record(event_key: str, payload: dict[str, object], at_seconds: int) -> BrokerEventRecord:
     return BrokerEventRecord(
         event_key=event_key,
         event_type=BrokerEventType.FILL,
@@ -267,6 +271,98 @@ def test_assignment_optrd_contributes_equity_cost_basis() -> None:
 
     assert derivation.realized_pnl_usd == signed_money("-1250.00")
     assert derivation.cost_basis_usd == money("75000.00")
+
+
+def test_bought_option_fill_then_opexp_closes_the_lot() -> None:
+    """FIX 2: an option bought via a FILL is closed by its OPEXP lifecycle exit.
+
+    The buy fill opens the option lot (cost basis = contracts x premium). OPEXP
+    must close that lot — without it the option still shows as held: cost basis
+    stays non-zero (the phantom held option) even though it expired worthless.
+    """
+    events = (
+        # Buy 5 option contracts at 250/contract → 1250 cost basis.
+        _fill_event(event_key="opt-buy", side="buy", fill_price=250.0, fill_quantity=5.0),
+        _lifecycle_event(
+            event_key="activity:exp-1",
+            event_type=BrokerEventType.OPEXP,
+            realized_pnl_delta_usd="-1250.00",
+            closed_contract_qty=5.0,
+            at_seconds=60,
+        ),
+    )
+
+    derivation = derive_thesis_pnl(_THESIS, events)
+
+    # The option expired worthless: full premium lost, no remaining cost basis.
+    assert derivation.realized_pnl_usd == signed_money("-1250.00")
+    assert derivation.cost_basis_usd == money("0")
+
+
+def test_bought_option_fill_then_opasn_closes_option_and_opens_equity() -> None:
+    """FIX 2: an OPASN closes the bought-option lot AND opens the equity at strike.
+
+    Buy 5 contracts (1250 basis). On assignment the option closes (-premium) and
+    the paired OPTRD opens the equity leg at the strike — 500 shares x 150 =
+    75000 cost basis. The lingering option contracts must not survive into the
+    equity-leg cost basis, and the equity sell must later classify as a close.
+    """
+    events = (
+        _fill_event(event_key="opt-buy", side="buy", fill_price=250.0, fill_quantity=5.0),
+        _lifecycle_event(
+            event_key="activity:asn-1",
+            event_type=BrokerEventType.OPASN,
+            realized_pnl_delta_usd="-1250.00",
+            closed_contract_qty=5.0,
+            at_seconds=60,
+        ),
+        _lifecycle_event(
+            event_key="activity:trd-1",
+            event_type=BrokerEventType.OPTRD,
+            cost_basis_delta_usd="75000.00",
+            equity_qty=500.0,
+            at_seconds=61,
+        ),
+    )
+
+    derivation = derive_thesis_pnl(_THESIS, events)
+
+    assert derivation.realized_pnl_usd == signed_money("-1250.00")
+    # Only the equity leg's basis remains; the closed option contributes nothing.
+    assert derivation.cost_basis_usd == money("75000.00")
+
+
+def test_assigned_equity_fully_sold_clears_cost_basis() -> None:
+    """FIX 3: equity opened at strike by an assignment, fully sold, leaves no basis.
+
+    The OPTRD opens the equity leg at the strike (cost basis set). When the
+    equity is later fully sold, the lot fully closes — cost basis must return to
+    zero, not leave a phantom strike-priced basis behind.
+    """
+    events = (
+        _lifecycle_event(
+            event_key="activity:asn-1",
+            event_type=BrokerEventType.OPASN,
+            realized_pnl_delta_usd="-1250.00",
+            closed_contract_qty=5.0,
+        ),
+        _lifecycle_event(
+            event_key="activity:trd-1",
+            event_type=BrokerEventType.OPTRD,
+            cost_basis_delta_usd="75000.00",
+            equity_qty=500.0,
+            at_seconds=1,
+        ),
+        # Sell all 500 assigned shares at 160 → realizes (160-150)*500 = +5000.
+        _fill_event(
+            event_key="eq-sell", side="sell", fill_price=160.0, fill_quantity=500.0, at_seconds=60
+        ),
+    )
+
+    derivation = derive_thesis_pnl(_THESIS, events)
+
+    assert derivation.realized_pnl_usd == signed_money("3750.00")  # -1250 + 5000
+    assert derivation.cost_basis_usd == money("0")
 
 
 def test_derivation_is_deterministic_for_a_fixed_event_set() -> None:
