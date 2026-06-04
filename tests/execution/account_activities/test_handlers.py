@@ -318,8 +318,10 @@ async def test_repoll_reappends_optrd_after_crash_window(
         assert option is not None
         assert option.status == "CLOSED"
         equities = (
-            await sess.execute(select(PositionRow).where(PositionRow.status == "OPEN"))
-        ).scalars().all()
+            (await sess.execute(select(PositionRow).where(PositionRow.status == "OPEN")))
+            .scalars()
+            .all()
+        )
         assert len(equities) == 1
 
     # The derivation now folds the equity cost basis it would have lost.
