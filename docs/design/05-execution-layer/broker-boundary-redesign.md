@@ -37,7 +37,7 @@ floor under every exit, and gives every fact one writer.
 ## 3. Current-state touchpoints (what changes)
 
 - Attribution / ids: `oms/command_ids.py`, `oms/broker_dispatch.py`, `broker_adapter/order_{equity,options,mleg}.py`, `decision/portfolio_manager/submit_envelope/`.
-- Capture: `continuous_monitor/fill_stream_consumer/persistence.py` (`_resolve_oms_order_id`, `_quarantine_unattributed_fill`), `continuous_monitor/activities_backfill/`, `broker_adapter/queries.py` (`get_account_activities:491` — **dead, to wire**; `get_orders`, `get_positions`, `get_account`), `corporate_actions/fetcher.py` (OPASN/OPEXC/WorthlessRemoval unhandled).
+- Capture: `continuous_monitor/fill_stream_consumer/persistence.py` (`_resolve_oms_order_id`, `_quarantine_unattributed_fill`), `continuous_monitor/activities_backfill/`, `broker_adapter/queries.py` (`get_account_activities:491` — **dead, to wire**; `get_orders`, `get_positions`, `get_account`), `corporate_actions/fetcher.py` (CA v1beta1 endpoint — `WorthlessRemoval`/`UnitSplit`/etc. unhandled). **`OPASN`/`OPEXC`/`OPEXP` are account-activities types, absent from the codebase entirely** (the activities endpoint is never polled).
 - Projection / reconcile: `corporate_actions/reconciliation.py` (**delete the adjudication path**), `execution/write_paths/phase1.py` (`process_unprocessed_fills`), `scheduler/phase1_inputs.py`, `scheduler/orchestrator.py`.
 - Brackets: `write_paths/phase2/_shared.py:305` (**remove `alp-{order_id}` synthetic id**), `write_paths/phase2/open.py`, `continuous_monitor/bracket_stops/`, `state/tables/{brackets,bracket_legs}.py`.
 - Monitor / writers: `continuous_monitor/{__main__,supervisor}.py`, `continuous_monitor/{breach_loop,greeks_refresh,borrow_accrual,emergency_trigger}/`, `persistence/session.py` (`BEGIN IMMEDIATE`/retry → cheap insurance).
@@ -218,3 +218,24 @@ All six §4 invariants hold under test; the genesis-cutover runbook executes cle
 fresh account; first live week produces zero husks, zero `BUSY_SNAPSHOT` aborts, and no
 silent monitor wedge (a frozen monitor leaves positions broker-protected and is restarted
 by the out-of-process watchdog).
+
+## 10. Current-state claim verification (2026-06-03)
+
+The current-code assertions in §3/§4 were adversarially verified against post-merge `main`
+(ALP-824 #292 and ALP-836 #300 both merged) by four independent verifiers. All
+load-bearing claims **confirmed**: the husk mechanism (dead `get_account_activities`, no
+expiry/assignment handler, `_reconcile_options` drift-to-zero booking no PnL), the
+synthetic-`alp-` mint (`_shared.py:305`), the **unguarded ALP-837 cancel path** (`_is_synthetic`
+guard present only in `entry_window/canceller.py`, absent in `broker_dispatch.py`), the
+bare-sync `get_orders` on the event loop (`queries.py:480`) with the watchdog on the same
+loop, the monitor as a second writer (greeks RMW on the positions row), and the
+single-writer doc claim it violates.
+
+Corrections folded in: `BEGIN IMMEDIATE` + retry is **no longer Phase-1-only** — ALP-836
+(#300) extended it to Phase-2 (`write_paths/phase2/atomic.py`), so the primitives manage
+contention on both phases (the redesign still removes the need). The post-#300 durable
+order row is a **required pre-condition** before broker submit (the broker-carried link is
+what *demotes* it to an optional cache). Only the **first** equity price-stop + take-profit
+are broker-native; secondary equity stops, all options legs, and time/event legs are
+monitor-enforced. `OPASN`/`OPEXC` are account-activities types absent from the codebase
+(not listed in `fetcher.py`, which is the CA endpoint).

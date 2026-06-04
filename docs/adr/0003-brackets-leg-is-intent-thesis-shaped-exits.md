@@ -20,9 +20,10 @@ Verified against Alpaca's current API: **no** bracket/OCO/OTO order classes on o
 A **protective leg is Intent** — never an order, never given a broker id (`alp-{…}` is
 deleted). Enforcement is a separately-typed binding:
 
-- **Broker-enforced** — an equity native bracket/OTO child, or an options
-  capital-protection `stop_limit`. Its execution is a Broker-Owned Fact; it survives a
-  monitor outage.
+- **Broker-enforced** — an equity native bracket/OTO child (Alpaca brackets exactly *one*
+  stop + one take-profit child — a *secondary* equity price-stop has no broker counterpart
+  and stays monitor-enforced), or an options capital-protection `stop_limit`. Its execution
+  is a Broker-Owned Fact; it survives a monitor outage.
 - **Monitor-enforced** — armed Intent with no broker order; the monitor watches the
   condition and, on fire, submits a *fresh self-attributing close*. "Cancel" is a local
   Intent state change, not a broker call.
