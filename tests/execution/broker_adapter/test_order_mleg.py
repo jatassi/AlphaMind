@@ -104,7 +104,7 @@ def _strategy_open_command(
     quantity: float = 1.0,
     entry_type: str = "market",
     limit_price: float | None = None,
-    command_id: str = "inv-test.ENV-SA-1.1.1",
+    command_id: str = "inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
 ) -> OpenCommand:
     """Build an OpenCommand carrying a StrategyInstrument."""
     if legs is None:
@@ -318,14 +318,16 @@ def test_mleg_leg_ack_is_frozen_dataclass() -> None:
 async def test_open_vertical_spread_constructs_mleg_request_with_two_legs() -> None:
     """A 2-leg vertical-spread OPEN produces an OrderClass.MLEG request."""
     command = _strategy_open_command(strategy_type="vertical_spread", legs=_vertical_spread_legs())
-    response = _fake_alpaca_order(client_order_id="inv-test.ENV-SA-1.1.1")
+    response = _fake_alpaca_order(
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"
+    )
     client = _CapturingClient(response=response)
 
     outcome = await submit_mleg_open(
         command,
         client=cast(Any, client),
         execution=_execution_config(),
-        client_order_id="inv-test.ENV-SA-1.1.1",
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
     )
 
     assert isinstance(outcome, Submitted)
@@ -333,7 +335,10 @@ async def test_open_vertical_spread_constructs_mleg_request_with_two_legs() -> N
     assert request is not None
     assert request.order_class == OrderClass.MLEG
     assert request.time_in_force == TimeInForce.DAY
-    assert request.client_order_id == "inv-test.ENV-SA-1.1.1"
+    assert (
+        request.client_order_id
+        == "inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"
+    )
     assert request.qty == 1.0
     assert request.legs is not None
     assert len(request.legs) == 2
@@ -370,7 +375,7 @@ async def test_open_more_than_four_legs_rejected_before_sdk_call() -> None:
             command,
             client=cast(Any, client),
             execution=_execution_config(),
-            client_order_id="inv-test.ENV-SA-1.1.1",
+            client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
         )
 
     assert client.captured_request is None  # SDK never called
@@ -487,14 +492,16 @@ async def test_open_constructs_each_named_strategy_type(
 ) -> None:
     """Each of the five named strategy types + custom builds an mleg request."""
     command = _strategy_open_command(strategy_type=strategy_type, legs=legs_factory())
-    response = _fake_alpaca_order(client_order_id="inv-test.ENV-SA-1.1.1")
+    response = _fake_alpaca_order(
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"
+    )
     client = _CapturingClient(response=response)
 
     outcome = await submit_mleg_open(
         command,
         client=cast(Any, client),
         execution=_execution_config(),
-        client_order_id="inv-test.ENV-SA-1.1.1",
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
     )
 
     assert isinstance(outcome, Submitted)
@@ -607,21 +614,23 @@ async def test_close_translates_close_side_legs_straight() -> None:
     """CLOSE submits the close-side legs it receives without re-inverting them."""
     close_legs = _close_legs_nvda_vertical()
     close_command = CloseCommand(
-        command_id=CommandId("inv-test.ENV-SA-1.1.1"),
+        command_id=CommandId("inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"),
         command_type="close",
         position_id=PositionId("pos-1"),
         quantity="all",
         order_type="market",
         close_rationale_type="target_reached",
     )
-    response = _fake_alpaca_order(client_order_id="inv-test.ENV-SA-1.1.1")
+    response = _fake_alpaca_order(
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"
+    )
     client = _CapturingClient(response=response)
 
     outcome = await submit_mleg_close(
         close_command,
         client=cast(Any, client),
         execution=_execution_config(),
-        client_order_id="inv-test.ENV-SA-1.1.1",
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
         close_legs=close_legs,
         strategy_type="vertical_spread",
         position_units=2.0,
@@ -663,7 +672,7 @@ async def test_close_rejects_non_close_position_intent() -> None:
         ),
     )
     close_command = CloseCommand(
-        command_id=CommandId("inv-test.ENV-SA-1.1.1"),
+        command_id=CommandId("inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"),
         command_type="close",
         position_id=PositionId("pos-1"),
         quantity=1.0,
@@ -677,7 +686,7 @@ async def test_close_rejects_non_close_position_intent() -> None:
             close_command,
             client=cast(Any, client),
             execution=_execution_config(),
-            client_order_id="inv-test.ENV-SA-1.1.1",
+            client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
             close_legs=open_side_legs,
             strategy_type="vertical_spread",
         )
@@ -701,7 +710,7 @@ async def test_close_with_multi_underlying_close_legs_rejected() -> None:
         ),
     )
     close_command = CloseCommand(
-        command_id=CommandId("inv-test.ENV-SA-1.1.1"),
+        command_id=CommandId("inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"),
         command_type="close",
         position_id=PositionId("pos-1"),
         quantity=1.0,
@@ -715,7 +724,7 @@ async def test_close_with_multi_underlying_close_legs_rejected() -> None:
             close_command,
             client=cast(Any, client),
             execution=_execution_config(),
-            client_order_id="inv-test.ENV-SA-1.1.1",
+            client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
             close_legs=close_legs,
             strategy_type="custom",
         )
@@ -726,7 +735,7 @@ async def test_close_with_limit_price_uses_limit_order_request() -> None:
     """Close with a net-credit limit price submits a LimitOrderRequest mleg."""
     close_legs = _close_legs_nvda_vertical()
     close_command = CloseCommand(
-        command_id=CommandId("inv-test.ENV-SA-1.1.1"),
+        command_id=CommandId("inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"),
         command_type="close",
         position_id=PositionId("pos-1"),
         quantity=1.0,
@@ -734,13 +743,17 @@ async def test_close_with_limit_price_uses_limit_order_request() -> None:
         limit_price=price(2.50),
         close_rationale_type="target_reached",
     )
-    client = _CapturingClient(response=_fake_alpaca_order(client_order_id="inv-test.ENV-SA-1.1.1"))
+    client = _CapturingClient(
+        response=_fake_alpaca_order(
+            client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"
+        )
+    )
 
     await submit_mleg_close(
         close_command,
         client=cast(Any, client),
         execution=_execution_config(),
-        client_order_id="inv-test.ENV-SA-1.1.1",
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
         close_legs=close_legs,
         strategy_type="vertical_spread",
     )
@@ -755,7 +768,7 @@ async def test_close_with_quantity_all_requires_position_units() -> None:
     """``quantity="all"`` without ``position_units`` raises ValueError."""
     close_legs = _close_legs_nvda_vertical()
     close_command = CloseCommand(
-        command_id=CommandId("inv-test.ENV-SA-1.1.1"),
+        command_id=CommandId("inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"),
         command_type="close",
         position_id=PositionId("pos-1"),
         quantity="all",
@@ -769,7 +782,7 @@ async def test_close_with_quantity_all_requires_position_units() -> None:
             close_command,
             client=cast(Any, client),
             execution=_execution_config(),
-            client_order_id="inv-test.ENV-SA-1.1.1",
+            client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
             close_legs=close_legs,
             strategy_type="vertical_spread",
         )
@@ -802,7 +815,7 @@ async def test_add_scales_ratios_by_additional_quantity_preserving_intent() -> N
         ),
     )
     add_command = AddCommand(
-        command_id=CommandId("inv-test.ENV-SA-1.1.1"),
+        command_id=CommandId("inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"),
         command_type="add",
         position_id=PositionId("pos-1"),
         additional_quantity=3.0,
@@ -816,14 +829,16 @@ async def test_add_scales_ratios_by_additional_quantity_preserving_intent() -> N
             key_assumptions=("x",),
         ),
     )
-    response = _fake_alpaca_order(client_order_id="inv-test.ENV-SA-1.1.1")
+    response = _fake_alpaca_order(
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"
+    )
     client = _CapturingClient(response=response)
 
     outcome = await submit_mleg_add(
         add_command,
         client=cast(Any, client),
         execution=_execution_config(),
-        client_order_id="inv-test.ENV-SA-1.1.1",
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
         open_legs=open_legs,
         strategy_type="vertical_spread",
     )
@@ -857,7 +872,7 @@ async def test_add_with_uneven_ratios_resimplifies() -> None:
         ),
     )
     add_command = AddCommand(
-        command_id=CommandId("inv-test.ENV-SA-1.1.1"),
+        command_id=CommandId("inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"),
         command_type="add",
         position_id=PositionId("pos-1"),
         additional_quantity=4.0,
@@ -871,14 +886,16 @@ async def test_add_with_uneven_ratios_resimplifies() -> None:
             key_assumptions=("x",),
         ),
     )
-    response = _fake_alpaca_order(client_order_id="inv-test.ENV-SA-1.1.1")
+    response = _fake_alpaca_order(
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"
+    )
     client = _CapturingClient(response=response)
 
     await submit_mleg_add(
         add_command,
         client=cast(Any, client),
         execution=_execution_config(),
-        client_order_id="inv-test.ENV-SA-1.1.1",
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
         open_legs=open_legs,
         strategy_type="vertical_spread",
     )
@@ -900,7 +917,9 @@ async def test_open_retries_on_transient_then_succeeds(
     monkeypatch.setattr("alphamind.execution.broker_adapter.retry.asyncio.sleep", fake_sleep)
 
     command = _strategy_open_command(legs=_vertical_spread_legs())
-    response = _fake_alpaca_order(client_order_id="inv-test.ENV-SA-1.1.1")
+    response = _fake_alpaca_order(
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"
+    )
 
     attempts = [0]
     captured: list[Any] = []
@@ -918,7 +937,7 @@ async def test_open_retries_on_transient_then_succeeds(
         command,
         client=cast(Any, _FlakyClient()),
         execution=_execution_config(window_seconds=10),
-        client_order_id="inv-test.ENV-SA-1.1.1",
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
     )
 
     assert isinstance(outcome, Submitted)
@@ -954,7 +973,7 @@ async def test_open_returns_gateway_failure_on_window_exhaustion(
         command,
         client=cast(Any, _AlwaysFailsClient()),
         execution=_execution_config(window_seconds=2),
-        client_order_id="inv-test.ENV-SA-1.1.1",
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
     )
 
     assert isinstance(outcome, GatewaySubmissionFailed)
@@ -973,7 +992,7 @@ async def test_open_invalid_legs_rejection_reraises_for_strategist_substitution(
             command,
             client=cast(Any, client),
             execution=_execution_config(),
-            client_order_id="inv-test.ENV-SA-1.1.1",
+            client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
         )
 
     # The raised exception's message identifies the offending leg index per
@@ -991,7 +1010,7 @@ async def test_open_invalid_legs_rejection_reraises_for_strategist_substitution(
 async def test_open_with_equity_instrument_raises_type_error() -> None:
     """Equity instrument routes to submit_equity_*; mleg path rejects."""
     equity_open = OpenCommand(
-        command_id=CommandId("inv-test.ENV-SA-1.1.1"),
+        command_id=CommandId("inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"),
         command_type="open",
         instrument=EquityInstrument(asset_type="equity", ticker=Symbol("NVDA"), direction="long"),
         entry_order=EntryOrder(type="market"),
@@ -1027,7 +1046,7 @@ async def test_open_with_equity_instrument_raises_type_error() -> None:
             equity_open,
             client=cast(Any, client),
             execution=_execution_config(),
-            client_order_id="inv-test.ENV-SA-1.1.1",
+            client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
         )
 
 
@@ -1035,7 +1054,7 @@ async def test_open_with_equity_instrument_raises_type_error() -> None:
 async def test_open_with_single_leg_option_instrument_raises_type_error() -> None:
     """Single-leg option routes to submit_options_*; mleg path rejects."""
     option_open = OpenCommand(
-        command_id=CommandId("inv-test.ENV-SA-1.1.1"),
+        command_id=CommandId("inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"),
         command_type="open",
         instrument=OptionInstrument(
             asset_type="option",
@@ -1078,7 +1097,7 @@ async def test_open_with_single_leg_option_instrument_raises_type_error() -> Non
             option_open,
             client=cast(Any, client),
             execution=_execution_config(),
-            client_order_id="inv-test.ENV-SA-1.1.1",
+            client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
         )
 
 
@@ -1107,13 +1126,17 @@ async def test_open_rejects_malformed_client_order_id(bad_id: str) -> None:
 async def test_open_constructs_occ_symbols_with_root_yymmdd_strike() -> None:
     """Each leg's OCC symbol encodes underlying + expiration + C/P + strike."""
     command = _strategy_open_command(underlying=Symbol("NVDA"), legs=_vertical_spread_legs())
-    client = _CapturingClient(response=_fake_alpaca_order(client_order_id="inv-test.ENV-SA-1.1.1"))
+    client = _CapturingClient(
+        response=_fake_alpaca_order(
+            client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"
+        )
+    )
 
     await submit_mleg_open(
         command,
         client=cast(Any, client),
         execution=_execution_config(),
-        client_order_id="inv-test.ENV-SA-1.1.1",
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
     )
 
     request = client.captured_request
@@ -1132,7 +1155,7 @@ async def test_open_returns_submitted_with_mleg_submission_payload() -> None:
     command = _strategy_open_command(legs=_vertical_spread_legs())
     response = _fake_alpaca_order(
         order_id=OrderId("alpaca-strategy-id-42"),
-        client_order_id="inv-test.ENV-SA-1.1.1",
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
         status="accepted",
     )
     client = _CapturingClient(response=response)
@@ -1141,14 +1164,17 @@ async def test_open_returns_submitted_with_mleg_submission_payload() -> None:
         command,
         client=cast(Any, client),
         execution=_execution_config(),
-        client_order_id="inv-test.ENV-SA-1.1.1",
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
     )
 
     assert isinstance(outcome, Submitted)
     payload = outcome.payload
     assert isinstance(payload, MLEGSubmission)
     assert payload.alpaca_order_id == "alpaca-strategy-id-42"
-    assert payload.client_order_id == "inv-test.ENV-SA-1.1.1"
+    assert (
+        payload.client_order_id
+        == "inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"
+    )
     assert payload.status == "accepted"
     assert payload.strategy_type == "vertical_spread"
     assert len(payload.legs) == 2
@@ -1163,13 +1189,17 @@ async def test_open_position_intent_per_leg_direction() -> None:
     """OPEN: long leg → buy_to_open, short leg → sell_to_open."""
     legs = _vertical_spread_legs()  # (long call, short call)
     command = _strategy_open_command(legs=legs)
-    client = _CapturingClient(response=_fake_alpaca_order(client_order_id="inv-test.ENV-SA-1.1.1"))
+    client = _CapturingClient(
+        response=_fake_alpaca_order(
+            client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"
+        )
+    )
 
     await submit_mleg_open(
         command,
         client=cast(Any, client),
         execution=_execution_config(),
-        client_order_id="inv-test.ENV-SA-1.1.1",
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
     )
 
     request = client.captured_request
@@ -1213,13 +1243,17 @@ async def test_open_simplifies_ratios_with_common_factor_two() -> None:
         ),
     )
     command = _strategy_open_command(strategy_type="custom", legs=legs)
-    client = _CapturingClient(response=_fake_alpaca_order(client_order_id="inv-test.ENV-SA-1.1.1"))
+    client = _CapturingClient(
+        response=_fake_alpaca_order(
+            client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"
+        )
+    )
 
     await submit_mleg_open(
         command,
         client=cast(Any, client),
         execution=_execution_config(),
-        client_order_id="inv-test.ENV-SA-1.1.1",
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
     )
 
     request = client.captured_request
@@ -1230,13 +1264,17 @@ async def test_open_simplifies_ratios_with_common_factor_two() -> None:
 async def test_open_simplifies_ratios_no_op_when_already_coprime() -> None:
     """Legs (1, 1) stay (1, 1) (gcd=1 already)."""
     command = _strategy_open_command(legs=_vertical_spread_legs())
-    client = _CapturingClient(response=_fake_alpaca_order(client_order_id="inv-test.ENV-SA-1.1.1"))
+    client = _CapturingClient(
+        response=_fake_alpaca_order(
+            client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"
+        )
+    )
 
     await submit_mleg_open(
         command,
         client=cast(Any, client),
         execution=_execution_config(),
-        client_order_id="inv-test.ENV-SA-1.1.1",
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
     )
 
     request = client.captured_request
@@ -1271,7 +1309,7 @@ async def test_open_empty_underlying_rejected() -> None:
             command,
             client=cast(Any, client),
             execution=_execution_config(),
-            client_order_id="inv-test.ENV-SA-1.1.1",
+            client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
         )
 
     assert client.captured_request is None
@@ -1281,14 +1319,16 @@ async def test_open_empty_underlying_rejected() -> None:
 async def test_open_iron_condor_constructs_four_legs() -> None:
     """A 4-leg iron-condor OPEN produces legs[] of length 4."""
     command = _strategy_open_command(strategy_type="iron_condor", legs=_iron_condor_legs())
-    response = _fake_alpaca_order(client_order_id="inv-test.ENV-SA-1.1.1")
+    response = _fake_alpaca_order(
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef"
+    )
     client = _CapturingClient(response=response)
 
     await submit_mleg_open(
         command,
         client=cast(Any, client),
         execution=_execution_config(),
-        client_order_id="inv-test.ENV-SA-1.1.1",
+        client_order_id="inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
     )
 
     request = client.captured_request

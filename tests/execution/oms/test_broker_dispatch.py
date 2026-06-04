@@ -90,7 +90,11 @@ from alphamind.execution.oms.broker_dispatch import (
 # Common fixture builders
 # ---------------------------------------------------------------------------
 
-_CLIENT_ORDER_ID = "inv-2026-05-09T09-30Z.ENV-REC-1.0.0"
+# A PM-originated client_order_id carrying the broker-carried link (ALP-844):
+# base id + the originating thesis FK.
+_CLIENT_ORDER_ID = (
+    "inv-2026-05-09T09-30Z.ENV-REC-1.0.0~the-THE-NVDA-0123456789abcdef0123456789abcdef"
+)
 
 
 def _execution_config() -> ExecutionConfig:
@@ -802,7 +806,9 @@ async def test_dispatch_engine_guardrail_close_routes_to_submit_equity_close() -
         client=client,
         queries=queries,
         execution=_execution_config(),
-        client_order_id=ClientOrderId("MON.session-abc.42.0"),
+        client_order_id=ClientOrderId(
+            "MON.session-abc.42.0~the-THE-AAPL-0123456789abcdef0123456789abcdef~inv-X"
+        ),
         position_symbol="AAPL",
         position_qty=10.0,
         position_side="long",

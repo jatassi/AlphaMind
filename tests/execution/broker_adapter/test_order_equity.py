@@ -71,8 +71,10 @@ from alphamind.execution.broker_adapter import (
 # Fixtures and helpers
 # ---------------------------------------------------------------------------
 
-_CLIENT_ORDER_ID_INV = "inv-2026-05-09T09-30Z.ENV-REC-1.0.0"
-_CLIENT_ORDER_ID_MON = "MON.sess-abc.42.0"
+_CLIENT_ORDER_ID_INV = (
+    "inv-2026-05-09T09-30Z.ENV-REC-1.0.0~the-THE-NVDA-0123456789abcdef0123456789abcdef"
+)
+_CLIENT_ORDER_ID_MON = "MON.sess-abc.42.0~the-THE-AAPL-fedcba9876543210fedcba9876543210~inv-X"
 
 
 def _make_execution_config() -> ExecutionConfig:
