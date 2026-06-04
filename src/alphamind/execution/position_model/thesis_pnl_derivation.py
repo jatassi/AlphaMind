@@ -86,9 +86,14 @@ def derive_thesis_pnl(
 def _ordered_for_thesis(
     thesis_id: ThesisId, events: tuple[BrokerEventRecord, ...]
 ) -> list[BrokerEventRecord]:
-    """The thesis's events, ordered by ``(broker_timestamp, captured_at)``."""
+    """The thesis's events, ordered by ``(broker_timestamp, captured_at, event_key)``.
+
+    The ``event_key`` tertiary key makes the order a total order independent of
+    the DB row order, so the fold is deterministic even when two events share a
+    timestamp (the ``broker_timestamp`` is broker-supplied and can collide).
+    """
     mine = [e for e in events if e.thesis_id == thesis_id]
-    mine.sort(key=lambda e: (e.broker_timestamp or e.captured_at, e.captured_at))
+    mine.sort(key=lambda e: (e.broker_timestamp or e.captured_at, e.captured_at, e.event_key))
     return mine
 
 
