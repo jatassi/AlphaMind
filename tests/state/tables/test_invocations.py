@@ -1,11 +1,14 @@
-"""Tests for _TRIGGER_SOURCES vocabulary and CHECK constraint in invocations table (ALP-718).
+"""Tests for _TRIGGER_SOURCES vocabulary and CHECK constraint in invocations table.
 
 Verifies that:
-- "borrow_accrual" is present in the _TRIGGER_SOURCES tuple.
-- An InvocationRow with trigger_source="borrow_accrual" can be inserted against an
+- ``continuous_monitor`` is present in the _TRIGGER_SOURCES tuple (not accidentally removed).
+- An InvocationRow with a known-good trigger_source can be inserted against an
   in-memory SQLite engine with the CHECK constraint active.
-- An InvocationRow with an unrecognized trigger_source still raises IntegrityError
-  (the new value did not loosen the constraint).
+- An InvocationRow with an unrecognized trigger_source raises IntegrityError
+  (the constraint is enforced).
+- ``borrow_accrual`` is NOT in _TRIGGER_SOURCES (story 04b relocated borrow accrual
+  into the pipeline Phase-1 write unit; it no longer mints its own InvocationRow —
+  ALP-842 CU4).
 """
 
 from __future__ import annotations
@@ -64,8 +67,8 @@ def _process_lifetime_kwargs(process_lifetime_id: str = "proc-1") -> dict[str, o
 
 
 def _invocation_kwargs(
-    trigger_source: str = "borrow_accrual",
-    invocation_id: str = "inv-borrow-accrual-001",
+    trigger_source: str = "continuous_monitor",
+    invocation_id: str = "inv-test-001",
     process_lifetime_id: str = "proc-1",
 ) -> dict[str, object]:
     return {
@@ -76,7 +79,7 @@ def _invocation_kwargs(
         "phase2_completed_at": None,
         "trigger_type": "scheduled",
         "trigger_source": trigger_source,
-        "trigger_reason": "borrow_accrual_tick",
+        "trigger_reason": "test_tick",
         "git_sha_at_invocation": "abcdef1234567890" * 2 + "abcd",
         "active_profile": "medium",
         "active_regime": "normal",
@@ -97,10 +100,11 @@ def _invocation_kwargs(
 class TestTriggerSourcesVocabulary:
     """Unit-level checks against the _TRIGGER_SOURCES tuple — no DB needed."""
 
-    def test_borrow_accrual_in_trigger_sources(self) -> None:
+    def test_borrow_accrual_not_in_trigger_sources(self) -> None:
+        """Story 04b relocated borrow accrual into the pipeline; source is dead (ALP-842 CU4)."""
         from alphamind.state.tables.invocations import _TRIGGER_SOURCES
 
-        assert "borrow_accrual" in _TRIGGER_SOURCES
+        assert "borrow_accrual" not in _TRIGGER_SOURCES
 
     def test_trigger_sources_still_contains_continuous_monitor(self) -> None:
         """The adjacent continuous_monitor value was not accidentally removed."""
@@ -114,24 +118,24 @@ class TestTriggerSourcesVocabulary:
         assert isinstance(_TRIGGER_SOURCES, tuple)
 
 
-class TestInvocationRowBorrowAccrualTriggerSource:
+class TestInvocationRowTriggerSourceConstraint:
     """INSERT-level tests against in-memory SQLite with the CHECK constraint active."""
 
-    def test_insert_borrow_accrual_trigger_source_succeeds(self, session: Session) -> None:
-        """AC: Inserting an InvocationRow with trigger_source='borrow_accrual' succeeds."""
+    def test_insert_known_trigger_source_succeeds(self, session: Session) -> None:
+        """AC: Inserting an InvocationRow with a known trigger_source succeeds."""
         from alphamind.state.tables.invocations import InvocationRow
         from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
 
         session.add(ProcessLifetimeRow(**_process_lifetime_kwargs()))
         session.commit()
 
-        row = InvocationRow(**_invocation_kwargs(trigger_source="borrow_accrual"))
+        row = InvocationRow(**_invocation_kwargs(trigger_source="continuous_monitor"))
         session.add(row)
         session.commit()  # must not raise
 
-        readback = session.get(InvocationRow, "inv-borrow-accrual-001")
+        readback = session.get(InvocationRow, "inv-test-001")
         assert readback is not None
-        assert readback.trigger_source == "borrow_accrual"
+        assert readback.trigger_source == "continuous_monitor"
 
     def test_insert_unrecognized_trigger_source_raises_integrity_error(
         self, session: Session
