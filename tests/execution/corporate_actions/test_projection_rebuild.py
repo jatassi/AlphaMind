@@ -29,7 +29,9 @@ from alphamind.execution.broker_adapter.queries import PositionSnapshot, TradeAc
 from alphamind.execution.write_paths.projection_rebuild import (
     BrokerFactNoIntent,
     OrderStatusProjection,
+    PendingWithBrokerHolding,
     classify_broker_facts_without_intent,
+    classify_pending_with_broker_holding,
     project_terminal_order_statuses,
     rebuild_projection,
 )
@@ -49,6 +51,7 @@ from ._handler_substrate import (
     make_active_thesis,
     make_open_equity_position,
     make_pending_entry_order,
+    make_pending_equity_position,
     open_handle,
     seed_invocation_substrate,
     seed_position_cluster,
@@ -374,6 +377,91 @@ async def test_broker_position_without_intent_surfaces_as_projection_state(
     assert summary.broker_facts_without_intent == (
         BrokerFactNoIntent(symbol="DVN", asset_class="us_equity", qty=42.0, side="long"),
     )
+
+
+# ---------------------------------------------------------------------------
+# RD1 — a PENDING-local position with a nonzero broker holding (dropped fill).
+# ---------------------------------------------------------------------------
+
+
+def test_classify_pending_with_broker_holding_flags_only_nonzero_pending() -> None:
+    """Pure — a PENDING-local symbol whose broker snapshot qty is nonzero is
+    surfaced; a zero-qty broker holding (or a PENDING symbol absent from the
+    snapshot) is not."""
+    holdings = classify_pending_with_broker_holding(
+        alpaca_positions=(
+            _equity_snapshot(symbol="AAPL", qty=10.0),  # PENDING + nonzero → flag
+            _equity_snapshot(symbol="MSFT", qty=0.0),  # PENDING but zero → no flag
+        ),
+        pending_symbols=frozenset({"AAPL", "MSFT", "TSLA"}),  # TSLA absent from snapshot
+    )
+    assert holdings == (
+        PendingWithBrokerHolding(symbol="AAPL", asset_class="us_equity", qty=10.0, side="long"),
+    )
+
+
+def test_classify_pending_with_broker_holding_uses_abs_qty_for_shorts() -> None:
+    """Pure — a short broker holding (signed-negative qty) flags on magnitude."""
+    short = PositionSnapshot(
+        symbol="AAPL",
+        asset_class="us_equity",
+        qty=-10.0,
+        avg_entry_price=price(150.0),
+        market_value=money(1500.0),
+        cost_basis=money(1500.0),
+        unrealized_pl=money(0.0),
+        unrealized_plpc=0.0,
+        current_price=price(150.0),
+        side="short",
+    )
+    holdings = classify_pending_with_broker_holding(
+        alpaca_positions=(short,),
+        pending_symbols=frozenset({"AAPL"}),
+    )
+    assert holdings == (
+        PendingWithBrokerHolding(symbol="AAPL", asset_class="us_equity", qty=10.0, side="short"),
+    )
+
+
+async def test_pending_local_with_nonzero_alpaca_surfaces_in_summary(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """RD1 — a PENDING local equity position (share_count=0, no fills) whose
+    Alpaca holding is nonzero is a dropped/un-integrated entry fill; the rebuild
+    surfaces it as a ``PendingWithBrokerHolding`` projection signal (replacing
+    the deleted ``pending_with_broker_holding`` escalation) and mutates nothing
+    — no status flip, no share_count write, no synthesized fill."""
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_position_cluster(
+        factory,
+        make_pending_equity_position(),
+        make_pending_entry_order(),
+        make_active_thesis(),
+        make_active_bracket(),
+    )
+
+    ctx, handle = await open_handle(factory)
+    summary = await rebuild_projection(
+        handle,
+        # Alpaca holds 10 shares — the dropped entry fill.
+        alpaca_positions=(_equity_snapshot(symbol="AAPL", qty=10.0),),
+        alpaca_account=_trade_account(),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.pending_with_broker_holding == (
+        PendingWithBrokerHolding(symbol="AAPL", asset_class="us_equity", qty=10.0, side="long"),
+    )
+    # The PENDING symbol is Intent-backed, so it is NOT a broker-fact-no-Intent.
+    assert summary.broker_facts_without_intent == ()
+    # Row UNTOUCHED — still PENDING, still zero shares.
+    async with factory() as sess:
+        from alphamind.state.tables.positions import PositionRow
+
+        row = await sess.get(PositionRow, "pos-1")
+        assert row is not None
+        assert row.status == "PENDING"
 
 
 # ---------------------------------------------------------------------------

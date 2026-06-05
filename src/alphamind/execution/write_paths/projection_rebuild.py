@@ -98,6 +98,28 @@ class BrokerFactNoIntent:
 
 
 @dataclass(frozen=True, slots=True)
+class PendingWithBrokerHolding:
+    """A PENDING-local position whose broker snapshot holds a nonzero quantity.
+
+    A PENDING local position carries quantity 0 by invariant (the entry has not
+    been integrated yet); a nonzero broker holding for its symbol means the entry
+    fill actually landed at the broker but was dropped / never integrated locally
+    — a filled-but-locally-pending divergence. This restores the safety detection
+    the deleted reconciler's ``pending_with_broker_holding`` escalation provided
+    (RD1): the rebuild only DETECTS it (surfaced here, never mutated), and the
+    honest recovery is the fill drain / periodic backfill writing the real fill
+    into ``fill_records`` so the next Phase-1 integrates it and flips the position
+    PENDING → OPEN with the true basis. ``qty`` is the unsigned magnitude (Alpaca
+    reports a signed qty for shorts; ``side`` carries the direction).
+    """
+
+    symbol: str
+    asset_class: str
+    qty: float
+    side: str
+
+
+@dataclass(frozen=True, slots=True)
 class OrderStatusProjection:
     """One ``TERMINAL_ORDER_STATUS`` event reduced to its order-cache projection.
 
@@ -121,12 +143,18 @@ class ProjectionRebuildSummary:
     rebuild advanced from a TERMINAL_ORDER_STATUS event; ``theses_rederived``
     counts thesis PnL-ledger rows re-derived from the log; ``broker_facts_without_intent``
     carries the DVN/manual-trade positions surfaced as a projection state (never
-    alerted).
+    alerted); ``pending_with_broker_holding`` carries PENDING-local positions whose
+    broker holding is nonzero (a dropped/un-integrated entry fill — RD1), surfaced
+    as a projection signal, never mutated.
     """
 
     order_statuses_projected: int
     theses_rederived: int
     broker_facts_without_intent: tuple[BrokerFactNoIntent, ...]
+    # Defaulted so the empty-rebuild constructors (recovery / scheduler stubs in
+    # phase1.py) that predate RD1 keep their shape; the production rebuild always
+    # populates it.
+    pending_with_broker_holding: tuple[PendingWithBrokerHolding, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +185,36 @@ def classify_broker_facts_without_intent(
         if snapshot.symbol not in intent_backed_symbols
     ]
     return tuple(sorted(facts, key=lambda fact: fact.symbol))
+
+
+_QTY_EPSILON = 1e-9
+
+
+def classify_pending_with_broker_holding(
+    *,
+    alpaca_positions: Iterable[PositionSnapshot],
+    pending_symbols: frozenset[str],
+) -> tuple[PendingWithBrokerHolding, ...]:
+    """Pure: PENDING-local positions whose broker snapshot quantity is nonzero.
+
+    A broker snapshot position whose ``symbol`` is in ``pending_symbols`` (the set
+    of PENDING local-position keys — equity ticker or options OCC symbol) and whose
+    ``qty`` magnitude is nonzero is a dropped/un-integrated entry fill (RD1): the
+    entry filled at the broker but the local position is still PENDING. Alpaca
+    reports a signed ``qty`` for shorts, so the magnitude is compared and surfaced.
+    ``sorted`` keeps the surfacing order deterministic.
+    """
+    holdings = [
+        PendingWithBrokerHolding(
+            symbol=snapshot.symbol,
+            asset_class=snapshot.asset_class,
+            qty=abs(snapshot.qty),
+            side=snapshot.side,
+        )
+        for snapshot in alpaca_positions
+        if snapshot.symbol in pending_symbols and abs(snapshot.qty) > _QTY_EPSILON
+    ]
+    return tuple(sorted(holdings, key=lambda holding: holding.symbol))
 
 
 def project_terminal_order_statuses(
@@ -217,10 +275,16 @@ async def rebuild_projection(
 
     order_statuses_projected = await _project_terminal_order_statuses(handle.session)
     theses_rederived = await _rederive_all_thesis_ledgers(handle.session, handle)
-    intent_backed_symbols = await _intent_backed_symbols(handle.session)
+    symbols_by_status = await _live_position_symbols_by_status(handle.session)
+    intent_backed_symbols = frozenset().union(*symbols_by_status.values())
+    pending_symbols = symbols_by_status.get("PENDING", frozenset())
     broker_facts = classify_broker_facts_without_intent(
         alpaca_positions=alpaca_positions,
         intent_backed_symbols=intent_backed_symbols,
+    )
+    pending_holdings = classify_pending_with_broker_holding(
+        alpaca_positions=alpaca_positions,
+        pending_symbols=pending_symbols,
     )
     for fact in broker_facts:
         log.info(
@@ -230,11 +294,21 @@ async def rebuild_projection(
             fact.qty,
             fact.side,
         )
+    for holding in pending_holdings:
+        log.warning(
+            "projection rebuild: PENDING-local position with nonzero broker holding "
+            "— %s qty=%s side=%s (likely a dropped/un-integrated entry fill; awaiting "
+            "fill-drain recovery, no state mutated)",
+            holding.symbol,
+            holding.qty,
+            holding.side,
+        )
 
     return ProjectionRebuildSummary(
         order_statuses_projected=order_statuses_projected,
         theses_rederived=theses_rederived,
         broker_facts_without_intent=broker_facts,
+        pending_with_broker_holding=pending_holdings,
     )
 
 
@@ -345,14 +419,17 @@ async def _rederive_all_thesis_ledgers(session: AsyncSession, handle: Invocation
     return rederived
 
 
-async def _intent_backed_symbols(session: AsyncSession) -> frozenset[str]:
-    """Broker-snapshot keys (equity ticker / options OCC) for every live local position.
+async def _live_position_symbols_by_status(session: AsyncSession) -> dict[str, frozenset[str]]:
+    """Broker-snapshot keys (equity ticker / options OCC) per live local-position status.
 
-    A broker snapshot position whose ``symbol`` is in this set has an Intent
-    overlay; one absent from it is "broker fact, no Intent". Strategy positions
-    carry no single broker key (Alpaca reports each leg as its own row), so they
-    contribute no key here — their legs surface as broker-fact-no-Intent until a
-    leg-level overlay exists, the same scope boundary the deleted reconciler drew.
+    One pass over the OPEN/PENDING local positions, grouping each position's broker
+    key by its status. The union over the values is the Intent-backed set (a broker
+    snapshot position whose ``symbol`` is in it has an Intent overlay; one absent
+    from it is "broker fact, no Intent"); the ``"PENDING"`` bucket alone is the
+    dropped-fill cross-check (RD1). Strategy positions carry no single broker key
+    (Alpaca reports each leg as its own row), so they contribute no key — their legs
+    surface as broker-fact-no-Intent until a leg-level overlay exists, the same scope
+    boundary the deleted reconciler drew.
     """
     rows = (
         (
@@ -363,21 +440,23 @@ async def _intent_backed_symbols(session: AsyncSession) -> frozenset[str]:
         .scalars()
         .all()
     )
-    symbols: set[str] = set()
+    symbols_by_status: dict[str, set[str]] = {status: set() for status in _LIVE_POSITION_STATUSES}
     for row in rows:
         details = position_row_to_record(row).details
         if isinstance(details, EquityPositionDetails):
-            symbols.add(details.ticker)
+            symbols_by_status[row.status].add(details.ticker)
         elif isinstance(details, OptionsPositionDetails):
-            symbols.add(alpaca_occ_symbol(details))
-    return frozenset(symbols)
+            symbols_by_status[row.status].add(alpaca_occ_symbol(details))
+    return {status: frozenset(symbols) for status, symbols in symbols_by_status.items()}
 
 
 __all__ = [
     "BrokerFactNoIntent",
     "OrderStatusProjection",
+    "PendingWithBrokerHolding",
     "ProjectionRebuildSummary",
     "classify_broker_facts_without_intent",
+    "classify_pending_with_broker_holding",
     "project_terminal_order_statuses",
     "rebuild_projection",
 ]
