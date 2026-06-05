@@ -41,6 +41,7 @@ from alphamind.scheduler.borrow_accrual_kernel import (
     AccrualTickResult,
     compute_tick,
 )
+from alphamind.scheduler.phase1_inputs import _MAX_REFERENCE_BAR_AGE_SECONDS
 from alphamind.state.invocation_context.activity_log import (
     activity_log_entry_to_row,
 )
@@ -64,12 +65,12 @@ _US_EASTERN = ZoneInfo("US/Eastern")
 # Same daily-timeframe key the rest of the system reads from ``ohlcv_bars``.
 _OHLCV_DAILY_TIMEFRAME = "1d"
 
-# Staleness ceiling for the per-ticker closing print (mirrors the prior monitor
-# task / ``scheduler.phase1_inputs._MAX_REFERENCE_BAR_AGE_SECONDS``): 7 calendar
-# days clears the longest US market-holiday weekend yet still drops a ticker whose
-# OHLCV feed has genuinely stalled, surfacing the kernel's "missing closing print"
-# ValueError instead of a stale-but-present accrual.
-_MAX_EOD_BAR_AGE_SECONDS = 7 * 24 * 60 * 60
+# Staleness ceiling for the per-ticker closing print — reuses
+# ``phase1_inputs._MAX_REFERENCE_BAR_AGE_SECONDS`` (7 calendar days) so the
+# two consumers stay in sync: 7 days clears the longest US market-holiday
+# weekend yet still drops a ticker whose OHLCV feed has genuinely stalled,
+# surfacing the kernel's "missing closing print" ValueError instead of a
+# stale-but-present accrual.
 
 
 BorrowCostResolver = Callable[[str], float | None]
@@ -157,18 +158,19 @@ async def _already_accrued_today(session: AsyncSession, *, accrual_date_iso: str
     """Whether a ``BORROW_COST_ACCRUED`` row already covers *accrual_date_iso*.
 
     The activity-log ``detail_json`` carries the kernel's ``accrual_date`` (ISO
-    ``YYYY-MM-DD``). A ``LIKE`` match on the serialized detail is the cheapest
-    once-per-trading-day key that needs no schema change — the accrual is a
-    discrete EOD quantity keyed off the trading day, so one booked row for the
-    day means the day is done regardless of which invocation booked it.
+    ``YYYY-MM-DD``). The guard uses SQLite's ``json_extract`` to read the
+    structured value at ``$.accrual_date`` — robust to any serialization
+    whitespace (e.g. ``"accrual_date": "2026-05-27"`` with a space after the
+    colon). The accrual is a discrete EOD quantity keyed off the trading day,
+    so one booked row for the day means the day is done regardless of which
+    invocation booked it.
     """
-    pattern = f'%"accrual_date":"{accrual_date_iso}"%'
     stmt = (
         select(func.count())
         .select_from(ActivityLogRow)
         .where(
             ActivityLogRow.event_type == EventType.BORROW_COST_ACCRUED.value,
-            ActivityLogRow.detail_json.like(pattern),
+            func.json_extract(ActivityLogRow.detail_json, "$.accrual_date") == accrual_date_iso,
         )
     )
     count = (await session.execute(stmt)).scalar_one()
@@ -196,15 +198,14 @@ async def _read_latest_closes(
     """Read the latest ``ohlcv_bars`` close (``timeframe='1d'``) per ticker.
 
     Returns a dict only for tickers whose latest bar exists *and* is fresher than
-    ``_MAX_EOD_BAR_AGE_SECONDS`` relative to ``as_of``; the kernel raises if any
+    ``_MAX_REFERENCE_BAR_AGE_SECONDS`` relative to ``as_of``; the kernel raises if any
     in-scope ticker is missing. ``unadj_close`` is the actual traded price.
     """
     if not tickers:
         return {}
     ticker_strs = tuple(str(t) for t in tickers)
-    cutoff_iso = (
-        (as_of - timedelta(seconds=_MAX_EOD_BAR_AGE_SECONDS)).replace(microsecond=0).isoformat()
-    )
+    cutoff = (as_of - timedelta(seconds=_MAX_REFERENCE_BAR_AGE_SECONDS)).replace(microsecond=0)
+    cutoff_iso = cutoff.isoformat()
     latest_subq = (
         select(
             OhlcvBars.ticker.label("ticker"),
