@@ -225,9 +225,35 @@ async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-ou
     A raise from here onward is a POST-submit failure: the order may already have
     reached the broker, so the caller keeps the leg marked fired to avoid a
     double-close (CL1).
+
+    Cancel-then-submit ordering (FL7 / ALP-856): the always-on broker-enforced
+    capital floor (a resting GTC ``stop_limit``) is cancelled FIRST, then the
+    monitor close is submitted. Submitting the close first left a window in which
+    the resting floor could fill before the cancel landed — both the floor AND the
+    monitor close executing → a double-SELL / oversell at the broker. Cancelling
+    first shrinks that window to near-zero. The residual, irreducible race is a
+    floor the broker has ALREADY triggered (matched/partially-filled) by the time
+    the cancel arrives: the cancel is best-effort and a benign already-filled / 404
+    is swallowed, the close still goes out, and Phase 1 quarantines the second fill
+    locally (absorb-on-broker-fire). The cancel is intentionally not awaited as a
+    precondition of the submit — a floor-cancel failure must never block the close,
+    which is the position's actual exit.
     """
     client_order_id_base = prepared.client_order_id_base
     details = position.details
+    if not isinstance(details, OptionsPositionDetails | StrategyPositionDetails):
+        msg = (
+            f"submit_options_bracket_close requires options or strategy position; "
+            f"got instrument_type={details.instrument_type!r}"
+        )
+        raise TypeError(msg)
+    # FL7 — cancel the resting broker-enforced floor BEFORE submitting the monitor
+    # close, shrinking the double-SELL window (floor fill + monitor close both
+    # executing) to near-zero. The two normally never double-close: a monitor fire
+    # cancels the floor here; a broker-floor fill instead drops the position from
+    # eligibility (absorb-on-broker-fire, _is_active_eligible_leg). Best-effort —
+    # a cancel failure is logged and swallowed, never blocking the close below.
+    await _cancel_resting_floors(bracket, submitter, floor_alpaca_id_resolver)
     if isinstance(details, OptionsPositionDetails):
         result = await submitter.submit_options_close(
             position=position,
@@ -235,19 +261,13 @@ async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-ou
             client_order_id=client_order_id_base,
             trigger_reason=trigger_reason,
         )
-    elif isinstance(details, StrategyPositionDetails):
+    else:
         result = await submitter.submit_strategy_close(
             position=position,
             details=details,
             client_order_id_base=client_order_id_base,
             trigger_reason=trigger_reason,
         )
-    else:
-        msg = (
-            f"submit_options_bracket_close requires options or strategy position; "
-            f"got instrument_type={details.instrument_type!r}"
-        )
-        raise TypeError(msg)
     await activity_log(
         _build_position_closed_entry(
             position=position,
@@ -259,12 +279,6 @@ async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-ou
             realized_pnl_usd=realized_pnl_usd,
         )
     )
-    # cancel-on-monitor-fire (ALP-856): the monitor stop just closed the position,
-    # so its always-on broker-enforced capital floor must be cancelled or it
-    # orphans against a no-longer-open position. The two never double-close: a
-    # monitor fire cancels the floor here; a broker-floor fill instead drops the
-    # position from eligibility (absorb-on-broker-fire, _is_active_eligible_leg).
-    await _cancel_resting_floors(bracket, submitter, floor_alpaca_id_resolver)
     return result
 
 

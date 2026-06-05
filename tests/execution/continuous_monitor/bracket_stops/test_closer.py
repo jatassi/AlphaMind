@@ -236,6 +236,10 @@ class FakeSubmitter:
     strategy_returns: CloseSubmissionResult | None = None
     trigger_reasons: list[PositionExitMethod] = field(default_factory=list)
     cancelled_floors: list[str] = field(default_factory=list)
+    # Unified, ordered log of every submitter call so a test can assert the
+    # relative order of the floor cancel vs. the close submit (FL7 — the cancel
+    # must precede the submit to shrink the double-SELL window to near-zero).
+    call_sequence: list[str] = field(default_factory=list)
 
     async def submit_options_close(
         self,
@@ -248,6 +252,7 @@ class FakeSubmitter:
         del details
         self.options_calls.append((position.position_id, client_order_id))
         self.trigger_reasons.append(trigger_reason)
+        self.call_sequence.append("submit_options_close")
         return CloseSubmissionResult(
             order_ids=(client_order_id,),
             mode="single_leg",
@@ -264,6 +269,7 @@ class FakeSubmitter:
         del details
         self.strategy_calls.append((position.position_id, client_order_id_base))
         self.trigger_reasons.append(trigger_reason)
+        self.call_sequence.append("submit_strategy_close")
         if self.strategy_returns is not None:
             return self.strategy_returns
         return CloseSubmissionResult(
@@ -273,6 +279,7 @@ class FakeSubmitter:
 
     async def cancel_floor(self, *, alpaca_order_id: str) -> None:
         self.cancelled_floors.append(alpaca_order_id)
+        self.call_sequence.append("cancel_floor")
 
 
 @dataclass
@@ -521,6 +528,35 @@ class TestCancelRestingFloor:
         # broker alpaca id the resolver returned (not the leg's order_id).
         assert resolved == ["ORD-FLOOR-xyz"]
         assert submitter.cancelled_floors == ["floor-alpaca-uuid"]
+
+    async def test_cancels_resting_floor_before_submitting_the_close(self) -> None:
+        """FL7 — the resting GTC floor is cancelled BEFORE the monitor close is
+        submitted, not after. Cancelling first shrinks the double-SELL window
+        (both the floor fill AND the monitor close executing) to near-zero: the
+        floor is retracted, then the close goes to the broker."""
+
+        async def _resolver(order_id: str) -> str | None:
+            return "floor-alpaca-uuid" if order_id == "ORD-FLOOR-xyz" else None
+
+        position = _options_position()
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+        await _prepare_and_submit(
+            position=position,
+            bracket=_bracket(floor_order_id="ORD-FLOOR-xyz"),
+            trigger_reason=PositionExitMethod.STOP_TRIGGERED,
+            submitter=submitter,
+            activity_log=log,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-20260511T143000Z-aabbccdd",
+            trigger_id=1,
+            now=_NOW,
+            estimated_exit_price=10.0,
+            realized_pnl_usd=-200.0,
+            floor_alpaca_id_resolver=_resolver,
+        )
+        # Cancel precedes the close submit.
+        assert submitter.call_sequence == ["cancel_floor", "submit_options_close"]
 
     async def test_no_floor_leg_cancels_nothing(self) -> None:
         """A bracket with no BROKER_ENFORCED floor leg cancels no floor."""
