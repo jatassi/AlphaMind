@@ -17,12 +17,14 @@ suite runs offline.
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
+from alpaca.common.exceptions import APIError
 from alpaca.trading.enums import (
     OrderClass,
     OrderSide,
@@ -35,6 +37,7 @@ from alpaca.trading.requests import (
     LimitOrderRequest,
     MarketOrderRequest,
     OptionLegRequest,
+    StopLimitOrderRequest,
 )
 
 from alphamind._kernel.ids import (
@@ -311,6 +314,19 @@ def _make_fake_leg(order_type: AlpacaOrderType) -> MagicMock:
     return leg
 
 
+def _permanent_api_error() -> APIError:
+    """An ``APIError`` carrying a permanent (4xx) status — a broker rejection.
+
+    Mirrors ``tests/execution/broker_adapter/test_order_options.py::_make_api_error``;
+    ``classify_alpaca_error`` maps the 403 to a non-retriable
+    :class:`PermanentRejection`, surfaced as ``PermanentRejectionError``.
+    """
+    body = json.dumps({"code": 42, "message": "options level not approved"})
+    fake_http_error = MagicMock()
+    fake_http_error.response.status_code = 403
+    return cast(APIError, cast(Any, APIError)(body, http_error=fake_http_error))
+
+
 # ---------------------------------------------------------------------------
 # 1. BrokerDispatchResult dataclass shape
 # ---------------------------------------------------------------------------
@@ -455,11 +471,118 @@ async def test_dispatch_open_options_routes_to_submit_options_open() -> None:
     result = outcome.payload
     assert result.payload_kind == "options"
     assert isinstance(result.raw_submission, OptionsSubmission)
-    submitted = client.submit_order.call_args[0][0]
+    # The ENTRY is the first submit_order call (the second is the always-on
+    # broker-enforced capital floor, ALP-856 — see the dedicated floor tests).
+    submitted = client.submit_order.call_args_list[0][0][0]
     # OCC: NVDA padded to 6 chars + YYMMDD + C/P + 8-digit strike-thousandths.
     assert submitted.symbol == "NVDA  260619C00900000"
     assert submitted.order_class == OrderClass.SIMPLE
     assert submitted.time_in_force == TimeInForce.DAY
+
+
+@pytest.mark.asyncio
+async def test_dispatch_open_options_submits_entry_and_resting_capital_floor() -> None:
+    """An options OPEN submits the entry AND the always-on broker-enforced floor.
+
+    Invariant 4 (ADR-0003 / ALP-856): every open options position carries a
+    resting broker-enforced exit. ``_dispatch_open`` submits the single-leg entry
+    first, then the GTC ``stop_limit`` capital floor — two ``submit_order`` calls.
+    The floor's real broker id surfaces on the result's ``leg_alpaca_order_ids``
+    under ``"capital_floor"`` so the OPEN writeback can stamp the broker-enforced
+    floor leg, and cancel-on-monitor-fire can cancel it by id.
+    """
+    entry_order = _make_fake_alpaca_order(order_class=OrderClass.SIMPLE)
+    floor_order = _make_fake_alpaca_order(order_class=OrderClass.SIMPLE)
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=[entry_order, floor_order])
+
+    outcome = await dispatch_command_to_broker(
+        _option_open_command(),
+        client=client,
+        queries=MagicMock(),
+        execution=_execution_config(),
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+    )
+
+    assert isinstance(outcome, Submitted)
+    result = outcome.payload
+    # The dispatch result is the ENTRY's ack (the position's primary order).
+    assert result.payload_kind == "options"
+    assert result.alpaca_order_id == str(entry_order.id)
+    # Two broker submissions: entry (DAY) then floor (GTC stop_limit).
+    assert client.submit_order.call_count == 2
+    entry_req = client.submit_order.call_args_list[0][0][0]
+    floor_req = client.submit_order.call_args_list[1][0][0]
+    assert entry_req.time_in_force == TimeInForce.DAY
+    assert floor_req.time_in_force == TimeInForce.GTC
+    assert isinstance(floor_req, StopLimitOrderRequest)
+    # A long (BUY-to-open) floor closes by SELLing.
+    assert floor_req.side == OrderSide.SELL
+    # The floor's broker id is carried for the writeback to stamp on the leg.
+    assert result.leg_alpaca_order_ids == {"capital_floor": str(floor_order.id)}
+    # The floor carries its OWN client_order_id (Alpaca rejects a duplicate),
+    # distinct from the entry's but pattern-valid + carrying the same thesis FK.
+    assert floor_req.client_order_id != entry_req.client_order_id
+
+
+@pytest.mark.asyncio
+async def test_dispatch_open_options_floor_rejection_fails_the_open() -> None:
+    """A permanent floor rejection propagates — the OPEN does not silently succeed.
+
+    The capital floor is mandatory (invariant 4): an options OPEN must not be
+    left broker-unprotected. When the floor's broker submission is permanently
+    rejected (e.g. options level not approved) after the entry submitted,
+    ``_dispatch_open`` lets the :class:`PermanentRejectionError` propagate so the
+    caller tears the OPEN down rather than recording a position with no resting
+    floor.
+    """
+    from alphamind.execution.broker_adapter.order_options import PermanentRejectionError
+
+    entry_order = _make_fake_alpaca_order(order_class=OrderClass.SIMPLE)
+
+    # Entry submits cleanly; the floor (the only StopLimit request) is rejected
+    # by the broker for a permanent (4xx) reason.
+    def _submit(request: object) -> MagicMock:
+        if isinstance(request, StopLimitOrderRequest):
+            raise _permanent_api_error()
+        return entry_order
+
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=_submit)
+
+    with pytest.raises(PermanentRejectionError):
+        await dispatch_command_to_broker(
+            _option_open_command(),
+            client=client,
+            queries=MagicMock(),
+            execution=_execution_config(),
+            client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+        )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_open_equity_submits_no_capital_floor() -> None:
+    """An equity OPEN submits no capital floor — the native bracket protects it.
+
+    Equities carry a native Alpaca bracket (broker-enforced take-profit + stop
+    child), so there is no separate options-style resting floor. ``_dispatch_open``
+    makes exactly one broker submission and surfaces no ``capital_floor`` leg id.
+    """
+    fake_order = _make_fake_alpaca_order(order_class=OrderClass.BRACKET)
+    client = MagicMock()
+    client.submit_order = MagicMock(return_value=fake_order)
+
+    outcome = await dispatch_command_to_broker(
+        _equity_open_command(),
+        client=client,
+        queries=MagicMock(),
+        execution=_execution_config(),
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+    )
+
+    assert isinstance(outcome, Submitted)
+    assert client.submit_order.call_count == 1
+    assert "capital_floor" not in outcome.payload.leg_alpaca_order_ids
 
 
 # ---------------------------------------------------------------------------

@@ -78,6 +78,7 @@ from alphamind.execution.broker_adapter.order_modify import (
 from alphamind.execution.broker_adapter.order_options import (
     OptionsSubmission,
     build_occ_symbol,
+    derive_capital_floor_client_order_id,
     submit_options_add,
     submit_options_capital_floor,
     submit_options_close,
@@ -148,6 +149,7 @@ __all__ = [
     "TradeAccountSnapshot",
     "build_occ_symbol",
     "classify_alpaca_error",
+    "derive_capital_floor_client_order_id",
     "fills_at_live_quote_equity",
     "is_transient",
     "live_bracket_incoherence_reason",

@@ -16,6 +16,7 @@ from alphamind.commands.command_models import (
     ComponentType,
     EquityInstrument,
     EventLeg,
+    OptionInstrument,
     PriceLeg,
     StrategyInstrument,
     Target,
@@ -443,6 +444,100 @@ def test_build_pending_order_with_override_carries_real_broker_id() -> None:
     )
     assert order.alpaca_order_id == "real-broker-uuid-1234"
     assert order.alpaca_order_id_chain == ("real-broker-uuid-1234",)
+
+
+def _option_instrument() -> OptionInstrument:
+    return OptionInstrument(
+        asset_type="option",
+        underlying="NVDA",
+        strike=price(900.0),
+        expiration="2026-06-19",
+        contract_type="call",
+        direction="long",
+    )
+
+
+def test_options_open_records_broker_enforced_capital_floor_leg() -> None:
+    """ALP-856 — an options OPEN's bracket carries a BROKER_ENFORCED capital-floor
+    leg whose ``order_id`` is the resting floor's real broker ``alpaca_order_id``.
+
+    The always-on GTC ``stop_limit`` floor (ADR-0003 invariant 4) is submitted at
+    dispatch; its broker id rides back on ``leg_alpaca_order_ids['capital_floor']``
+    and is stamped onto a dedicated PRICE_STOP leg here. ``BracketLeg.order_id``
+    carries the broker id directly so cancel-on-monitor-fire
+    (``bracket_stops/closer._cancel_resting_floors``) cancels the resting floor by
+    that id.
+    """
+    from alphamind.portfolio_state.records.orders import (
+        BracketLegType,
+        EnforcementBinding,
+    )
+
+    bracket = _build_pending_bracket(
+        bracket_id="BRK-NVDA-abc123",
+        position_id="POS-NVDA-abc123",
+        entry_order_id="ORD-NVDA-entry-abc123",
+        target=Target(target_type="absolute_price", price=price(950.0), order_type="limit"),
+        target_order_id="ORD-NVDA-target-abc123",
+        invalidation_leg_orders=((_price_leg(850.0), "ORD-NVDA-inv0-abc123"),),
+        instrument=_option_instrument(),
+        entry_window_deadline=None,
+        capital_floor_alpaca_order_id="alpaca-floor-uuid",
+    )
+    floor_legs = [
+        leg
+        for leg in bracket.protective_legs
+        if leg.enforcement_binding is EnforcementBinding.BROKER_ENFORCED
+    ]
+    assert len(floor_legs) == 1
+    floor = floor_legs[0]
+    assert floor.leg_type is BracketLegType.PRICE_STOP
+    # The broker id is on the leg's order_id — what the closer cancels by.
+    assert floor.order_id == "alpaca-floor-uuid"
+    # The thesis-invalidation stop stays monitor-enforced (no native bracket on options).
+    inv_legs = [
+        leg
+        for leg in bracket.protective_legs
+        if leg.leg_type is BracketLegType.PRICE_STOP
+        and leg.enforcement_binding is EnforcementBinding.MONITOR_ENFORCED
+    ]
+    assert len(inv_legs) == 1
+
+
+def test_equity_open_records_no_capital_floor_leg() -> None:
+    """ALP-856 — an equity OPEN carries no options-style capital-floor leg.
+
+    Equities are protected by the native Alpaca bracket; the broker-enforced
+    legs are the take-profit + first stop (ALP-847), never a separate resting
+    floor. ``_build_pending_bracket`` is never passed a floor id for equity, so
+    no extra BROKER_ENFORCED PRICE_STOP floor leg appears.
+    """
+    from alphamind.portfolio_state.records.orders import (
+        BracketLegType,
+        EnforcementBinding,
+    )
+
+    equity = EquityInstrument(asset_type="equity", ticker="AAPL", direction="long")
+    bracket = _build_pending_bracket(
+        bracket_id="BRK-AAPL-abc123",
+        position_id="POS-AAPL-abc123",
+        entry_order_id="ORD-AAPL-entry-abc123",
+        target=Target(target_type="absolute_price", price=price(160.0), order_type="limit"),
+        target_order_id="ORD-AAPL-target-abc123",
+        invalidation_leg_orders=((_price_leg(150.0), "ORD-AAPL-inv0-abc123"),),
+        instrument=equity,
+        entry_window_deadline=None,
+    )
+    # The only broker-enforced legs are the native bracket's take-profit + first
+    # stop — no leg carries an options floor's broker id, and there is no extra
+    # PRICE_STOP beyond the single invalidation stop.
+    price_stops = [
+        leg for leg in bracket.protective_legs if leg.leg_type is BracketLegType.PRICE_STOP
+    ]
+    assert len(price_stops) == 1
+    # That single stop is the native-bracket invalidation stop, not a floor leg.
+    assert price_stops[0].enforcement_binding is EnforcementBinding.BROKER_ENFORCED
+    assert price_stops[0].order_id == "ORD-AAPL-inv0-abc123"
 
 
 def test_build_pending_bracket_carries_entry_window_deadline() -> None:

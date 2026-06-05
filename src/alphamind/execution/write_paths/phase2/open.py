@@ -212,6 +212,18 @@ async def _writeback_open(
         entry_window_deadline=(
             command.entry_window.deadline if command.entry_window is not None else None
         ),
+        # ALP-856 — on an options OPEN the dispatcher submits the always-on
+        # broker-enforced capital floor alongside the entry; its real broker id
+        # rides back on ``leg_alpaca_order_ids['capital_floor']`` and is stamped
+        # onto a dedicated BROKER_ENFORCED floor leg here (NULL at pre-commit,
+        # present after dispatch). Cancel-on-monitor-fire cancels the resting
+        # floor by this leg's ``order_id``. The PnL-denominated floor price
+        # (planned premium per contract minus the per-contract max loss) is the
+        # leg's recorded resting level — the broker owns firing, so the monitor
+        # never reads this trigger (it drops broker-enforced legs from
+        # eligibility).
+        capital_floor_alpaca_order_id=leg_ids.get("capital_floor"),
+        capital_floor_price=_capital_floor_price(command),
     )
     entry_order = _build_entry_order_from_command(
         order_id=ids["entry_order_id"],
@@ -994,7 +1006,70 @@ def _strategy_target_to_bracket_leg(
     )
 
 
-def _build_pending_bracket(
+def _capital_floor_price(command: OpenCommand) -> float | None:
+    """The PnL-denominated capital-floor price per contract for an options OPEN.
+
+    Mirrors ``broker_adapter.order_options._floor_price_per_contract``: the planned
+    entry premium per contract (``dollar_value / (qty * multiplier)``) minus the
+    per-contract loss the PM-authored ``max_loss`` represents — the level the
+    resting broker floor (``stop_limit``) closes the position at. ``None`` for an
+    equity OPEN (no floor) or a strategy OPEN (the single-leg floor is not
+    submitted for multi-leg positions at this story).
+    """
+    if not isinstance(command.instrument, OptionInstrument):
+        return None
+    floor = command.capital_protection_floor
+    if floor is None:
+        return None
+    contracts = command.position_size.quantity * LISTED_OPTION_CONTRACT_MULTIPLIER
+    return (float(command.position_size.dollar_value) - float(floor.max_loss)) / contracts
+
+
+def _capital_floor_bracket_leg(
+    *,
+    bracket_id: str,
+    ticker: str,
+    capital_floor_alpaca_order_id: str | None,
+    capital_floor_price: float | None,
+    direction: str | None,
+) -> BracketLeg | None:
+    """Build the options OPEN's broker-enforced capital-floor leg (ALP-856).
+
+    ``None`` when no floor was submitted (equity / strategy OPEN — the floor id is
+    absent). Otherwise a BROKER_ENFORCED PRICE_STOP leg whose ``order_id`` is the
+    resting floor's real broker ``alpaca_order_id`` (``None`` only at the
+    pre-commit step, before dispatch backfills it). The closer's
+    cancel-on-monitor-fire cancels the resting floor by this ``order_id``; the
+    monitor never fires it (``_is_active_eligible_leg`` drops broker-enforced
+    legs), so the :class:`PriceTrigger` is the floor's recorded resting level, not
+    a monitor-evaluated condition. A long floor closes by SELLing on a decline
+    (LTE); a short floor BUYs on a rise (GTE).
+    """
+    if capital_floor_alpaca_order_id is None and capital_floor_price is None:
+        return None
+    # A positive structural threshold keeps the PriceTrigger valid even if the
+    # floor price is unavailable at the pre-commit step (broker id NULL).
+    threshold = capital_floor_price if capital_floor_price is not None else 0.01
+    return BracketLeg(
+        leg_id=f"{bracket_id}-leg-floor",
+        leg_type=BracketLegType.PRICE_STOP,
+        order_id=(
+            OrderId(capital_floor_alpaca_order_id)
+            if capital_floor_alpaca_order_id is not None
+            else None
+        ),
+        trigger=PriceTrigger(
+            underlying_ticker=make_symbol(ticker),
+            threshold_usd=threshold,
+            direction="GTE" if direction == "short" else "LTE",
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        enforcement_binding=EnforcementBinding.BROKER_ENFORCED,
+        status=BracketLegStatus.PENDING_ACTIVATION,
+    )
+
+
+def _build_pending_bracket(  # noqa: PLR0913 — the OPEN bracket threads its id graph + sizing + the optional floor id.
     *,
     bracket_id: str,
     position_id: str,
@@ -1004,6 +1079,8 @@ def _build_pending_bracket(
     invalidation_leg_orders: tuple[tuple[InvalidationLeg, str | None], ...],
     instrument: EquityInstrument | OptionInstrument | StrategyInstrument,
     entry_window_deadline: datetime | None,
+    capital_floor_alpaca_order_id: str | None = None,
+    capital_floor_price: float | None = None,
 ) -> BracketRecord:
     """Build a PENDING_ENTRY bracket.
 
@@ -1075,12 +1152,26 @@ def _build_pending_bracket(
                 enforcement_binding=leg_binding,
             )
         )
+    # ALP-856 — an options OPEN carries an always-on broker-enforced capital
+    # floor (a resting GTC ``stop_limit`` submitted at dispatch). It is recorded
+    # as a dedicated BROKER_ENFORCED PRICE_STOP leg whose ``order_id`` is the
+    # floor's real broker id, so cancel-on-monitor-fire cancels the resting floor
+    # by that id. Equity / strategy OPENs never carry one (no single-leg options
+    # floor is submitted for them), so the floor id is absent and no leg is added.
+    floor_leg = _capital_floor_bracket_leg(
+        bracket_id=bracket_id,
+        ticker=ticker,
+        capital_floor_alpaca_order_id=capital_floor_alpaca_order_id,
+        capital_floor_price=capital_floor_price,
+        direction=(instrument.direction if isinstance(instrument, OptionInstrument) else None),
+    )
+    floor_legs = (floor_leg,) if floor_leg is not None else ()
     return BracketRecord(
         bracket_id=BracketId(bracket_id),
         position_id=PositionId(position_id),
         status=BracketStatus.PENDING_ENTRY,
         entry_order_id=OrderId(entry_order_id),
-        protective_legs=(target_leg, *invalidation_legs),
+        protective_legs=(target_leg, *invalidation_legs, *floor_legs),
         modification_history=(),
         corporate_action_cancellation_reason=None,
         entry_window_deadline=entry_window_deadline,
