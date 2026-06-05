@@ -454,11 +454,12 @@ def register_options_bracket_watcher_task(
     greeks-refresh wiring so the monitor process has one canonical set of
     these helpers (no near-duplicate envelopes).
 
-    ``trigger_ids`` is the cascade-dispatch :class:`TriggerIdGenerator`
-    constructed once per monitor session in ``_register_breach_loop``.
-    Sharing the instance keeps a bracket-stop fire and a cascade dispatch
-    in the same session from minting the same engine-originated
-    ``client_order_id`` (both encode ``MON.{session}.{trigger}.0``).
+    ``trigger_ids`` is the :class:`TriggerIdGenerator` constructed once per
+    monitor session in ``_run_daemon``. The bracket watcher is the monitor
+    proper's sole engine-originated submitter after ALP-857 (breach detection +
+    its cascade dispatch moved to the out-of-process safety core), so the
+    per-session counter guarantees each bracket-stop fire mints a unique
+    engine-originated ``client_order_id`` (``MON.{session}.{trigger}.0``).
     """
     bracket_repository = SqlBracketRepository(session_factory)
     activity_log = make_activity_log_emitter(session_factory)

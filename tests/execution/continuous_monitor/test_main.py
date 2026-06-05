@@ -173,12 +173,18 @@ def test_main_run_no_mode_arg_defaults_to_paper(
     assert "mode=paper" in log_path.read_text(encoding="utf-8")
 
 
-def test_main_registers_wave_2_and_3_tasks(
+def test_main_registers_precision_and_data_tasks(
     _paper_boot: dict[str, Any],
 ) -> None:
-    """Waves 2 + 3 + 4c — the daemon wires ``underlying_stream`` (02b),
-    ``fill_stream_consumer`` (02c), ``greeks_refresh`` (03a),
-    ``breach_loop`` (03b), and ``bracket_stops`` (04c) onto the supervisor.
+    """The monitor proper wires only precision/data tasks onto the supervisor.
+
+    Post-ALP-857 (W4b) the monitor proper is precision/data only:
+    ``underlying_stream`` (02b), ``fill_stream_consumer`` (02c),
+    ``greeks_refresh`` (03a), ``bracket_stops`` (04c), ``entry_window``. Breach
+    detection (the lone no-floor safety item) is isolated into the
+    out-of-process safety core, so ``breach_loop`` is no longer a monitor task —
+    a frozen monitor proper now degrades precision while positions stay
+    broker-protected (ADR-0004).
 
     The patch on ``MonitorSupervisor.run`` captures ``self`` so we can read
     the registered task names without driving the asyncio loop.
@@ -190,11 +196,15 @@ def test_main_registers_wave_2_and_3_tasks(
         "underlying_stream",
         "fill_stream_consumer",
         "greeks_refresh",
-        "breach_loop",
         "bracket_stops",
         "entry_window",
     ):
         assert expected in task_names, f"{expected} not registered; got {task_names!r}"
+    # ALP-857 / W4b — breach detection is isolated into the out-of-process safety
+    # core; the monitor proper no longer registers a ``breach_loop`` task.
+    assert "breach_loop" not in task_names, (
+        f"breach_loop must be isolated into the safety core, not a monitor task; got {task_names!r}"
+    )
     # ALP-855 / W4a — borrow accrual is accounting, evicted from the always-on
     # monitor (ADR-0004) into the pipeline's Phase-1 write unit. It is no longer
     # a monitor task.
@@ -217,59 +227,6 @@ def test_main_rejects_unknown_subcommand(
     monkeypatch.delenv("USERPROFILE", raising=False)
     with pytest.raises(SystemExit):
         monitor_main(["bogus"])
-
-
-def test_main_shares_trigger_id_generator_across_breach_loop_and_bracket_stops(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    _silent_logger: None,
-) -> None:
-    """Regression — the cascade dispatcher's TriggerIdGenerator instance is
-    also passed to ``register_options_bracket_watcher_task``.
-
-    Per Fix 3 (ALP-123 PR-48 review): a bracket-stop fire and a cascade
-    dispatch in the same session must consume from the *same* monotonic
-    counter so the engine-originated ``client_order_id``
-    (``MON.{session}.{trigger}.0``) cannot collide across producers.
-    """
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("USERPROFILE", raising=False)
-    monkeypatch.setenv("ALPACA_PAPER_KEY", "test-key")
-    monkeypatch.setenv("ALPACA_PAPER_SECRET", "test-secret")
-    _ensure_db_schema(tmp_path)
-
-    captured: dict[str, object] = {}
-
-    async def _no_op_run(self: object) -> None:
-        captured["supervisor"] = self
-
-    real_breach = "alphamind.execution.continuous_monitor.__main__._register_breach_loop"
-    real_bracket = (
-        "alphamind.execution.continuous_monitor.__main__.register_options_bracket_watcher_task"
-    )
-
-    def _capture_breach(*args: object, **kwargs: object) -> None:
-        captured["breach_trigger_ids"] = kwargs.get("trigger_ids")
-
-    def _capture_bracket(*args: object, **kwargs: object) -> None:
-        captured["bracket_trigger_ids"] = kwargs.get("trigger_ids")
-
-    with (
-        mock.patch(
-            "alphamind.execution.continuous_monitor.__main__.MonitorSupervisor.run",
-            _no_op_run,
-        ),
-        mock.patch(real_breach, _capture_breach),
-        mock.patch(real_bracket, _capture_bracket),
-    ):
-        monitor_main(["run", "--mode", "paper"])
-
-    breach_trigger_ids = captured.get("breach_trigger_ids")
-    bracket_trigger_ids = captured.get("bracket_trigger_ids")
-    assert breach_trigger_ids is not None
-    assert bracket_trigger_ids is not None
-    # The same instance is threaded to both — not two independent generators.
-    assert breach_trigger_ids is bracket_trigger_ids
 
 
 def test_main_wires_is_market_open_into_underlying_stream(

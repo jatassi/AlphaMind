@@ -119,10 +119,13 @@ def make_emergency_callback(
     coroutine the breach loop awaits.
 
     ``trigger_ids`` is optional; when omitted, a fresh generator scoped
-    to the monitor session is created. The daemon's ``_register_breach_loop``
-    threads the shared cascade-dispatch :class:`TriggerIdGenerator` so the
-    emergency callback and the cascade dispatcher mint trigger ids from one
-    monotonic sequence within a session.
+    to the monitor session is created. A caller that wires this callback
+    alongside the cascade dispatcher threads one shared
+    :class:`TriggerIdGenerator` so the emergency callback and the cascade
+    dispatcher mint trigger ids from one monotonic sequence within a session.
+    (After ALP-857 the monitor-proper daemon no longer registers the breach
+    loop — breach detection is isolated into the out-of-process safety core —
+    so this wiring is consumed by that domain, not by ``_run_daemon``.)
 
     ``margin_call_observer`` defaults to :class:`NoMarginCallObserver` for
     tests; production wires :class:`AlpacaMarginCallObserver` so the

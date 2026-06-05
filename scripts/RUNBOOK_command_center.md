@@ -61,6 +61,16 @@ per-step PASS / FAIL report.
    `install_command_center_service.ps1`); a missing dependency causes the
    Windows SCM to refuse the start.
 
+The full prod runtime is **six** NSSM services (see `RUNBOOK_production.md`'s
+service table): `alphamind-collector`, `alphamind-scheduler`,
+`alphamind-monitor`, `alphamind-safety-core`, `alphamind-safety-core-watchdog`,
+and `AlphaMindCommandCenter`. The `alphamind-safety-core` service is the isolated
+breach + price-staleness safety core (ADR-0004 / ALP-857); its dedicated
+out-of-process watchdog `alphamind-safety-core-watchdog` restarts it on heartbeat
+staleness. The command center does **not** depend on the safety-core services and
+does not surface their state — they are monitored via their logs
+(`safety_core.*.log`) and the heartbeat file, per `RUNBOOK_production.md` §7/§9.
+
 ## Initial bring-up
 
 The first time a command center comes up on a machine. Each step is

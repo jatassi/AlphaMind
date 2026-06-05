@@ -510,12 +510,12 @@ async def _fire_leg(  # noqa: PLR0913 — fan-out parameters for the closer call
     """
     trigger_reason = _trigger_reason_for_leg(leg)
     estimated_exit_price, realized_pnl_usd = _estimated_exit_price_for(position, spot)
-    # The same monotonic per-session counter the cascade dispatcher uses;
-    # threaded in from ``_register_breach_loop`` so a bracket-stop fire and a
-    # cascade dispatch in the same session cannot collide on
-    # ``MON.{session}.{trigger}.0`` (the engine-originated client_order_id
-    # pattern shared by both). The prior PYTHONHASHSEED-randomized hash had
-    # an unbounded collision space against the cascade's 1-based counter.
+    # A monotonic per-session counter, threaded in from the daemon's
+    # ``_run_daemon`` (ALP-857: breach detection + its cascade dispatch were
+    # isolated into the out-of-process safety core, so the bracket watcher is now
+    # the sole monitor-proper engine-originated submitter). The counter still
+    # guarantees a unique ``MON.{session}.{trigger}.0`` per fire within a session;
+    # the prior PYTHONHASHSEED-randomized hash had an unbounded collision space.
     trigger_id = trigger_ids.next()
     try:
         prepared = await prepare_bracket_close(
