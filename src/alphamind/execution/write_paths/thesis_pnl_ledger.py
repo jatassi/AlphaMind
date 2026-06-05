@@ -19,7 +19,6 @@ Attribution is by ``thesis_id`` alone — the events carry the broker-carried li
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -31,7 +30,7 @@ from alphamind.execution.position_model.thesis_pnl_derivation import (
     ThesisPnlDerivation,
     derive_thesis_pnl,
 )
-from alphamind.state.records_broker_event_log import BrokerEventRecord
+from alphamind.state.records_broker_event_log import BrokerEventRecord, serialize_event_payload
 from alphamind.state.records_intent import ThesisPnlLedgerRecord
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.broker_event_log_codec import row_to_record as event_row_to_record
@@ -77,7 +76,7 @@ def _to_ledger_record(
     derivation: ThesisPnlDerivation,
     invocation_id: InvocationId | None,
 ) -> ThesisPnlLedgerRecord:
-    provenance = json.dumps({"event_keys": list(derivation.provenance_event_keys)}, sort_keys=True)
+    provenance = serialize_event_payload({"event_keys": list(derivation.provenance_event_keys)})
     return ThesisPnlLedgerRecord(
         thesis_id=thesis_id,
         realized_pnl_usd=derivation.realized_pnl_usd,

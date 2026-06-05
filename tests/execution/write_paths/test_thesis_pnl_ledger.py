@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 from collections.abc import AsyncIterator
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -23,8 +24,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import InvocationId, PositionId, ThesisId
 from alphamind._kernel.money import money, signed_money
+from alphamind.execution.position_model.thesis_pnl_derivation import ThesisPnlDerivation
 from alphamind.execution.write_paths.broker_event_persistence import append_broker_event
-from alphamind.execution.write_paths.thesis_pnl_ledger import rederive_thesis_pnl_ledger
+from alphamind.execution.write_paths.thesis_pnl_ledger import (
+    _to_ledger_record,
+    rederive_thesis_pnl_ledger,
+)
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -217,3 +222,25 @@ async def test_derived_cost_basis_and_provenance_round_trip_through_codec(
     assert record.cost_basis_usd == money("2200.00")
     assert json.loads(record.provenance_json)["event_keys"] == ["fevt-open", "fevt-add"]
     assert record.derived_from_invocation_id == InvocationId(_INV)
+
+
+def test_provenance_serialization_tolerates_non_str_values() -> None:
+    """F6: non-str provenance values (Decimal, datetime) must not raise TypeError.
+
+    ``_to_ledger_record`` uses ``serialize_event_payload`` (sort_keys+default=str)
+    so a Decimal or datetime sneaking into provenance coerces via str() instead of
+    raising.  The round-trip must preserve the coerced string in the JSON.
+    """
+    decimal_key = Decimal("1.23")
+    datetime_key = dt.datetime(2026, 6, 1, 12, 0, 0, tzinfo=dt.UTC)
+    derivation = ThesisPnlDerivation(
+        realized_pnl_usd=money("0"),
+        cost_basis_usd=money("0"),
+        provenance_event_keys=(decimal_key, datetime_key),  # type: ignore[arg-type]
+    )
+
+    # Must not raise TypeError despite non-str values in provenance_event_keys.
+    record = _to_ledger_record(ThesisId(_THESIS), derivation, None)
+
+    parsed = json.loads(record.provenance_json)
+    assert parsed["event_keys"] == [str(decimal_key), str(datetime_key)]
