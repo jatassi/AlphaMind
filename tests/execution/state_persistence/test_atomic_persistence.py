@@ -492,6 +492,66 @@ async def test_abandon_open_tears_down_graph_and_releases_capital(
 
 
 @pytest.mark.asyncio
+async def test_abandon_options_open_cancels_pending_submit_floor_no_strand(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """FL3 — abandoning an options OPEN whose floor row is still PENDING_SUBMIT
+    cancels/clears the floor so no PENDING_SUBMIT strand survives the teardown.
+
+    On a floor-submit failure the entry is live but the floor's OrderRow is left
+    PENDING_SUBMIT (its broker-id backfill never ran). The entry-CANCEL teardown
+    (``abandon_command`` → ``_writeback_cancel`` → ``_cancel_pending_protective_orders``)
+    must sweep the floor leg out of PENDING_SUBMIT, or its ``inv-{id}.``
+    ``client_order_id`` keeps ``invocation_has_pending_submit_strand`` True forever
+    → ``phase2_completed_at`` withheld with no recovery, and the resting floor is
+    never cancelled. The floor reserves no capital, so none is released here.
+    """
+    from alphamind.execution.write_paths.phase2.atomic import (
+        invocation_has_pending_submit_strand,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory, invocation_id=_INV)
+    await _seed_cash_ledger(factory)
+    cmd = _options_open()
+    # The entry id (and thus the floor's derived client_order_id) must carry the
+    # invocation prefix the strand guard scopes by, so a surviving floor strand is
+    # observable.
+    cid = derive_pm_command_id(
+        invocation_id=_INV,
+        envelope_id="ENV-REC-3",
+        command_ordinal=0,
+        attempt_seq=0,
+        thesis_id=derive_open_thesis_id("NVDA", f"{_INV}.ENV-REC-3.0.0"),
+    )
+    result = _options_open_result(cid)
+    await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
+
+    # The floor is precommitted PENDING_SUBMIT and would strand the invocation.
+    floor_order_id = _capital_floor_order_id(cid)
+    floor_row = await _read_order_by_order_id(factory, floor_order_id)
+    assert floor_row is not None
+    assert floor_row.status == OrderStatus.PENDING_SUBMIT.value
+    async with factory() as session:
+        assert await invocation_has_pending_submit_strand(session, invocation_id=_INV) is True
+
+    # (F) abandon the entry — the floor-submit-failure teardown path.
+    await abandon_command(
+        factory, invocation_id=_INV, command=cmd, result=result, reason="floor_submit_failed"
+    )
+
+    # The floor row is cleared out of PENDING_SUBMIT (CANCELLED), so no strand
+    # remains and the invocation can stamp phase2_completed_at.
+    floor_row = await _read_order_by_order_id(factory, floor_order_id)
+    assert floor_row is not None
+    assert floor_row.status == OrderStatus.CANCELLED.value
+    async with factory() as session:
+        assert await invocation_has_pending_submit_strand(session, invocation_id=_INV) is False
+    # The floor reserves no capital — the only reservation freed is the entry's.
+    assert await _read_reserved_capital(factory) == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
 async def test_abandon_missing_precommit_is_noop(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
