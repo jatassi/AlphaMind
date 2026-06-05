@@ -20,6 +20,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import InvocationId, PositionId, ThesisId
@@ -29,6 +30,7 @@ from alphamind.execution.write_paths.broker_event_persistence import append_brok
 from alphamind.execution.write_paths.thesis_pnl_ledger import (
     _to_ledger_record,
     rederive_thesis_pnl_ledger,
+    rederive_thesis_pnl_ledgers,
 )
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
@@ -95,7 +97,14 @@ def _at(seconds: int) -> dt.datetime:
 
 
 def _fill_event(
-    *, event_key: str, side: str, fill_price: float, fill_quantity: float, at_seconds: int = 0
+    *,
+    event_key: str,
+    side: str,
+    fill_price: float,
+    fill_quantity: float,
+    at_seconds: int = 0,
+    thesis_id: str = _THESIS,
+    position_id: str = _POS,
 ) -> BrokerEventRecord:
     payload = {
         "fill_price": fill_price,
@@ -105,9 +114,9 @@ def _fill_event(
     return BrokerEventRecord(
         event_key=event_key,
         event_type=BrokerEventType.FILL,
-        thesis_id=ThesisId(_THESIS),
+        thesis_id=ThesisId(thesis_id),
         invocation_id=InvocationId(_INV),
-        position_id=PositionId(_POS),
+        position_id=PositionId(position_id),
         raw_payload_json=json.dumps(payload, sort_keys=True),
         broker_timestamp=_at(at_seconds),
         captured_at=_at(at_seconds),
@@ -128,6 +137,33 @@ def _expiry_event(
         broker_timestamp=_at(at_seconds),
         captured_at=_at(at_seconds),
     )
+
+
+async def _seed_extra_cluster(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    position_id: str,
+    thesis_id: str,
+    bracket_id: str,
+    entry_order_id: str,
+) -> None:
+    """Seed a second position/thesis/bracket/order cluster (FK targets for events)."""
+
+    def _populate(sync_session: object) -> None:
+        from sqlalchemy.orm import Session
+
+        assert isinstance(sync_session, Session)
+        seed_position_cluster(
+            sync_session,
+            position_id=position_id,
+            thesis_id=thesis_id,
+            bracket_id=bracket_id,
+            entry_order_id=entry_order_id,
+        )
+
+    async with factory() as sess:
+        await sess.run_sync(lambda s: _populate(s))
+        await sess.commit()
 
 
 async def _append(factory: async_sessionmaker[AsyncSession], *events: BrokerEventRecord) -> None:
@@ -222,6 +258,92 @@ async def test_derived_cost_basis_and_provenance_round_trip_through_codec(
     assert record.cost_basis_usd == money("2200.00")
     assert json.loads(record.provenance_json)["event_keys"] == ["fevt-open", "fevt-add"]
     assert record.derived_from_invocation_id == InvocationId(_INV)
+
+
+async def test_batched_rederive_matches_unbatched_and_is_query_bounded(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """PR2 — ``rederive_thesis_pnl_ledgers`` over N theses fetches events in a
+    bounded number of broker-event-log SELECTs (not one-per-thesis) while writing
+    per-thesis ledgers byte-identical to the unbatched per-thesis path.
+
+    The N+1 it replaces issues one ``SELECT … WHERE thesis_id = ?`` per distinct
+    thesis; the batched entry point issues a small constant regardless of the
+    thesis count. Per-thesis output must be unchanged, so the two ledger rows the
+    batch writes are asserted against the figures the unbatched single-thesis
+    derivation produces over the same events.
+    """
+    engine, factory = db
+    await _seed(factory)  # pos-1 / thesis-1
+    await _seed_extra_cluster(
+        factory,
+        position_id="pos-2",
+        thesis_id="thesis-2",
+        bracket_id="bracket-2",
+        entry_order_id="order-2",
+    )
+    # thesis-1: a closed round-trip (+300 realized, flat) — same as the unbatched tests.
+    await _append(
+        factory,
+        _fill_event(event_key="t1-open", side="buy", fill_price=100.0, fill_quantity=10.0),
+        _fill_event(
+            event_key="t1-close", side="sell", fill_price=130.0, fill_quantity=10.0, at_seconds=60
+        ),
+    )
+    # thesis-2: an open lot (20 shares @ avg 110 → 2200 basis, 0 realized).
+    await _append(
+        factory,
+        _fill_event(
+            event_key="t2-open",
+            side="buy",
+            fill_price=100.0,
+            fill_quantity=10.0,
+            thesis_id="thesis-2",
+            position_id="pos-2",
+        ),
+        _fill_event(
+            event_key="t2-add",
+            side="buy",
+            fill_price=120.0,
+            fill_quantity=10.0,
+            at_seconds=60,
+            thesis_id="thesis-2",
+            position_id="pos-2",
+        ),
+    )
+
+    event_log_selects: list[str] = []
+
+    @event.listens_for(engine.sync_engine, "before_cursor_execute")
+    def _capture(_conn: object, _cursor: object, statement: str, *_rest: object) -> None:
+        normalized = " ".join(statement.split()).lower()
+        if "from broker_event_log" in normalized and normalized.startswith("select"):
+            event_log_selects.append(statement)
+
+    async with factory() as sess:
+        records = await rederive_thesis_pnl_ledgers(
+            sess, (ThesisId("thesis-1"), ThesisId("thesis-2")), InvocationId(_INV)
+        )
+        await sess.commit()
+
+    # Bounded: a per-thesis fetch would issue >= 2 event SELECTs over 2 theses; the
+    # batch issues a single IN-clause read regardless of the thesis count.
+    assert len(event_log_selects) == 1, event_log_selects
+
+    by_thesis = {r.thesis_id: r for r in records}
+    assert by_thesis[ThesisId("thesis-1")].realized_pnl_usd == signed_money("300.00")
+    assert by_thesis[ThesisId("thesis-1")].cost_basis_usd == money("0")
+    assert by_thesis[ThesisId("thesis-2")].realized_pnl_usd == signed_money("0")
+    assert by_thesis[ThesisId("thesis-2")].cost_basis_usd == money("2200.00")
+
+    # The persisted ledger rows match the returned records, byte-for-byte on the figures.
+    async with factory() as sess:
+        row1 = await sess.get(ThesisPnlLedgerRow, "thesis-1")
+        row2 = await sess.get(ThesisPnlLedgerRow, "thesis-2")
+        assert row1 is not None and row2 is not None
+        assert row_to_record(row1).realized_pnl_usd == signed_money("300.00")
+        assert row_to_record(row1).cost_basis_usd == money("0")
+        assert row_to_record(row2).cost_basis_usd == money("2200.00")
 
 
 def test_provenance_serialization_tolerates_non_str_values() -> None:

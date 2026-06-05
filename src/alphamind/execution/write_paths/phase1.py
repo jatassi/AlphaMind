@@ -51,7 +51,7 @@ from alphamind.execution.write_paths.projection_rebuild import (
     ProjectionRebuildSummary,
     rebuild_projection,
 )
-from alphamind.execution.write_paths.thesis_pnl_ledger import rederive_thesis_pnl_ledger
+from alphamind.execution.write_paths.thesis_pnl_ledger import rederive_thesis_pnl_ledgers
 from alphamind.portfolio_state.events.activity_log import (
     EVENT_TYPE_TO_GROUP,
     ActivityLogEntry,
@@ -366,7 +366,7 @@ async def process_unprocessed_fills(
 async def rederive_thesis_ledgers(handle: InvocationHandle) -> int:
     """Re-derive every thesis's PnL ledger from the full broker-event log.
 
-    Story 03c's :func:`rederive_thesis_pnl_ledger` is the single writer of
+    Story 03c's :mod:`thesis_pnl_ledger` is the single writer of
     ``thesis_pnl_ledger`` (ADR-0005 invariant 3): enumerate the distinct
     ``thesis_id`` values present on the broker-event log (the only theses whose
     realized PnL the log can derive) and re-derive each. The write is an
@@ -377,10 +377,16 @@ async def rederive_thesis_ledgers(handle: InvocationHandle) -> int:
     ``run_account_activities_poll`` (ALP-846), so a thesis carrying a
     same-invocation OPEXP / OPEXC / OPASN / OPTRD option-lifecycle event has that
     event's realized-PnL delta folded into the ledger *this* invocation. The
-    activities poll appends those events to the log *after* the fill-fold's
-    projection rebuild ran, so the ledger must be re-derived once the log is
-    complete. Joins the open ``handle.session`` transaction; the surrounding
-    write unit commits. Returns the count of ledgers re-derived.
+    activities poll appends those events to the log *after* the fill-fold ran, so
+    the ledger must be re-derived once the log is complete — and this post-poll
+    pass is the **sole** thesis-ledger rederive (the W2a projection rebuild no
+    longer re-derives them, so there is no redundant pre-poll double-write). Joins
+    the open ``handle.session`` transaction; the surrounding write unit commits.
+    Returns the count of ledgers re-derived.
+
+    PR2 — the distinct ``thesis_id`` values are re-derived through the **batched**
+    :func:`rederive_thesis_pnl_ledgers`: a single ``IN``-clause event fetch for all
+    theses instead of one ``SELECT … WHERE thesis_id = ?`` per thesis (the N+1).
     """
     session = handle.session
     thesis_ids = (
@@ -395,15 +401,12 @@ async def rederive_thesis_ledgers(handle: InvocationHandle) -> int:
         .all()
     )
     invocation_id = InvocationId(handle.invocation_id)
-    rederived = 0
-    for thesis_id in thesis_ids:
-        # The ``is_not(None)`` filter guarantees a non-NULL value at runtime; the
-        # mypy-visible ``str | None`` column type does not narrow, so guard it.
-        if thesis_id is None:
-            continue
-        await rederive_thesis_pnl_ledger(session, ThesisId(thesis_id), invocation_id)
-        rederived += 1
-    return rederived
+    # The ``is_not(None)`` filter guarantees non-NULL values at runtime; the
+    # mypy-visible ``str | None`` column type does not narrow, so guard before
+    # wrapping each in ``ThesisId``.
+    typed_ids = tuple(ThesisId(tid) for tid in thesis_ids if tid is not None)
+    records = await rederive_thesis_pnl_ledgers(session, typed_ids, invocation_id)
+    return len(records)
 
 
 def _iter_merged_events(

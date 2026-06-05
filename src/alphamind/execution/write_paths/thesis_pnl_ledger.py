@@ -19,6 +19,7 @@ Attribution is by ``thesis_id`` alone — the events carry the broker-carried li
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -57,6 +58,40 @@ async def rederive_thesis_pnl_ledger(
     return record
 
 
+async def rederive_thesis_pnl_ledgers(
+    session: AsyncSession,
+    thesis_ids: Iterable[ThesisId],
+    invocation_id: InvocationId | None,
+) -> tuple[ThesisPnlLedgerRecord, ...]:
+    """Batched per-thesis rederive — one event fetch for *all* of *thesis_ids*.
+
+    The N+1-free entry point: a single ``SELECT … WHERE thesis_id IN (…)`` loads
+    every thesis's events in one round-trip, groups them in-process, then upserts
+    each thesis's ledger row through the same single-writer path
+    (:func:`_to_ledger_record` / :func:`_upsert`). Per-thesis output is
+    byte-identical to the unbatched :func:`rederive_thesis_pnl_ledger`: the events
+    are the same set and :func:`derive_thesis_pnl` re-filters to its thesis, so the
+    fold sees exactly the rows the single-thesis query would have returned.
+
+    De-duplicates *thesis_ids* while preserving first-seen order so a repeated id
+    is derived (and returned) once. The caller owns the transaction boundary
+    (mirrors :func:`rederive_thesis_pnl_ledger`). Returns the persisted records in
+    that order.
+    """
+    unique_ids = tuple(dict.fromkeys(thesis_ids))
+    if not unique_ids:
+        return ()
+    events_by_thesis = await _events_by_thesis(session, unique_ids)
+    records: list[ThesisPnlLedgerRecord] = []
+    for thesis_id in unique_ids:
+        events = events_by_thesis.get(thesis_id, ())
+        derivation = derive_thesis_pnl(thesis_id, events)
+        record = _to_ledger_record(thesis_id, derivation, invocation_id)
+        await _upsert(session, record)
+        records.append(record)
+    return tuple(records)
+
+
 async def _events_for_thesis(
     session: AsyncSession, thesis_id: ThesisId
 ) -> tuple[BrokerEventRecord, ...]:
@@ -69,6 +104,26 @@ async def _events_for_thesis(
     stmt = select(BrokerEventLogRow).where(BrokerEventLogRow.thesis_id == thesis_id)
     rows = (await session.execute(stmt)).scalars().all()
     return tuple(event_row_to_record(row) for row in rows)
+
+
+async def _events_by_thesis(
+    session: AsyncSession, thesis_ids: tuple[ThesisId, ...]
+) -> dict[ThesisId, tuple[BrokerEventRecord, ...]]:
+    """Load the events for *all* of *thesis_ids* in one ``IN``-clause SELECT.
+
+    Replaces the per-thesis ``WHERE thesis_id = ?`` fetch (one round-trip per
+    thesis, the N+1) with a single ``WHERE thesis_id IN (…)`` read, grouping the
+    rows by their broker-carried ``thesis_id`` in-process. A thesis with no events
+    is absent from the map (the caller derives an empty ledger for it).
+    """
+    stmt = select(BrokerEventLogRow).where(BrokerEventLogRow.thesis_id.in_(thesis_ids))
+    rows = (await session.execute(stmt)).scalars().all()
+    grouped: dict[ThesisId, list[BrokerEventRecord]] = {tid: [] for tid in thesis_ids}
+    for row in rows:
+        record = event_row_to_record(row)
+        if record.thesis_id is not None:
+            grouped.setdefault(record.thesis_id, []).append(record)
+    return {tid: tuple(records) for tid, records in grouped.items()}
 
 
 def _to_ledger_record(
@@ -106,4 +161,4 @@ async def _upsert(session: AsyncSession, record: ThesisPnlLedgerRecord) -> None:
     await session.execute(stmt)
 
 
-__all__ = ["rederive_thesis_pnl_ledger"]
+__all__ = ["rederive_thesis_pnl_ledger", "rederive_thesis_pnl_ledgers"]
