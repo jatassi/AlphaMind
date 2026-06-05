@@ -101,6 +101,31 @@ def _rest_recovered_fill_event(
     return _fill_record(event_key, payload, at_seconds)
 
 
+def _mleg_leg_child_fill_event(
+    *,
+    event_key: str,
+    position_intent: str,
+    parent_net_side: str | None,
+    fill_price: float,
+    fill_quantity: float,
+    at_seconds: int = 0,
+) -> BrokerEventRecord:
+    """A FILL event mirroring an mleg per-leg child report.
+
+    The leg child shares the PARENT ``TradeUpdate`` dump as ``raw_event_payload``,
+    whose ``order.side`` is the strategy NET direction (or ``None``) — NOT the
+    leg's buy/sell. The leg-authoritative side lives on the report's top-level
+    ``position_intent`` (``buy_to_open`` / ``sell_to_close`` / …), set per-leg.
+    """
+    payload: dict[str, object] = {
+        "fill_price": fill_price,
+        "fill_quantity": fill_quantity,
+        "position_intent": position_intent,
+        "raw_event_payload": {"order": {"side": parent_net_side}},
+    }
+    return _fill_record(event_key, payload, at_seconds)
+
+
 def _fill_record(event_key: str, payload: dict[str, object], at_seconds: int) -> BrokerEventRecord:
     return BrokerEventRecord(
         event_key=event_key,
@@ -138,6 +163,76 @@ def test_rest_recovered_fill_side_reads_from_top_level_order_snapshot() -> None:
     derivation = derive_thesis_pnl(_THESIS, events)
 
     assert derivation.realized_pnl_usd == signed_money("300.00")
+    assert derivation.cost_basis_usd == money("0")
+
+
+def test_mleg_leg_child_side_reads_position_intent_not_parent_net_side() -> None:
+    """P3: an mleg leg-child folds by its ``position_intent``, not the parent net side.
+
+    A credit-spread BUY leg arrives as a child of a parent ``TradeUpdate`` whose
+    ``order.side`` is the strategy NET direction ("sell" for a credit spread).
+    Reading the parent net side would classify the BUY leg as a SELL (opening a
+    short), producing the wrong PnL sign. The leg's own ``position_intent``
+    (``buy_to_open``) is authoritative: it must open a LONG lot, so a later
+    sell-to-close realizes a long gain.
+    """
+    events = (
+        # BUY leg of a credit spread: parent net side is "sell", but this leg
+        # is buy_to_open → must open a LONG lot.
+        _mleg_leg_child_fill_event(
+            event_key="leg-open",
+            position_intent="buy_to_open",
+            parent_net_side="sell",
+            fill_price=100.0,
+            fill_quantity=10.0,
+        ),
+        _mleg_leg_child_fill_event(
+            event_key="leg-close",
+            position_intent="sell_to_close",
+            parent_net_side="sell",
+            fill_price=130.0,
+            fill_quantity=10.0,
+            at_seconds=60,
+        ),
+    )
+
+    derivation = derive_thesis_pnl(_THESIS, events)
+
+    # Long round-trip: bought 10@100, sold 10@130 → +300. A parent-net-side read
+    # would have opened a short and produced -300 (or crashed on a null net side).
+    assert derivation.realized_pnl_usd == signed_money("300.00")
+    assert derivation.cost_basis_usd == money("0")
+
+
+def test_mleg_leg_child_null_parent_side_does_not_crash_fold() -> None:
+    """P3: a null parent net side never aborts the fold when ``position_intent`` is set.
+
+    An mleg parent ``TradeUpdate`` can carry a ``None`` ``order.side``. The
+    leg-authoritative ``position_intent`` must be consulted first so a null
+    parent side does not raise ``ValueError`` and propagate through the fold.
+    """
+    events = (
+        _mleg_leg_child_fill_event(
+            event_key="leg-open",
+            position_intent="sell_to_open",
+            parent_net_side=None,
+            fill_price=100.0,
+            fill_quantity=10.0,
+        ),
+        _mleg_leg_child_fill_event(
+            event_key="leg-cover",
+            position_intent="buy_to_close",
+            parent_net_side=None,
+            fill_price=80.0,
+            fill_quantity=10.0,
+            at_seconds=60,
+        ),
+    )
+
+    derivation = derive_thesis_pnl(_THESIS, events)
+
+    # Short round-trip: sold 10@100 then bought 10@80 → +200.
+    assert derivation.realized_pnl_usd == signed_money("200.00")
     assert derivation.cost_basis_usd == money("0")
 
 

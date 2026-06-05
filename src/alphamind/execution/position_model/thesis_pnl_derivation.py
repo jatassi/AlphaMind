@@ -16,9 +16,10 @@ Two event families contribute (CONTEXT.md, ADR-0002):
   basis fold out of the fill cashflows via an average-cost lot model: an opening
   fill adds capital to the open lot's cost basis; a closing fill realizes PnL
   against the running average cost and releases basis proportionally. The
-  open/close direction is the broker order ``side`` (``buy`` / ``sell``) read off
-  the captured ``FillReport`` payload against the running net quantity — no
-  ``position_intent`` is required (it is unset for equity entries).
+  open/close direction is the leg-authoritative ``buy`` / ``sell`` side read off
+  the captured ``FillReport`` payload against the running net quantity — taken
+  from the per-leg ``position_intent`` when present (mleg leg-children), else the
+  order ``side`` (equity entries leave ``position_intent`` unset).
 * **Activities** (``OPEXP`` / ``OPASN`` / ``OPEXC``) — option-lifecycle events
   that change a position with **no fill** (an OTM expiry, an assignment). They
   carry their realized-PnL contribution on the event payload
@@ -152,12 +153,26 @@ def _activity_realized_delta(event: BrokerEventRecord, lot: _Lot) -> Decimal:
     return Decimal(str(realized)) if realized is not None else DECIMAL_ZERO
 
 
+_POSITION_INTENT_SIDE: dict[str, str] = {
+    "buy_to_open": "buy",
+    "buy_to_close": "buy",
+    "sell_to_open": "sell",
+    "sell_to_close": "sell",
+}
+
+
 def _fill_side(payload: dict[str, object]) -> str:
-    """The broker order side (``buy`` / ``sell``) off a captured FillReport payload.
+    """The leg-authoritative open/close side (``buy`` / ``sell``) of a FillReport.
 
-    Two ``raw_event_payload`` shapes reach the log, and the side lives in a
-    different place in each:
+    The side is read in priority order, leg-authoritative first:
 
+    * **``position_intent``** (top-level on the report) is set PER LEG on every
+      mleg leg-child (``buy_to_open`` / ``sell_to_close`` / …). It is the only
+      leg-authoritative side: an mleg leg-child shares the PARENT ``TradeUpdate``
+      dump as ``raw_event_payload``, whose ``order.side`` is the strategy NET
+      direction (or ``None``) — reading that mis-signs a spread leg or aborts the
+      fold on a null net side. ``position_intent`` is unset for equity entries,
+      so it is only consulted when present.
     * **websocket** fills (02a ``translate_trade_update``) dump an alpaca-py
       ``TradeUpdate`` — the order is nested, so the side is at
       ``raw_event_payload['order']['side']``;
@@ -167,8 +182,12 @@ def _fill_side(payload: dict[str, object]) -> str:
       and there is no nested ``order`` key.
 
     Reading only the websocket path crashes the fold for any thesis carrying a
-    recovered fill, so both shapes are tried before surfacing.
+    recovered fill or an mleg leg-child, so all shapes are tried before surfacing.
     """
+    intent = payload.get("position_intent")
+    if isinstance(intent, str) and intent in _POSITION_INTENT_SIDE:
+        return _POSITION_INTENT_SIDE[intent]
+
     raw = payload.get("raw_event_payload")
     if not isinstance(raw, dict):
         raw = {}
