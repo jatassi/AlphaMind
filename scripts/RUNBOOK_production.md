@@ -175,6 +175,17 @@ set -a && source <(tr -d '\r' < .env) && set +a && \
 **Run § 2 exactly once, the very first time AlphaMind comes up on the
 production machine.** Subsequent operations all go through § 1.
 
+> **If you are performing the broker-boundary genesis cutover (ADR-0001–0005)**
+> — swapping to a new Alpaca paper account and a fresh DB — use
+> `docs/runbooks/genesis-cutover.md` as your primary procedure. That runbook
+> supersedes § 2.2 (the fresh DB replaces the additive migration) and is the
+> current first-run procedure for the new design. The account-swap step
+> (§ 2.1) and the `--fresh-start` cold-start invocation (§ 2.4) remain
+> relevant: § 2.1 for populating the new account's credentials in `.env`,
+> and § 2.4 for the `synthetic_id_count == 0` verification and hard-fail
+> paths. Return to § 2.5 onward to install the five remaining NSSM services
+> after the genesis cutover bootstrap step.
+
 The collector is already running on this box (it was installed first to
 accumulate the months of distillation-calibration data the analysis layer
 needs). Steps 2.5–2.6 below assume that and skip re-installing it.
@@ -233,13 +244,23 @@ NSSM-managed services bypass this — they read the env from
 
 ### 2.2 Bring the DB to alembic head
 
+> **Cutover to the new broker-boundary design (ADR-0001–0005) requires a
+> fresh DB, not an additive migration.** The procedure in
+> `docs/runbooks/genesis-cutover.md` — swapping to a new Alpaca paper
+> account and a new empty DB file — **supersedes this step** for that
+> one-time event. After the genesis cutover § 2 does not apply; the system
+> is already bootstrapped and all subsequent operations go through § 1.
+>
+> The text below applies to the **legacy** setup (old Alpaca account, old
+> DB) and to any incremental schema updates after genesis.
+
 ```powershell
 uv run alembic upgrade head
 uv run alembic current      # confirm at heads
 ```
 
 The collector has been writing into this DB for months; do not delete or
-re-create it. Migrations are additive.
+re-create it for incremental updates. Migrations are additive.
 
 ### 2.3 Build the command-center frontend
 
