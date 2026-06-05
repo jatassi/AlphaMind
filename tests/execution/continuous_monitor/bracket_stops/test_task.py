@@ -9,7 +9,7 @@ broker-call submitter, and the activity-log emitter.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
@@ -22,6 +22,11 @@ from alphamind._kernel.ids import (
     ThesisId,
 )
 from alphamind._kernel.money import money, price, signed_money
+from alphamind.commands.command_models import (
+    BracketOrderParameters,
+    PriceCondition,
+    PriceLeg,
+)
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     CloseSubmissionResult,
@@ -29,6 +34,7 @@ from alphamind.execution.continuous_monitor.bracket_stops.closer import (
 from alphamind.execution.continuous_monitor.bracket_stops.task import (
     _run_bracket_stop_cycle,
 )
+from alphamind.execution.write_paths.phase2.open import _wire_leg_to_bracket_leg
 from alphamind.execution.continuous_monitor.cascade_dispatch import TriggerIdGenerator
 from alphamind.execution.continuous_monitor.underlying_stream.cache import (
     UnderlyingPriceCache,
@@ -46,6 +52,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
+    EnforcementBinding,
     PLAnchorSpec,
     PriceTrigger,
     TriggerSignal,
@@ -713,93 +720,14 @@ def _directional_stop_bracket(
     )
 
 
-def _non_directional_option_stop_bracket(
-    *,
-    underlying_threshold: float,
-    stop_pct: float,
-    actual_entry_price: float,
-) -> BracketRecord:
-    """A non-directional single-option PRICE_STOP firing on the option's own mark.
-
-    The leg carries ``trigger_signal=OPTION_PRICE`` plus a ``stop`` PLAnchorSpec
-    so the monitor routes it into the single-option derived-price evaluator. The
-    ``PriceTrigger.threshold_usd`` (an underlying level) is set so that an
-    underlying-price evaluation would give the opposite firing answer — proving
-    the monitor did not evaluate against the underlying.
-    """
-    leg = BracketLeg(
-        leg_id="leg-nondir-stop",
-        leg_type=BracketLegType.PRICE_STOP,
-        order_id=None,
-        trigger=PriceTrigger(
-            underlying_ticker=Symbol("NVDA"),
-            threshold_usd=underlying_threshold,
-            direction="LTE",
-        ),
-        enforcement=BracketLegEnforcement.MECHANICAL,
-        status=BracketLegStatus.ACTIVE,
-        trigger_signal=TriggerSignal.OPTION_PRICE,
-        pl_anchor=PLAnchorSpec(
-            spec_type="stop",
-            pct=stop_pct,
-            planned_entry_price=actual_entry_price,
-            actual_entry_price=actual_entry_price,
-            recalculated_at_fill=True,
-        ),
-    )
-    return BracketRecord(
-        bracket_id=BracketId("brk-1"),
-        position_id=PositionId("pos-1"),
-        status=BracketStatus.ACTIVE,
-        entry_order_id=OrderId("ord-entry-1"),
-        protective_legs=(leg,),
-        modification_history=(),
-        corporate_action_cancellation_reason=None,
-    )
-
-
-def _non_directional_strategy_stop_bracket(*, stop_pct: float) -> BracketRecord:
-    """A non-directional spread PRICE_STOP firing on the strategy net mark.
-
-    Carries ``trigger_signal=NET_MARK`` + a ``stop`` PLAnchorSpec so the monitor
-    routes it into the strategy net-P/L evaluator rather than the underlying.
-    """
-    leg = BracketLeg(
-        leg_id="leg-strat-stop",
-        leg_type=BracketLegType.PRICE_STOP,
-        order_id=None,
-        trigger=PriceTrigger(
-            underlying_ticker=Symbol("NVDA"),
-            threshold_usd=850.0,
-            direction="LTE",
-        ),
-        enforcement=BracketLegEnforcement.MECHANICAL,
-        status=BracketLegStatus.ACTIVE,
-        trigger_signal=TriggerSignal.NET_MARK,
-        pl_anchor=PLAnchorSpec(
-            spec_type="stop",
-            pct=stop_pct,
-            planned_entry_price=3.0,
-        ),
-    )
-    return BracketRecord(
-        bracket_id=BracketId("brk-strat-1"),
-        position_id=PositionId("pos-strat-1"),
-        status=BracketStatus.ACTIVE,
-        entry_order_id=OrderId("ord-entry-strat"),
-        protective_legs=(leg,),
-        modification_history=(),
-        corporate_action_cancellation_reason=None,
-    )
-
-
 class TestThesisShapedTriggerSelection:
-    """ALP-852 — the thesis-invalidation stop selects its trigger by thesis nature.
+    """ALP-852/861 — the thesis-invalidation stop selects its trigger by signal.
 
-    A directional thesis's PRICE_STOP fires on the underlying; a non-directional
-    (vol / spread) thesis's PRICE_STOP fires on the option's own mark / the
-    strategy net mark — *not* the underlying, which is meaningless for a thesis
-    whose PnL is nonlinear in the underlying.
+    A directional thesis's PRICE_STOP fires on the underlying; the
+    non-directional (vol / spread) firing paths are covered against the REAL leg
+    constructor in :class:`TestNonDirectionalStopFiresThroughRealConstructor`.
+    Selection is by the leg's ``trigger_signal``, authoritative over any
+    ``pl_anchor`` it happens to carry.
     """
 
     async def test_directional_stop_fires_on_underlying_price(self) -> None:
@@ -807,73 +735,6 @@ class TestThesisShapedTriggerSelection:
         position = _options_position(direction=Direction.LONG)
         bracket = _directional_stop_bracket(threshold=865.0, direction="LTE")
         cache = await _seed_cache({"NVDA": 860.0})  # underlying below threshold → fires
-        submitter = FakeSubmitter()
-        log = FakeActivityLog()
-        await _run_bracket_stop_cycle(
-            config=_config(),
-            position_repository=FakePositionRepository((position,)),
-            bracket_repository=FakeBracketRepository((bracket,)),
-            cache=cache,
-            submitter=submitter,
-            activity_log=log.emit,
-            invocation_id_provider=_const_str("inv-001"),
-            monitor_session_id="mon-S",
-            trigger_ids=_trigger_ids(),
-            now=_NOW,
-            risk_free_rate=0.045,
-            fired_legs=set(),
-        )
-        assert len(submitter.options_calls) == 1
-        assert log.entries[0].detail.exit_method is PositionExitMethod.STOP_TRIGGERED
-
-    async def test_non_directional_option_stop_ignores_underlying_breach(self) -> None:
-        """AC2/AC3 — a non-directional leg does NOT fire on an underlying breach.
-
-        Spot 860 is below the leg's ``threshold_usd`` of 865 (LTE) — an
-        underlying-price evaluation would fire. But the leg is non-directional
-        (``trigger_signal=OPTION_PRICE``); the call's derived mark at spot 860
-        (strike 850, IV 0.30) is well above the 30%-of-premium stop, so the
-        option-price evaluator does not fire. The non-fire proves the monitor
-        did not route to the underlying path.
-        """
-        position = _options_position(direction=Direction.LONG, premium_paid=12.0, iv=0.30)
-        bracket = _non_directional_option_stop_bracket(
-            underlying_threshold=865.0, stop_pct=0.30, actual_entry_price=12.0
-        )
-        cache = await _seed_cache({"NVDA": 860.0})
-        submitter = FakeSubmitter()
-        log = FakeActivityLog()
-        await _run_bracket_stop_cycle(
-            config=_config(),
-            position_repository=FakePositionRepository((position,)),
-            bracket_repository=FakeBracketRepository((bracket,)),
-            cache=cache,
-            submitter=submitter,
-            activity_log=log.emit,
-            invocation_id_provider=_const_str("inv-001"),
-            monitor_session_id="mon-S",
-            trigger_ids=_trigger_ids(),
-            now=_NOW,
-            risk_free_rate=0.045,
-            fired_legs=set(),
-        )
-        assert submitter.options_calls == []
-        assert log.entries == []
-
-    async def test_non_directional_option_stop_fires_on_option_mark(self) -> None:
-        """AC2 — a non-directional leg fires when the option's own mark crosses.
-
-        Spot 800 is ABOVE the leg's ``threshold_usd`` of 790 (LTE) — an
-        underlying-price evaluation would NOT fire. But the call's derived mark
-        at spot 800 (strike 850, IV 0.30) has collapsed below the 30%-of-premium
-        stop, so the option-price evaluator fires. The fire on a spot the
-        underlying path would skip proves the option-price route is taken.
-        """
-        position = _options_position(direction=Direction.LONG, premium_paid=35.24, iv=0.30)
-        bracket = _non_directional_option_stop_bracket(
-            underlying_threshold=790.0, stop_pct=0.30, actual_entry_price=35.24
-        )
-        cache = await _seed_cache({"NVDA": 800.0})
         submitter = FakeSubmitter()
         log = FakeActivityLog()
         await _run_bracket_stop_cycle(
@@ -952,18 +813,201 @@ class TestThesisShapedTriggerSelection:
         )
         assert len(submitter.options_calls) == 1
 
-    async def test_non_directional_strategy_stop_routes_to_net_mark(self) -> None:
-        """AC2 — a non-directional spread leg routes to the strategy net-mark evaluator.
 
-        The credit spread's net P/L far exceeds the 50% stop fraction when the
-        spread goes near-worthless (spot far above both strikes), and the fire
-        routes through ``submit_strategy_close`` — the strategy net-P/L path, not
-        an underlying-price evaluation.
+# ---------------------------------------------------------------------------
+# Non-directional stop built by the REAL leg constructor (ALP-861)
+# ---------------------------------------------------------------------------
+
+
+def _activate(leg: BracketLeg) -> BracketLeg:
+    """Return *leg* with status ACTIVE — the monitor only fires ACTIVE legs.
+
+    The real OPEN writeback builds legs PENDING_ACTIVATION; Phase 1 entry-fill
+    activates them. Tests that build a leg via the production constructor flip
+    that one field so the firing kernel evaluates it, leaving every other field
+    exactly as the constructor produced it (in particular: NO ``pl_anchor``).
+    """
+    return replace(leg, status=BracketLegStatus.ACTIVE)
+
+
+def _non_directional_option_stop_bracket_real(
+    *,
+    trigger_price: float,
+    comparator: str,
+) -> BracketRecord:
+    """A non-directional single-option PRICE_STOP built by ``_wire_leg_to_bracket_leg``.
+
+    Crucially this exercises the REAL production leg constructor — the leg
+    carries ``trigger_signal=OPTION_PRICE`` and NO ``pl_anchor`` (the constructor
+    does not build one). Pre-ALP-861 the monitor routed this into the pct-of-PnL
+    evaluator, which raised ValueError on the missing anchor and never fired.
+    """
+    wire_leg = PriceLeg(
+        type="price",
+        is_hard=True,
+        trigger_signal="option_price",
+        condition=PriceCondition(
+            underlying_trigger="NVDA",
+            comparator=comparator,  # type: ignore[arg-type]
+            trigger_price=price(trigger_price),
+        ),
+        order_parameters=BracketOrderParameters(order_type="market"),
+    )
+    leg = _activate(
+        _wire_leg_to_bracket_leg(
+            leg_id="leg-nondir-opt",
+            wire_leg=wire_leg,
+            leg_order_id=None,
+            ticker="NVDA",
+            enforcement_binding=EnforcementBinding.MONITOR_ENFORCED,
+        )
+    )
+    return BracketRecord(
+        bracket_id=BracketId("brk-1"),
+        position_id=PositionId("pos-1"),
+        status=BracketStatus.ACTIVE,
+        entry_order_id=OrderId("ord-entry-1"),
+        protective_legs=(leg,),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
+    )
+
+
+def _non_directional_strategy_stop_bracket_real(
+    *,
+    trigger_price: float,
+    comparator: str,
+) -> BracketRecord:
+    """A non-directional spread PRICE_STOP built by ``_wire_leg_to_bracket_leg``.
+
+    Carries ``trigger_signal=NET_MARK`` and NO ``pl_anchor`` — the real
+    constructor's output for a spread thesis-invalidation stop.
+    """
+    wire_leg = PriceLeg(
+        type="price",
+        is_hard=True,
+        trigger_signal="net_mark",
+        condition=PriceCondition(
+            underlying_trigger="NVDA",
+            comparator=comparator,  # type: ignore[arg-type]
+            trigger_price=price(trigger_price),
+        ),
+        order_parameters=BracketOrderParameters(order_type="market"),
+    )
+    leg = _activate(
+        _wire_leg_to_bracket_leg(
+            leg_id="leg-nondir-net",
+            wire_leg=wire_leg,
+            leg_order_id=None,
+            ticker="NVDA",
+            enforcement_binding=EnforcementBinding.MONITOR_ENFORCED,
+        )
+    )
+    return BracketRecord(
+        bracket_id=BracketId("brk-strat-1"),
+        position_id=PositionId("pos-strat-1"),
+        status=BracketStatus.ACTIVE,
+        entry_order_id=OrderId("ord-entry-strat"),
+        protective_legs=(leg,),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
+    )
+
+
+class TestNonDirectionalStopFiresThroughRealConstructor:
+    """ALP-861 — the non-directional thesis-invalidation stop actually fires.
+
+    These brackets are built by the production ``_wire_leg_to_bracket_leg``
+    constructor, which produces a PRICE_STOP leg carrying ``trigger_signal`` and
+    NO ``pl_anchor``. Pre-ALP-861 the monitor routed such a leg into the
+    pct-of-PnL evaluator, which raised ValueError on the missing anchor and was
+    silently swallowed — the stop never fired. With the absolute option-mark /
+    net-mark evaluator the stop fires on ``condition.trigger_price``.
+    """
+
+    async def test_single_option_stop_fires_on_option_mark_crossing(self) -> None:
+        """AC1 — a single-option non-directional stop fires when the option mark
+        crosses ``condition.trigger_price``, via the real leg constructor.
+
+        At spot 820 the long call (strike 850, IV 0.30, ~39 DTE) marks ~$21.
+        ``trigger_price=25.0`` with comparator ``<=`` → the mark is below it →
+        fire. The underlying (820) is far above the $25 level, so an
+        underlying-route evaluation would NOT fire — proving the option-mark
+        route is taken. Before ALP-861 this never fired (no ``pl_anchor``).
+        """
+        position = _options_position(direction=Direction.LONG, premium_paid=35.24, iv=0.30)
+        bracket = _non_directional_option_stop_bracket_real(
+            trigger_price=25.0, comparator="<="
+        )
+        cache = await _seed_cache({"NVDA": 820.0})
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+        await _run_bracket_stop_cycle(
+            config=_config(),
+            position_repository=FakePositionRepository((position,)),
+            bracket_repository=FakeBracketRepository((bracket,)),
+            cache=cache,
+            submitter=submitter,
+            activity_log=log.emit,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
+            now=_NOW,
+            risk_free_rate=0.045,
+            fired_legs=set(),
+        )
+        assert len(submitter.options_calls) == 1
+        assert log.entries[0].detail.exit_method is PositionExitMethod.STOP_TRIGGERED
+
+    async def test_single_option_stop_does_not_fire_when_mark_above(self) -> None:
+        """A single-option non-directional stop does NOT fire when the option
+        mark is still above ``condition.trigger_price``.
+
+        At spot 820 the call marks ~$21; ``trigger_price=15.0`` (``<=``) is below
+        the mark → no fire.
+        """
+        position = _options_position(direction=Direction.LONG, premium_paid=35.24, iv=0.30)
+        bracket = _non_directional_option_stop_bracket_real(
+            trigger_price=15.0, comparator="<="
+        )
+        cache = await _seed_cache({"NVDA": 820.0})
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+        await _run_bracket_stop_cycle(
+            config=_config(),
+            position_repository=FakePositionRepository((position,)),
+            bracket_repository=FakeBracketRepository((bracket,)),
+            cache=cache,
+            submitter=submitter,
+            activity_log=log.emit,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
+            now=_NOW,
+            risk_free_rate=0.045,
+            fired_legs=set(),
+        )
+        assert submitter.options_calls == []
+        assert log.entries == []
+
+    async def test_spread_stop_fires_on_net_mark_crossing(self) -> None:
+        """AC2 — a spread non-directional stop fires when the net mark crosses
+        ``condition.trigger_price``, via the real leg constructor.
+
+        The bull put credit spread (short 850 put / long 840 put) was opened near
+        $850, where its per-contract net mark (cost to close one spread unit) is
+        ~$4.74. As NVDA falls toward the strikes the short put richens and the
+        cost to buy the spread back rises; at spot 780 the net mark is ~$7.89.
+        ``trigger_price=6.0`` with comparator ``>=`` → the worsening net mark has
+        crossed the level → fire. (Before ALP-861 this never fired — the leg
+        carries no ``pl_anchor``.)
         """
         net_premium = _credit_spread_net_premium_at(entry_spot=850.0)
         position = _credit_strategy_position(net_premium_usd=net_premium)
-        bracket = _non_directional_strategy_stop_bracket(stop_pct=0.50)
-        cache = await _seed_cache({"NVDA": 1000.0})
+        bracket = _non_directional_strategy_stop_bracket_real(
+            trigger_price=6.0, comparator=">="
+        )
+        cache = await _seed_cache({"NVDA": 780.0})
         submitter = FakeSubmitter()
         log = FakeActivityLog()
         await _run_bracket_stop_cycle(

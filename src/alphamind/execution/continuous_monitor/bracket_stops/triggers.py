@@ -78,6 +78,93 @@ def evaluate_price_based_trigger(
     return spot >= threshold
 
 
+def evaluate_option_mark_trigger(
+    *,
+    position: PositionRecord,
+    leg: BracketLeg,
+    spot: float,
+    risk_free_rate: float,
+    as_of: datetime,
+) -> bool:
+    """Return True when the single option's mark has crossed the leg's level.
+
+    The non-directional (vol) thesis-invalidation stop for a single option
+    (ALP-861 / ADR-0003 ``trigger_signal=OPTION_PRICE``). It mirrors
+    :func:`evaluate_price_based_trigger` — the directional evaluator that fires
+    when the *underlying* crosses ``threshold_usd`` per the leg's ``GTE`` / ``LTE``
+    direction — but evaluates the option's own derived **mark** against the same
+    absolute level. The leg carries ``condition.trigger_price`` as the firing
+    level on its :class:`PriceTrigger` ``threshold_usd`` (the OPEN writeback
+    stores it there) and the comparator as the ``direction``, so no
+    :class:`PLAnchorSpec` is needed.
+
+    The option mark is the guardrail-evaluation Black-Scholes closed form at
+    ``spot`` — the same primitive the breach loop and the pct-of-PnL evaluator
+    use. Pure and deterministic for fixed inputs.
+    """
+    if not isinstance(leg.trigger, PriceTrigger):
+        msg = (
+            f"evaluate_option_mark_trigger requires a PriceTrigger leg; "
+            f"got trigger_type={leg.trigger.trigger_type!r}"
+        )
+        raise TypeError(msg)
+    option_details = _options_details_for_pl(position)
+    mark = _bs_option_price(
+        spot=spot,
+        strike=option_details.strike_price,
+        time_to_expiration_years=_time_to_expiration_years(option_details, as_of),
+        risk_free_rate=risk_free_rate,
+        iv=_iv_for_pl(option_details),
+        contract_type=option_details.contract_type,
+    )
+    return _crosses_level(mark, leg.trigger)
+
+
+def evaluate_strategy_net_mark_trigger(
+    *,
+    position: PositionRecord,
+    leg: BracketLeg,
+    spot: float,
+    risk_free_rate: float,
+    as_of: datetime,
+) -> bool:
+    """Return True when a strategy's net mark has crossed the leg's level.
+
+    The non-directional (spread) thesis-invalidation stop (ALP-861 / ADR-0003
+    ``trigger_signal=NET_MARK``). It mirrors :func:`evaluate_price_based_trigger`
+    against the strategy's per-spread-unit **net mark** — the cost to close one
+    spread unit — rather than the underlying, which is meaningless for a thesis
+    whose PnL is nonlinear in the underlying.
+
+    The net mark is the magnitude of the signed sum over legs of the per-contract
+    Black-Scholes mark (``-`` for a SHORT leg, ``+`` otherwise): a credit spread's
+    mark is the debit to buy it back, a debit spread's the credit to sell it — a
+    positive cost-to-close in the same per-contract dollars as the single-option
+    mark and the leg's ``threshold_usd`` (from ``condition.trigger_price``). No
+    :class:`PLAnchorSpec` is needed. Pure and deterministic for fixed inputs.
+    """
+    if not isinstance(leg.trigger, PriceTrigger):
+        msg = (
+            f"evaluate_strategy_net_mark_trigger requires a PriceTrigger leg; "
+            f"got trigger_type={leg.trigger.trigger_type!r}"
+        )
+        raise TypeError(msg)
+    details = position.details
+    if not isinstance(details, StrategyPositionDetails):
+        msg = (
+            f"evaluate_strategy_net_mark_trigger requires a strategy position; "
+            f"got instrument_type={details.instrument_type!r}"
+        )
+        raise TypeError(msg)
+    signed_net = sum(
+        _strategy_leg_net_mark(
+            leg=strategy_leg, spot=spot, risk_free_rate=risk_free_rate, as_of=as_of
+        )
+        for strategy_leg in details.legs
+    )
+    return _crosses_level(abs(signed_net), leg.trigger)
+
+
 def evaluate_pl_target_trigger(
     *,
     position: PositionRecord,
@@ -217,6 +304,48 @@ def evaluate_strategy_pl_target_trigger(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _crosses_level(mark: float, trigger: PriceTrigger) -> bool:
+    """Return True when ``mark`` has crossed ``trigger.threshold_usd``.
+
+    The shared absolute-level comparison for the non-directional option-mark /
+    net-mark evaluators, identical in shape to the underlying comparison in
+    :func:`evaluate_price_based_trigger`: ``LTE`` fires on ``mark <= threshold``,
+    ``GTE`` on ``mark >= threshold``.
+    """
+    if trigger.direction == "LTE":
+        return mark <= trigger.threshold_usd
+    return mark >= trigger.threshold_usd
+
+
+def _strategy_leg_net_mark(
+    *,
+    leg: StrategyLeg,
+    spot: float,
+    risk_free_rate: float,
+    as_of: datetime,
+) -> float:
+    """Signed per-contract net-mark contribution of a single strategy leg.
+
+    The leg's per-contract Black-Scholes mark at ``spot``, signed ``-1`` for a
+    SHORT (written) leg and ``+1`` otherwise — the same signed convention as
+    :func:`_strategy_leg_market_value`, but in per-contract dollars (no
+    ``contract_count`` / ``contract_multiplier`` scaling) so the summed net mark
+    is comparable to the leg's ``threshold_usd`` (a per-contract level carried
+    from ``condition.trigger_price``).
+    """
+    opts = leg.options
+    derived_price = _bs_option_price(
+        spot=spot,
+        strike=opts.strike_price,
+        time_to_expiration_years=_time_to_expiration_years(opts, as_of),
+        risk_free_rate=risk_free_rate,
+        iv=_iv_for_pl(opts),
+        contract_type=opts.contract_type,
+    )
+    sign = -1.0 if leg.direction is Direction.SHORT else 1.0
+    return sign * derived_price
 
 
 def _strategy_leg_market_value(

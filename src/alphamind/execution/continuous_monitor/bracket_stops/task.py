@@ -36,8 +36,10 @@ from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     submit_options_bracket_close,
 )
 from alphamind.execution.continuous_monitor.bracket_stops.triggers import (
+    evaluate_option_mark_trigger,
     evaluate_pl_target_trigger,
     evaluate_price_based_trigger,
+    evaluate_strategy_net_mark_trigger,
     evaluate_strategy_pl_target_trigger,
 )
 from alphamind.execution.continuous_monitor.cascade_dispatch import TriggerIdGenerator
@@ -314,40 +316,52 @@ def _leg_should_fire(
     now: datetime,
     risk_free_rate: float,
 ) -> bool:
-    """Select the trigger evaluator by thesis nature (ALP-852 / ADR-0003).
+    """Select the trigger evaluator by thesis nature (ALP-852/861 / ADR-0003).
 
     The thesis-invalidation stop is *thesis-shaped*: a PRICE_STOP leg carries a
     :class:`TriggerSignal` (set at OPEN from the wire ``PriceLeg.trigger_signal``,
     pinned consistent with the thesis nature by 02d's command validator):
 
-    * ``UNDERLYING_PRICE`` — a *directional* thesis. Evaluate against the
-      underlying-equity price (:func:`evaluate_price_based_trigger`).
-    * ``OPTION_PRICE`` — a *non-directional* single-option vol thesis. Evaluate
-      against the option's own derived mark (:func:`evaluate_pl_target_trigger`);
-      an underlying-level trigger is meaningless for a nonlinear vol thesis.
-    * ``NET_MARK`` — a *non-directional* multi-leg spread thesis. Evaluate against
-      the strategy net mark (:func:`evaluate_strategy_pl_target_trigger`).
+    * ``UNDERLYING_PRICE`` — a *directional* thesis. Fires when the underlying
+      crosses ``condition.trigger_price`` (:func:`evaluate_price_based_trigger`).
+    * ``OPTION_PRICE`` — a *non-directional* single-option vol thesis. Fires when
+      the option's own derived mark crosses ``condition.trigger_price``
+      (:func:`evaluate_option_mark_trigger`); an underlying-level trigger is
+      meaningless for a nonlinear vol thesis.
+    * ``NET_MARK`` — a *non-directional* multi-leg spread thesis. Fires when the
+      strategy net mark crosses ``condition.trigger_price``
+      (:func:`evaluate_strategy_net_mark_trigger`).
+
+    Selection is by the leg's ``trigger_signal``, NOT the position type (ALP-861
+    A-F5): a ``NET_MARK`` stop on a single-option position and an ``OPTION_PRICE``
+    stop on a strategy position route to the evaluator the signal names, surfacing
+    the shape mismatch rather than silently mis-routing.
 
     A leg with no ``trigger_signal`` — a TAKE_PROFIT leg (which fires on its own
-    target geometry, routed by ``pl_anchor`` below), or a legacy PRICE_STOP
-    predating the tag — falls back to the geometry-based routing: a P/L-anchored
-    leg evaluates against option-price / net-mark, otherwise the underlying.
+    pct-of-max-profit target geometry, routed by ``pl_anchor`` below), or a legacy
+    PRICE_STOP predating the tag — falls back to the geometry-based routing: a
+    P/L-anchored leg evaluates against the pct-of-PnL target, otherwise the
+    underlying.
     """
     if leg.trigger_signal is TriggerSignal.UNDERLYING_PRICE:
         return evaluate_price_based_trigger(position=position, leg=leg, spot=spot)
-    if leg.trigger_signal in (TriggerSignal.OPTION_PRICE, TriggerSignal.NET_MARK):
-        return _evaluate_option_pl_trigger(
-            position=position, leg=leg, spot=spot, now=now, risk_free_rate=risk_free_rate
+    if leg.trigger_signal is TriggerSignal.OPTION_PRICE:
+        return evaluate_option_mark_trigger(
+            position=position, leg=leg, spot=spot, risk_free_rate=risk_free_rate, as_of=now
+        )
+    if leg.trigger_signal is TriggerSignal.NET_MARK:
+        return evaluate_strategy_net_mark_trigger(
+            position=position, leg=leg, spot=spot, risk_free_rate=risk_free_rate, as_of=now
         )
     # No trigger_signal: TAKE_PROFIT (routed by pl_anchor) or a legacy PRICE_STOP.
     if leg.pl_anchor is not None:
-        return _evaluate_option_pl_trigger(
+        return _evaluate_pl_target_trigger(
             position=position, leg=leg, spot=spot, now=now, risk_free_rate=risk_free_rate
         )
     return evaluate_price_based_trigger(position=position, leg=leg, spot=spot)
 
 
-def _evaluate_option_pl_trigger(
+def _evaluate_pl_target_trigger(
     *,
     position: PositionRecord,
     leg: BracketLeg,
@@ -355,11 +369,11 @@ def _evaluate_option_pl_trigger(
     now: datetime,
     risk_free_rate: float,
 ) -> bool:
-    """Evaluate the option-price / net-mark trigger for a non-directional leg.
+    """Evaluate a P/L-anchored TAKE_PROFIT leg's pct-of-PnL target.
 
     A :class:`StrategyPositionDetails` position routes into the strategy net-P/L
-    evaluator (net mark); a single-leg options position routes into the
-    single-option derived-price evaluator. Both require the leg's
+    take-profit evaluator; a single-leg options position routes into the
+    single-option pct-of-premium evaluator. Both require the leg's
     :class:`PLAnchorSpec`; a missing anchor / IV (pre-fill state) is caught,
     logged, and treated as not-fired so the loop continues evaluating other legs.
     """
@@ -386,7 +400,7 @@ def _evaluate_option_pl_trigger(
         # via the structured logger; the loop continues so other legs still
         # evaluate.
         log.exception(
-            "bracket_stops: P/L trigger evaluation skipped for leg %s on position %s",
+            "bracket_stops: P/L target evaluation skipped for leg %s on position %s",
             leg.leg_id,
             position.position_id,
         )
