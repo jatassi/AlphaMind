@@ -155,7 +155,90 @@ async def test_re_polling_same_activity_does_not_double_book(
     assert ledger_record.realized_pnl_usd == signed_money("-1250.00")
 
 
-def _assignment_event(activity_type: LifecycleActivityType) -> LifecycleEvent:
+async def test_repoll_closes_option_when_opexp_row_exists_but_option_still_open(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """AC1: expiry is crash-idempotent — an OPEXP row + an OPEN option re-closes.
+
+    If an OPEXP row ever co-exists with an OPEN option (a partial-commit / crash
+    that committed the event row but not the booking), a ``newly``-gated booking
+    permanently skips the close. Mirroring the assignment path, expiry must gate
+    the booking on the option still being OPEN: re-resolve, and book if found.
+    Simulated by committing only the OPEXP row while leaving the option OPEN — the
+    re-poll must close it.
+    """
+    _engine, factory = db
+    await _seed_open_option(factory, contract_count=5.0, premium_paid_per_contract=250.0)
+
+    # Pre-seed ONLY the OPEXP row — the crash committed it but not the booking.
+    async with factory() as sess:
+        sess.add(
+            BrokerEventLogRow(
+                event_key="activity:act-exp-1",
+                event_type="OPEXP",
+                thesis_id="thesis-1",
+                invocation_id=INV_ID,
+                position_id="pos-1",
+                raw_payload_json=json.dumps(
+                    {
+                        "activity_id": "act-exp-1",
+                        "occ_symbol": _OCC,
+                        "realized_pnl_delta_usd": "-1250.00",
+                        "closed_contract_qty": 5.0,
+                    },
+                    sort_keys=True,
+                ),
+                broker_timestamp=_TXN,
+                captured_at=_TXN,
+            )
+        )
+        await sess.commit()
+
+    # Re-poll the same expiry: the option is still OPEN, so the booking must run.
+    ctx, handle = await open_handle(factory)
+    try:
+        await integrate_lifecycle_event(handle, _expiry_event())
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        pos = await sess.get(PositionRow, "pos-1")
+        assert pos is not None
+        # The crash-window OPEXP no longer skips the close — the option is CLOSED.
+        assert pos.status == "CLOSED"
+        # Still exactly one OPEXP row (idempotent append), not two.
+        events = (await sess.execute(select(BrokerEventLogRow))).scalars().all()
+        assert len(events) == 1
+
+
+async def test_repoll_after_clean_expiry_is_a_no_op(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """AC1: a re-poll after a clean expiry (option already CLOSED) is a clean no-op.
+
+    Once expiry closed the option, ``_find_open_option_position`` returns None and
+    the durable OPEXP row marks a clean no-op — no raise, no double-book.
+    """
+    _engine, factory = db
+    await _seed_open_option(factory, contract_count=5.0, premium_paid_per_contract=250.0)
+
+    ctx, handle = await open_handle(factory)
+    try:
+        await integrate_lifecycle_event(handle, _expiry_event())
+        # Re-poll after the option already closed: a clean no-op.
+        await integrate_lifecycle_event(handle, _expiry_event())
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        pos = await sess.get(PositionRow, "pos-1")
+        assert pos is not None
+        assert pos.status == "CLOSED"
+        events = (await sess.execute(select(BrokerEventLogRow))).scalars().all()
+        assert len(events) == 1
+
+
+def _assignment_event(activity_type: LifecycleActivityType, *, side: str = "buy") -> LifecycleEvent:
     return LifecycleEvent(
         activity_id="act-asn-1",
         activity_type=activity_type,
@@ -167,7 +250,7 @@ def _assignment_event(activity_type: LifecycleActivityType) -> LifecycleEvent:
             equity_symbol="AAPL",
             qty=500.0,
             strike_price=price(150.0),
-            side="buy",
+            side=side,
             net_amount=signed_money(-75_000.0),
         ),
     )
@@ -214,6 +297,68 @@ async def test_assignment_opens_equity_at_strike_with_thesis_link(
         assert by_type["OPASN"].position_id == "pos-1"
         assert by_type["OPTRD"].thesis_id == "thesis-1"
         assert by_type["OPTRD"].position_id == "pos-1"
+
+
+async def test_assignment_stamps_equity_side_on_optrd_for_signed_fold(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """P4: the OPTRD payload carries ``equity_side`` so the 03c fold opens a signed lot.
+
+    The paired OPTRD must stamp the equity delivery direction (the broker's
+    buy/sell side). The 03c fold reads it to open a +N lot (long delivery) or a
+    -N lot (short-call assignment); without it the fold always opened +N and a
+    short cover mis-classified as opening (no realized PnL). The signed-fold math
+    itself is pinned in the derivation unit tests — here we pin that the handler
+    actually emits the side onto the OPTRD row, AND that a long delivery's cover
+    still realizes correctly through the re-derivation.
+    """
+    _engine, factory = db
+    await _seed_open_option(factory, contract_count=5.0, premium_paid_per_contract=250.0)
+
+    ctx, handle = await open_handle(factory)
+    try:
+        await integrate_lifecycle_event(
+            handle, _assignment_event(LifecycleActivityType.OPASN, side="buy")
+        )
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        events = (await sess.execute(select(BrokerEventLogRow))).scalars().all()
+        by_type = {e.event_type: json.loads(e.raw_payload_json) for e in events}
+        # The OPTRD carries the delivery side so the fold opens a SIGNED lot.
+        assert by_type["OPTRD"]["equity_side"] == "buy"
+        assert by_type["OPTRD"]["equity_qty"] == pytest.approx(500.0)
+
+        # Seed a sell FILL closing the long-delivered 500 @ 150: sell 500 @ 160
+        # → realizes (160-150)*500 = +5000; cover then leaves zero basis.
+        sess.add(
+            BrokerEventLogRow(
+                event_key="fill:sell-1",
+                event_type="FILL",
+                thesis_id="thesis-1",
+                invocation_id=INV_ID,
+                position_id="pos-1",
+                raw_payload_json=json.dumps(
+                    {
+                        "fill_price": 160.0,
+                        "fill_quantity": 500.0,
+                        "raw_event_payload": {"order": {"side": "sell"}},
+                    },
+                    sort_keys=True,
+                ),
+                broker_timestamp=_TXN + dt.timedelta(hours=1),
+                captured_at=_TXN + dt.timedelta(hours=1),
+            )
+        )
+        await sess.commit()
+
+    async with factory() as sess:
+        ledger_record = await rederive_thesis_pnl_ledger(sess, ThesisId("thesis-1"), None)
+        await sess.commit()
+    # -1250 (premium) + 5000 (long sell gain) = +3750; basis back to zero.
+    assert ledger_record.realized_pnl_usd == signed_money("3750.00")
+    assert ledger_record.cost_basis_usd == money("0")
 
 
 async def test_exercise_books_strike_pnl_and_opens_equity_leg(

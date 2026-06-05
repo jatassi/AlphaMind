@@ -51,6 +51,7 @@ from alphamind.execution.corporate_actions.handlers._shared import _persist_posi
 from alphamind.execution.write_paths.broker_event_persistence import append_broker_event
 from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
+    InstrumentType,
     OptionsPositionDetails,
     PositionRecord,
     PositionStatus,
@@ -114,9 +115,17 @@ async def _append_lifecycle_event(
 async def _find_open_option_position(
     handle: InvocationHandle, occ_symbol: str
 ) -> tuple[PositionRow, PositionRecord] | None:
-    """Find the OPEN option ``PositionRow`` whose OCC symbol equals *occ_symbol*."""
+    """Find the OPEN option ``PositionRow`` whose OCC symbol equals *occ_symbol*.
+
+    The ``instrument_type`` discriminator narrows the query to OPTIONS rows in
+    SQL, so the scan never loads (and decodes ``details_json`` for) every open
+    equity / strategy position just to skip it in Python (F5). The OCC match
+    still runs in Python — ``alpaca_occ_symbol`` is derived from the decoded
+    option details, not a stored column.
+    """
     stmt = select(PositionRow).where(
-        PositionRow.status.in_((PositionStatus.OPEN.value, PositionStatus.PENDING.value))
+        PositionRow.status.in_((PositionStatus.OPEN.value, PositionStatus.PENDING.value)),
+        PositionRow.instrument_type == InstrumentType.OPTIONS.value,
     )
     rows = (await handle.session.execute(stmt)).scalars().all()
     for row in rows:
@@ -159,11 +168,23 @@ async def _already_booked(handle: InvocationHandle, event_key: str) -> bool:
 
 
 async def handle_expiry(handle: InvocationHandle, event: LifecycleEvent) -> None:
-    """Book an OTM expiry (``OPEXP``): realized PnL = -premium; close the option."""
-    if await _already_booked(handle, event_key_for(event.activity_id)):
-        return
+    """Book an OTM expiry (``OPEXP``): realized PnL = -premium; close the option.
+
+    Crash-idempotent the same way the assignment path is: the booking is gated on
+    the option still being OPEN, NOT on the event-log append's ``newly`` (AC1). If
+    an OPEXP row ever co-exists with an OPEN option (a partial-commit / crash that
+    committed the row but not the booking), a ``newly``-gated booking would skip
+    the close forever. Resolving the option first makes the path self-healing:
+    book while OPEN, clean no-op once closed, surface only when genuinely unknown.
+    """
     found = await _find_open_option_position(handle, event.occ_symbol)
     if found is None:
+        # No OPEN/PENDING option to re-resolve. Either (a) a clean post-booking
+        # re-poll — the prior invocation closed the option and durably committed
+        # the OPEXP row, so this is a no-op; or (b) a genuinely unknown event. The
+        # durable OPEXP row distinguishes them: present → (a) no-op; absent → (b).
+        if await _already_booked(handle, event_key_for(event.activity_id)):
+            return
         msg = (
             f"OPEXP {event.activity_id!r} references option {event.occ_symbol!r} "
             f"with no matching OPEN/PENDING local position"
@@ -173,7 +194,11 @@ async def handle_expiry(handle: InvocationHandle, event: LifecycleEvent) -> None
     # Compute the booking first (pure) so the realized-PnL delta can ride the
     # event-log payload — the 03c derivation reproduces it from the log alone.
     result = book_expiry(option_record)
-    newly = await _append_lifecycle_event(
+    # Append the OPEXP row (idempotent on event_key — a crash-committed row from a
+    # prior poll collapses to the one row), then book: the option is still OPEN so
+    # the booking runs exactly once. Once it closes the option a later re-poll
+    # resolves ``found is None`` above and never reaches here.
+    await _append_lifecycle_event(
         handle,
         event_key=event_key_for(event.activity_id),
         event_type=BrokerEventType.OPEXP,
@@ -190,8 +215,6 @@ async def handle_expiry(handle: InvocationHandle, event: LifecycleEvent) -> None
         },
         broker_timestamp=event.transaction_time,
     )
-    if not newly:
-        return
     await _persist_booking(handle, option_row=option_row, result=result)
 
 
@@ -270,10 +293,13 @@ async def handle_assignment_or_exercise(handle: InvocationHandle, event: Lifecyc
     )
     # The paired OPTRD is the second event-log row (the priced equity leg). It
     # carries the SAME resolved thesis/position link as the OPASN/OPEXC row, plus
-    # the opened-equity cost basis (qty x strike) AND the equity share count so
-    # the derivation opens the equity lot at the strike (avg cost = basis / qty)
-    # — a later equity sell then closes it and the basis releases — without
-    # double-counting the option PnL.
+    # the opened-equity cost basis (qty x strike), the equity share count, AND the
+    # equity delivery direction (``equity_side`` — the broker's buy/sell) so the
+    # derivation opens the equity lot at the strike on the SIGNED side: a long
+    # delivery (+N) a later sell closes, a short-call assignment (-N) a later
+    # buy-to-cover closes. Without the side the fold always opened +N and a short
+    # cover mis-classified as opening (no realized PnL). The option PnL is not
+    # double-counted (it rides the OPASN/OPEXC row as -premium).
     await _append_lifecycle_event(
         handle,
         event_key=event_key_for(event.paired_trade.activity_id),
@@ -285,6 +311,7 @@ async def handle_assignment_or_exercise(handle: InvocationHandle, event: Lifecyc
             "equity_symbol": event.paired_trade.equity_symbol,
             "cost_basis_delta_usd": str(_equity_cost_basis(result)),
             "equity_qty": event.paired_trade.qty,
+            "equity_side": event.paired_trade.side,
         },
         broker_timestamp=event.transaction_time,
     )

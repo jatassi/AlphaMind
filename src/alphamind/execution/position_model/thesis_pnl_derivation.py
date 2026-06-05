@@ -16,9 +16,10 @@ Two event families contribute (CONTEXT.md, ADR-0002):
   basis fold out of the fill cashflows via an average-cost lot model: an opening
   fill adds capital to the open lot's cost basis; a closing fill realizes PnL
   against the running average cost and releases basis proportionally. The
-  open/close direction is the broker order ``side`` (``buy`` / ``sell``) read off
-  the captured ``FillReport`` payload against the running net quantity — no
-  ``position_intent`` is required (it is unset for equity entries).
+  open/close direction is the leg-authoritative ``buy`` / ``sell`` side read off
+  the captured ``FillReport`` payload against the running net quantity — taken
+  from the per-leg ``position_intent`` when present (mleg leg-children), else the
+  order ``side`` (equity entries leave ``position_intent`` unset).
 * **Activities** (``OPEXP`` / ``OPASN`` / ``OPEXC``) — option-lifecycle events
   that change a position with **no fill** (an OTM expiry, an assignment). They
   carry their realized-PnL contribution on the event payload
@@ -128,11 +129,15 @@ def _activity_realized_delta(event: BrokerEventRecord, lot: _Lot) -> Decimal:
       show as held (phantom cost basis, and a later equity sell mis-classified
       as opening a short).
     * **OPTRD** — the paired equity leg of an assignment / exercise. It carries
-      the opened-equity cost basis (``cost_basis_delta_usd``) and the equity
-      share count (``equity_qty``); together they open the equity lot at the
-      strike (avg cost = basis / qty) so a later equity sell closes it and the
-      cost basis releases. (An OPTRD without ``equity_qty`` falls back to an
-      unpriced external-basis addend — cleared on full close, FIX 3.)
+      the opened-equity cost basis (``cost_basis_delta_usd``), the equity share
+      count (``equity_qty``), and the equity direction (``equity_side`` —
+      ``buy`` long / ``sell`` short); together they open the equity lot at the
+      strike (avg cost = basis / qty) on the SIGNED side so a later closing fill
+      releases the cost basis and realizes PnL. A short-call assignment delivers
+      shares SHORT (``equity_side="sell"``) → a -N lot a buy-to-cover closes; a
+      long delivery (``buy`` / absent) opens a +N lot a later sell closes. (An
+      OPTRD without ``equity_qty`` falls back to an unpriced external-basis
+      addend — cleared on full close, FIX 3.)
     """
     payload = json.loads(event.raw_payload_json)
 
@@ -144,7 +149,8 @@ def _activity_realized_delta(event: BrokerEventRecord, lot: _Lot) -> Decimal:
     if cost_basis_delta is not None:
         equity_qty = payload.get("equity_qty")
         if equity_qty is not None:
-            lot.open_priced_basis(Decimal(str(cost_basis_delta)), Decimal(str(equity_qty)))
+            signed_qty = _signed_equity_qty(Decimal(str(equity_qty)), payload.get("equity_side"))
+            lot.open_priced_basis(Decimal(str(cost_basis_delta)), signed_qty)
         else:
             lot.add_external_basis(Decimal(str(cost_basis_delta)))
 
@@ -152,12 +158,38 @@ def _activity_realized_delta(event: BrokerEventRecord, lot: _Lot) -> Decimal:
     return Decimal(str(realized)) if realized is not None else DECIMAL_ZERO
 
 
+_POSITION_INTENT_SIDE: dict[str, str] = {
+    "buy_to_open": "buy",
+    "buy_to_close": "buy",
+    "sell_to_open": "sell",
+    "sell_to_close": "sell",
+}
+
+
+def _signed_equity_qty(equity_qty: Decimal, equity_side: object) -> Decimal:
+    """The signed OPTRD equity quantity: negative for a ``sell`` (short) delivery.
+
+    ``equity_qty`` is the broker's positive share count; ``equity_side`` is the
+    OPTRD equity direction (``buy`` long / ``sell`` short). A short-call
+    assignment delivers shares SHORT (``equity_side="sell"``) so the lot must open
+    at -qty; a long delivery (``buy``, or an absent side on legacy rows) opens at
+    +qty.
+    """
+    return -abs(equity_qty) if equity_side == "sell" else abs(equity_qty)
+
+
 def _fill_side(payload: dict[str, object]) -> str:
-    """The broker order side (``buy`` / ``sell``) off a captured FillReport payload.
+    """The leg-authoritative open/close side (``buy`` / ``sell``) of a FillReport.
 
-    Two ``raw_event_payload`` shapes reach the log, and the side lives in a
-    different place in each:
+    The side is read in priority order, leg-authoritative first:
 
+    * **``position_intent``** (top-level on the report) is set PER LEG on every
+      mleg leg-child (``buy_to_open`` / ``sell_to_close`` / …). It is the only
+      leg-authoritative side: an mleg leg-child shares the PARENT ``TradeUpdate``
+      dump as ``raw_event_payload``, whose ``order.side`` is the strategy NET
+      direction (or ``None``) — reading that mis-signs a spread leg or aborts the
+      fold on a null net side. ``position_intent`` is unset for equity entries,
+      so it is only consulted when present.
     * **websocket** fills (02a ``translate_trade_update``) dump an alpaca-py
       ``TradeUpdate`` — the order is nested, so the side is at
       ``raw_event_payload['order']['side']``;
@@ -167,8 +199,12 @@ def _fill_side(payload: dict[str, object]) -> str:
       and there is no nested ``order`` key.
 
     Reading only the websocket path crashes the fold for any thesis carrying a
-    recovered fill, so both shapes are tried before surfacing.
+    recovered fill or an mleg leg-child, so all shapes are tried before surfacing.
     """
+    intent = payload.get("position_intent")
+    if isinstance(intent, str) and intent in _POSITION_INTENT_SIDE:
+        return _POSITION_INTENT_SIDE[intent]
+
     raw = payload.get("raw_event_payload")
     if not isinstance(raw, dict):
         raw = {}
@@ -224,8 +260,12 @@ class _Lot:
         if self._net_qty == 0:
             self._reset_to_flat()
         elif not _same_sign(self._net_qty, direction):
-            # Flipped through zero: residual opens a fresh lot at the fill price.
+            # Flipped through zero: the old lot is fully closed, so its external
+            # basis is realized/gone (FIX 3 / P1) — clear it before the residual
+            # opens a fresh lot at the fill price, or it would leak into the new
+            # opposite-sign lot and overstate cost_basis() indefinitely.
             self._avg_cost = price
+            self._external_basis = DECIMAL_ZERO
         return realized
 
     def close_quantity(self, qty: Decimal) -> None:
@@ -245,18 +285,20 @@ class _Lot:
         if self._net_qty == 0:
             self._reset_to_flat()
 
-    def open_priced_basis(self, basis: Decimal, qty: Decimal) -> None:
-        """Open a priced lot of *qty* shares whose total cost basis is *basis*.
+    def open_priced_basis(self, basis: Decimal, signed_qty: Decimal) -> None:
+        """Open a priced lot of *signed_qty* shares whose total cost basis is *basis*.
 
-        The OPTRD equity leg of an assignment / exercise: ``qty`` shares enter
-        the lot at avg cost ``basis / qty`` (the strike), so a later equity sell
-        closes against them and the basis releases proportionally. Falls back to
-        an unpriced external addend only when ``qty`` is non-positive.
+        The OPTRD equity leg of an assignment / exercise: ``signed_qty`` shares
+        enter the lot at avg cost ``basis / abs(signed_qty)`` (the strike) on the
+        signed side — positive long (a long delivery), negative short (a
+        short-call assignment delivers shares SHORT). A later closing fill is then
+        opposite-sign and releases the basis / realizes PnL. Falls back to an
+        unpriced external addend only when ``signed_qty`` is zero.
         """
-        if qty <= 0:
+        if signed_qty == 0:
             self.add_external_basis(basis)
             return
-        self.apply(qty, basis / qty)
+        self.apply(signed_qty, basis / abs(signed_qty))
 
     def add_external_basis(self, basis: Decimal) -> None:
         """Add cost basis sourced outside the fill stream (an unpriced OPTRD leg)."""

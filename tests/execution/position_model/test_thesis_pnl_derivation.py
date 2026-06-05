@@ -34,6 +34,7 @@ def _lifecycle_event(
     cost_basis_delta_usd: str | None = None,
     closed_contract_qty: float | None = None,
     equity_qty: float | None = None,
+    equity_side: str | None = None,
     at_seconds: int = 0,
 ) -> BrokerEventRecord:
     payload: dict[str, object] = {"activity_id": event_key}
@@ -45,6 +46,8 @@ def _lifecycle_event(
         payload["closed_contract_qty"] = closed_contract_qty
     if equity_qty is not None:
         payload["equity_qty"] = equity_qty
+    if equity_side is not None:
+        payload["equity_side"] = equity_side
     return BrokerEventRecord(
         event_key=event_key,
         event_type=event_type,
@@ -101,6 +104,31 @@ def _rest_recovered_fill_event(
     return _fill_record(event_key, payload, at_seconds)
 
 
+def _mleg_leg_child_fill_event(
+    *,
+    event_key: str,
+    position_intent: str,
+    parent_net_side: str | None,
+    fill_price: float,
+    fill_quantity: float,
+    at_seconds: int = 0,
+) -> BrokerEventRecord:
+    """A FILL event mirroring an mleg per-leg child report.
+
+    The leg child shares the PARENT ``TradeUpdate`` dump as ``raw_event_payload``,
+    whose ``order.side`` is the strategy NET direction (or ``None``) — NOT the
+    leg's buy/sell. The leg-authoritative side lives on the report's top-level
+    ``position_intent`` (``buy_to_open`` / ``sell_to_close`` / …), set per-leg.
+    """
+    payload: dict[str, object] = {
+        "fill_price": fill_price,
+        "fill_quantity": fill_quantity,
+        "position_intent": position_intent,
+        "raw_event_payload": {"order": {"side": parent_net_side}},
+    }
+    return _fill_record(event_key, payload, at_seconds)
+
+
 def _fill_record(event_key: str, payload: dict[str, object], at_seconds: int) -> BrokerEventRecord:
     return BrokerEventRecord(
         event_key=event_key,
@@ -138,6 +166,76 @@ def test_rest_recovered_fill_side_reads_from_top_level_order_snapshot() -> None:
     derivation = derive_thesis_pnl(_THESIS, events)
 
     assert derivation.realized_pnl_usd == signed_money("300.00")
+    assert derivation.cost_basis_usd == money("0")
+
+
+def test_mleg_leg_child_side_reads_position_intent_not_parent_net_side() -> None:
+    """P3: an mleg leg-child folds by its ``position_intent``, not the parent net side.
+
+    A credit-spread BUY leg arrives as a child of a parent ``TradeUpdate`` whose
+    ``order.side`` is the strategy NET direction ("sell" for a credit spread).
+    Reading the parent net side would classify the BUY leg as a SELL (opening a
+    short), producing the wrong PnL sign. The leg's own ``position_intent``
+    (``buy_to_open``) is authoritative: it must open a LONG lot, so a later
+    sell-to-close realizes a long gain.
+    """
+    events = (
+        # BUY leg of a credit spread: parent net side is "sell", but this leg
+        # is buy_to_open → must open a LONG lot.
+        _mleg_leg_child_fill_event(
+            event_key="leg-open",
+            position_intent="buy_to_open",
+            parent_net_side="sell",
+            fill_price=100.0,
+            fill_quantity=10.0,
+        ),
+        _mleg_leg_child_fill_event(
+            event_key="leg-close",
+            position_intent="sell_to_close",
+            parent_net_side="sell",
+            fill_price=130.0,
+            fill_quantity=10.0,
+            at_seconds=60,
+        ),
+    )
+
+    derivation = derive_thesis_pnl(_THESIS, events)
+
+    # Long round-trip: bought 10@100, sold 10@130 → +300. A parent-net-side read
+    # would have opened a short and produced -300 (or crashed on a null net side).
+    assert derivation.realized_pnl_usd == signed_money("300.00")
+    assert derivation.cost_basis_usd == money("0")
+
+
+def test_mleg_leg_child_null_parent_side_does_not_crash_fold() -> None:
+    """P3: a null parent net side never aborts the fold when ``position_intent`` is set.
+
+    An mleg parent ``TradeUpdate`` can carry a ``None`` ``order.side``. The
+    leg-authoritative ``position_intent`` must be consulted first so a null
+    parent side does not raise ``ValueError`` and propagate through the fold.
+    """
+    events = (
+        _mleg_leg_child_fill_event(
+            event_key="leg-open",
+            position_intent="sell_to_open",
+            parent_net_side=None,
+            fill_price=100.0,
+            fill_quantity=10.0,
+        ),
+        _mleg_leg_child_fill_event(
+            event_key="leg-cover",
+            position_intent="buy_to_close",
+            parent_net_side=None,
+            fill_price=80.0,
+            fill_quantity=10.0,
+            at_seconds=60,
+        ),
+    )
+
+    derivation = derive_thesis_pnl(_THESIS, events)
+
+    # Short round-trip: sold 10@100 then bought 10@80 → +200.
+    assert derivation.realized_pnl_usd == signed_money("200.00")
     assert derivation.cost_basis_usd == money("0")
 
 
@@ -363,6 +461,104 @@ def test_assigned_equity_fully_sold_clears_cost_basis() -> None:
 
     assert derivation.realized_pnl_usd == signed_money("3750.00")  # -1250 + 5000
     assert derivation.cost_basis_usd == money("0")
+
+
+def test_short_call_assignment_opens_short_lot_and_books_pnl_on_cover() -> None:
+    """P4: a short-call assignment opens a SHORT equity lot; a later cover realizes PnL.
+
+    On a short-call assignment the trader delivers shares short — the OPTRD prices
+    the equity leg with ``equity_side="sell"`` (a short delivery). The fold must
+    open a -500 lot at the strike, NOT a +500 long. A later buy-to-cover FILL is
+    then opposite-sign and closes the short, realizing PnL. With the wrong-sign
+    (long) lot the cover would be same-sign — mis-classified as opening — and book
+    NO realized PnL while phantom basis grew.
+    """
+    events = (
+        _lifecycle_event(
+            event_key="activity:asn-1",
+            event_type=BrokerEventType.OPASN,
+            realized_pnl_delta_usd="-1250.00",
+            closed_contract_qty=5.0,
+        ),
+        # Short delivery: 500 shares short at strike 150 → -500 lot, basis 75000.
+        _lifecycle_event(
+            event_key="activity:trd-1",
+            event_type=BrokerEventType.OPTRD,
+            cost_basis_delta_usd="75000.00",
+            equity_qty=500.0,
+            equity_side="sell",
+            at_seconds=1,
+        ),
+        # Buy-to-cover 500 @ 140 → short close realizes (150-140)*500 = +5000.
+        _fill_event(
+            event_key="eq-cover", side="buy", fill_price=140.0, fill_quantity=500.0, at_seconds=60
+        ),
+    )
+
+    derivation = derive_thesis_pnl(_THESIS, events)
+
+    assert derivation.realized_pnl_usd == signed_money("3750.00")  # -1250 + 5000
+    assert derivation.cost_basis_usd == money("0")
+
+
+def test_long_assignment_optrd_without_side_still_opens_long_lot() -> None:
+    """P4: an OPTRD with no ``equity_side`` (or a buy side) opens a LONG lot as before.
+
+    The long-assignment path (a long-call exercise delivering shares to hold long)
+    keeps the positive-qty behavior: a later equity sell closes it.
+    """
+    events = (
+        _lifecycle_event(
+            event_key="activity:trd-1",
+            event_type=BrokerEventType.OPTRD,
+            cost_basis_delta_usd="75000.00",
+            equity_qty=500.0,
+            equity_side="buy",
+        ),
+        _fill_event(
+            event_key="eq-sell", side="sell", fill_price=160.0, fill_quantity=500.0, at_seconds=60
+        ),
+    )
+
+    derivation = derive_thesis_pnl(_THESIS, events)
+
+    # Long close: (160-150)*500 = +5000.
+    assert derivation.realized_pnl_usd == signed_money("5000.00")
+    assert derivation.cost_basis_usd == money("0")
+
+
+def test_flip_through_zero_clears_stale_external_basis() -> None:
+    """P1: a fill that flips the lot through zero discards the old lot's external basis.
+
+    An unpriced OPTRD addend (``cost_basis_delta_usd`` with no ``equity_qty``)
+    accrues ``external_basis``. When a single fill then flips the lot through zero,
+    the old lot is fully closed — its external basis is realized/gone — and the
+    residual opens a fresh opposite-sign lot. The external basis must NOT leak into
+    the new lot: ``cost_basis()`` reflects only the new lot. Before the fix it
+    cleared only at exact zero, overstating the flipped lot's basis indefinitely.
+    """
+    events = (
+        # Long 10 @ 100 → net +10, avg 100.
+        _fill_event(event_key="open-long", side="buy", fill_price=100.0, fill_quantity=10.0),
+        # Unpriced OPTRD addend: +500 external basis on the open lot.
+        _lifecycle_event(
+            event_key="activity:trd-ext",
+            event_type=BrokerEventType.OPTRD,
+            cost_basis_delta_usd="500.00",
+            at_seconds=10,
+        ),
+        # Sell 30 @ 130 → closes the +10 long (realizes (130-100)*10 = +300) and
+        # flips through zero, opening a -20 short at 130.
+        _fill_event(
+            event_key="flip-sell", side="sell", fill_price=130.0, fill_quantity=30.0, at_seconds=20
+        ),
+    )
+
+    derivation = derive_thesis_pnl(_THESIS, events)
+
+    assert derivation.realized_pnl_usd == signed_money("300.00")
+    # New short lot only: 20 * 130 = 2600. The stale 500 external basis is gone.
+    assert derivation.cost_basis_usd == money("2600.00")
 
 
 def test_derivation_is_deterministic_for_a_fixed_event_set() -> None:
