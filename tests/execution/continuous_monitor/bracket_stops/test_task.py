@@ -399,6 +399,194 @@ class TestAlreadyFiredTracking:
         assert len(log.entries) == 1
 
 
+class TestPreSubmitFailureRetries:
+    """CL1 — a pre-submit failure must NOT permanently silence the protective leg.
+
+    The fail-safe invariant: a leg is marked fired only once the broker submit has
+    actually been ATTEMPTED. A raise BEFORE the submit (a transient DB error inside
+    the invocation-id provider, a ValueError building the engine client_order_id)
+    leaves the leg un-fired so the next cycle retries — never an unprotected
+    position for the rest of the session.
+    """
+
+    async def test_invocation_provider_failure_does_not_mark_fired(self) -> None:
+        position = _options_position(direction=Direction.LONG)
+        bracket = _price_stop_bracket(threshold=865.0, direction="LTE")
+        cache = await _seed_cache({"NVDA": 860.0})
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+        fired_legs: set[tuple[str, str]] = set()
+
+        calls = {"n": 0}
+
+        async def _flaky_invocation_id() -> str:
+            # First cycle: the provider's session hits a transient DB error
+            # BEFORE the broker submit. Subsequent cycles recover.
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("transient DB error resolving invocation id")
+            return "inv-001"
+
+        # Cycle 1: the pre-submit provider raises. No close is submitted and — the
+        # bug being fixed — the leg must NOT be marked fired.
+        await _run_bracket_stop_cycle(
+            config=_config(),
+            position_repository=FakePositionRepository((position,)),
+            bracket_repository=FakeBracketRepository((bracket,)),
+            cache=cache,
+            submitter=submitter,
+            activity_log=log.emit,
+            invocation_id_provider=_flaky_invocation_id,
+            monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
+            now=_NOW,
+            risk_free_rate=0.045,
+            fired_legs=fired_legs,
+        )
+        assert submitter.options_calls == []
+        assert log.entries == []
+        # The leg stayed un-fired — the next cycle is free to retry.
+        assert fired_legs == set()
+
+        # Cycle 2: the provider recovers; the leg fires and a close is submitted.
+        await _run_bracket_stop_cycle(
+            config=_config(),
+            position_repository=FakePositionRepository((position,)),
+            bracket_repository=FakeBracketRepository((bracket,)),
+            cache=cache,
+            submitter=submitter,
+            activity_log=log.emit,
+            invocation_id_provider=_flaky_invocation_id,
+            monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
+            now=_NOW,
+            risk_free_rate=0.045,
+            fired_legs=fired_legs,
+        )
+        assert len(submitter.options_calls) == 1
+        assert len(log.entries) == 1
+        assert fired_legs == {("brk-1", "leg-stop-1")}
+
+    async def test_post_submit_failure_stays_fired(self) -> None:
+        """The complement: a POST-submit raise keeps the leg fired (the order may
+        have reached the broker — re-firing risks a double-close)."""
+        position = _options_position(direction=Direction.LONG)
+        bracket = _price_stop_bracket(threshold=865.0, direction="LTE")
+        cache = await _seed_cache({"NVDA": 860.0})
+        log = FakeActivityLog()
+        fired_legs: set[tuple[str, str]] = set()
+
+        @dataclass
+        class _RaisingSubmitter:
+            calls: int = 0
+
+            async def submit_options_close(
+                self,
+                *,
+                position: PositionRecord,
+                details: OptionsPositionDetails,
+                client_order_id: str,
+                trigger_reason: PositionExitMethod,
+            ) -> CloseSubmissionResult:
+                del position, details, client_order_id, trigger_reason
+                self.calls += 1
+                raise RuntimeError("broker submit reached the gateway then failed")
+
+            async def submit_strategy_close(
+                self,
+                *,
+                position: PositionRecord,
+                details: object,
+                client_order_id_base: str,
+                trigger_reason: PositionExitMethod,
+            ) -> CloseSubmissionResult:
+                raise NotImplementedError
+
+        submitter = _RaisingSubmitter()
+        # Two cycles: the submit raises both times, but the leg stays fired after
+        # the first attempt so the second cycle does NOT re-attempt the submit.
+        for _ in range(2):
+            await _run_bracket_stop_cycle(
+                config=_config(),
+                position_repository=FakePositionRepository((position,)),
+                bracket_repository=FakeBracketRepository((bracket,)),
+                cache=cache,
+                submitter=submitter,
+                activity_log=log.emit,
+                invocation_id_provider=_const_str("inv-001"),
+                monitor_session_id="mon-S",
+                trigger_ids=_trigger_ids(),
+                now=_NOW,
+                risk_free_rate=0.045,
+                fired_legs=fired_legs,
+            )
+        # Exactly one submit attempt — the post-submit raise kept the leg fired.
+        assert submitter.calls == 1
+        assert fired_legs == {("brk-1", "leg-stop-1")}
+
+
+class TestPerPositionIsolation:
+    """CL2 — one position's failure skips ONLY that position, not the whole tick.
+
+    The per-leg evaluators swallow their own ValueErrors; an unexpected error that
+    escapes them (e.g. a NET_MARK stop mis-routed onto a single-option position →
+    TypeError) must not abort the cycle and silently leave every remaining
+    position's protective stop unevaluated (the silent-wedge class).
+    """
+
+    async def test_one_position_failure_does_not_skip_the_others(self) -> None:
+        # Position A carries a NET_MARK stop but is a SINGLE-OPTION position — the
+        # strategy net-mark evaluator raises TypeError (an uncaught mis-route) that
+        # escapes _evaluate_bracket_legs.
+        position_a = _options_position(position_id="pos-A", bracket_id="brk-A")
+        misrouted_leg = BracketLeg(
+            leg_id="leg-misroute",
+            leg_type=BracketLegType.PRICE_STOP,
+            order_id=None,
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("NVDA"), threshold_usd=1.0, direction="GTE"
+            ),
+            enforcement=BracketLegEnforcement.MECHANICAL,
+            status=BracketLegStatus.ACTIVE,
+            trigger_signal=TriggerSignal.NET_MARK,  # NET_MARK on a single option → TypeError
+        )
+        bracket_a = BracketRecord(
+            bracket_id=BracketId("brk-A"),
+            position_id=PositionId("pos-A"),
+            status=BracketStatus.ACTIVE,
+            entry_order_id=OrderId("ord-A"),
+            protective_legs=(misrouted_leg,),
+            modification_history=(),
+            corporate_action_cancellation_reason=None,
+        )
+        # Position B is a normal directional price-stop that SHOULD fire this tick.
+        position_b = _options_position(position_id="pos-B", bracket_id="brk-B")
+        bracket_b = _price_stop_bracket(bracket_id="brk-B", position_id="pos-B", threshold=865.0)
+
+        cache = await _seed_cache({"NVDA": 860.0})  # below 865 → position B fires
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+        # Order A first so its failure would, pre-fix, abort the tick before B.
+        await _run_bracket_stop_cycle(
+            config=_config(),
+            position_repository=FakePositionRepository((position_a, position_b)),
+            bracket_repository=FakeBracketRepository((bracket_a, bracket_b)),
+            cache=cache,
+            submitter=submitter,
+            activity_log=log.emit,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
+            now=_NOW,
+            risk_free_rate=0.045,
+            fired_legs=set(),
+        )
+        # Position B's stop still fired despite position A's TypeError mis-route.
+        assert submitter.options_calls == [("pos-B", submitter.options_calls[0][1])]
+        assert len(log.entries) == 1
+        assert log.entries[0].position_id == "pos-B"
+
+
 class TestTriggerIdsSharedWithCascade:
     """Regression — bracket-stop fires consume from the shared TriggerIdGenerator.
 

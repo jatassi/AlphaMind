@@ -19,6 +19,7 @@ from alphamind._kernel.ids import (
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     CloseSubmissionResult,
+    prepare_bracket_close,
     submit_options_bracket_close,
 )
 from alphamind.execution.oms.command_ids import parse_engine_command_id
@@ -260,6 +261,46 @@ class FakeActivityLog:
         self.entries.append(entry)
 
 
+async def _prepare_and_submit(
+    *,
+    position: PositionRecord,
+    bracket: BracketRecord,
+    trigger_reason: PositionExitMethod,
+    submitter: FakeSubmitter,
+    activity_log: FakeActivityLog,
+    invocation_id_provider: Callable[[], Awaitable[str]],
+    monitor_session_id: str,
+    trigger_id: int,
+    now: datetime,
+    estimated_exit_price: float,
+    realized_pnl_usd: float,
+) -> CloseSubmissionResult:
+    """Run the full closer flow: pre-submit prepare then the broker submit.
+
+    The closer is a two-step surface (CL1): :func:`prepare_bracket_close` does the
+    pre-submit work that can raise, then :func:`submit_options_bracket_close`
+    performs the broker call + activity-log write. These tests exercise the closer
+    end-to-end, so they thread both.
+    """
+    prepared = await prepare_bracket_close(
+        position=position,
+        monitor_session_id=monitor_session_id,
+        trigger_id=trigger_id,
+        invocation_id_provider=invocation_id_provider,
+    )
+    return await submit_options_bracket_close(
+        position=position,
+        bracket=bracket,
+        trigger_reason=trigger_reason,
+        submitter=submitter,
+        activity_log=activity_log.emit,
+        prepared=prepared,
+        now=now,
+        estimated_exit_price=estimated_exit_price,
+        realized_pnl_usd=realized_pnl_usd,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Single-leg options close
 # ---------------------------------------------------------------------------
@@ -270,12 +311,12 @@ class TestSingleLegClose:
         position = _options_position()
         submitter = FakeSubmitter()
         log = FakeActivityLog()
-        result = await submit_options_bracket_close(
+        result = await _prepare_and_submit(
             position=position,
             bracket=_bracket(),
             trigger_reason=PositionExitMethod.STOP_TRIGGERED,
             submitter=submitter,
-            activity_log=log.emit,
+            activity_log=log,
             invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-20260511T143000Z-aabbccdd",
             trigger_id=1,
@@ -291,12 +332,12 @@ class TestSingleLegClose:
         position = _options_position()
         submitter = FakeSubmitter()
         log = FakeActivityLog()
-        await submit_options_bracket_close(
+        await _prepare_and_submit(
             position=position,
             bracket=_bracket(),
             trigger_reason=PositionExitMethod.STOP_TRIGGERED,
             submitter=submitter,
-            activity_log=log.emit,
+            activity_log=log,
             invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-20260511T143000Z-aabbccdd",
             trigger_id=1,
@@ -324,12 +365,12 @@ class TestSingleLegClose:
         position = _options_position()
         submitter = FakeSubmitter()
         log = FakeActivityLog()
-        await submit_options_bracket_close(
+        await _prepare_and_submit(
             position=position,
             bracket=_bracket(),
             trigger_reason=PositionExitMethod.TARGET_REACHED,
             submitter=submitter,
-            activity_log=log.emit,
+            activity_log=log,
             invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-20260511T143000Z-aabbccdd",
             trigger_id=2,
@@ -348,12 +389,12 @@ class TestSingleLegClose:
         position = _options_position()
         submitter = FakeSubmitter()
         log = FakeActivityLog()
-        await submit_options_bracket_close(
+        await _prepare_and_submit(
             position=position,
             bracket=_bracket(),
             trigger_reason=PositionExitMethod.STOP_TRIGGERED,
             submitter=submitter,
-            activity_log=log.emit,
+            activity_log=log,
             invocation_id_provider=_const_str("inv-20260511T143000Z-aabbccdd"),
             monitor_session_id="mon-20260511T143000Z-aabbccdd",
             trigger_id=42,
@@ -378,12 +419,12 @@ class TestSingleLegClose:
         position = _options_position()
         submitter = FakeSubmitter()
         log = FakeActivityLog()
-        await submit_options_bracket_close(
+        await _prepare_and_submit(
             position=position,
             bracket=_bracket(),
             trigger_reason=PositionExitMethod.STOP_TRIGGERED,
             submitter=submitter,
-            activity_log=log.emit,
+            activity_log=log,
             invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-20260511T143000Z-aabbccdd",
             trigger_id=9,
@@ -401,12 +442,12 @@ class TestSingleLegClose:
         submitter = FakeSubmitter()
         log = FakeActivityLog()
         with pytest.raises(ValueError, match="no thesis_id"):
-            await submit_options_bracket_close(
+            await _prepare_and_submit(
                 position=position,
                 bracket=_bracket(),
                 trigger_reason=PositionExitMethod.STOP_TRIGGERED,
                 submitter=submitter,
-                activity_log=log.emit,
+                activity_log=log,
                 invocation_id_provider=_const_str("inv-20260511T143000Z-aabbccdd"),
                 monitor_session_id="mon-20260511T143000Z-aabbccdd",
                 trigger_id=42,
@@ -427,12 +468,12 @@ class TestStrategyClose:
         position = _strategy_position()
         submitter = FakeSubmitter()
         log = FakeActivityLog()
-        await submit_options_bracket_close(
+        await _prepare_and_submit(
             position=position,
             bracket=_bracket(position_id=PositionId("pos-st")),
             trigger_reason=PositionExitMethod.STOP_TRIGGERED,
             submitter=submitter,
-            activity_log=log.emit,
+            activity_log=log,
             invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-20260511T143000Z-aabbccdd",
             trigger_id=3,
@@ -456,12 +497,12 @@ class TestStrategyClose:
             )
         )
         log = FakeActivityLog()
-        await submit_options_bracket_close(
+        await _prepare_and_submit(
             position=position,
             bracket=_bracket(position_id=PositionId("pos-st")),
             trigger_reason=PositionExitMethod.STOP_TRIGGERED,
             submitter=submitter,
-            activity_log=log.emit,
+            activity_log=log,
             invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-S",
             trigger_id=5,
@@ -512,12 +553,12 @@ class TestUnsupportedInstrument:
         submitter = FakeSubmitter()
         log = FakeActivityLog()
         with pytest.raises(TypeError):
-            await submit_options_bracket_close(
+            await _prepare_and_submit(
                 position=equity,
                 bracket=_bracket(position_id=PositionId("pos-eq")),
                 trigger_reason=PositionExitMethod.STOP_TRIGGERED,
                 submitter=submitter,
-                activity_log=log.emit,
+                activity_log=log,
                 invocation_id_provider=_const_str("inv-001"),
                 monitor_session_id="mon-S",
                 trigger_id=1,
