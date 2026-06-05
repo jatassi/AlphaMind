@@ -69,7 +69,10 @@ from alphamind.execution.broker_adapter import (
     submit_options_close,
     submit_options_open,
 )
-from alphamind.execution.broker_adapter.order_options import PermanentRejectionError
+from alphamind.execution.broker_adapter.order_options import (
+    PermanentRejectionError,
+    submit_options_capital_floor,
+)
 from alphamind.portfolio_state.records.positions import OptionContractType
 
 # ---------------------------------------------------------------------------
@@ -493,8 +496,80 @@ async def test_submit_options_open_always_simple_regardless_of_bracket_shape() -
 
 
 # ---------------------------------------------------------------------------
-# submit_options_close — close-side derivation and quantity handling
+# submit_options_capital_floor — resting GTC stop_limit capital floor (04c)
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_submit_options_capital_floor_is_gtc_stop_limit() -> None:
+    """An options OPEN's capital floor is a single-leg GTC ``stop_limit``.
+
+    Per ADR-0003 / W3c: the broker-enforced floor uses ``stop_limit`` (not
+    ``stop_market``) to bound bad fills, is GTC (always-on, survives a monitor
+    wedge), and SIMPLE class (no complex order classes on options).
+    """
+    command = _open_options_command(quantity=5.0)
+    client, captured = _capturing_client()
+
+    outcome = await submit_options_capital_floor(
+        command,
+        client=client,
+        execution=_execution_config(),
+        client_order_id=_VALID_PM_COMMAND_ID,
+    )
+
+    assert isinstance(outcome, Submitted)
+    [request] = captured
+    assert isinstance(request, StopLimitOrderRequest)
+    assert request.time_in_force is TimeInForce.GTC
+    assert request.order_class is OrderClass.SIMPLE
+    assert request.symbol == "NVDA  240315C00800000"
+
+
+@pytest.mark.asyncio
+async def test_submit_options_capital_floor_long_sells_at_pnl_level() -> None:
+    """A long floor SELLs at the PnL-denominated trigger price.
+
+    The floor closes the position, so a long (BUY-to-open) floor is a SELL. The
+    trigger price is the PM-authored floor: planned premium per contract
+    ``dollar_value / (qty * mult)`` minus the loss-per-contract
+    ``max_loss / (qty * mult)`` — here ``(10_000 - 2_000) / (5 * 100) = 16.0``.
+    """
+    command = _open_options_command(quantity=5.0)  # long, $10k, max_loss $2k
+    client, captured = _capturing_client()
+
+    await submit_options_capital_floor(
+        command,
+        client=client,
+        execution=_execution_config(),
+        client_order_id=_VALID_PM_COMMAND_ID,
+    )
+
+    [request] = captured
+    assert request.side is OrderSide.SELL
+    assert request.qty == 5.0
+    assert request.stop_price == 16.0
+    assert request.limit_price == 16.0
+
+
+@pytest.mark.asyncio
+async def test_submit_options_capital_floor_short_buys_to_close() -> None:
+    """A short (SELL-to-open) floor BUYs to close."""
+    command = _open_options_command(
+        instrument=_option_instrument(direction="short", contract_type="put"),
+        quantity=5.0,
+    )
+    client, captured = _capturing_client()
+
+    await submit_options_capital_floor(
+        command,
+        client=client,
+        execution=_execution_config(),
+        client_order_id=_VALID_PM_COMMAND_ID,
+    )
+
+    [request] = captured
+    assert request.side is OrderSide.BUY
 
 
 @pytest.mark.asyncio

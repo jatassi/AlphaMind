@@ -46,6 +46,7 @@ from alphamind.commands.command_models import (
     OptionInstrument,
 )
 from alphamind.config.models.execution import ExecutionConfig
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.broker_adapter.errors import (
     PermanentRejection,
     classify_alpaca_error,
@@ -186,6 +187,60 @@ async def submit_options_add(
     return await _submit(client, request, execution, occ_symbol=occ_symbol)
 
 
+async def submit_options_capital_floor(
+    command: OpenCommand,
+    *,
+    client: TradingClient,
+    execution: ExecutionConfig,
+    client_order_id: str,
+) -> SubmissionOutcome[OptionsSubmission]:
+    """Submit the always-on broker-enforced capital-protection floor (W3c / ALP-856).
+
+    On an options OPEN, places a single-leg **GTC** ``stop_limit`` that closes the
+    position once its loss reaches the PM-authored, PnL-denominated
+    ``capital_protection_floor.max_loss`` (story 02d). The floor is *wedge-survivable*
+    — it rests at the broker and fires even with the monitor stopped (invariant 4 /
+    ADR-0003); ``stop_limit`` (not ``stop_market``) bounds bad fills, accepting
+    possible non-fill in a true gap (caught by the monitor + guardrail).
+
+    The floor closes the position, so its side is the reverse of the entry: a long
+    (``BUY``-to-open) floor SELLs, a short floor BUYs. The trigger price is
+    PnL-denominated, derived from the floor's ``max_loss`` against the planned entry
+    premium — no new numeric threshold lives in code (the level is PM judgment per
+    OPEN). The ``stop_trigger`` and ``limit`` collapse to that one floor price: a
+    ``stop_limit`` resting exactly at the floor, fully PM-authored.
+    """
+    instrument = _require_option_instrument(command.instrument, command_kind="open")
+    floor = command.capital_protection_floor
+    if floor is None:
+        msg = (
+            "submit_options_capital_floor requires command.capital_protection_floor; "
+            "an options OPEN always carries one (ALP-848)"
+        )
+        raise ValueError(msg)
+    occ_symbol = _occ_from_instrument(instrument)
+    # The floor *closes* the position, so its side reverses the entry.
+    side = OrderSide.SELL if instrument.direction == "long" else OrderSide.BUY
+    qty = command.position_size.quantity
+    floor_price = _floor_price_per_contract(
+        dollar_value=float(command.position_size.dollar_value),
+        max_loss=float(floor.max_loss),
+        quantity=qty,
+    )
+    _validate_client_order_id(client_order_id)
+    request = StopLimitOrderRequest(
+        symbol=occ_symbol,
+        side=side,
+        qty=qty,
+        time_in_force=TimeInForce.GTC,
+        order_class=OrderClass.SIMPLE,
+        client_order_id=client_order_id,
+        stop_price=floor_price,
+        limit_price=floor_price,
+    )
+    return await _submit(client, request, execution, occ_symbol=occ_symbol)
+
+
 async def submit_options_close(
     command: CloseCommand,
     *,
@@ -294,6 +349,27 @@ def _build_close_request(
         return LimitOrderRequest(**common, limit_price=float(limit_price))
     msg = f"unsupported CloseCommand.order_type for options: {order_type!r}"
     raise ValueError(msg)
+
+
+def _floor_price_per_contract(*, dollar_value: float, max_loss: float, quantity: float) -> float:
+    """Translate the PnL-denominated floor (``max_loss`` USD) to a per-contract price.
+
+    The PM authors the floor in PnL terms (story 02d); the broker order needs a
+    per-contract trigger price. The planned entry premium per contract is
+    ``dollar_value / (quantity * multiplier)`` (the position's planned dollars
+    spread over its contracts), and the position has lost ``max_loss`` when the
+    contract price has dropped by ``max_loss / (quantity * multiplier)``:
+
+        floor_price = (dollar_value - max_loss) / (quantity * multiplier)
+
+    Both terms are PM-authored OPEN fields — no numeric threshold is introduced
+    here. A floor whose ``max_loss`` meets-or-exceeds the planned outlay implies a
+    non-positive trigger price, which Alpaca would reject; the caller's schema
+    validation (02d) keeps ``max_loss`` below the capital at risk, so the
+    derived price stays positive.
+    """
+    contracts = quantity * LISTED_OPTION_CONTRACT_MULTIPLIER
+    return (dollar_value - max_loss) / contracts
 
 
 def _validate_client_order_id(client_order_id: str) -> None:
