@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -204,7 +205,10 @@ def _bracket(*, position_id: str = "pos-1", floor_order_id: str | None = None) -
         # floor's durable OMS order_id (the precommitted floor OrderRow), NOT the
         # broker alpaca id. The closer resolves it → OrderRow.alpaca_order_id.
         floor_leg = BracketLeg(
-            leg_id="leg-floor",
+            # Production form: f"{bracket_id}-leg-floor"
+            # (open._capital_floor_bracket_leg) — the closer matches the floor by
+            # this suffix, not by every BROKER_ENFORCED leg (FL11).
+            leg_id="brk-1-leg-floor",
             leg_type=BracketLegType.PRICE_STOP,
             order_id=OrderId(floor_order_id),
             trigger=PriceTrigger(
@@ -236,6 +240,10 @@ class FakeSubmitter:
     strategy_returns: CloseSubmissionResult | None = None
     trigger_reasons: list[PositionExitMethod] = field(default_factory=list)
     cancelled_floors: list[str] = field(default_factory=list)
+    # Unified, ordered log of every submitter call so a test can assert the
+    # relative order of the floor cancel vs. the close submit (FL7 — the cancel
+    # must precede the submit to shrink the double-SELL window to near-zero).
+    call_sequence: list[str] = field(default_factory=list)
 
     async def submit_options_close(
         self,
@@ -248,6 +256,7 @@ class FakeSubmitter:
         del details
         self.options_calls.append((position.position_id, client_order_id))
         self.trigger_reasons.append(trigger_reason)
+        self.call_sequence.append("submit_options_close")
         return CloseSubmissionResult(
             order_ids=(client_order_id,),
             mode="single_leg",
@@ -264,6 +273,7 @@ class FakeSubmitter:
         del details
         self.strategy_calls.append((position.position_id, client_order_id_base))
         self.trigger_reasons.append(trigger_reason)
+        self.call_sequence.append("submit_strategy_close")
         if self.strategy_returns is not None:
             return self.strategy_returns
         return CloseSubmissionResult(
@@ -273,6 +283,7 @@ class FakeSubmitter:
 
     async def cancel_floor(self, *, alpaca_order_id: str) -> None:
         self.cancelled_floors.append(alpaca_order_id)
+        self.call_sequence.append("cancel_floor")
 
 
 @dataclass
@@ -522,6 +533,35 @@ class TestCancelRestingFloor:
         assert resolved == ["ORD-FLOOR-xyz"]
         assert submitter.cancelled_floors == ["floor-alpaca-uuid"]
 
+    async def test_cancels_resting_floor_before_submitting_the_close(self) -> None:
+        """FL7 — the resting GTC floor is cancelled BEFORE the monitor close is
+        submitted, not after. Cancelling first shrinks the double-SELL window
+        (both the floor fill AND the monitor close executing) to near-zero: the
+        floor is retracted, then the close goes to the broker."""
+
+        async def _resolver(order_id: str) -> str | None:
+            return "floor-alpaca-uuid" if order_id == "ORD-FLOOR-xyz" else None
+
+        position = _options_position()
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+        await _prepare_and_submit(
+            position=position,
+            bracket=_bracket(floor_order_id="ORD-FLOOR-xyz"),
+            trigger_reason=PositionExitMethod.STOP_TRIGGERED,
+            submitter=submitter,
+            activity_log=log,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-20260511T143000Z-aabbccdd",
+            trigger_id=1,
+            now=_NOW,
+            estimated_exit_price=10.0,
+            realized_pnl_usd=-200.0,
+            floor_alpaca_id_resolver=_resolver,
+        )
+        # Cancel precedes the close submit.
+        assert submitter.call_sequence == ["cancel_floor", "submit_options_close"]
+
     async def test_no_floor_leg_cancels_nothing(self) -> None:
         """A bracket with no BROKER_ENFORCED floor leg cancels no floor."""
         position = _options_position()
@@ -543,9 +583,16 @@ class TestCancelRestingFloor:
         )
         assert submitter.cancelled_floors == []
 
-    async def test_unresolved_floor_id_skips_cancel(self) -> None:
-        """If the floor OrderRow has no alpaca id yet (resolver returns None), the
-        closer skips the cancel rather than passing a bad id to the broker."""
+    async def test_unbackfilled_floor_id_skips_cancel_and_escalates(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """FL6 — a floor leg whose OrderRow exists (its ``order_id`` is the FK
+        target) but whose broker-id backfill hasn't landed (resolver returns None)
+        leaves an un-cancellable resting floor that will later double-fire. The
+        closer still skips the bad-id cancel, but escalates this beyond a bare
+        warning — an operator-alert-grade ERROR naming the position — so the
+        lingering floor is surfaced rather than silently dropped. The close is
+        never blocked."""
 
         async def _resolver(order_id: str) -> str | None:
             del order_id
@@ -554,9 +601,75 @@ class TestCancelRestingFloor:
         position = _options_position()
         submitter = FakeSubmitter()
         log = FakeActivityLog()
+        with caplog.at_level(
+            logging.WARNING,
+            logger="alphamind.execution.continuous_monitor.bracket_stops.closer",
+        ):
+            await _prepare_and_submit(
+                position=position,
+                bracket=_bracket(floor_order_id="ORD-FLOOR-xyz"),
+                trigger_reason=PositionExitMethod.STOP_TRIGGERED,
+                submitter=submitter,
+                activity_log=log,
+                invocation_id_provider=_const_str("inv-001"),
+                monitor_session_id="mon-20260511T143000Z-aabbccdd",
+                trigger_id=1,
+                now=_NOW,
+                estimated_exit_price=10.0,
+                realized_pnl_usd=-200.0,
+                floor_alpaca_id_resolver=_resolver,
+            )
+        # No bad id passed to the broker, and the close still landed.
+        assert submitter.cancelled_floors == []
+        assert len(submitter.options_calls) == 1
+        # The un-cancellable resting floor is surfaced at ERROR (operator alert),
+        # naming the position so the lingering floor can be reconciled.
+        floor_logs = [
+            r
+            for r in caplog.records
+            if "ORD-FLOOR-xyz" in r.getMessage() or "pos-1" in r.getMessage()
+        ]
+        assert floor_logs, "expected the un-backfilled floor to be surfaced in a log"
+        assert all(r.levelno == logging.ERROR for r in floor_logs), (
+            "an un-cancellable resting floor must escalate beyond WARNING"
+        )
+
+    async def test_only_the_capital_floor_leg_is_cancelled_not_native_children(
+        self,
+    ) -> None:
+        """FL11 — cancel-on-monitor-fire targets ONLY the capital-floor leg
+        (``{bracket_id}-leg-floor``), never every BROKER_ENFORCED leg. An equity
+        native bracket's take-profit / stop children are also BROKER_ENFORCED but
+        the broker manages their OCO cancellation natively — cancelling them here
+        would be a double-cancel. The closer resolves and cancels only the floor."""
+        resolved: list[str] = []
+
+        async def _resolver(order_id: str) -> str | None:
+            resolved.append(order_id)
+            return "floor-alpaca-uuid" if order_id == "ORD-FLOOR-xyz" else "native-alpaca-uuid"
+
+        # A bracket carrying BOTH a BROKER_ENFORCED native-bracket take-profit
+        # child (``brk-1-leg-target``) AND the capital floor (``brk-1-leg-floor``).
+        native_child = BracketLeg(
+            leg_id="brk-1-leg-target",
+            leg_type=BracketLegType.TAKE_PROFIT,
+            order_id=OrderId("ORD-NATIVE-TP"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("NVDA"), threshold_usd=900.0, direction="GTE"
+            ),
+            enforcement=BracketLegEnforcement.MECHANICAL,
+            enforcement_binding=EnforcementBinding.BROKER_ENFORCED,
+            status=BracketLegStatus.ACTIVE,
+        )
+        base = _bracket(floor_order_id="ORD-FLOOR-xyz")
+        bracket = dataclasses.replace(base, protective_legs=(*base.protective_legs, native_child))
+
+        position = _options_position()
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
         await _prepare_and_submit(
             position=position,
-            bracket=_bracket(floor_order_id="ORD-FLOOR-xyz"),
+            bracket=bracket,
             trigger_reason=PositionExitMethod.STOP_TRIGGERED,
             submitter=submitter,
             activity_log=log,
@@ -568,7 +681,10 @@ class TestCancelRestingFloor:
             realized_pnl_usd=-200.0,
             floor_alpaca_id_resolver=_resolver,
         )
-        assert submitter.cancelled_floors == []
+        # Only the floor leg's order_id is resolved + cancelled; the native child
+        # is left to the broker's native OCO (never resolved, never cancelled).
+        assert resolved == ["ORD-FLOOR-xyz"]
+        assert submitter.cancelled_floors == ["floor-alpaca-uuid"]
 
 
 async def _none() -> str | None:

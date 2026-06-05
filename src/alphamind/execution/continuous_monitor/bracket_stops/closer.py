@@ -38,7 +38,11 @@ from alphamind.portfolio_state.events.activity_log import (
     PositionClosedDetail,
     PositionExitMethod,
 )
-from alphamind.portfolio_state.records.orders import BracketRecord, EnforcementBinding
+from alphamind.portfolio_state.records.orders import (
+    BracketLeg,
+    BracketRecord,
+    EnforcementBinding,
+)
 from alphamind.portfolio_state.records.positions import (
     OptionsPositionDetails,
     PositionRecord,
@@ -46,6 +50,16 @@ from alphamind.portfolio_state.records.positions import (
 )
 
 log = logging.getLogger(__name__)
+
+
+# The capital-floor leg's id form, minted by
+# ``write_paths.phase2.open._capital_floor_bracket_leg`` as
+# ``f"{bracket_id}-leg-floor"``. The closer matches the floor by this suffix so
+# cancel-on-monitor-fire targets ONLY the always-on capital floor — never the
+# equity native-bracket children (take-profit ``-leg-target`` / stop
+# ``-leg-inv{idx}``), which are also BROKER_ENFORCED but must not be cancelled
+# here (FL11). Kept in lockstep with the producer's literal.
+_CAPITAL_FLOOR_LEG_ID_SUFFIX = "-leg-floor"
 
 
 ActivityLogEmitter = Callable[[ActivityLogEntry], Awaitable[None]]
@@ -225,9 +239,35 @@ async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-ou
     A raise from here onward is a POST-submit failure: the order may already have
     reached the broker, so the caller keeps the leg marked fired to avoid a
     double-close (CL1).
+
+    Cancel-then-submit ordering (FL7 / ALP-856): the always-on broker-enforced
+    capital floor (a resting GTC ``stop_limit``) is cancelled FIRST, then the
+    monitor close is submitted. Submitting the close first left a window in which
+    the resting floor could fill before the cancel landed — both the floor AND the
+    monitor close executing → a double-SELL / oversell at the broker. Cancelling
+    first shrinks that window to near-zero. The residual, irreducible race is a
+    floor the broker has ALREADY triggered (matched/partially-filled) by the time
+    the cancel arrives: the cancel is best-effort and a benign already-filled / 404
+    is swallowed, the close still goes out, and Phase 1 quarantines the second fill
+    locally (absorb-on-broker-fire). The cancel is intentionally not awaited as a
+    precondition of the submit — a floor-cancel failure must never block the close,
+    which is the position's actual exit.
     """
     client_order_id_base = prepared.client_order_id_base
     details = position.details
+    if not isinstance(details, OptionsPositionDetails | StrategyPositionDetails):
+        msg = (
+            f"submit_options_bracket_close requires options or strategy position; "
+            f"got instrument_type={details.instrument_type!r}"
+        )
+        raise TypeError(msg)
+    # FL7 — cancel the resting broker-enforced floor BEFORE submitting the monitor
+    # close, shrinking the double-SELL window (floor fill + monitor close both
+    # executing) to near-zero. The two normally never double-close: a monitor fire
+    # cancels the floor here; a broker-floor fill instead drops the position from
+    # eligibility (absorb-on-broker-fire, _is_active_eligible_leg). Best-effort —
+    # a cancel failure is logged and swallowed, never blocking the close below.
+    await _cancel_resting_floors(bracket, submitter, floor_alpaca_id_resolver)
     if isinstance(details, OptionsPositionDetails):
         result = await submitter.submit_options_close(
             position=position,
@@ -235,19 +275,13 @@ async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-ou
             client_order_id=client_order_id_base,
             trigger_reason=trigger_reason,
         )
-    elif isinstance(details, StrategyPositionDetails):
+    else:
         result = await submitter.submit_strategy_close(
             position=position,
             details=details,
             client_order_id_base=client_order_id_base,
             trigger_reason=trigger_reason,
         )
-    else:
-        msg = (
-            f"submit_options_bracket_close requires options or strategy position; "
-            f"got instrument_type={details.instrument_type!r}"
-        )
-        raise TypeError(msg)
     await activity_log(
         _build_position_closed_entry(
             position=position,
@@ -259,12 +293,6 @@ async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-ou
             realized_pnl_usd=realized_pnl_usd,
         )
     )
-    # cancel-on-monitor-fire (ALP-856): the monitor stop just closed the position,
-    # so its always-on broker-enforced capital floor must be cancelled or it
-    # orphans against a no-longer-open position. The two never double-close: a
-    # monitor fire cancels the floor here; a broker-floor fill instead drops the
-    # position from eligibility (absorb-on-broker-fire, _is_active_eligible_leg).
-    await _cancel_resting_floors(bracket, submitter, floor_alpaca_id_resolver)
     return result
 
 
@@ -275,35 +303,48 @@ async def _cancel_resting_floors(
 ) -> None:
     """Cancel each resting broker-enforced floor leg of *bracket* (ALP-856 / FS4).
 
-    A broker-enforced floor leg's ``order_id`` is the floor's durable OMS
-    ``order_id`` (the precommitted floor OrderRow, the FK target) — NOT the broker
-    alpaca id. So the resting Alpaca order's id is resolved through
-    *floor_alpaca_id_resolver* (``order_id`` → the floor OrderRow's
-    ``alpaca_order_id``) before cancelling. A ``None`` resolution — no row, or the
-    floor's broker-id backfill hasn't landed yet — skips the cancel rather than
-    passing a bad id to the broker. Best-effort throughout: a resolver / cancel
-    failure is logged and swallowed (the close already reached the broker — the
-    floor is at worst a stale resting order the reconcile sweep surfaces), never
-    propagated so it cannot mask the close. ``CancelledError`` propagates for
-    shutdown. With no resolver wired (legacy callers / unit tests of the
-    submit-only path) the floor cancel is skipped entirely.
+    The capital-floor leg's ``order_id`` is the floor's durable OMS ``order_id``
+    (the precommitted floor OrderRow, the FK target) — NOT the broker alpaca id. So
+    the resting Alpaca order's id is resolved through *floor_alpaca_id_resolver*
+    (``order_id`` → the floor OrderRow's ``alpaca_order_id``) before cancelling.
+
+    FL6 — the floor leg always carries a non-``None`` ``order_id`` (the OrderRow
+    stamped at OPEN, the FK target), so a ``None`` resolution here means that
+    OrderRow exists locally but its broker-id backfill has NOT landed yet: the
+    monitor fired in the window before backfill. That floor is live at the broker
+    and un-cancellable from here — it will later double-fire / orphan-quarantine.
+    Rather than silently swallowing it at WARNING, this surfaces it at ERROR
+    (operator-alert-grade), naming the position so the lingering resting floor is
+    visible for reconcile. The cancel is still skipped (no bad id to the broker)
+    and the close is never blocked.
+
+    Best-effort throughout: a resolver / cancel failure is logged and swallowed
+    (the close already reached the broker — the floor is at worst a stale resting
+    order the reconcile sweep surfaces), never propagated so it cannot mask the
+    close. ``CancelledError`` propagates for shutdown. With no resolver wired
+    (legacy callers / unit tests of the submit-only path) the floor cancel is
+    skipped entirely.
     """
     if floor_alpaca_id_resolver is None:
         return
     for leg in bracket.protective_legs:
-        if (
-            leg.enforcement_binding is EnforcementBinding.BROKER_ENFORCED
-            and leg.order_id is not None
-        ):
+        if leg.order_id is not None and _is_capital_floor_leg(leg, bracket.bracket_id):
             try:
                 alpaca_order_id = await floor_alpaca_id_resolver(leg.order_id)
                 if alpaca_order_id is None:
-                    log.warning(
-                        "bracket_stops: floor leg %s for bracket %s resolved no broker id "
-                        "(unbackfilled or missing OrderRow); skipping cancel — reconcile "
-                        "sweep will surface any lingering resting floor",
+                    # FL6 — the floor OrderRow exists (this leg's order_id is its FK
+                    # target) but its broker id is un-backfilled → the live resting
+                    # floor is un-cancellable from here and will later double-fire.
+                    # Escalate to ERROR so an operator surfaces the lingering floor.
+                    log.error(
+                        "bracket_stops: capital-floor leg %s for bracket %s "
+                        "(position %s) has an un-backfilled broker id — the resting "
+                        "floor is live at the broker but un-cancellable from the "
+                        "monitor close; it will linger until reconcile and may "
+                        "double-fire. Operator: reconcile the floor for this position.",
                         leg.order_id,
                         bracket.bracket_id,
+                        bracket.position_id,
                     )
                     continue
                 await submitter.cancel_floor(alpaca_order_id=alpaca_order_id)
@@ -315,6 +356,23 @@ async def _cancel_resting_floors(
                     leg.order_id,
                     bracket.bracket_id,
                 )
+
+
+def _is_capital_floor_leg(leg: BracketLeg, bracket_id: str) -> bool:
+    """Is *leg* the always-on broker-enforced capital floor (FL11)?
+
+    Matches the capital floor SPECIFICALLY — a BROKER_ENFORCED leg whose id is the
+    producer's ``f"{bracket_id}-leg-floor"`` form — not every BROKER_ENFORCED leg.
+    An equity native bracket's take-profit (``-leg-target``) and first price-stop
+    (``-leg-inv{idx}``) children are ALSO BROKER_ENFORCED, but the broker manages
+    their OCO cancellation natively; cancel-on-monitor-fire must never touch them
+    (a double-cancel of a native-bracket child). Only the options capital floor is
+    a standalone resting order the monitor close must retract.
+    """
+    return (
+        leg.enforcement_binding is EnforcementBinding.BROKER_ENFORCED
+        and leg.leg_id == f"{bracket_id}{_CAPITAL_FLOOR_LEG_ID_SUFFIX}"
+    )
 
 
 def _build_engine_client_order_id(
