@@ -62,9 +62,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-
-from alphamind.config.models._shared import validate_hh_mm
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ContinuousMonitorConfig(BaseModel):
@@ -136,14 +134,6 @@ class ContinuousMonitorConfig(BaseModel):
             "before going loud."
         ),
     )
-    borrow_accrual_tick_local_time: str = Field(
-        default="16:00",
-        description=(
-            "Trading-day local time (HH:MM, US/Eastern) at which the "
-            "borrow-accrual tick fires. See ALP-715 pre-resolved decision (E). "
-            "Same HH:MM format as ``SessionWindow.open``/``.close`` in venue.yaml."
-        ),
-    )
     watchdog_cadence_multiplier: float = Field(
         default=10.0,
         gt=1.0,
@@ -210,8 +200,3 @@ class ContinuousMonitorConfig(BaseModel):
             "reconnect path."
         ),
     )
-
-    @field_validator("borrow_accrual_tick_local_time")
-    @classmethod
-    def _hh_mm_well_formed(cls, value: str) -> str:
-        return validate_hh_mm(value)

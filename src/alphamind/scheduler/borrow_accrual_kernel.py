@@ -1,4 +1,10 @@
-"""Pure recompute kernel for the daily borrow-accrual tick (ALP-719).
+"""Pure recompute kernel for the daily borrow-accrual tick (ALP-719 / relocated ALP-855).
+
+Relocated from the always-on continuous monitor into the scheduler layer
+(ADR-0004 evicts accounting; ADR-0005 makes the pipeline the single writer).
+The kernel itself is unchanged — it was always a pure function — only its home
+moved alongside the imperative shell that now runs it inside the pipeline's
+Phase-1 write transaction (:mod:`alphamind.scheduler.borrow_accrual`).
 
 For every OPEN SHORT EQUITY position the kernel:
 

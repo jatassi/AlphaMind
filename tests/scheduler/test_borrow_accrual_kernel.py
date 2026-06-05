@@ -1,4 +1,4 @@
-"""Pure tests for the borrow-accrual recompute kernel (ALP-719).
+"""Pure tests for the borrow-accrual recompute kernel (ALP-719 / relocated ALP-855).
 
 The kernel runs over typed :class:`PositionRecord` values and explicit
 ``close_prices`` / ``fee_rates`` mappings. It returns a typed
@@ -9,8 +9,8 @@ or missing fee, so the imperative shell can roll the surrounding
 transaction back.
 
 These tests are pure: no SQLAlchemy, no asyncio, no clock. The shell-side
-behaviors (DB session, InvocationRow insert, atomicity) live in
-``test_task.py``.
+behaviors (DB session, atomicity, the once-per-trading-day guard) live in
+``test_borrow_accrual.py``.
 """
 
 from __future__ import annotations
@@ -21,9 +21,6 @@ import pytest
 
 from alphamind._kernel.ids import PositionId, ThesisId, make_symbol
 from alphamind._kernel.money import money, price, signed_money
-from alphamind.execution.continuous_monitor.borrow_accrual.recompute import (
-    compute_tick,
-)
 from alphamind.portfolio_state.events.activity_log import (
     BorrowCostAccruedDetail,
     EventGroup,
@@ -40,6 +37,9 @@ from alphamind.portfolio_state.records.positions import (
     PositionFill,
     PositionRecord,
     PositionStatus,
+)
+from alphamind.scheduler.borrow_accrual_kernel import (
+    compute_tick,
 )
 
 _NOW = datetime(2026, 5, 27, 20, 0, tzinfo=UTC)  # 16:00 ET in summer (UTC-4)

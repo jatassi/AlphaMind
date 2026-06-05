@@ -434,8 +434,8 @@ def is_open_short_equity(record: PositionRecord) -> bool:
     :class:`PositionRecord` so any layer (state-persistence, snapshot
     assembly, breach monitor, borrow-accrual kernel) can reuse it without
     cross-layer imports. The borrow-accrual kernel
-    (``alphamind.execution.continuous_monitor.borrow_accrual.recompute``)
-    re-exports it for backwards compatibility.
+    (``alphamind.scheduler.borrow_accrual_kernel``) re-exports it for
+    backwards compatibility.
     """
     return (
         record.status == PositionStatus.OPEN

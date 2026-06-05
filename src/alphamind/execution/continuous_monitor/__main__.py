@@ -49,9 +49,6 @@ from alphamind.execution.broker_adapter import AccountStateQueries, AlpacaClient
 from alphamind.execution.continuous_monitor.activities_backfill import (
     register_fill_backfill_task,
 )
-from alphamind.execution.continuous_monitor.borrow_accrual import (
-    register_borrow_accrual_task,
-)
 from alphamind.execution.continuous_monitor.bracket_stops import (
     AlpacaBracketCloseSubmitter,
     register_options_bracket_watcher_task,
@@ -203,7 +200,7 @@ _MAIN_CONFIG_PATH = _CONFIG_DIR / "main.yaml"
 _REALIZED_VOL_REFRESH_INTERVAL_SECONDS: float = 24 * 60 * 60
 
 # ALP-825 review — short heartbeat cadence for the realized-vol refresh loop.
-# Mirrors ``borrow_accrual._HEARTBEAT_CADENCE_SECONDS``: the refresh fires only
+# The refresh fires only
 # once per ``_REALIZED_VOL_REFRESH_INTERVAL_SECONDS`` (24h), but the supervised
 # loop must iterate far more often than that so the stall watchdog sees a steady
 # heartbeat — pacing the loop on the 24h functional interval would yield a stall
@@ -290,7 +287,7 @@ def _register_realized_vol_refresh_task(
 
     Watchdog liveness (ALP-825 review). The loop drives the supervisor's
     ``supervised_loop`` seam on a SHORT ``heartbeat_cadence_seconds`` cadence
-    (mirroring ``borrow_accrual``) rather than the 24h functional interval, so
+    rather than the 24h functional interval, so
     the stall bound is ``heartbeat_cadence_seconds * watchdog_cadence_multiplier``
     instead of ~240h — a mid-refresh wedge is detected within minutes, not ~10
     days. Each iteration beats the watchdog (via the seam) and checks whether the
@@ -543,13 +540,9 @@ async def _run_daemon(*, mode: MonitorMode) -> None:  # noqa: PLR0915 — compos
         session_factory=db_session_factory,
         market_open=calendar_cache.is_market_open,
     )
-    register_borrow_accrual_task(
-        supervisor,
-        session_factory=db_session_factory,
-        sync_session_factory=sync_session_factory,
-        calendar_cache=calendar_cache,
-        process_lifetime_id=process_lifetime_id,
-    )
+    # ALP-855 / W4a — borrow accrual is accounting; it was evicted from the
+    # always-on monitor (ADR-0004) into the pipeline's Phase-1 write unit (single
+    # writer = pipeline, ADR-0005). No monitor registration here.
     # Constructed once per monitor session so the cascade dispatcher and
     # bracket-stops watcher mint trigger ids from the same monotonic
     # sequence — both encode ``MON.{session}.{trigger}.0`` into the

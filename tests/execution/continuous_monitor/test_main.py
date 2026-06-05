@@ -193,9 +193,14 @@ def test_main_registers_wave_2_and_3_tasks(
         "breach_loop",
         "bracket_stops",
         "entry_window",
-        "borrow_accrual",
     ):
         assert expected in task_names, f"{expected} not registered; got {task_names!r}"
+    # ALP-855 / W4a — borrow accrual is accounting, evicted from the always-on
+    # monitor (ADR-0004) into the pipeline's Phase-1 write unit. It is no longer
+    # a monitor task.
+    assert "borrow_accrual" not in task_names, (
+        f"borrow_accrual should be evicted from the monitor; got {task_names!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -2,13 +2,10 @@
 
 Lives outside any individual model module so multiple configs can share
 the same parsing + diagnostic posture without cross-importing each other.
-The first re-user (ALP-715 review F6) is the
-``borrow_accrual_tick_local_time`` knob on ``ContinuousMonitorConfig``,
-which mirrors the HH:MM 24-hour-clock format that
-``SessionWindow.open``/``.close`` (in :mod:`alphamind.config.models.venue`)
-already validate. Keeping one canonical regex + diagnostic prevents two
-HH:MM formats from drifting and gives operators a single error message
-to recognize.
+The HH:MM 24-hour-clock validator backs ``SessionWindow.open``/``.close``
+(in :mod:`alphamind.config.models.venue`). Keeping one canonical regex +
+diagnostic prevents two HH:MM formats from drifting and gives operators a
+single error message to recognize.
 """
 
 from __future__ import annotations
