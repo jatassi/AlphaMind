@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -204,7 +205,10 @@ def _bracket(*, position_id: str = "pos-1", floor_order_id: str | None = None) -
         # floor's durable OMS order_id (the precommitted floor OrderRow), NOT the
         # broker alpaca id. The closer resolves it → OrderRow.alpaca_order_id.
         floor_leg = BracketLeg(
-            leg_id="leg-floor",
+            # Production form: f"{bracket_id}-leg-floor"
+            # (open._capital_floor_bracket_leg) — the closer matches the floor by
+            # this suffix, not by every BROKER_ENFORCED leg (FL11).
+            leg_id="brk-1-leg-floor",
             leg_type=BracketLegType.PRICE_STOP,
             order_id=OrderId(floor_order_id),
             trigger=PriceTrigger(
@@ -579,9 +583,16 @@ class TestCancelRestingFloor:
         )
         assert submitter.cancelled_floors == []
 
-    async def test_unresolved_floor_id_skips_cancel(self) -> None:
-        """If the floor OrderRow has no alpaca id yet (resolver returns None), the
-        closer skips the cancel rather than passing a bad id to the broker."""
+    async def test_unbackfilled_floor_id_skips_cancel_and_escalates(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """FL6 — a floor leg whose OrderRow exists (its ``order_id`` is the FK
+        target) but whose broker-id backfill hasn't landed (resolver returns None)
+        leaves an un-cancellable resting floor that will later double-fire. The
+        closer still skips the bad-id cancel, but escalates this beyond a bare
+        warning — an operator-alert-grade ERROR naming the position — so the
+        lingering floor is surfaced rather than silently dropped. The close is
+        never blocked."""
 
         async def _resolver(order_id: str) -> str | None:
             del order_id
@@ -590,21 +601,38 @@ class TestCancelRestingFloor:
         position = _options_position()
         submitter = FakeSubmitter()
         log = FakeActivityLog()
-        await _prepare_and_submit(
-            position=position,
-            bracket=_bracket(floor_order_id="ORD-FLOOR-xyz"),
-            trigger_reason=PositionExitMethod.STOP_TRIGGERED,
-            submitter=submitter,
-            activity_log=log,
-            invocation_id_provider=_const_str("inv-001"),
-            monitor_session_id="mon-20260511T143000Z-aabbccdd",
-            trigger_id=1,
-            now=_NOW,
-            estimated_exit_price=10.0,
-            realized_pnl_usd=-200.0,
-            floor_alpaca_id_resolver=_resolver,
-        )
+        with caplog.at_level(
+            logging.WARNING,
+            logger="alphamind.execution.continuous_monitor.bracket_stops.closer",
+        ):
+            await _prepare_and_submit(
+                position=position,
+                bracket=_bracket(floor_order_id="ORD-FLOOR-xyz"),
+                trigger_reason=PositionExitMethod.STOP_TRIGGERED,
+                submitter=submitter,
+                activity_log=log,
+                invocation_id_provider=_const_str("inv-001"),
+                monitor_session_id="mon-20260511T143000Z-aabbccdd",
+                trigger_id=1,
+                now=_NOW,
+                estimated_exit_price=10.0,
+                realized_pnl_usd=-200.0,
+                floor_alpaca_id_resolver=_resolver,
+            )
+        # No bad id passed to the broker, and the close still landed.
         assert submitter.cancelled_floors == []
+        assert len(submitter.options_calls) == 1
+        # The un-cancellable resting floor is surfaced at ERROR (operator alert),
+        # naming the position so the lingering floor can be reconciled.
+        floor_logs = [
+            r
+            for r in caplog.records
+            if "ORD-FLOOR-xyz" in r.getMessage() or "pos-1" in r.getMessage()
+        ]
+        assert floor_logs, "expected the un-backfilled floor to be surfaced in a log"
+        assert all(r.levelno == logging.ERROR for r in floor_logs), (
+            "an un-cancellable resting floor must escalate beyond WARNING"
+        )
 
 
 async def _none() -> str | None:
