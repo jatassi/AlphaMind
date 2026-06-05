@@ -88,6 +88,9 @@ from alphamind.execution.broker_adapter.order_modify import (
 from alphamind.execution.broker_adapter.order_modify import (
     ReplaceFields,
 )
+from alphamind.execution.broker_adapter.order_options import (
+    PermanentRejectionError,
+)
 
 __all__ = [
     "BrokerDispatchResult",
@@ -295,10 +298,14 @@ async def _dispatch_options_open(
     cancel-on-monitor-fire can cancel the resting floor by id.
 
     The entry submits first: if it fails (gateway exhaustion → the caller
-    abandons the durable pre-commit), no floor is attempted. The floor is
-    mandatory, so a floor submission failure is surfaced as the dispatch outcome
-    — the caller tears down the OPEN rather than leaving the position
-    broker-unprotected.
+    abandons the durable pre-commit), no floor is attempted. Once the entry is
+    LIVE, the floor is mandatory — a mandatory floor means NO unprotected
+    options position — so ANY floor-submit failure (``GatewaySubmissionFailed``
+    or a permanently-rejecting ``PermanentRejectionError``) FIRST retracts the
+    live entry via :func:`submit_cancel` (so it cannot rest broker-unprotected,
+    FL1/ALP-856), THEN surfaces the failure as the dispatch outcome. The caller
+    still tears down the LOCAL graph; this cancel closes the broker side that the
+    local-graph abandon never touches.
     """
     entry_outcome = await submit_options_open(
         command,
@@ -308,17 +315,55 @@ async def _dispatch_options_open(
     )
     if isinstance(entry_outcome, GatewaySubmissionFailed):
         return entry_outcome
-    floor_outcome = await submit_options_capital_floor(
-        command,
-        client=client,
-        execution=execution,
-        client_order_id=derive_capital_floor_client_order_id(client_order_id),
-    )
+    entry_alpaca_order_id = entry_outcome.payload.alpaca_order_id
+    try:
+        floor_outcome = await submit_options_capital_floor(
+            command,
+            client=client,
+            execution=execution,
+            client_order_id=derive_capital_floor_client_order_id(client_order_id),
+        )
+    except PermanentRejectionError:
+        # The floor was permanently rejected (e.g. options level not approved)
+        # AFTER the entry went live. Retract the live entry first so it cannot
+        # rest unprotected, then re-raise so the caller also abandons local state.
+        await _cancel_live_entry(
+            client=client, execution=execution, entry_alpaca_order_id=entry_alpaca_order_id
+        )
+        raise
     if isinstance(floor_outcome, GatewaySubmissionFailed):
+        # The floor exhausted its retry window after the entry went live; retract
+        # the live entry first, then surface the gateway failure as the outcome.
+        await _cancel_live_entry(
+            client=client, execution=execution, entry_alpaca_order_id=entry_alpaca_order_id
+        )
         return floor_outcome
     return _wrap_options(
         entry_outcome,
         leg_alpaca_order_ids={"capital_floor": floor_outcome.payload.alpaca_order_id},
+    )
+
+
+async def _cancel_live_entry(
+    *,
+    client: TradingClient,
+    execution: ExecutionConfig,
+    entry_alpaca_order_id: AlpacaOrderId,
+) -> None:
+    """Retract a live options entry whose mandatory floor failed to submit (FL1).
+
+    The floor is mandatory: a floor-submit failure must leave NO unprotected
+    options position, so the live entry is cancelled at the broker before the
+    floor failure is surfaced. The cancel is best-effort — a
+    ``GatewaySubmissionFailed`` or ``PermanentRejectionError`` from the cancel
+    itself propagates so the boundary logs it (an already-terminal / unknown
+    entry is the broker's to reconcile), and the original floor failure is the
+    caller's teardown signal regardless.
+    """
+    await submit_cancel(
+        client=client,
+        execution=execution,
+        target_alpaca_order_id=entry_alpaca_order_id,
     )
 
 
