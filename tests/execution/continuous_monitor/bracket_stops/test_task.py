@@ -267,13 +267,16 @@ def _monitor_stop_plus_floor_bracket(
     bracket_id: str = "brk-1",
     position_id: str = "pos-1",
     stop_threshold: float = 865.0,
-    floor_order_id: str = "alpaca-floor-uuid",
+    floor_order_id: str = "ORD-FLOOR-xyz",
 ) -> BracketRecord:
     """A bracket with a MONITOR_ENFORCED stop AND a BROKER_ENFORCED resting floor.
 
     The monitor stop fires the close; the resting broker floor must then be
     cancelled (cancel-on-monitor-fire) so no orphaned floor lingers against a
-    now-closing position (ALP-856).
+    now-closing position (ALP-856). The floor leg's ``order_id`` is the floor's
+    durable OMS order_id (the FK target / precommitted OrderRow), NOT the alpaca
+    id — the closer resolves it → the OrderRow's ``alpaca_order_id`` before
+    cancelling.
     """
     monitor_stop = BracketLeg(
         leg_id="leg-monitor-stop",
@@ -541,11 +544,16 @@ class TestCancelOnMonitorFire:
     async def test_monitor_fire_cancels_the_resting_broker_floor(self) -> None:
         position = _options_position(direction=Direction.LONG)
         bracket = _monitor_stop_plus_floor_bracket(
-            stop_threshold=865.0, floor_order_id="alpaca-floor-uuid"
+            stop_threshold=865.0, floor_order_id="ORD-FLOOR-xyz"
         )
         cache = await _seed_cache({"NVDA": 860.0})  # below the stop → fires
         submitter = FakeSubmitter()
         log = FakeActivityLog()
+
+        # The floor leg's order_id is the OMS order_id; the resolver maps it to
+        # the floor OrderRow's broker alpaca id (the sanctioned DB seam).
+        async def _resolver(order_id: str) -> str | None:
+            return "alpaca-floor-uuid" if order_id == "ORD-FLOOR-xyz" else None
 
         await _run_bracket_stop_cycle(
             config=_config(),
@@ -555,6 +563,7 @@ class TestCancelOnMonitorFire:
             submitter=submitter,
             activity_log=log.emit,
             invocation_id_provider=_const_str("inv-001"),
+            floor_alpaca_id_resolver=_resolver,
             monitor_session_id="mon-S",
             trigger_ids=_trigger_ids(),
             now=_NOW,
@@ -564,7 +573,8 @@ class TestCancelOnMonitorFire:
 
         # The monitor stop fired its close ...
         assert len(submitter.options_calls) == 1
-        # ... and the resting broker floor was cancelled — no orphan remains.
+        # ... and the resting broker floor was cancelled by the RESOLVED broker
+        # id — no orphan remains.
         assert submitter.cancelled_floors == ["alpaca-floor-uuid"]
 
     async def test_no_floor_cancel_when_no_broker_floor_present(self) -> None:

@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alphamind._kernel.ids import ClientOrderId
 from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     CloseOrderPrecommitter,
+    FloorAlpacaIdResolver,
 )
 from alphamind.execution.write_paths.phase2._shared import (
     _build_pending_order,
@@ -149,7 +150,33 @@ def make_close_order_precommitter(
     return _precommit
 
 
+def make_floor_alpaca_id_resolver(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> FloorAlpacaIdResolver:
+    """Bind an ``order_id`` → floor ``alpaca_order_id`` resolver to *session_factory*.
+
+    The capital floor is a tracked broker order whose durable OrderRow carries the
+    broker id (ALP-856 / FS4); the floor bracket leg's ``order_id`` points at that
+    OrderRow (the FK target), NOT the alpaca id. Cancel-on-monitor-fire resolves
+    the resting Alpaca order's id through this lookup. Returns ``None`` when no
+    OrderRow resolves or its broker-id backfill hasn't landed yet (the closer then
+    skips the cancel). Reads on a fresh session so it can outlive any one
+    invocation context (the monitor runs across invocations).
+    """
+
+    async def _resolve(order_id: str) -> str | None:
+        async with session_factory() as session:
+            return (
+                await session.execute(
+                    select(OrderRow.alpaca_order_id).where(OrderRow.order_id == order_id)
+                )
+            ).scalar_one_or_none()
+
+    return _resolve
+
+
 __all__ = [
     "make_close_order_precommitter",
+    "make_floor_alpaca_id_resolver",
     "precommit_monitor_close_order",
 ]

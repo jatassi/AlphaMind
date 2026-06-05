@@ -40,6 +40,7 @@ from alphamind.execution.broker_adapter.order_options import (
 from alphamind.execution.broker_adapter.retry import GatewaySubmissionFailed, Submitted
 from alphamind.execution.continuous_monitor.bracket_stops.close_order_precommit import (
     make_close_order_precommitter,
+    make_floor_alpaca_id_resolver,
 )
 from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     BracketCloseSubmitter,
@@ -469,6 +470,11 @@ def register_options_bracket_watcher_task(
     # (rather than the fill stranding in broker_event_log and the position
     # staying phantom-open).
     close_order_precommitter = make_close_order_precommitter(session_factory)
+    # ALP-856 — resolves a fired bracket's capital-floor leg ``order_id`` → the
+    # floor OrderRow's ``alpaca_order_id`` so cancel-on-monitor-fire cancels the
+    # resting Alpaca floor by its real broker id (the leg's order_id is the OMS
+    # order_id / FK target, not the alpaca id).
+    floor_alpaca_id_resolver = make_floor_alpaca_id_resolver(session_factory)
 
     async def _coro(session: MonitorSession, config: ContinuousMonitorConfig) -> None:
         cadence = float(config.bracket_stop_evaluation_cadence_seconds)
@@ -482,6 +488,7 @@ def register_options_bracket_watcher_task(
             activity_log=activity_log,
             invocation_id_provider=invocation_id_provider,
             close_order_precommitter=close_order_precommitter,
+            floor_alpaca_id_resolver=floor_alpaca_id_resolver,
             risk_free_rate_provider=risk_free_rate_provider,
             trigger_ids=trigger_ids,
             # ALP-829 — drive the loop through supervised_loop so beats are

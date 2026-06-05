@@ -38,6 +38,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
+    EnforcementBinding,
     PriceTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
@@ -186,7 +187,7 @@ def _strategy_position(*, position_id: str = "pos-st") -> PositionRecord:
     )
 
 
-def _bracket(*, position_id: str = "pos-1") -> BracketRecord:
+def _bracket(*, position_id: str = "pos-1", floor_order_id: str | None = None) -> BracketRecord:
     leg = BracketLeg(
         leg_id="leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
@@ -197,12 +198,29 @@ def _bracket(*, position_id: str = "pos-1") -> BracketRecord:
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
+    legs: tuple[BracketLeg, ...] = (leg,)
+    if floor_order_id is not None:
+        # ALP-856 — a BROKER_ENFORCED capital-floor leg whose ``order_id`` is the
+        # floor's durable OMS order_id (the precommitted floor OrderRow), NOT the
+        # broker alpaca id. The closer resolves it → OrderRow.alpaca_order_id.
+        floor_leg = BracketLeg(
+            leg_id="leg-floor",
+            leg_type=BracketLegType.PRICE_STOP,
+            order_id=OrderId(floor_order_id),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("NVDA"), threshold_usd=800.0, direction="LTE"
+            ),
+            enforcement=BracketLegEnforcement.MECHANICAL,
+            enforcement_binding=EnforcementBinding.BROKER_ENFORCED,
+            status=BracketLegStatus.ACTIVE,
+        )
+        legs = (leg, floor_leg)
     return BracketRecord(
         bracket_id=BracketId("brk-1"),
         position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
         entry_order_id=OrderId("ord-entry-1"),
-        protective_legs=(leg,),
+        protective_legs=legs,
         modification_history=(),
         corporate_action_cancellation_reason=None,
     )
@@ -278,6 +296,7 @@ async def _prepare_and_submit(
     now: datetime,
     estimated_exit_price: float,
     realized_pnl_usd: float,
+    floor_alpaca_id_resolver: Callable[[str], Awaitable[str | None]] | None = None,
 ) -> CloseSubmissionResult:
     """Run the full closer flow: pre-submit prepare then the broker submit.
 
@@ -302,6 +321,7 @@ async def _prepare_and_submit(
         now=now,
         estimated_exit_price=estimated_exit_price,
         realized_pnl_usd=realized_pnl_usd,
+        floor_alpaca_id_resolver=floor_alpaca_id_resolver,
     )
 
 
@@ -460,6 +480,99 @@ class TestSingleLegClose:
                 realized_pnl_usd=-200.0,
             )
         assert submitter.options_calls == []
+
+
+# ---------------------------------------------------------------------------
+# cancel-on-monitor-fire — resolve the floor leg's OMS order_id → OrderRow's
+# alpaca id → cancel_floor (ALP-856 / FS4)
+# ---------------------------------------------------------------------------
+
+
+class TestCancelRestingFloor:
+    async def test_resolves_floor_order_id_to_alpaca_id_and_cancels(self) -> None:
+        """A monitor-fired close resolves the floor leg's ``order_id`` (the floor's
+        OMS order_id, the FK target) → the floor OrderRow's ``alpaca_order_id`` →
+        ``submitter.cancel_floor``. The leg's ``order_id`` is NOT the alpaca id, so
+        the closer must look it up (the resolver is the DB seam)."""
+        resolved: list[str] = []
+
+        async def _resolver(order_id: str) -> str | None:
+            resolved.append(order_id)
+            return "floor-alpaca-uuid" if order_id == "ORD-FLOOR-xyz" else None
+
+        position = _options_position()
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+        await _prepare_and_submit(
+            position=position,
+            bracket=_bracket(floor_order_id="ORD-FLOOR-xyz"),
+            trigger_reason=PositionExitMethod.STOP_TRIGGERED,
+            submitter=submitter,
+            activity_log=log,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-20260511T143000Z-aabbccdd",
+            trigger_id=1,
+            now=_NOW,
+            estimated_exit_price=10.0,
+            realized_pnl_usd=-200.0,
+            floor_alpaca_id_resolver=_resolver,
+        )
+        # The OMS order_id was resolved, and the floor was cancelled by the
+        # broker alpaca id the resolver returned (not the leg's order_id).
+        assert resolved == ["ORD-FLOOR-xyz"]
+        assert submitter.cancelled_floors == ["floor-alpaca-uuid"]
+
+    async def test_no_floor_leg_cancels_nothing(self) -> None:
+        """A bracket with no BROKER_ENFORCED floor leg cancels no floor."""
+        position = _options_position()
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+        await _prepare_and_submit(
+            position=position,
+            bracket=_bracket(),
+            trigger_reason=PositionExitMethod.STOP_TRIGGERED,
+            submitter=submitter,
+            activity_log=log,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-20260511T143000Z-aabbccdd",
+            trigger_id=1,
+            now=_NOW,
+            estimated_exit_price=10.0,
+            realized_pnl_usd=-200.0,
+            floor_alpaca_id_resolver=lambda _oid: _none(),
+        )
+        assert submitter.cancelled_floors == []
+
+    async def test_unresolved_floor_id_skips_cancel(self) -> None:
+        """If the floor OrderRow has no alpaca id yet (resolver returns None), the
+        closer skips the cancel rather than passing a bad id to the broker."""
+
+        async def _resolver(order_id: str) -> str | None:
+            del order_id
+            return None
+
+        position = _options_position()
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+        await _prepare_and_submit(
+            position=position,
+            bracket=_bracket(floor_order_id="ORD-FLOOR-xyz"),
+            trigger_reason=PositionExitMethod.STOP_TRIGGERED,
+            submitter=submitter,
+            activity_log=log,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-20260511T143000Z-aabbccdd",
+            trigger_id=1,
+            now=_NOW,
+            estimated_exit_price=10.0,
+            realized_pnl_usd=-200.0,
+            floor_alpaca_id_resolver=_resolver,
+        )
+        assert submitter.cancelled_floors == []
+
+
+async def _none() -> str | None:
+    return None
 
 
 # ---------------------------------------------------------------------------
