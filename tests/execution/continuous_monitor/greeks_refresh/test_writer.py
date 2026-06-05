@@ -17,7 +17,8 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import (
@@ -353,3 +354,68 @@ class TestSqlGreeksWriterStrategy:
         )
         after = await _position_row_details_json(async_factory, "strat-1")
         assert after == before
+
+
+class TestSqlGreeksWriterNoPositionsOrOrdersRmw:
+    """ADR-0005 invariant 1: the greeks refresh's only write is its own side
+    table — it issues no ``UPDATE`` / ``INSERT`` on the pipeline-owned
+    ``positions`` or ``orders`` rows (the cross-process RMW that generated
+    ALP-824). Asserts directly on the SQL the writer emits, so the no-RMW
+    contract is structural rather than incidental to the codec round-trip.
+    """
+
+    async def test_options_refresh_emits_no_positions_or_orders_write(
+        self, tmp_path: Path
+    ) -> None:
+        from alphamind.persistence.session import (
+            make_async_engine,
+            make_async_session_factory,
+        )
+
+        engine = make_async_engine(str(tmp_path / "norwm.db"))
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = make_async_session_factory(engine)
+
+        statements: list[str] = []
+
+        @event.listens_for(engine.sync_engine, "before_cursor_execute")
+        def _capture(
+            _conn: Connection,
+            _cursor: object,
+            statement: str,
+            *_rest: object,
+        ) -> None:
+            statements.append(statement)
+
+        try:
+            await _insert_position(factory, _options_position(position_id=PositionId("pos-1")))
+            statements.clear()  # ignore the seed insert; only watch the refresh
+            writer = SqlGreeksWriter(factory)
+            await writer.update_options_greeks(
+                position_id=PositionId("pos-1"),
+                greeks=OptionGreeks(
+                    delta=0.6,
+                    gamma=0.03,
+                    theta=-0.015,
+                    vega=0.13,
+                    as_of_timestamp=datetime(2026, 5, 11, 14, 30, tzinfo=UTC),
+                    iv_used=0.28,
+                ),
+            )
+        finally:
+            await engine.dispose()
+
+        write_kinds = ("INSERT", "UPDATE", "DELETE")
+        mutations = [
+            s
+            for s in statements
+            if any(s.lstrip().upper().startswith(k) for k in write_kinds)
+        ]
+        # The only mutation is on the side table.
+        assert mutations, "expected at least one write to position_greeks"
+        for stmt in mutations:
+            upper = stmt.upper()
+            assert "POSITIONS" not in upper, f"greeks refresh RMW'd positions: {stmt!r}"
+            assert "ORDERS" not in upper, f"greeks refresh RMW'd orders: {stmt!r}"
+            assert "POSITION_GREEKS" in upper, f"unexpected write target: {stmt!r}"

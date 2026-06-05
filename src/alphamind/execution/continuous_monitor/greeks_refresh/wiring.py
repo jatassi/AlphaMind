@@ -25,6 +25,8 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import PositionId
@@ -58,7 +60,6 @@ from alphamind.state.tables.position_greeks import PositionGreeksRow
 from alphamind.state.tables.position_greeks_codec import (
     record_to_row as greeks_record_to_row,
 )
-from alphamind.state.tables.positions import PositionRow
 
 log = logging.getLogger(__name__)
 
@@ -122,34 +123,50 @@ class SqlGreeksWriter:
         await self._upsert(position_id=position_id, greeks=aggregated)
 
     async def _upsert(self, *, position_id: str, greeks: OptionGreeks) -> None:
-        async with self._session_factory() as sess:
-            await self._require_position(sess, position_id)
-            record = PositionGreeksRecord(
-                position_id=PositionId(position_id),
-                delta=greeks.delta,
-                gamma=greeks.gamma,
-                theta=greeks.theta,
-                vega=greeks.vega,
-                iv=greeks.iv_used,
-                updated_at=greeks.as_of_timestamp or _utcnow(),
-            )
-            await sess.merge(greeks_record_to_row(record))
-            await sess.commit()
+        """Append-only-idempotent upsert: one ``INSERT ... ON CONFLICT DO UPDATE``.
 
-    async def _require_position(self, sess: AsyncSession, position_id: str) -> None:
-        """Surface a missing position as a ``LookupError`` before the upsert.
-
-        The side table's ``position_id`` FK to ``positions`` would otherwise
-        only fire at COMMIT as an ``IntegrityError`` (and DEFERRED). Checking
-        up front keeps the writer's "no such position" contract loud and typed,
-        matching the prior RMW writer's behavior.
+        A single write statement with **no preceding read** in the same
+        transaction — the write lock is taken directly, so ``PRAGMA busy_timeout``
+        governs cross-writer contention rather than a deferred read snapshot whose
+        later write-upgrade a concurrent committer could race into
+        ``SQLITE_BUSY_SNAPSHOT`` (ADR-0005). Idempotent on ``position_id`` (PK),
+        so re-running a cycle overwrites the row in place.
         """
-        result = await sess.execute(
-            select(PositionRow.position_id).where(PositionRow.position_id == position_id)
+        record = PositionGreeksRecord(
+            position_id=PositionId(position_id),
+            delta=greeks.delta,
+            gamma=greeks.gamma,
+            theta=greeks.theta,
+            vega=greeks.vega,
+            iv=greeks.iv_used,
+            updated_at=greeks.as_of_timestamp or _utcnow(),
         )
-        if result.scalar_one_or_none() is None:
-            msg = f"no such position: {position_id!r}"
-            raise LookupError(msg)
+        row = greeks_record_to_row(record)
+        values = {
+            "position_id": row.position_id,
+            "delta": row.delta,
+            "gamma": row.gamma,
+            "theta": row.theta,
+            "vega": row.vega,
+            "iv": row.iv,
+            "updated_at": row.updated_at,
+        }
+        stmt = sqlite_insert(PositionGreeksRow).values(**values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[PositionGreeksRow.position_id],
+            set_={k: v for k, v in values.items() if k != "position_id"},
+        )
+        async with self._session_factory() as sess:
+            try:
+                await sess.execute(stmt)
+                await sess.commit()
+            except IntegrityError as exc:
+                # The DEFERRED ``position_id`` FK to ``positions`` fires at COMMIT
+                # when the position does not exist; translate to the writer's
+                # typed "no such position" contract.
+                await sess.rollback()
+                msg = f"no such position: {position_id!r}"
+                raise LookupError(msg) from exc
 
 
 # ---------------------------------------------------------------------------
