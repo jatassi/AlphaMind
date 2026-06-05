@@ -33,6 +33,8 @@ from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     ActivityLogEmitter,
     BracketCloseSubmitter,
+    CloseOrderPrecommitter,
+    prepare_bracket_close,
     submit_options_bracket_close,
 )
 from alphamind.execution.continuous_monitor.bracket_stops.triggers import (
@@ -206,6 +208,7 @@ async def _run_bracket_stop_cycle(  # noqa: PLR0913 — kernel surfaces every co
     submitter: BracketCloseSubmitter,
     activity_log: ActivityLogEmitter,
     invocation_id_provider: InvocationIdProvider,
+    close_order_precommitter: CloseOrderPrecommitter | None = None,
     trigger_ids: TriggerIdGenerator,
     monitor_session_id: str,
     now: datetime,
@@ -255,6 +258,7 @@ async def _run_bracket_stop_cycle(  # noqa: PLR0913 — kernel surfaces every co
             submitter=submitter,
             activity_log=activity_log,
             invocation_id_provider=invocation_id_provider,
+            close_order_precommitter=close_order_precommitter,
             trigger_ids=trigger_ids,
             monitor_session_id=monitor_session_id,
             now=now,
@@ -271,6 +275,7 @@ async def _evaluate_bracket_legs(  # noqa: PLR0913 — fans out the cycle's per-
     submitter: BracketCloseSubmitter,
     activity_log: ActivityLogEmitter,
     invocation_id_provider: InvocationIdProvider,
+    close_order_precommitter: CloseOrderPrecommitter | None,
     trigger_ids: TriggerIdGenerator,
     monitor_session_id: str,
     now: datetime,
@@ -291,20 +296,20 @@ async def _evaluate_bracket_legs(  # noqa: PLR0913 — fans out the cycle's per-
             risk_free_rate=risk_free_rate,
         ):
             continue
-        # Mark fired BEFORE submission so a retry-on-exception cycle does
-        # not re-fire the same leg.
-        fired_legs.add(key)
         await _fire_leg(
             position=position,
             bracket=bracket,
             leg=leg,
+            key=key,
             spot=spot,
             submitter=submitter,
             activity_log=activity_log,
             invocation_id_provider=invocation_id_provider,
+            close_order_precommitter=close_order_precommitter,
             trigger_ids=trigger_ids,
             monitor_session_id=monitor_session_id,
             now=now,
+            fired_legs=fired_legs,
         )
 
 
@@ -448,15 +453,28 @@ async def _fire_leg(  # noqa: PLR0913 — fan-out parameters for the closer call
     position: PositionRecord,
     bracket: BracketRecord,
     leg: BracketLeg,
+    key: _FiredLegKey,
     spot: float,
     submitter: BracketCloseSubmitter,
     activity_log: ActivityLogEmitter,
     invocation_id_provider: InvocationIdProvider,
+    close_order_precommitter: CloseOrderPrecommitter | None,
     trigger_ids: TriggerIdGenerator,
     monitor_session_id: str,
     now: datetime,
+    fired_legs: set[_FiredLegKey],
 ) -> None:
-    """Submit the closing order + write the POSITION_CLOSED activity-log entry."""
+    """Submit the closing order + write the POSITION_CLOSED activity-log entry.
+
+    Splits pre-submit from post-submit failure to honour the fail-safe invariant
+    (CL1). The pre-submit work — resolving the invocation, building the engine
+    client_order_id, persisting the durable close ``orders`` row (FS4) — runs in
+    :func:`prepare_bracket_close` BEFORE the leg is marked fired. A pre-submit
+    raise leaves the leg un-fired so the next cycle retries (no silently
+    unprotected position). Only once the broker submit has been ATTEMPTED is the
+    leg added to ``fired_legs``; a post-submit raise keeps it fired (the order may
+    have reached the broker — avoid a double-close).
+    """
     trigger_reason = _trigger_reason_for_leg(leg)
     estimated_exit_price, realized_pnl_usd = _estimated_exit_price_for(position, spot)
     # The same monotonic per-session counter the cascade dispatcher uses;
@@ -467,25 +485,49 @@ async def _fire_leg(  # noqa: PLR0913 — fan-out parameters for the closer call
     # an unbounded collision space against the cascade's 1-based counter.
     trigger_id = trigger_ids.next()
     try:
+        prepared = await prepare_bracket_close(
+            position=position,
+            monitor_session_id=monitor_session_id,
+            trigger_id=trigger_id,
+            invocation_id_provider=invocation_id_provider,
+            close_order_precommitter=close_order_precommitter,
+        )
+    except Exception:
+        # PRE-submit failure (transient DB error in the invocation provider, a
+        # thesis-less position, a durable-order-row precommit failure): NO broker
+        # order was placed, so the leg stays un-fired and the next cycle retries —
+        # never an unprotected position for the session (CL1, invariant 4).
+        # ``CancelledError`` propagates so supervisor shutdown bubbles up.
+        log.exception(
+            "bracket_stops: pre-submit preparation failed for bracket %s leg %s "
+            "position %s; leg left un-fired for retry",
+            bracket.bracket_id,
+            leg.leg_id,
+            position.position_id,
+        )
+        return
+    # The broker submit is now being ATTEMPTED — mark fired so a retry-on-exception
+    # cycle does not re-fire the same leg.
+    fired_legs.add(key)
+    try:
         await submit_options_bracket_close(
             position=position,
             bracket=bracket,
             trigger_reason=trigger_reason,
             submitter=submitter,
             activity_log=activity_log,
-            invocation_id_provider=invocation_id_provider,
-            monitor_session_id=monitor_session_id,
-            trigger_id=trigger_id,
+            prepared=prepared,
             now=now,
             estimated_exit_price=estimated_exit_price,
             realized_pnl_usd=realized_pnl_usd,
         )
     except Exception:
-        # Per-submission supervisor per runtime §G1: the submission raised —
-        # keep the leg marked fired (already added to fired_legs above) to
-        # avoid re-fire storms. NSSM's restart policy and the operator's
-        # monitor log surface the failure for recovery. ``BaseException``
-        # (``CancelledError``) propagates so supervisor shutdown bubbles up.
+        # Per-submission supervisor per runtime §G1: the submission raised AFTER
+        # the broker call was attempted — keep the leg marked fired (added above)
+        # to avoid re-fire storms / a double-close. NSSM's restart policy and the
+        # operator's monitor log surface the failure for recovery.
+        # ``BaseException`` (``CancelledError``) propagates so supervisor shutdown
+        # bubbles up.
         log.exception(
             "bracket_stops: close submission failed for bracket %s leg %s position %s",
             bracket.bracket_id,
@@ -509,6 +551,7 @@ async def run_options_bracket_watcher(  # noqa: PLR0913 — orchestrator surface
     submitter: BracketCloseSubmitter,
     activity_log: ActivityLogEmitter,
     invocation_id_provider: InvocationIdProvider,
+    close_order_precommitter: CloseOrderPrecommitter | None = None,
     risk_free_rate_provider: RiskFreeRateProvider,
     trigger_ids: TriggerIdGenerator,
     loop: SupervisedLoop,
@@ -549,6 +592,7 @@ async def run_options_bracket_watcher(  # noqa: PLR0913 — orchestrator surface
                 submitter=submitter,
                 activity_log=activity_log,
                 invocation_id_provider=invocation_id_provider,
+                close_order_precommitter=close_order_precommitter,
                 trigger_ids=trigger_ids,
                 monitor_session_id=session.session_id,
                 now=now(),

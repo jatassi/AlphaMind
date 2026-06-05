@@ -51,6 +51,30 @@ log = logging.getLogger(__name__)
 ActivityLogEmitter = Callable[[ActivityLogEntry], Awaitable[None]]
 # Async-native: invoked from the watcher's loop; see bracket_stops.task.
 type InvocationIdProvider = Callable[[], Awaitable[str]]
+# Persists the durable monitor-fired-close ``orders`` row before the broker submit
+# (FS4 / ALP-836 atomic pattern): ``(position, client_order_id)`` → a committed
+# OrderRow keyed by ``client_order_id`` so the returning close fill resolves an
+# ``oms_order_id`` and Phase 1 closes the position. Idempotent on the
+# ``client_order_id``. Production wires the SQL implementation in
+# :mod:`alphamind.execution.continuous_monitor.bracket_stops.wiring`; tests pass a
+# capturing fake (a sanctioned DB boundary).
+type CloseOrderPrecommitter = Callable[[PositionRecord, str], Awaitable[None]]
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedClose:
+    """Pre-submit context for a bracket close — the work that can raise.
+
+    Resolving the invocation id (a DB read) and building the engine
+    client_order_id (raises ``ValueError`` on a thesis-less position) are the only
+    steps that can fail BEFORE the broker submit is attempted. They are computed by
+    :func:`prepare_bracket_close` so the caller can run them ahead of marking the
+    leg fired (CL1 / fail-safe invariant 4): a pre-submit raise then leaves the leg
+    un-fired for the next cycle to retry, while a post-submit raise keeps it fired.
+    """
+
+    invocation_id: str
+    client_order_id_base: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,36 +140,33 @@ class BracketCloseSubmitter(Protocol):
         thesis-shaped exit (see :meth:`submit_options_close`)."""
 
 
-async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-out: closer + activity-log writer
+async def prepare_bracket_close(
     *,
     position: PositionRecord,
-    bracket: BracketRecord,
-    trigger_reason: PositionExitMethod,
-    submitter: BracketCloseSubmitter,
-    activity_log: ActivityLogEmitter,
-    invocation_id_provider: InvocationIdProvider,
     monitor_session_id: str,
     trigger_id: int,
-    now: datetime,
-    estimated_exit_price: float,
-    realized_pnl_usd: float,
-) -> CloseSubmissionResult:
-    """Submit a closing market order + persist the POSITION_CLOSED activity-log entry.
+    invocation_id_provider: InvocationIdProvider,
+    close_order_precommitter: CloseOrderPrecommitter | None = None,
+) -> PreparedClose:
+    """Run the pre-submit work for a bracket close — every step that can raise.
 
-    Routes single-leg options through ``submitter.submit_options_close`` and
-    strategy positions through ``submitter.submit_strategy_close``. The
-    activity-log entry has ``event_source=BRACKET_MANAGER`` and the supplied
-    ``trigger_reason`` (``STOP_TRIGGERED`` or ``TARGET_REACHED``).
+    Three steps, all BEFORE the broker submit (CL1 / fail-safe invariant 4):
 
-    ``trigger_id`` is the per-session monotonically-increasing identifier
-    the watcher allocates; it is woven into the engine-originated
-    ``client_order_id`` so the resulting Alpaca order is traceable back to
-    the firing event.
+    1. Resolve the invocation once (a DB read that can transiently fail).
+    2. Build the engine ``client_order_id`` — weaves the position's thesis (*why*)
+       + invocation (*when*) so the resulting Alpaca order self-attributes
+       (broker-carried link, ALP-844); raises :class:`ValueError` on a thesis-less
+       position.
+    3. (FS4 / ALP-836) Persist a durable ``orders`` row keyed by that
+       ``client_order_id`` so the returning close fill resolves an
+       ``oms_order_id`` and Phase 1 integrates it (closing the position). Skipped
+       when no precommitter is wired (legacy callers / unit tests of the
+       submit-only path).
+
+    Because the caller runs this BEFORE marking the leg fired, any raise here
+    leaves the leg un-fired so the next monitor cycle retries — the position is
+    never left silently unprotected for the rest of the session.
     """
-    del bracket  # bracket_id flows through trigger_id; leg_id is in the rationale
-    # Resolve the invocation once and weave it (with the position's thesis) into
-    # the engine client_order_id so the resulting Alpaca order self-attributes
-    # by thesis (*why*) + invocation (*when*) — the broker-carried link (ALP-844).
     invocation_id = await invocation_id_provider()
     client_order_id_base = _build_engine_client_order_id(
         monitor_session_id=monitor_session_id,
@@ -153,6 +174,42 @@ async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-ou
         position=position,
         invocation_id=invocation_id,
     )
+    if close_order_precommitter is not None:
+        await close_order_precommitter(position, client_order_id_base)
+    return PreparedClose(
+        invocation_id=invocation_id,
+        client_order_id_base=client_order_id_base,
+    )
+
+
+async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-out: closer + activity-log writer
+    *,
+    position: PositionRecord,
+    bracket: BracketRecord,
+    trigger_reason: PositionExitMethod,
+    submitter: BracketCloseSubmitter,
+    activity_log: ActivityLogEmitter,
+    prepared: PreparedClose,
+    now: datetime,
+    estimated_exit_price: float,
+    realized_pnl_usd: float,
+) -> CloseSubmissionResult:
+    """Submit a closing market order + persist the POSITION_CLOSED activity-log entry.
+
+    Takes a :class:`PreparedClose` (the pre-submit invocation + client_order_id
+    built by :func:`prepare_bracket_close`) and performs only the broker submit +
+    activity-log write — the steps from the broker call onward. Routes single-leg
+    options through ``submitter.submit_options_close`` and strategy positions
+    through ``submitter.submit_strategy_close``. The activity-log entry has
+    ``event_source=BRACKET_MANAGER`` and the supplied ``trigger_reason``
+    (``STOP_TRIGGERED`` or ``TARGET_REACHED``).
+
+    A raise from here onward is a POST-submit failure: the order may already have
+    reached the broker, so the caller keeps the leg marked fired to avoid a
+    double-close (CL1).
+    """
+    del bracket  # bracket_id flows through trigger_id; leg_id is in the rationale
+    client_order_id_base = prepared.client_order_id_base
     details = position.details
     if isinstance(details, OptionsPositionDetails):
         result = await submitter.submit_options_close(
@@ -179,7 +236,7 @@ async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-ou
             position=position,
             order_ids=result.order_ids,
             trigger_reason=trigger_reason,
-            invocation_id=invocation_id,
+            invocation_id=prepared.invocation_id,
             now=now,
             estimated_exit_price=estimated_exit_price,
             realized_pnl_usd=realized_pnl_usd,

@@ -47,6 +47,7 @@ from alphamind.execution.broker_adapter import FillReport
 from alphamind.execution.broker_adapter.fill_stream import translate_trade_update
 from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     CloseSubmissionResult,
+    prepare_bracket_close,
     submit_options_bracket_close,
 )
 from alphamind.execution.continuous_monitor.fill_stream_consumer.persistence import (
@@ -299,15 +300,19 @@ class TestFiredLegCloseSelfAttributes:
         activity_log = _CollectingActivityLog()
 
         # The Monitor-enforced leg fires: the closer submits a fresh close.
+        prepared = await prepare_bracket_close(
+            position=_options_position(),
+            monitor_session_id=_MONITOR_SESSION_ID,
+            trigger_id=7,
+            invocation_id_provider=_const_str(f"inv-{_INVOCATION_BARE}"),
+        )
         await submit_options_bracket_close(
             position=_options_position(),
             bracket=_bracket(),
             trigger_reason=PositionExitMethod.STOP_TRIGGERED,
             submitter=submitter,
             activity_log=activity_log.emit,
-            invocation_id_provider=_const_str(f"inv-{_INVOCATION_BARE}"),
-            monitor_session_id=_MONITOR_SESSION_ID,
-            trigger_id=7,
+            prepared=prepared,
             now=_NOW,
             estimated_exit_price=9.5,
             realized_pnl_usd=-250.0,
