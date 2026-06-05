@@ -29,7 +29,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import InvocationId, PositionId, ThesisId
@@ -60,6 +60,7 @@ from alphamind.state.records_broker_event_log import (
     BrokerEventType,
     serialize_event_payload,
 )
+from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.invocations import InvocationRow
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.positions import PositionRow
@@ -145,6 +146,7 @@ async def persist_fill_report(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     enrichment_callable: EnrichmentCallable | None,
+    recovered: bool = False,
 ) -> None:
     """Self-attribute a single ``FillReport`` and persist it in its own transaction.
 
@@ -168,6 +170,20 @@ async def persist_fill_report(
     ``enrichment_callable`` so each translated :class:`FillRecord` is enriched
     with a ``live_execution_estimate`` before that append; live mode passes
     ``None`` and the column persists as NULL.
+
+    ``recovered`` distinguishes a LIVE websocket fill (``False``, the default)
+    from a REST-recovery snapshot (``True``, the disconnect-recovery / periodic
+    backfill sweeps). The live websocket logs PER-EVENT partial increments
+    (``update.qty`` / ``update.price``); the REST sweep — sourced from Alpaca's
+    ``GET /v2/orders`` — yields ONE report carrying the order's CUMULATIVE
+    ``filled_qty`` / ``filled_avg_price``. Appending that cumulative as-is would
+    log the same shares twice (the partials AND the cumulative) → the 03c PnL
+    fold double-counts (FS1). So a recovered fill is reconciled to the RESIDUAL
+    GAP — the cumulative minus the quantity already logged for that
+    ``alpaca_order_id`` — and only the gap is appended (gap-free, exactly-once,
+    realizing 03b's recovery intent). A non-positive gap appends nothing (the
+    log is already complete for that order); idempotency holds because a second
+    recovery pass sees gap == 0.
     """
     record = fill_report_to_fill_record(report)
     log.debug(
@@ -183,6 +199,20 @@ async def persist_fill_report(
     # One session spans resolution AND the append/commit, removing the TOCTOU
     # window between resolving attribution and writing the event/fill rows (B4).
     async with session_factory() as db:
+        if recovered:
+            # FS1 — a recovery report carries the order's CUMULATIVE fill; reduce
+            # it to the residual gap over what is already logged, or skip entirely
+            # when the log is already complete for this order. Done in this
+            # DB-bearing layer (not the broker adapter, which must not query the
+            # local DB) so recovery.py stays a pure broker→FillReport translator.
+            reconciled = await _reconcile_recovered_fill_to_gap(db, report)
+            if reconciled is None:
+                return
+            report = reconciled
+            record = fill_report_to_fill_record(report)
+            # The residual is still a fill-bearing report, so the translator
+            # returns a record; assert to narrow for the append below.
+            assert record is not None
         attribution = await _resolve_attribution(db, report)
         if attribution is None:
             # No link AND no resolvable+attributable order-row projection cache —
@@ -256,6 +286,63 @@ async def _resolve_attribution(db: AsyncSession, report: FillReport) -> _FillAtt
             oms_order_id=oms_order_id,
         )
     return None
+
+
+async def _reconcile_recovered_fill_to_gap(
+    db: AsyncSession, report: FillReport
+) -> FillReport | None:
+    """Reduce a REST-recovery cumulative fill to its residual gap, or ``None`` (FS1).
+
+    A recovery report (Alpaca ``GET /v2/orders``) carries the order's CUMULATIVE
+    ``filled_qty`` as its ``fill_quantity`` at the cumulative ``filled_avg_price``,
+    whereas the live websocket logs PER-EVENT partial increments. Appending the
+    cumulative as-is re-logs shares the partials already captured → the 03c fold
+    double-counts. So compute::
+
+        gap = cumulative_filled_quantity - sum(already-logged FILL qty for this order)
+
+    and return a residual :class:`FillReport` of exactly ``gap`` shares at the
+    cumulative price, so ``broker_event_log`` reflects the order's true total
+    EXACTLY ONCE. ``None`` (append nothing) when:
+
+    * the report carries no cumulative (``None``) — unknown-not-zero, nothing to
+      reconcile (mirrors the FS3 guard); the live/fill path owns it; or
+    * ``gap <= 0`` — the log is already complete for this order (e.g. a second
+      recovery pass after the residual landed sees gap == 0), so the append is a
+      no-op and idempotency holds.
+
+    The residual self-attributes through the SAME broker-carried link / order-row
+    path as the cumulative report it derived from (only ``fill_quantity`` changes).
+    """
+    cumulative = report.cumulative_filled_quantity
+    if cumulative is None:
+        return None
+    already_logged = await _logged_fill_quantity_for_order(db, report.alpaca_order_id)
+    gap = cumulative - already_logged
+    if gap <= 0:
+        return None
+    return report.model_copy(update={"fill_quantity": gap})
+
+
+async def _logged_fill_quantity_for_order(db: AsyncSession, alpaca_order_id: str) -> float:
+    """Sum the ``fill_quantity`` already logged as FILL rows for *alpaca_order_id*.
+
+    The quantity the 03c fold sees for the order: every ``broker_event_log`` FILL
+    row whose payload's ``alpaca_order_id`` matches contributes its per-event
+    ``fill_quantity``. ``alpaca_order_id`` / ``fill_quantity`` live in the
+    JSON ``raw_payload_json`` (canonical ``serialize_event_payload`` of the
+    report), so the sum is pushed into SQL via SQLite-native ``json_extract``
+    rather than decoding every row in Python. Returns ``0.0`` when no FILL row
+    for the order has been logged yet (a genuinely-dropped fill the recovery
+    sweep is the first to see).
+    """
+    fill_qty = func.json_extract(BrokerEventLogRow.raw_payload_json, "$.fill_quantity")
+    stmt = select(func.coalesce(func.sum(fill_qty), 0.0)).where(
+        BrokerEventLogRow.event_type == BrokerEventType.FILL.value,
+        func.json_extract(BrokerEventLogRow.raw_payload_json, "$.alpaca_order_id")
+        == alpaca_order_id,
+    )
+    return float((await db.execute(stmt)).scalar_one())
 
 
 def _fill_event_record(

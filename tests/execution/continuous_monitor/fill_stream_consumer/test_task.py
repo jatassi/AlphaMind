@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -437,6 +438,78 @@ class TestStartupRecovery:
         assert first_call["since"].replace(microsecond=0) == prior_ts.replace(microsecond=0)
         # The recovered fill landed alongside the seeded one.
         assert len(rows) == 2
+
+    async def test_recovery_appends_only_the_residual_gap_over_logged_partials(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """FS1 wiring — the consumer's REST-recovery path passes ``recovered=True``
+        so a cumulative snapshot reconciles to the residual gap over what the live
+        websocket already logged. A 60-share partial is on ``broker_event_log``;
+        startup recovery sees the order's cumulative 100 → ONE 40-share residual
+        lands, not a full-100 duplicate, so the 03c fold totals 100 exactly once.
+
+        Were ``recovered=True`` dropped at the caller, the cumulative would append
+        as a second 100-share FILL and the logged total would be 160."""
+        order_uuid = uuid4()
+        # A live 60-share partial, logged per-event into broker_event_log AND
+        # fill_records (the latter activates startup recovery via its timestamp).
+        prior_ts = _now_utc() - timedelta(minutes=10)
+        partial = _report_from_order(
+            _build_order(
+                client_order_id="order-1",
+                order_id=order_uuid,
+                qty="100",
+                filled_qty="60",
+                status=AlpacaOrderStatus.PARTIALLY_FILLED,
+            ),
+            event="partial_fill",
+            price=189.42,
+            qty=60.0,
+        )
+        partial = partial.model_copy(update={"fill_timestamp": prior_ts})
+        await persist_fill_report(
+            partial, session_factory=session_factory, enrichment_callable=None
+        )
+
+        # Startup recovery sees the order's CUMULATIVE state (100 filled @ avg)
+        # for the SAME alpaca_order_id.
+        recovered_ts = _now_utc() - timedelta(minutes=5)
+        stream = _FakeStream()
+        queries = _FakeAccountStateQueries(
+            snapshots=[
+                _order_snapshot(
+                    order_id=str(order_uuid),
+                    client_order_id="order-1",
+                    filled_avg_price=189.50,
+                    filled_qty=100.0,
+                    filled_at=recovered_ts,
+                ),
+            ]
+        )
+
+        task = asyncio.create_task(
+            run_fill_stream_consumer(
+                _session(),
+                _config(),
+                **_build_run_kwargs(session_factory, stream, queries),
+            )
+        )
+
+        await _wait_for_handler(stream)
+        # The partial (1) + the 40-share residual (2) — wait for the second.
+        rows = await _wait_for_event_log(session_factory, expected=2)
+
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        fills = [r for r in rows if r.event_type == "FILL"]
+        total = sum(float(json.loads(r.raw_payload_json)["fill_quantity"]) for r in fills)
+        assert total == 100.0, "recovery must append only the residual gap, not the cumulative"
+        residuals = [
+            r for r in fills if float(json.loads(r.raw_payload_json)["fill_quantity"]) == 40.0
+        ]
+        assert len(residuals) == 1
 
 
 class TestDisconnect:

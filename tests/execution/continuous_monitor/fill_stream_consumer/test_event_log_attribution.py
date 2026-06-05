@@ -16,6 +16,7 @@ never hand-write the id grammar.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -200,6 +201,15 @@ async def _read_event_log(
     async with session_factory() as session:
         result = await session.execute(select(BrokerEventLogRow))
         return list(result.scalars().all())
+
+
+def _logged_fill_quantity_total(rows: list[BrokerEventLogRow]) -> float:
+    """Sum ``fill_quantity`` over the FILL rows — the qty the 03c fold sees."""
+    return sum(
+        float(json.loads(r.raw_payload_json)["fill_quantity"])
+        for r in rows
+        if r.event_type == "FILL"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -647,3 +657,185 @@ class TestOutOfBandQuarantine:
         # One row, alerted once — the re-park did not re-insert or re-alert.
         assert len(queued) == 1
         assert queued[0].retry_count == 0
+
+
+class TestRecoveryGapReconciliation:
+    """FS1 — a REST recovery report carries the CUMULATIVE ``filled_qty`` for an
+    order, while the live websocket logs PER-EVENT partial increments. Appending
+    the cumulative as-is would log the same shares twice (once as the partials,
+    once as the cumulative) → the 03c PnL fold double-counts. The recovery path
+    instead appends only the RESIDUAL GAP so ``broker_event_log`` reflects the
+    order's true total EXACTLY ONCE."""
+
+    async def test_recovery_after_partials_appends_only_the_residual_gap(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A websocket partial (60 of 100) is logged, then REST recovery sees the
+        cumulative (100). Recovery must append ONE residual 40-share FILL — not a
+        full 100-share duplicate — so the log totals 100 exactly once."""
+        order_uuid = uuid4()
+        # Live websocket partial: 60 shares @ p1, logged per-event.
+        partial = _fill_report(
+            client_order_id=_PM_LINKED_COMMAND_ID,
+            order_id=order_uuid,
+            event="partial_fill",
+            price=189.42,
+            qty=60.0,
+            filled_qty="60",
+            timestamp=_FIXED_TS,
+        )
+        await persist_fill_report(
+            partial, session_factory=session_factory, enrichment_callable=None
+        )
+
+        # REST recovery sees the order's CUMULATIVE state: 100 filled @ avg price,
+        # carried as one report whose ``fill_quantity`` == ``cumulative``.
+        recovered = _fill_report(
+            client_order_id=_PM_LINKED_COMMAND_ID,
+            order_id=order_uuid,
+            event="fill",
+            price=190.00,
+            qty=100.0,
+            filled_qty="100",
+        )
+        assert recovered.fill_quantity == recovered.cumulative_filled_quantity == 100.0
+
+        await persist_fill_report(
+            recovered, session_factory=session_factory, enrichment_callable=None, recovered=True
+        )
+
+        rows = await _read_event_log(session_factory)
+        # The log reflects the order's true total of 100 shares EXACTLY ONCE:
+        # the 60-share partial + a single 40-share residual, NOT a 100-share dup.
+        assert _logged_fill_quantity_total(rows) == 100.0
+        residuals = [
+            r
+            for r in rows
+            if r.event_type == "FILL"
+            and float(json.loads(r.raw_payload_json)["fill_quantity"]) == 40.0
+        ]
+        assert len(residuals) == 1, "expected exactly one 40-share residual FILL"
+
+    async def test_recovery_after_all_partials_logged_appends_nothing(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """When the websocket already logged the full quantity (two partials
+        summing to the cumulative), a REST recovery of the same order sees gap == 0
+        and appends NOTHING — the log stays complete, no duplicate row."""
+        order_uuid = uuid4()
+        for second, (qty, filled, price, event) in enumerate(
+            ((40.0, "40", 189.00, "partial_fill"), (60.0, "100", 189.50, "fill"))
+        ):
+            partial = _fill_report(
+                client_order_id=_PM_LINKED_COMMAND_ID,
+                order_id=order_uuid,
+                event=event,
+                price=price,
+                qty=qty,
+                filled_qty=filled,
+                timestamp=datetime(2026, 6, 3, 14, 30, second, tzinfo=UTC),
+            )
+            await persist_fill_report(
+                partial, session_factory=session_factory, enrichment_callable=None
+            )
+
+        before = await _read_event_log(session_factory)
+        assert _logged_fill_quantity_total(before) == 100.0
+
+        recovered = _fill_report(
+            client_order_id=_PM_LINKED_COMMAND_ID,
+            order_id=order_uuid,
+            event="fill",
+            price=189.30,
+            qty=100.0,
+            filled_qty="100",
+        )
+        await persist_fill_report(
+            recovered, session_factory=session_factory, enrichment_callable=None, recovered=True
+        )
+
+        after = await _read_event_log(session_factory)
+        # Gap == 0 → no residual appended; the FILL rows are unchanged.
+        assert len(after) == len(before)
+        assert _logged_fill_quantity_total(after) == 100.0
+
+    async def test_recovery_of_a_genuinely_dropped_fill_appends_the_full_quantity(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A fill the websocket NEVER logged (0 logged, cumulative 100) recovers
+        the full 100 shares — the gap equals the whole cumulative when nothing is
+        on the log yet, so the dropped fill is captured in full exactly once."""
+        order_uuid = uuid4()
+        recovered = _fill_report(
+            client_order_id=_PM_LINKED_COMMAND_ID,
+            order_id=order_uuid,
+            event="fill",
+            price=190.00,
+            qty=100.0,
+            filled_qty="100",
+        )
+        await persist_fill_report(
+            recovered, session_factory=session_factory, enrichment_callable=None, recovered=True
+        )
+
+        rows = await _read_event_log(session_factory)
+        assert _logged_fill_quantity_total(rows) == 100.0
+        fills = [r for r in rows if r.event_type == "FILL"]
+        assert len(fills) == 1
+
+    async def test_recovered_fill_processed_twice_nets_to_one_total(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """Idempotency: the SAME recovery snapshot processed twice nets to the
+        same logged total — the second pass sees gap == 0 and appends nothing."""
+        order_uuid = uuid4()
+        recovered = _fill_report(
+            client_order_id=_PM_LINKED_COMMAND_ID,
+            order_id=order_uuid,
+            event="fill",
+            price=190.00,
+            qty=100.0,
+            filled_qty="100",
+            timestamp=_FIXED_TS,
+        )
+        for _ in range(2):
+            await persist_fill_report(
+                recovered, session_factory=session_factory, enrichment_callable=None, recovered=True
+            )
+
+        rows = await _read_event_log(session_factory)
+        assert _logged_fill_quantity_total(rows) == 100.0
+        assert len([r for r in rows if r.event_type == "FILL"]) == 1
+
+    async def test_live_websocket_fill_is_never_gap_reconciled(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """The live websocket path (``recovered=False``) keeps appending per-event
+        partials as-is — gap reconciliation is recovery-only. Two distinct live
+        partials both land in full; neither is reduced against the other."""
+        order_uuid = uuid4()
+        first = _fill_report(
+            client_order_id=_PM_LINKED_COMMAND_ID,
+            order_id=order_uuid,
+            event="partial_fill",
+            price=189.00,
+            qty=60.0,
+            filled_qty="60",
+            timestamp=datetime(2026, 6, 3, 14, 30, 1, tzinfo=UTC),
+        )
+        second = _fill_report(
+            client_order_id=_PM_LINKED_COMMAND_ID,
+            order_id=order_uuid,
+            event="fill",
+            price=189.50,
+            qty=40.0,
+            filled_qty="100",
+            timestamp=datetime(2026, 6, 3, 14, 30, 2, tzinfo=UTC),
+        )
+        await persist_fill_report(first, session_factory=session_factory, enrichment_callable=None)
+        await persist_fill_report(second, session_factory=session_factory, enrichment_callable=None)
+
+        rows = await _read_event_log(session_factory)
+        # Both per-event increments logged in full (60 + 40), no reconciliation.
+        assert _logged_fill_quantity_total(rows) == 100.0
+        assert len([r for r in rows if r.event_type == "FILL"]) == 2

@@ -16,6 +16,7 @@ whose ``get_orders`` yields ``OrderSnapshot``s, mirroring the
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -191,6 +192,15 @@ async def _read_broker_events(
         return list(result.scalars().all())
 
 
+def _logged_fill_quantity_total(rows: list[BrokerEventLogRow]) -> float:
+    """Sum ``fill_quantity`` over the FILL rows — the qty the 03c fold sees."""
+    return sum(
+        float(json.loads(r.raw_payload_json)["fill_quantity"])
+        for r in rows
+        if r.event_type == "FILL"
+    )
+
+
 async def _seed_order_row(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -364,6 +374,62 @@ class TestIdempotent:
         assert len(await _read_broker_events(session_factory)) == 1
         assert len(await _read_fill_records(session_factory)) == 1
 
+    async def test_sweep_appends_only_residual_gap_over_logged_partials(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """FS1 wiring — the backfill sweep passes ``recovered=True`` so a cumulative
+        snapshot reconciles to the residual gap over the per-event partials the live
+        websocket already logged. A 60-share partial is on ``broker_event_log``; the
+        sweep sees the order's cumulative 100 → ONE 40-share residual lands, not a
+        full-100 duplicate, so the 03c fold totals 100 exactly once.
+
+        Were ``recovered=True`` dropped at the caller, the cumulative would append
+        as a second 100-share FILL and the logged total would be 160."""
+        entry_uuid = str(uuid4())
+        await _seed_order_row(session_factory, order_id="ORD-GAP-1", alpaca_order_id=entry_uuid)
+        # A live 60-share partial pre-logged into broker_event_log for this order.
+        partial = _fill_report(
+            order_id=entry_uuid, client_order_id="inv.CMD-GAP.0.0", price_=189.42, qty=60.0
+        )
+        partial = partial.model_copy(
+            update={"fill_quantity": 60.0, "cumulative_filled_quantity": 60.0}
+        )
+        await persist_fill_report(
+            partial, session_factory=session_factory, enrichment_callable=None
+        )
+        assert _logged_fill_quantity_total(await _read_broker_events(session_factory)) == 60.0
+
+        # The sweep sees the order's CUMULATIVE state (100 filled @ avg).
+        queries = _FakeAccountStateQueries(
+            snapshots=[
+                _order_snapshot(
+                    order_id=entry_uuid, client_order_id="inv.CMD-GAP.0.0", filled_qty=100.0
+                ),
+            ]
+        )
+        task = asyncio.create_task(
+            run_fill_backfill(
+                _session(),
+                _config(),
+                **_run_kwargs(session_factory, queries),
+            )
+        )
+        await _wait_for_broker_events(session_factory, expected=2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        rows = await _read_broker_events(session_factory)
+        # The log totals 100 exactly once: the 60-share partial + a 40-share residual.
+        assert _logged_fill_quantity_total(rows) == 100.0
+        residuals = [
+            r
+            for r in rows
+            if r.event_type == "FILL"
+            and float(json.loads(r.raw_payload_json)["fill_quantity"]) == 40.0
+        ]
+        assert len(residuals) == 1
+
 
 # ---------------------------------------------------------------------------
 # Queue drain — a previously-quarantined fill integrates after a sweep
@@ -526,6 +592,22 @@ async def _wait_for_rows(
     rows: list[FillRecordRow] = []
     while asyncio.get_event_loop().time() < deadline:
         rows = await _read_fill_records(session_factory)
+        if len(rows) >= expected:
+            return rows
+        await asyncio.sleep(0.01)
+    return rows
+
+
+async def _wait_for_broker_events(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    expected: int,
+    timeout_seconds: float = 5.0,
+) -> list[BrokerEventLogRow]:
+    deadline = asyncio.get_event_loop().time() + timeout_seconds
+    rows: list[BrokerEventLogRow] = []
+    while asyncio.get_event_loop().time() < deadline:
+        rows = await _read_broker_events(session_factory)
         if len(rows) >= expected:
             return rows
         await asyncio.sleep(0.01)

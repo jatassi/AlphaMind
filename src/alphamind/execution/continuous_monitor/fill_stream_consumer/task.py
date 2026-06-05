@@ -259,10 +259,15 @@ async def _replay_recovery(
     # we don't pin to ``AccountStateQueries`` and can swap in a stub.
     gen: AsyncIterator[FillReport] = recover_missed_fills_since(queries, since=since)  # type: ignore[arg-type]
     async for report in gen:
+        # FS1 — REST recovery reports carry the order's CUMULATIVE fill; flag the
+        # persist so it appends only the residual gap over the per-event partials
+        # the live websocket already logged, rather than re-logging the full
+        # cumulative and double-counting in the 03c fold.
         await persist_fill_report(
             report,
             session_factory=session_factory,
             enrichment_callable=enrichment_callable,
+            recovered=True,
         )
 
 

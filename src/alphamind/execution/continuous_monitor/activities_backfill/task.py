@@ -153,10 +153,15 @@ async def _run_sweep(
     # ``AccountStateQueries`` and can swap in a stub.
     gen: AsyncIterator[FillReport] = recover_missed_fills_since(queries, since=since, until=until)  # type: ignore[arg-type]
     async for report in gen:
+        # FS1 — backfill sweeps are a REST-recovery path: each report carries the
+        # order's CUMULATIVE fill, so flag the persist to append only the residual
+        # gap over what is already logged (gap-free, exactly-once) rather than
+        # re-logging the full cumulative and double-counting in the 03c fold.
         await persist_fill_report(
             report,
             session_factory=session_factory,
             enrichment_callable=enrichment_callable,
+            recovered=True,
         )
     await drain_unattributed_fills(
         session_factory=session_factory,
