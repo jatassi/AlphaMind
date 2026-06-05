@@ -25,10 +25,13 @@ from decimal import Decimal
 from alpaca.data.enums import CorporateActionsType
 from alpaca.data.models.corporate_actions import CorporateAction
 
+from typing import Literal
+
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.broker_adapter.entry_pricing import TouchQuote
 from alphamind.execution.broker_adapter.queries import (
     ActivitySnapshot,
+    OrderSnapshot,
     PositionSnapshot,
     TradeAccountSnapshot,
 )
@@ -165,6 +168,24 @@ class LogOnlyAccountStateQueries:
     def get_positions(self) -> tuple[PositionSnapshot, ...]:
         log.info("[debug_e2e] LogOnlyAccountStateQueries.get_positions()")
         return tuple(_position_snapshot(p) for p in self._portfolio.positions)
+
+    async def get_orders(
+        self,
+        *,
+        status: Literal["open", "closed", "all"] = "all",
+        since: dt.datetime | None = None,
+        until: dt.datetime | None = None,
+        symbols: tuple[str, ...] | None = None,
+    ) -> AsyncIterator[OrderSnapshot]:
+        """Yield no orders — the synthetic portfolio is positions-only, offline.
+
+        Satisfies the ``AccountStateQueriesP`` ``get_orders`` surface (the
+        fresh-start open-orders precondition) so a debug-e2e run drains an empty
+        cursor rather than reaching the broker.
+        """
+        log.info("[debug_e2e] LogOnlyAccountStateQueries.get_orders(status=%s)", status)
+        return
+        yield  # pragma: no cover — makes this an async generator
 
     async def get_account_activities(
         self,

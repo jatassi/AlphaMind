@@ -10,8 +10,10 @@ initialized).
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Literal
 
 import pytest
 from sqlalchemy import select
@@ -21,6 +23,7 @@ from alphamind._kernel.money import money, price
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.venue import VenueConfig
 from alphamind.execution.broker_adapter.queries import (
+    OrderSnapshot,
     PositionSnapshot,
     TradeAccountSnapshot,
 )
@@ -73,23 +76,65 @@ def _make_position_snapshot(symbol: str = "AAPL") -> PositionSnapshot:
     )
 
 
+def _make_open_order_snapshot(symbol: str = "AAPL") -> OrderSnapshot:
+    """A resting (open) order — a husk in order form on a non-flat account."""
+    return OrderSnapshot(
+        order_id="ord-open-1",
+        client_order_id="cli-open-1",
+        symbol=symbol,
+        asset_class="us_equity",
+        qty=10.0,
+        filled_qty=0.0,
+        filled_avg_price=None,
+        side="buy",
+        order_type="limit",
+        time_in_force="day",
+        order_class="simple",
+        status="new",
+        submitted_at=_NOW,
+        filled_at=None,
+        replaced_by=None,
+        replaces=None,
+        legs=None,
+    )
+
+
 class _StubQueries:
-    """Sync stand-in for ``AccountStateQueries`` returning canned data."""
+    """Sync stand-in for ``AccountStateQueries`` returning canned data.
+
+    ``get_orders`` mirrors the production async-generator surface so the
+    fresh-start open-orders precondition can consume ``status="open"`` the
+    same way it consumes ``get_positions`` for the positions precondition.
+    """
 
     def __init__(
         self,
         *,
         account: TradeAccountSnapshot,
         positions: tuple[PositionSnapshot, ...],
+        open_orders: tuple[OrderSnapshot, ...] = (),
     ) -> None:
         self._account = account
         self._positions = positions
+        self._open_orders = open_orders
 
     def get_account(self) -> TradeAccountSnapshot:
         return self._account
 
     def get_positions(self) -> tuple[PositionSnapshot, ...]:
         return self._positions
+
+    async def get_orders(
+        self,
+        *,
+        status: Literal["open", "closed", "all"] = "all",
+        since: datetime | None = None,
+        until: datetime | None = None,
+        symbols: tuple[str, ...] | None = None,
+    ) -> AsyncIterator[OrderSnapshot]:
+        assert status == "open"
+        for order in self._open_orders:
+            yield order
 
 
 class TestBootstrapSingletonsFromAlpaca:
@@ -161,6 +206,55 @@ class TestBootstrapSingletonsFromAlpaca:
             # check runs before any write.
             assert (await verify_session.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)) is None
             assert (await verify_session.get(DrawdownStateRow, DRAWDOWN_STATE_SINGLETON_ID)) is None
+
+    async def test_rejects_when_open_orders_present(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Any resting open order triggers ``FreshStartPreconditionError``.
+
+        A fresh account must be FLAT — positions empty *and* open orders empty
+        (genesis-cutover runbook S6 / build-spec invariant 6). A resting
+        bracket/entry order with no local Intent is the husk in order form, so
+        the precondition refuses to bootstrap onto it.
+        """
+        async with async_factory() as session:
+            with pytest.raises(FreshStartPreconditionError) as exc_info:
+                await bootstrap_singletons_from_alpaca(
+                    session=session,
+                    account=_make_account_snapshot(),
+                    positions=(),
+                    open_orders=(_make_open_order_snapshot("AAPL"),),
+                    now=_NOW,
+                )
+
+        message = str(exc_info.value)
+        assert "AAPL" in message
+        assert "open order" in message
+        assert "--fresh-start" in message
+
+        async with async_factory() as verify_session:
+            # No singleton written — the precondition check precedes any write.
+            assert (await verify_session.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)) is None
+            assert (await verify_session.get(DrawdownStateRow, DRAWDOWN_STATE_SINGLETON_ID)) is None
+
+    async def test_flat_account_with_no_orders_passes(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A genuinely flat account (no positions, no open orders) bootstraps."""
+        async with async_factory() as session:
+            await bootstrap_singletons_from_alpaca(
+                session=session,
+                account=_make_account_snapshot(100_000.0),
+                positions=(),
+                open_orders=(),
+                now=_NOW,
+            )
+            await session.commit()
+
+        async with async_factory() as verify_session:
+            assert (await verify_session.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)) is not None
 
     async def test_rejects_when_cash_ledger_already_initialized(
         self,
@@ -349,6 +443,40 @@ class TestRunFreshStartBootstrap:
         message = str(exc_info.value)
         assert "AAPL" in message
         assert "MSFT" in message
+
+        async with async_factory() as verify_session:
+            rows = (await verify_session.execute(select(CashLedgerRow))).scalars().all()
+            assert rows == []
+
+    async def test_propagates_open_orders_precondition_error(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Open orders from the stubbed broker abort the top-level bootstrap.
+
+        Exercises ``run_fresh_start_bootstrap`` fetching open orders via the
+        factory's ``get_orders(status="open")`` generator and refusing to
+        bootstrap an account that is flat on positions but carries a resting
+        order.
+        """
+        open_orders = (_make_open_order_snapshot("TSLA"),)
+
+        def _stub_factory(venue_config: VenueConfig, execution_mode: ExecutionMode) -> _StubQueries:
+            return _StubQueries(
+                account=_make_account_snapshot(), positions=(), open_orders=open_orders
+            )
+
+        with pytest.raises(FreshStartPreconditionError) as exc_info:
+            await run_fresh_start_bootstrap(
+                session_factory=async_factory,
+                venue_config=_make_venue_config(),
+                execution_mode=ExecutionMode.paper,
+                now=_NOW,
+                account_queries_factory=_stub_factory,
+            )
+
+        assert "TSLA" in str(exc_info.value)
+        assert "open order" in str(exc_info.value)
 
         async with async_factory() as verify_session:
             rows = (await verify_session.execute(select(CashLedgerRow))).scalars().all()
