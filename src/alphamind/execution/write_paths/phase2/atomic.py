@@ -47,9 +47,11 @@ from alphamind.commands.command_models import (
     CloseCommand,
     OMSCommand,
     OpenCommand,
+    OptionInstrument,
 )
 from alphamind.commands.pm_envelope import PMEnvelope
 from alphamind.commands.submission_results import SubmissionResult
+from alphamind.execution.broker_adapter import derive_capital_floor_client_order_id
 from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
 from alphamind.execution.write_paths.phase2 import (
     _dispatch_command_writeback,
@@ -61,7 +63,7 @@ from alphamind.execution.write_paths.phase2.add import _add_order_id
 from alphamind.execution.write_paths.phase2.adjust import _adjust_replacement_order_id
 from alphamind.execution.write_paths.phase2.cancel import _writeback_cancel
 from alphamind.execution.write_paths.phase2.close import _close_order_id
-from alphamind.execution.write_paths.phase2.open import _new_open_ids
+from alphamind.execution.write_paths.phase2.open import _capital_floor_order_id, _new_open_ids
 from alphamind.persistence.session import begin_write_immediate
 from alphamind.portfolio_state.records.orders import OrderRole, OrderStatus
 from alphamind.state.invocation_context.context import InvocationHandle
@@ -166,8 +168,35 @@ async def precommit_command(
             raise RuntimeError(msg)
         row.status = OrderStatus.PENDING_SUBMIT.value
         row.client_order_id = result.command_id
+        # ALP-856 — an options OPEN also pre-commits a durable OrderRow for the
+        # always-on capital floor (a second tracked broker order), keyed by the
+        # floor's deterministic ``client_order_id``. It rides the same atomic
+        # precommit/backfill path as the entry: PENDING_SUBMIT now, broker id
+        # backfilled after dispatch.
+        if isinstance(command, OpenCommand):
+            await _precommit_capital_floor(session, command, command_id=result.command_id)
         await session.commit()
     return True
+
+
+async def _precommit_capital_floor(
+    session: AsyncSession, command: OpenCommand, *, command_id: str
+) -> None:
+    """Mark the options OPEN's capital-floor OrderRow PENDING_SUBMIT (ALP-856).
+
+    A no-op for an equity / strategy OPEN (no floor row was written). The floor
+    OrderRow was inserted by ``_writeback_open`` with ``alpaca_order_id`` NULL;
+    here it gets its durable-Intent stamp (PENDING_SUBMIT + the floor's
+    ``client_order_id``), exactly mirroring the entry row's pre-commit.
+    """
+    if not isinstance(command.instrument, OptionInstrument):
+        return
+    floor_oid = _capital_floor_order_id(command_id)
+    floor_row = await session.get(OrderRow, floor_oid)
+    if floor_row is None:
+        return
+    floor_row.status = OrderStatus.PENDING_SUBMIT.value
+    floor_row.client_order_id = derive_capital_floor_client_order_id(command_id)
 
 
 async def backfill_command_broker_ids(
@@ -210,6 +239,9 @@ async def backfill_command_broker_ids(
                 session,
                 bracket_id=row.bracket_id,
                 leg_alpaca_order_ids=dict(dispatch_result.leg_alpaca_order_ids),
+                capital_floor_order_id=_capital_floor_order_id(result.command_id)
+                if isinstance(command.instrument, OptionInstrument)
+                else None,
                 now=now,
             )
         await session.commit()
@@ -220,15 +252,20 @@ async def _backfill_open_leg_ids(
     *,
     bracket_id: str,
     leg_alpaca_order_ids: dict[str, str],
+    capital_floor_order_id: str | None = None,
     now: str,
 ) -> None:
-    """Stamp native-bracket protective children with their real broker ids (ALP-746).
+    """Stamp native-bracket protective children + the capital floor with broker ids.
 
     Take-profit → the bracket's TAKE_PROFIT order; stop-loss → the first
     PRICE_STOP order (Alpaca's native bracket submits exactly one stop child,
-    mapped from the first PriceLeg). Legs with no broker counterpart (TIME_STOP,
-    advisory EVENT legs, any PRICE_STOP beyond the first) keep NO broker id
-    (``alpaca_order_id`` NULL, ALP-847) — they are monitor-enforced Intent.
+    mapped from the first PriceLeg). The ALP-856 capital floor → its own
+    ``PRICE_STOP`` OrderRow, resolved by ``capital_floor_order_id`` (not by role —
+    it shares the PRICE_STOP role with the invalidation stop) and stamped from the
+    ``"capital_floor"`` key. The floor row is excluded from the native-bracket stop
+    selection. Legs with no broker counterpart (TIME_STOP, advisory EVENT legs, any
+    PRICE_STOP beyond the first) keep NO broker id (``alpaca_order_id`` NULL,
+    ALP-847) — they are monitor-enforced Intent.
     """
     rows = list(
         (
@@ -239,8 +276,20 @@ async def _backfill_open_leg_ids(
             )
         ).scalars()
     )
+    # ALP-856 — the floor's broker id rides under ``"capital_floor"`` and lands on
+    # the floor OrderRow (matched by id, since the floor shares the PRICE_STOP role).
+    floor_real = leg_alpaca_order_ids.get("capital_floor")
     stop_stamped = False
     for row in rows:
+        if capital_floor_order_id is not None and row.order_id == capital_floor_order_id:
+            if floor_real is not None:
+                row.alpaca_order_id = floor_real
+                row.alpaca_order_id_chain_json = json.dumps([floor_real])
+                # The floor is a tracked broker order — flip it PENDING_SUBMIT →
+                # PENDING on its broker-id backfill, exactly like the entry row.
+                row.status = OrderStatus.PENDING.value
+                row.last_update_timestamp = now
+            continue
         dispatch_key = _LEG_ROLE_TO_DISPATCH_KEY.get(row.order_role)
         if dispatch_key is None:
             continue

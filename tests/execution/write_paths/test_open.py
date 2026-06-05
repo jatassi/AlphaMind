@@ -459,14 +459,16 @@ def _option_instrument() -> OptionInstrument:
 
 def test_options_open_records_broker_enforced_capital_floor_leg() -> None:
     """ALP-856 — an options OPEN's bracket carries a BROKER_ENFORCED capital-floor
-    leg whose ``order_id`` is the resting floor's real broker ``alpaca_order_id``.
+    leg whose ``order_id`` is the floor's durable OMS ``order_id`` (the precommitted
+    floor OrderRow), NOT the broker Alpaca id.
 
-    The always-on GTC ``stop_limit`` floor (ADR-0003 invariant 4) is submitted at
-    dispatch; its broker id rides back on ``leg_alpaca_order_ids['capital_floor']``
-    and is stamped onto a dedicated PRICE_STOP leg here. ``BracketLeg.order_id``
-    carries the broker id directly so cancel-on-monitor-fire
-    (``bracket_stops/closer._cancel_resting_floors``) cancels the resting floor by
-    that id.
+    The floor is a tracked broker order with its own OrderRow (FS4 / ALP-836). The
+    leg's ``order_id`` points at that OrderRow so the DEFERRABLE FK to
+    ``orders.order_id`` is satisfied (stamping the broker id here, as the merged
+    wiring did, would reference no ``orders`` row → ``FOREIGN KEY constraint
+    failed``). Cancel-on-monitor-fire
+    (``bracket_stops/closer._cancel_resting_floors``) resolves this ``order_id`` →
+    the floor OrderRow's ``alpaca_order_id`` → ``submitter.cancel_floor``.
     """
     from alphamind.portfolio_state.records.orders import (
         BracketLegType,
@@ -482,7 +484,7 @@ def test_options_open_records_broker_enforced_capital_floor_leg() -> None:
         invalidation_leg_orders=((_price_leg(850.0), "ORD-NVDA-inv0-abc123"),),
         instrument=_option_instrument(),
         entry_window_deadline=None,
-        capital_floor_alpaca_order_id="alpaca-floor-uuid",
+        capital_floor_order_id="ORD-FLOOR-abc123",
     )
     floor_legs = [
         leg
@@ -492,8 +494,8 @@ def test_options_open_records_broker_enforced_capital_floor_leg() -> None:
     assert len(floor_legs) == 1
     floor = floor_legs[0]
     assert floor.leg_type is BracketLegType.PRICE_STOP
-    # The broker id is on the leg's order_id — what the closer cancels by.
-    assert floor.order_id == "alpaca-floor-uuid"
+    # The leg points at the floor's OMS order_id (the FK target), not the broker id.
+    assert floor.order_id == "ORD-FLOOR-abc123"
     # The thesis-invalidation stop stays monitor-enforced (no native bracket on options).
     inv_legs = [
         leg

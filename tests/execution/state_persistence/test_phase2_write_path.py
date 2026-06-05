@@ -43,11 +43,13 @@ from alphamind._kernel.money import money, price, signed_money
 from alphamind.commands.command_models import (
     BracketAdjustment,
     BracketOrderParameters,
+    CapitalProtectionFloor,
     EntryOrder,
     EntryWindow,
     EquityInstrument,
     NewStopLevel,
     NewTargetLevel,
+    OptionInstrument,
     PositionSize,
     PriceCondition,
     PriceLeg,
@@ -59,6 +61,7 @@ from alphamind.commands.command_models import (
 from alphamind.commands.command_models import (
     ThesisComponent as OMSThesisComponent,
 )
+from alphamind.commands.submission_results import _ValidationMetadata
 from alphamind.decision.portfolio_manager.models import (
     AddCommand,
     AdjustCommand,
@@ -2093,6 +2096,140 @@ async def test_open_command_stamps_captured_leg_ids_on_protective_orders(
         # The chain head must match the stamped id (OrderRecord invariant).
         assert by_role["TAKE_PROFIT"].alpaca_order_id_chain_json == f'["{tp_uuid}"]'
         assert by_role["PRICE_STOP"].alpaca_order_id_chain_json == f'["{sl_uuid}"]'
+
+
+def _options_open_command() -> OpenCommand:
+    """An options OPEN carrying the mandatory PnL-denominated capital floor (ALP-848)."""
+    return OpenCommand(
+        command_type="open",
+        instrument=OptionInstrument(
+            asset_type="option",
+            underlying="NVDA",
+            strike=price(900.0),
+            expiration="2026-06-19",
+            contract_type="call",
+            direction="long",
+        ),
+        entry_order=EntryOrder(type="limit", limit_price=price(12.0), stop_price=None),
+        position_size=PositionSize(quantity=2.0, dollar_value=money(2_400.0)),
+        target=Target(
+            target_type="absolute_price",
+            price=price(20.0),
+            pl_percentage=None,
+            pl_dollar=None,
+            order_type="limit",
+        ),
+        invalidation_legs=(
+            PriceLeg(
+                type="price",
+                is_hard=True,
+                trigger_signal="underlying_price",
+                condition=PriceCondition(
+                    underlying_trigger="NVDA", comparator="<=", trigger_price=price(750.0)
+                ),
+                order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
+            ),
+        ),
+        thesis=Thesis(
+            summary="Long NVDA call.",
+            nature="directional",
+            components=(
+                OMSThesisComponent(
+                    component_type="entry_rationale",
+                    linked_leg="entry",
+                    instrument_reference="NVDA",
+                    narrative="Capex tailwind.",
+                    key_assumptions=("Capex stays elevated.",),
+                ),
+            ),
+        ),
+        capital_protection_floor=CapitalProtectionFloor(max_loss=money(800.0)),
+    )
+
+
+def _options_open_result(command_id: str) -> SubmissionResult:
+    """An accepted result carrying the validation greeks an options OPEN requires."""
+    from alphamind.risk_guardrails.guardrail_evaluation import Greeks
+
+    return SubmissionResult(
+        command_ordinal=0,
+        status="accepted",
+        command_id=command_id,
+        acknowledgment=Acknowledgment(
+            validation_metadata=_ValidationMetadata(
+                greeks=Greeks(delta=0.5, gamma=0.02, theta=-0.04, vega=0.2),
+                implied_volatility=0.30,
+                delta_adjusted_exposure=0.0,
+                per_rule_headroom=(),
+            ),
+        ),
+    )
+
+
+async def test_options_open_single_pass_persists_floor_orderrow_fk_safe(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-856 — an options OPEN through the single-pass writeback path persists the
+    floor's OrderRow + the floor ``bracket_legs`` row through an FK-enforced DB with
+    NO ``FOREIGN KEY constraint failed``, and the floor leg's ``order_id`` resolves
+    to an OrderRow whose ``alpaca_order_id`` is the floor's broker id.
+
+    The single-pass path (``persist_envelope_outcome`` → ``_writeback_open`` with a
+    real ``dispatch_result``) knows the floor's broker id at write time, so it
+    stamps the floor OrderRow's ``alpaca_order_id`` directly; the floor leg points
+    at the floor OMS order_id, satisfying the DEFERRABLE FK to ``orders.order_id``.
+    """
+    from alphamind.execution.write_paths.phase2 import persist_envelope_outcome
+    from alphamind.execution.write_paths.phase2.open import _capital_floor_order_id
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    command_id = _open_command_id()
+    command = _options_open_command()
+    envelope = _make_analyst_envelope(commands=(command,))
+    results = (_options_open_result(command_id),)
+    dispatch = BrokerDispatchResult(
+        alpaca_order_id=AlpacaOrderId("entry-uuid"),
+        client_order_id=ClientOrderId(command_id),
+        status="accepted",
+        order_class="simple",
+        payload_kind="options",
+        raw_submission=None,
+        leg_alpaca_order_ids={"capital_floor": AlpacaOrderId("floor-uuid")},
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        dispatch_results=(dispatch,),
+    )
+    # The commit (FK-enforced) happens here — a mispointed floor leg FK would
+    # raise FOREIGN KEY constraint failed at this boundary.
+    await ctx.__aexit__(None, None, None)
+
+    floor_order_id = _capital_floor_order_id(command_id)
+    async with factory() as sess:
+        floor_row = await sess.get(OrderRow, floor_order_id)
+        assert floor_row is not None, "the floor OrderRow must be persisted"
+        assert floor_row.alpaca_order_id == "floor-uuid"
+        leg_rows = list(
+            (
+                await sess.execute(
+                    select(BracketLegRow).where(
+                        BracketLegRow.enforcement_binding == "broker_enforced"
+                    )
+                )
+            ).scalars()
+        )
+    assert len(leg_rows) == 1
+    # The floor leg points at the floor OMS order_id (FK target), and resolving
+    # that order_id recovers the floor's broker id.
+    assert leg_rows[0].order_id == floor_order_id
 
 
 async def test_open_command_stamps_stop_id_on_first_price_leg_only(

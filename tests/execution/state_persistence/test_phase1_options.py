@@ -1055,6 +1055,115 @@ async def test_full_close_fill_transitions_position_closed_and_dissolves_bracket
     assert EventType.POSITION_REDUCED.value not in types
 
 
+async def test_broker_capital_floor_fill_closes_the_position(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-856 / FS4 — a broker capital-floor FILL closes the position.
+
+    This is the bonus the floor's durable OrderRow buys (the floor is a tracked
+    broker order, not an orphan): when the broker fires the always-on capital floor,
+    its fill resolves to the floor's OrderRow (role PRICE_STOP, close-side SELL on a
+    LONG option) and Phase 1 integrates it as an EXIT fill — exactly the mechanism a
+    monitor-fired close rides. The opposite-sided fill drives OPEN → CLOSED with no
+    edit to the 04a fill-integration logic (Phase 1 dispatches by the order's
+    direction, not its role).
+    """
+    from alphamind.execution.write_paths.phase1 import (
+        process_unprocessed_fills,
+    )
+    from tests.state._fk_substrate import stub_order_row
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+
+    # The capital floor: a tracked broker order, role PRICE_STOP, close-side SELL
+    # (a long floor SELLs to close). Its fill is what closes the position.
+    floor_order = _make_pending_options_entry_order(
+        order_id=OrderId("ORD-FLOOR-xyz"),
+        role=OrderRole.PRICE_STOP,
+        direction=OrderDirection.SELL,
+        quantity=5.0,
+        position_id=PositionId("pos-opt-1"),
+    )
+    entry_order = _make_pending_options_entry_order()
+    thesis_row, component_rows = thesis_record_to_rows(
+        _make_options_thesis_with_resolved_components()
+    )
+    bracket_row, leg_rows = bracket_record_to_rows(_make_active_options_bracket())
+    leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
+    seeded_order_ids: set[str] = {entry_order.order_id, floor_order.order_id}
+
+    async with factory() as sess:
+        sess.add(
+            position_record_to_row(
+                _make_open_options_position(
+                    contract_count=5.0,
+                    premium_paid_per_contract=8.75,
+                    fill_price=8.75,
+                )
+            )
+        )
+        sess.add(thesis_row)
+        for crow in component_rows:
+            sess.add(crow)
+        sess.add(order_record_to_row(entry_order))
+        sess.add(order_record_to_row(floor_order))
+        for oid in leg_order_ids:
+            if oid not in seeded_order_ids:
+                sess.add(stub_order_row(oid, bracket_row.bracket_id))
+                seeded_order_ids.add(oid)
+        sess.add(bracket_row)
+        await sess.flush()
+        for lrow in leg_rows:
+            sess.add(lrow)
+        await sess.commit()
+
+    await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=95_625.0))
+    await _seed_drawdown_state(factory)
+    # The broker fires the floor: 5 contracts fill at the floor price $6.50.
+    await _append_fill(
+        factory,
+        _make_unprocessed_fill(
+            fill_id="fill-floor-fire",
+            order_id=OrderId("ORD-FLOOR-xyz"),
+            fill_quantity=5.0,
+            fill_price=6.5,
+        ),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-opt-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        # The broker floor fill closed the position.
+        assert pos.status == PositionStatus.CLOSED
+        # Realized P/L = (6.50 - 8.75) * 5 * 100 = -$1125 (the floor caps the loss).
+        assert pos.realized_pnl_to_date_usd == pytest.approx(-1_125.0)
+
+        log_rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.invocation_id == handle.invocation_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        types = {r.event_type for r in log_rows}
+    assert EventType.POSITION_CLOSED.value in types
+
+
 async def test_bracket_activation_for_monitor_managed_legs_carries_empty_order_ids(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:

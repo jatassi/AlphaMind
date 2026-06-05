@@ -14,6 +14,7 @@ from alphamind._kernel.ids import (
     ThesisId,
     make_symbol,
 )
+from alphamind._kernel.money import price
 from alphamind.commands.command_models import (
     BracketOrderType,
     EquityInstrument,
@@ -28,8 +29,11 @@ from alphamind.commands.command_models import (
     TimeLeg,
 )
 from alphamind.commands.submission_results import SubmissionResult
+from alphamind.execution.broker_adapter.order_options import (
+    derive_capital_floor_client_order_id,
+)
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
-from alphamind.execution.oms.command_ids import parse_pm_command_id
+from alphamind.execution.oms.command_ids import parse_pm_command_id, synthesize_id_suffix
 from alphamind.execution.write_paths.phase2._shared import (
     _OMS_COMPONENT_TYPE_TO_PERSISTED,
     _build_entry_order_from_command,
@@ -58,6 +62,7 @@ from alphamind.portfolio_state.records.orders import (
     EnforcementBinding,
     EventTrigger,
     InstrumentSpec,
+    OptionsInstrumentSpec,
     OrderClass,
     OrderDirection,
     OrderRecord,
@@ -201,6 +206,24 @@ async def _writeback_open(
         thesis=command.thesis,
         timestamp=timestamp,
     )
+    # ALP-856 / FS4 — an options OPEN submits an always-on broker-enforced capital
+    # floor alongside the entry. The floor is a tracked broker order with its OWN
+    # durable OrderRow, keyed by the floor's deterministic ``client_order_id``
+    # (precommitted PENDING_SUBMIT with ``alpaca_order_id`` NULL, exactly like the
+    # entry). The floor bracket leg's ``order_id`` points at the floor OMS order_id —
+    # NOT the broker Alpaca id — so the DEFERRABLE FK to ``orders.order_id`` is
+    # satisfied. The broker id rides back on ``leg_alpaca_order_ids['capital_floor']``
+    # and is backfilled onto the floor OrderRow after submit. Equity / strategy
+    # OPENs carry no floor.
+    floor_price = _capital_floor_price(command)
+    floor_order, floor_order_id = _capital_floor_order_for_open(
+        command=command,
+        command_id=result.command_id,
+        ids=ids,
+        floor_price=floor_price,
+        capital_floor_alpaca_order_id=leg_ids.get("capital_floor"),
+        timestamp=timestamp,
+    )
     bracket = _build_pending_bracket(
         bracket_id=ids["bracket_id"],
         position_id=ids["position_id"],
@@ -212,18 +235,8 @@ async def _writeback_open(
         entry_window_deadline=(
             command.entry_window.deadline if command.entry_window is not None else None
         ),
-        # ALP-856 — on an options OPEN the dispatcher submits the always-on
-        # broker-enforced capital floor alongside the entry; its real broker id
-        # rides back on ``leg_alpaca_order_ids['capital_floor']`` and is stamped
-        # onto a dedicated BROKER_ENFORCED floor leg here (NULL at pre-commit,
-        # present after dispatch). Cancel-on-monitor-fire cancels the resting
-        # floor by this leg's ``order_id``. The PnL-denominated floor price
-        # (planned premium per contract minus the per-contract max loss) is the
-        # leg's recorded resting level — the broker owns firing, so the monitor
-        # never reads this trigger (it drops broker-enforced legs from
-        # eligibility).
-        capital_floor_alpaca_order_id=leg_ids.get("capital_floor"),
-        capital_floor_price=_capital_floor_price(command),
+        capital_floor_order_id=floor_order_id,
+        capital_floor_price=floor_price,
     )
     entry_order = _build_entry_order_from_command(
         order_id=ids["entry_order_id"],
@@ -272,6 +285,11 @@ async def _writeback_open(
     handle.session.add(order_record_to_row(target_order))
     for inv_order in invalidation_orders:
         handle.session.add(order_record_to_row(inv_order))
+    # ALP-856 — the capital floor's durable OrderRow (options OPEN only). Its
+    # ``order_id`` is what the floor bracket leg references, so it must land in the
+    # same transaction the bracket legs do (the DEFERRABLE FK is checked at COMMIT).
+    if floor_order is not None:
+        handle.session.add(order_record_to_row(floor_order))
     await handle.session.flush()
 
     # Reserve the entry order's notional (``limit_price * quantity``), NOT the
@@ -1025,39 +1043,150 @@ def _capital_floor_price(command: OpenCommand) -> float | None:
     return (float(command.position_size.dollar_value) - float(floor.max_loss)) / contracts
 
 
+def _capital_floor_order_id(command_id: str) -> str:
+    """The floor's durable OMS ``order_id``, derived from its real client_order_id.
+
+    The capital floor is a tracked broker order with its own durable
+    projection-cache ``OrderRow`` (ALP-856 / FS4), exactly as the entry is tracked
+    through the ALP-836 atomic precommit/backfill machinery. Its OMS ``order_id``
+    derives from the floor's deterministic ``client_order_id``
+    (:func:`derive_capital_floor_client_order_id`) — NOT a synthetic ``alp-`` id
+    (ADR-0003 invariant 5). Because :func:`synthesize_id_suffix` strips the
+    broker-carried link and hashes the base id, and the floor's
+    ``command_ordinal`` is shifted off the entry's, the floor's suffix differs
+    from the entry's, so the two OMS order ids never collide.
+    """
+    floor_cid = derive_capital_floor_client_order_id(command_id)
+    return f"ORD-FLOOR-{synthesize_id_suffix(floor_cid)}"
+
+
+def _capital_floor_order_for_open(
+    *,
+    command: OpenCommand,
+    command_id: str,
+    ids: Mapping[str, str],
+    floor_price: float | None,
+    capital_floor_alpaca_order_id: str | None,
+    timestamp: datetime,
+) -> tuple[OrderRecord | None, str | None]:
+    """Build the floor's durable OrderRow + its OMS order_id for an options OPEN.
+
+    Returns ``(None, None)`` for an equity / strategy OPEN (no floor). For an
+    options OPEN, mints the floor OMS order_id (the FK target the floor bracket leg
+    references — derived from ``command_id``, the authoritative ``result.command_id``
+    the precommit/backfill path also keys off) and the floor :class:`OrderRecord` the
+    writeback persists, so the floor is a tracked broker order (ALP-856 / FS4) rather
+    than an orphan.
+    """
+    if not isinstance(command.instrument, OptionInstrument) or floor_price is None:
+        return None, None
+    floor_order_id = _capital_floor_order_id(command_id)
+    floor_order = _build_capital_floor_order(
+        order_id=floor_order_id,
+        position_id=ids["position_id"],
+        bracket_id=ids["bracket_id"],
+        thesis_id=ids["thesis_id"],
+        instrument=command.instrument,
+        quantity=command.position_size.quantity,
+        capital_floor_price=floor_price,
+        capital_floor_alpaca_order_id=capital_floor_alpaca_order_id,
+        pm_command_id=command_id,
+        timestamp=timestamp,
+    )
+    return floor_order, floor_order_id
+
+
+def _build_capital_floor_order(  # noqa: PLR0913 — distinct id / position / bracket / pricing threaded through, matching the other phase2 _build_* builders.
+    *,
+    order_id: str,
+    position_id: str,
+    bracket_id: str,
+    thesis_id: str,
+    instrument: OptionInstrument,
+    quantity: float,
+    capital_floor_price: float | None,
+    capital_floor_alpaca_order_id: str | None,
+    pm_command_id: str,
+    timestamp: datetime,
+) -> OrderRecord:
+    """Build the options OPEN's durable capital-floor :class:`OrderRecord` (ALP-856).
+
+    The floor is a tracked broker order, so it gets its own PENDING OrderRow keyed
+    (at precommit) by the floor's deterministic ``client_order_id`` — the same
+    ALP-836 atomic precommit/backfill machinery the entry rides. The floor *closes*
+    the position (its broker side reverses the entry: a long floor SELLs on a
+    decline → LTE / SELL, a short floor BUYs on a rise → GTE / BUY), and is a resting
+    ``stop_limit`` at the PnL-denominated ``capital_floor_price``. ``alpaca_order_id``
+    is NULL at pre-commit and backfilled from the broker submission's
+    ``leg_alpaca_order_ids['capital_floor']`` after dispatch.
+    """
+    floor_direction = OrderDirection.SELL if instrument.direction == "long" else OrderDirection.BUY
+    if capital_floor_price is not None:
+        # The resting ``stop_limit`` collapses its stop_trigger + limit to the one
+        # PnL-denominated floor price (mirrors ``order_options.submit_options_capital_floor``).
+        floor_price = price(capital_floor_price)
+        price_parameters = PriceParameters(
+            limit_price=floor_price,
+            stop_trigger_price=floor_price,
+        )
+    else:
+        price_parameters = PriceParameters()
+    return _build_pending_order(
+        order_id=order_id,
+        position_id=position_id,
+        bracket_id=bracket_id,
+        role=OrderRole.PRICE_STOP,
+        order_class=OrderClass.SIMPLE,
+        direction=floor_direction,
+        order_type=OrderType.STOP_LIMIT,
+        price_parameters=price_parameters,
+        quantity=quantity,
+        instrument_spec=OptionsInstrumentSpec(
+            underlying=make_symbol(instrument.underlying),
+            strike=float(instrument.strike),
+            expiration=date.fromisoformat(instrument.expiration),
+            contract_type=_CONTRACT_TYPE_FROM_WIRE[instrument.contract_type],
+            contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
+        ),
+        pm_command_id=pm_command_id,
+        thesis_id=thesis_id,
+        timestamp=timestamp,
+        alpaca_order_id_override=capital_floor_alpaca_order_id,
+    )
+
+
 def _capital_floor_bracket_leg(
     *,
     bracket_id: str,
     ticker: str,
-    capital_floor_alpaca_order_id: str | None,
+    capital_floor_order_id: str | None,
     capital_floor_price: float | None,
     direction: str | None,
 ) -> BracketLeg | None:
     """Build the options OPEN's broker-enforced capital-floor leg (ALP-856).
 
-    ``None`` when no floor was submitted (equity / strategy OPEN — the floor id is
+    ``None`` when no floor was submitted (equity / strategy OPEN — the floor is
     absent). Otherwise a BROKER_ENFORCED PRICE_STOP leg whose ``order_id`` is the
-    resting floor's real broker ``alpaca_order_id`` (``None`` only at the
-    pre-commit step, before dispatch backfills it). The closer's
-    cancel-on-monitor-fire cancels the resting floor by this ``order_id``; the
-    monitor never fires it (``_is_active_eligible_leg`` drops broker-enforced
-    legs), so the :class:`PriceTrigger` is the floor's recorded resting level, not
-    a monitor-evaluated condition. A long floor closes by SELLing on a decline
-    (LTE); a short floor BUYs on a rise (GTE).
+    floor's durable OMS ``order_id`` (the precommitted :class:`OrderRecord`), NOT
+    the broker Alpaca id — so the DEFERRABLE FK to ``orders.order_id`` is satisfied
+    (the merged design stamped the broker id here, which references no ``orders``
+    row → ``FOREIGN KEY constraint failed`` under production ``foreign_keys=ON``).
+    The closer's cancel-on-monitor-fire resolves this ``order_id`` → the floor
+    OrderRow's ``alpaca_order_id`` → ``submitter.cancel_floor``. The monitor never
+    fires it (``_is_active_eligible_leg`` drops broker-enforced legs), so the
+    :class:`PriceTrigger` is the floor's recorded resting level, not a
+    monitor-evaluated condition. A long floor closes by SELLing on a decline (LTE);
+    a short floor BUYs on a rise (GTE).
     """
-    if capital_floor_alpaca_order_id is None and capital_floor_price is None:
+    if capital_floor_order_id is None and capital_floor_price is None:
         return None
     # A positive structural threshold keeps the PriceTrigger valid even if the
-    # floor price is unavailable at the pre-commit step (broker id NULL).
+    # floor price is unavailable.
     threshold = capital_floor_price if capital_floor_price is not None else 0.01
     return BracketLeg(
         leg_id=f"{bracket_id}-leg-floor",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=(
-            OrderId(capital_floor_alpaca_order_id)
-            if capital_floor_alpaca_order_id is not None
-            else None
-        ),
+        order_id=(OrderId(capital_floor_order_id) if capital_floor_order_id is not None else None),
         trigger=PriceTrigger(
             underlying_ticker=make_symbol(ticker),
             threshold_usd=threshold,
@@ -1079,7 +1208,7 @@ def _build_pending_bracket(  # noqa: PLR0913 — the OPEN bracket threads its id
     invalidation_leg_orders: tuple[tuple[InvalidationLeg, str | None], ...],
     instrument: EquityInstrument | OptionInstrument | StrategyInstrument,
     entry_window_deadline: datetime | None,
-    capital_floor_alpaca_order_id: str | None = None,
+    capital_floor_order_id: str | None = None,
     capital_floor_price: float | None = None,
 ) -> BracketRecord:
     """Build a PENDING_ENTRY bracket.
@@ -1155,13 +1284,15 @@ def _build_pending_bracket(  # noqa: PLR0913 — the OPEN bracket threads its id
     # ALP-856 — an options OPEN carries an always-on broker-enforced capital
     # floor (a resting GTC ``stop_limit`` submitted at dispatch). It is recorded
     # as a dedicated BROKER_ENFORCED PRICE_STOP leg whose ``order_id`` is the
-    # floor's real broker id, so cancel-on-monitor-fire cancels the resting floor
-    # by that id. Equity / strategy OPENs never carry one (no single-leg options
-    # floor is submitted for them), so the floor id is absent and no leg is added.
+    # floor's durable OMS ``order_id`` (the precommitted floor OrderRow) so the
+    # DEFERRABLE FK to ``orders.order_id`` is satisfied; cancel-on-monitor-fire
+    # then resolves that order_id → the floor OrderRow's ``alpaca_order_id`` and
+    # cancels the resting floor by it. Equity / strategy OPENs never carry one (no
+    # single-leg options floor is submitted for them), so no leg is added.
     floor_leg = _capital_floor_bracket_leg(
         bracket_id=bracket_id,
         ticker=ticker,
-        capital_floor_alpaca_order_id=capital_floor_alpaca_order_id,
+        capital_floor_order_id=capital_floor_order_id,
         capital_floor_price=capital_floor_price,
         direction=(instrument.direction if isinstance(instrument, OptionInstrument) else None),
     )

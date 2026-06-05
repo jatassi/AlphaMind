@@ -13,8 +13,30 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from alphamind._kernel.money import price
-from alphamind.commands.command_models import EntryOrder, OpenCommand
+from alphamind._kernel.money import money, price
+from alphamind.commands.command_models import (
+    BracketOrderParameters,
+    CapitalProtectionFloor,
+    EntryOrder,
+    OpenCommand,
+    OptionInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+)
+from alphamind.commands.command_models import (
+    ThesisComponent as OMSThesisComponent,
+)
+from alphamind.commands.submission_results import (
+    Acknowledgment,
+    SubmissionResult,
+    _ValidationMetadata,
+)
+from alphamind.execution.broker_adapter.order_options import (
+    derive_capital_floor_client_order_id,
+)
 from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
 from alphamind.execution.oms.command_ids import derive_open_thesis_id, derive_pm_command_id
 from alphamind.execution.write_paths.phase2.atomic import (
@@ -23,7 +45,10 @@ from alphamind.execution.write_paths.phase2.atomic import (
     dispatched_order_id,
     precommit_command,
 )
+from alphamind.execution.write_paths.phase2.open import _capital_floor_order_id
 from alphamind.portfolio_state.records.orders import OrderRole, OrderStatus
+from alphamind.risk_guardrails.guardrail_evaluation import Greeks
+from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.cash_ledger import CASH_LEDGER_SINGLETON_ID, CashLedgerRow
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.positions import PositionRow
@@ -88,7 +113,7 @@ def _limit_open() -> OpenCommand:
     )
 
 
-def _open_cid(envelope_id: str) -> str:
+def _open_cid(envelope_id: str, *, ticker: str = "NVDA") -> str:
     """A realistic broker-carried OPEN command id (ALP-844) for ``_limit_open``.
 
     Phase-2 OPEN writeback (reached here via ``precommit_command`` →
@@ -103,8 +128,107 @@ def _open_cid(envelope_id: str) -> str:
         envelope_id=envelope_id,
         command_ordinal=0,
         attempt_seq=0,
-        thesis_id=derive_open_thesis_id("NVDA", base),
+        thesis_id=derive_open_thesis_id(ticker, base),
     )
+
+
+def _options_open() -> OpenCommand:
+    """An options OPEN carrying the mandatory PnL-denominated capital floor (ALP-848).
+
+    Single-leg long call with a LIMIT entry so the OPEN reserves capital, and a
+    ``capital_protection_floor`` so the dispatcher submits the always-on
+    broker-enforced floor alongside the entry (ALP-856).
+    """
+    return OpenCommand(
+        command_type="open",
+        instrument=OptionInstrument(
+            asset_type="option",
+            underlying="NVDA",
+            strike=price(900.0),
+            expiration="2026-06-19",
+            contract_type="call",
+            direction="long",
+        ),
+        entry_order=EntryOrder(type="limit", limit_price=price(12.0), stop_price=None),
+        position_size=PositionSize(quantity=2.0, dollar_value=money(2_400.0)),
+        target=Target(
+            target_type="absolute_price",
+            price=price(20.0),
+            pl_percentage=None,
+            pl_dollar=None,
+            order_type="limit",
+        ),
+        invalidation_legs=(
+            PriceLeg(
+                type="price",
+                is_hard=True,
+                trigger_signal="underlying_price",
+                condition=PriceCondition(
+                    underlying_trigger="NVDA",
+                    comparator="<=",
+                    trigger_price=price(750.0),
+                ),
+                order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
+            ),
+        ),
+        thesis=Thesis(
+            summary="Long NVDA call.",
+            nature="directional",
+            components=(
+                OMSThesisComponent(
+                    component_type="entry_rationale",
+                    linked_leg="entry",
+                    instrument_reference="NVDA",
+                    narrative="Capex tailwind.",
+                    key_assumptions=("Capex stays elevated.",),
+                ),
+            ),
+        ),
+        capital_protection_floor=CapitalProtectionFloor(max_loss=money(800.0)),
+    )
+
+
+def _options_open_result(command_id: str) -> SubmissionResult:
+    """An accepted ``SubmissionResult`` carrying the validation greeks an options
+    OPEN writeback requires (``OptionsPositionDetails`` cannot build without
+    ``validation_metadata.greeks`` + ``.implied_volatility``)."""
+    return SubmissionResult(
+        command_ordinal=0,
+        status="accepted",
+        command_id=command_id,
+        acknowledgment=Acknowledgment(
+            validation_metadata=_ValidationMetadata(
+                greeks=Greeks(delta=0.5, gamma=0.02, theta=-0.04, vega=0.2),
+                implied_volatility=0.30,
+                delta_adjusted_exposure=0.0,
+                per_rule_headroom=(),
+            ),
+        ),
+    )
+
+
+async def _read_order_by_order_id(
+    factory: async_sessionmaker[AsyncSession], order_id: str
+) -> OrderRow | None:
+    async with factory() as sess:
+        return await sess.get(OrderRow, order_id)
+
+
+async def _read_floor_leg_order_id(
+    factory: async_sessionmaker[AsyncSession], *, bracket_id: str
+) -> str | None:
+    """The ``order_id`` of the bracket's BROKER_ENFORCED capital-floor leg."""
+    async with factory() as sess:
+        rows = list(
+            (
+                await sess.execute(
+                    select(BracketLegRow).where(BracketLegRow.bracket_id == bracket_id)
+                )
+            ).scalars()
+        )
+    floor = [r for r in rows if r.enforcement_binding == "broker_enforced"]
+    assert len(floor) == 1, f"expected exactly one broker-enforced floor leg, got {len(floor)}"
+    return floor[0].order_id
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +367,76 @@ async def test_backfill_open_stamps_native_bracket_leg_ids(
         }
     assert legs[OrderRole.TAKE_PROFIT.value] == "tp-uuid"
     assert legs[OrderRole.PRICE_STOP.value] == "sl-uuid"
+
+
+# ---------------------------------------------------------------------------
+# (A)+(C) options OPEN capital floor — durable floor OrderRow + FK-safe leg
+# (ALP-856 / FS4): the floor is a tracked broker order with its own OrderRow,
+# the floor bracket_legs.order_id points at that OrderRow (satisfying the FK),
+# and the floor's broker id is backfilled onto OrderRow.alpaca_order_id.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_options_open_atomic_path_persists_floor_orderrow_fk_safe(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-856 — an options OPEN through the ALP-836 atomic path persists the
+    floor's OrderRow + the floor ``bracket_legs`` row through an FK-enforced DB
+    with NO ``FOREIGN KEY constraint failed``, and the floor leg's ``order_id``
+    resolves to an OrderRow whose ``alpaca_order_id`` is the backfilled broker id.
+
+    The floor is precommitted PENDING_SUBMIT with ``alpaca_order_id`` NULL keyed
+    by its deterministic floor ``client_order_id``; the broker id rides back on
+    ``leg_alpaca_order_ids['capital_floor']`` and is backfilled onto the floor
+    OrderRow (not onto the leg, which points at the OMS order_id).
+    """
+    _, factory = db
+    await _seed_invocation_substrate(factory, invocation_id=_INV)
+    await _seed_cash_ledger(factory)
+    cmd = _options_open()
+    cid = _open_cid("ENV-REC-9")
+    result = _options_open_result(cid)
+
+    # (A) pre-commit — durable graph, no broker ids; floor PENDING_SUBMIT.
+    landed = await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
+    assert landed is True
+
+    floor_cid = derive_capital_floor_client_order_id(cid)
+    floor_order_id = _capital_floor_order_id(cid)
+    floor_row = await _read_order_by_order_id(factory, floor_order_id)
+    assert floor_row is not None, "the floor OrderRow must be precommitted"
+    assert floor_row.status == OrderStatus.PENDING_SUBMIT.value
+    assert floor_row.client_order_id == floor_cid
+    assert floor_row.alpaca_order_id is None
+
+    # The floor bracket_legs.order_id points at the floor OMS order_id (FK-safe).
+    entry = await _read_order_by_client_order_id(factory, cid)
+    assert entry is not None
+    leg_order_id = await _read_floor_leg_order_id(factory, bracket_id=entry.bracket_id)
+    assert leg_order_id == floor_order_id
+
+    # (C) backfill — the floor's broker id lands on the floor OrderRow.
+    await backfill_command_broker_ids(
+        factory,
+        command=cmd,
+        result=result,
+        dispatch_result=_dispatch_result(
+            "entry-uuid",
+            leg_alpaca_order_ids={"capital_floor": "floor-uuid"},
+            payload_kind="options",
+        ),
+    )
+
+    floor_row = await _read_order_by_order_id(factory, floor_order_id)
+    assert floor_row is not None
+    assert floor_row.status == OrderStatus.PENDING.value
+    assert floor_row.alpaca_order_id == "floor-uuid"
+    # The leg still points at the OMS order_id; resolving it → OrderRow →
+    # alpaca id recovers the resting floor's real broker id (the closer path).
+    resolved = await _read_order_by_order_id(factory, leg_order_id)
+    assert resolved is not None
+    assert resolved.alpaca_order_id == "floor-uuid"
 
 
 # ---------------------------------------------------------------------------
