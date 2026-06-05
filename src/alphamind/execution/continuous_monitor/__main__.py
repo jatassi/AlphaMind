@@ -49,9 +49,6 @@ from alphamind.execution.broker_adapter import AccountStateQueries, AlpacaClient
 from alphamind.execution.continuous_monitor.activities_backfill import (
     register_fill_backfill_task,
 )
-from alphamind.execution.continuous_monitor.borrow_accrual import (
-    register_borrow_accrual_task,
-)
 from alphamind.execution.continuous_monitor.bracket_stops import (
     AlpacaBracketCloseSubmitter,
     register_options_bracket_watcher_task,
@@ -543,13 +540,9 @@ async def _run_daemon(*, mode: MonitorMode) -> None:  # noqa: PLR0915 — compos
         session_factory=db_session_factory,
         market_open=calendar_cache.is_market_open,
     )
-    register_borrow_accrual_task(
-        supervisor,
-        session_factory=db_session_factory,
-        sync_session_factory=sync_session_factory,
-        calendar_cache=calendar_cache,
-        process_lifetime_id=process_lifetime_id,
-    )
+    # ALP-855 / W4a — borrow accrual is accounting; it was evicted from the
+    # always-on monitor (ADR-0004) into the pipeline's Phase-1 write unit (single
+    # writer = pipeline, ADR-0005). No monitor registration here.
     # Constructed once per monitor session so the cascade dispatcher and
     # bracket-stops watcher mint trigger ids from the same monotonic
     # sequence — both encode ``MON.{session}.{trigger}.0`` into the

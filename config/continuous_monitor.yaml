@@ -66,16 +66,6 @@ max_reconnect_attempts: 5
 # can restart promptly. Defaulted at 5s per ALP-432 scope section 7.
 supervisor_shutdown_timeout_seconds: 5
 
-# Trading-day local time at which the borrow-accrual tick (story 04 of
-# ALP-715, continuous-monitor responsibility 4f) fires once per trading day.
-# Iterates every OPEN SHORT-equity position, resolves the live borrow fee,
-# accrues today's cost against the live notional, and emits one
-# BORROW_COST_ACCRUED activity-log entry per position. Off-hours and
-# weekends the timer sleeps to the next trading-day close. Format: 24-hour
-# HH:MM ET (US/Eastern wall clock, matching the rest of the monitor).
-# Source: ALP-715 § Pre-resolved decision (E).
-borrow_accrual_tick_local_time: "16:00"
-
 # Cadence (seconds) of the periodic fill-backfill backstop (ALP-763). Each
 # sweep reuses the disconnect-recovery primitive with an independent `since`
 # bound to recover any Alpaca fill missing from fill_records — even when no

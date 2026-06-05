@@ -137,6 +137,7 @@ from alphamind.risk_guardrails.state_delivery.config import (
     load_state_delivery_config,
 )
 from alphamind.scheduler.account_activities_poll import run_account_activities_poll
+from alphamind.scheduler.borrow_accrual import run_borrow_accrual
 from alphamind.scheduler.control.events import SSEEventEmitter
 from alphamind.scheduler.control.models import (
     InvocationEndedEvent,
@@ -761,6 +762,17 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
                 venue_config=venue_config,
                 execution_mode=execution_mode,
                 activities_source_factory=_activities_source_factory_from_debug_e2e(context),
+            )
+            # ALP-855 / W4a — daily SHORT-equity borrow accrual, relocated out of
+            # the always-on monitor (ADR-0004) into this pipeline write unit
+            # (single writer = pipeline, ADR-0005). The once-per-trading-day guard
+            # makes the ~3×/day pipeline cadence book the day's accrual exactly
+            # once; it reuses the invocation's session + the already-built
+            # ``borrow_cost_resolver`` (no per-tick InvocationRow, no daily timer).
+            await run_borrow_accrual(
+                write_handle,
+                borrow_cost_resolver=borrow_cost_resolver,
+                now=now,
             )
             await _update_row_phase1(
                 write_handle,

@@ -985,6 +985,6 @@ class TestIsOpenShortEquityPredicate:
     def test_re_export_from_recompute_module_is_same_function(self) -> None:
         """Backwards-compat — the borrow-accrual kernel re-exports the
         canonical predicate from ``portfolio_state.records.positions``."""
-        from alphamind.execution.continuous_monitor.borrow_accrual import recompute
+        from alphamind.scheduler import borrow_accrual_kernel
 
-        assert recompute.is_open_short_equity is is_open_short_equity
+        assert borrow_accrual_kernel.is_open_short_equity is is_open_short_equity
