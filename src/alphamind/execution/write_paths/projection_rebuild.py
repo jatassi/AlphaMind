@@ -315,13 +315,18 @@ async def rebuild_projection(
 async def _project_terminal_order_statuses(session: AsyncSession) -> int:
     """Project every ``TERMINAL_ORDER_STATUS`` event onto its ``orders`` cache row.
 
-    Reads the event payloads, folds them to typed projections (pure), then resolves
-    each to a local ``orders`` row — by the broker UUID, falling back to the durable
-    pre-commit ``client_order_id`` for an order whose UUID was never backfilled — and
-    advances its cached ``status`` + ``last_update_timestamp``. Returns the count of
-    rows advanced. A projection whose order row does not resolve (a genuinely
-    out-of-band order) is logged and skipped; the order cache is optional, so a
-    cache miss is not an error.
+    Reads the event payloads, folds them to typed projections (pure), then
+    batch-resolves them to local ``orders`` rows — by the broker UUID, falling back
+    to the durable pre-commit ``client_order_id`` for an order whose UUID was never
+    backfilled — and advances each row's cached ``status`` + ``last_update_timestamp``.
+    Returns the count of rows advanced.
+
+    The resolve is **bounded** (PR1): the candidate ``orders`` rows are loaded in two
+    ``IN``-clause batches restricted to **non-terminal** orders, so an order already
+    in a terminal status is never re-resolved or re-stamped (an already-projected
+    terminal disposition is final). A projection whose order row does not resolve
+    against a non-terminal row (already terminal, or a genuinely out-of-band order)
+    is skipped; the order cache is optional, so a miss is not an error.
     """
     payloads = (
         (
@@ -335,19 +340,19 @@ async def _project_terminal_order_statuses(session: AsyncSession) -> int:
         .all()
     )
     projections = project_terminal_order_statuses(payloads)
+    if not projections:
+        return 0
+    by_alpaca_id, by_client_id = await _resolve_non_terminal_order_rows(session, projections)
     now_iso = datetime.now(UTC).isoformat()
     projected = 0
     for projection in projections:
-        row = await _resolve_order_row(session, projection)
+        row = None
+        if projection.alpaca_order_id is not None:
+            row = by_alpaca_id.get(projection.alpaca_order_id)
+        if row is None and projection.client_order_id is not None:
+            row = by_client_id.get(projection.client_order_id)
         if row is None:
-            log.debug(
-                "projection rebuild: TERMINAL_ORDER_STATUS for unknown order "
-                "(alpaca_order_id=%s client_order_id=%s status=%s) — no local order "
-                "cache row; skipping",
-                projection.alpaca_order_id,
-                projection.client_order_id,
-                projection.terminal_status.value,
-            )
+            # Already terminal (filtered out of the batch) or genuinely out-of-band.
             continue
         if row.status == projection.terminal_status.value:
             continue
@@ -357,33 +362,62 @@ async def _project_terminal_order_statuses(session: AsyncSession) -> int:
     return projected
 
 
-async def _resolve_order_row(
-    session: AsyncSession, projection: OrderStatusProjection
-) -> OrderRow | None:
-    """Resolve the local ``orders`` row a terminal-status projection applies to.
+# Order statuses already terminal for the order-status projection — a row in one
+# of these is final, so the rebuild never re-resolves or re-stamps it (PR1).
+_TERMINAL_ORDER_STATUSES: frozenset[str] = frozenset(
+    status.value for status in _TERMINAL_STATUS_BY_NAME.values()
+)
 
-    Resolution mirrors the fill-path's order resolution (ADR-0002): the broker UUID
-    first (the captured-at-submission ``alpaca_order_id``), then the durable
-    pre-commit ``client_order_id`` for an order whose post-submit UUID backfill was
-    lost (``alpaca_order_id`` still NULL, ALP-836/847). Both columns are
-    unique-when-present, so ``one_or_none`` surfaces a duplicate as a loud invariant
-    breach rather than guessing.
+
+async def _resolve_non_terminal_order_rows(
+    session: AsyncSession, projections: tuple[OrderStatusProjection, ...]
+) -> tuple[dict[str, OrderRow], dict[str, OrderRow]]:
+    """Batch-resolve candidate ``orders`` rows by alpaca id / client id (PR1).
+
+    Two ``IN``-clause SELECTs — one keyed by ``alpaca_order_id``, one by
+    ``client_order_id`` — restricted to **non-terminal** rows, replacing the prior
+    two-SELECT-per-event resolve. Resolution priority (broker UUID first, the durable
+    pre-commit ``client_order_id`` as the pre-backfill fallback, ADR-0002) is applied
+    by the caller against the returned maps. Both columns are unique-when-present, so
+    each id maps to at most one row.
     """
-    if projection.alpaca_order_id is not None:
-        row = (
-            await session.execute(
-                select(OrderRow).where(OrderRow.alpaca_order_id == projection.alpaca_order_id)
+    alpaca_ids = {p.alpaca_order_id for p in projections if p.alpaca_order_id is not None}
+    client_ids = {p.client_order_id for p in projections if p.client_order_id is not None}
+    by_alpaca_id: dict[str, OrderRow] = {}
+    by_client_id: dict[str, OrderRow] = {}
+    if alpaca_ids:
+        rows = (
+            (
+                await session.execute(
+                    select(OrderRow).where(
+                        OrderRow.alpaca_order_id.in_(alpaca_ids),
+                        OrderRow.status.not_in(_TERMINAL_ORDER_STATUSES),
+                    )
+                )
             )
-        ).scalar_one_or_none()
-        if row is not None:
-            return row
-    if projection.client_order_id is not None:
-        return (
-            await session.execute(
-                select(OrderRow).where(OrderRow.client_order_id == projection.client_order_id)
+            .scalars()
+            .all()
+        )
+        for row in rows:
+            if row.alpaca_order_id is not None:
+                by_alpaca_id[row.alpaca_order_id] = row
+    if client_ids:
+        rows = (
+            (
+                await session.execute(
+                    select(OrderRow).where(
+                        OrderRow.client_order_id.in_(client_ids),
+                        OrderRow.status.not_in(_TERMINAL_ORDER_STATUSES),
+                    )
+                )
             )
-        ).scalar_one_or_none()
-    return None
+            .scalars()
+            .all()
+        )
+        for row in rows:
+            if row.client_order_id is not None:
+                by_client_id[row.client_order_id] = row
+    return by_alpaca_id, by_client_id
 
 
 async def _rederive_all_thesis_ledgers(session: AsyncSession, handle: InvocationHandle) -> int:

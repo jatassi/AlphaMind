@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import PositionId, ThesisId
@@ -44,6 +44,8 @@ from alphamind.state.records_broker_event_log import (
 from alphamind.state.tables.broker_event_log_codec import record_to_row as event_record_to_row
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
+
+from tests.state._fk_substrate import stub_order_row
 
 from ._handler_substrate import (
     NOW,
@@ -341,6 +343,100 @@ async def test_terminal_event_resolves_order_by_client_order_id_when_uuid_null(
         row = await sess.get(OrderRow, "ord-entry-1")
         assert row is not None
         assert row.status == OrderStatus.EXPIRED.value
+
+
+# ---------------------------------------------------------------------------
+# PR1 — the terminal-status scan is bounded, not O(all-events).
+# ---------------------------------------------------------------------------
+
+
+async def test_terminal_status_projection_resolves_orders_in_batch(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """PR1 — the projection resolves order rows in a bounded number of SELECTs,
+    not two per event. With three pending orders each carrying a terminal event,
+    the orders-resolution must not scale with the event count: a per-event
+    2-SELECT resolve would issue ~6 reads against ``orders``; the batched resolve
+    issues a small constant regardless of event count."""
+    engine, factory = db
+    await seed_invocation_substrate(factory)
+    await _entry_order(factory, alpaca_order_id="broker-uuid-1")
+    # Two more pending orders on the same bracket, each by a distinct broker UUID.
+    async with factory() as sess:
+        for n in (2, 3):
+            sess.add(
+                stub_order_row(
+                    f"ord-extra-{n}",
+                    "brk-1",
+                    position_id="pos-1",
+                    status=OrderStatus.PENDING.value,
+                    alpaca_order_id=f"broker-uuid-{n}",
+                )
+            )
+        await sess.commit()
+    await _append_events(
+        factory,
+        *(
+            _terminal_event(
+                event_key=f"tevt-batch-{n}",
+                alpaca_order_id=f"broker-uuid-{n}",
+                client_order_id=f"cli-{n}",
+                terminal_status=OrderStatus.CANCELLED,
+            )
+            for n in (1, 2, 3)
+        ),
+    )
+
+    orders_selects: list[str] = []
+
+    @event.listens_for(engine.sync_engine, "before_cursor_execute")
+    def _capture(
+        _conn: object, _cursor: object, statement: str, *_rest: object
+    ) -> None:
+        normalized = " ".join(statement.split()).lower()
+        if "from orders" in normalized and normalized.startswith("select"):
+            orders_selects.append(statement)
+
+    ctx, handle = await open_handle(factory)
+    summary = await rebuild_projection(handle, alpaca_positions=(), alpaca_account=None)
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.order_statuses_projected == 3
+    # Batched: a small constant (the batch resolve, not ~2 per event). A
+    # per-event 2-SELECT resolve over 3 events would issue 6+ reads.
+    assert len(orders_selects) <= 2, orders_selects
+
+
+async def test_terminal_status_projection_skips_already_terminal_orders(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """PR1 — a re-delivered terminal event whose order is already in the target
+    terminal status is bounded out (counts 0, no re-advance), so a rebuild does
+    not re-resolve / re-stamp already-projected orders run after run."""
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await _entry_order(factory, alpaca_order_id="broker-uuid-1")
+    # The order is ALREADY CANCELLED (a prior rebuild projected it).
+    async with factory() as sess:
+        row = await sess.get(OrderRow, "ord-entry-1")
+        assert row is not None
+        row.status = OrderStatus.CANCELLED.value
+        await sess.commit()
+    await _append_events(
+        factory,
+        _terminal_event(
+            event_key="tevt-dup",
+            alpaca_order_id="broker-uuid-1",
+            client_order_id="inv-1.ENV-1.0.0",
+            terminal_status=OrderStatus.CANCELLED,
+        ),
+    )
+
+    ctx, handle = await open_handle(factory)
+    summary = await rebuild_projection(handle, alpaca_positions=(), alpaca_account=None)
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.order_statuses_projected == 0
 
 
 # ---------------------------------------------------------------------------
