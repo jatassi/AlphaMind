@@ -260,8 +260,12 @@ class _Lot:
         if self._net_qty == 0:
             self._reset_to_flat()
         elif not _same_sign(self._net_qty, direction):
-            # Flipped through zero: residual opens a fresh lot at the fill price.
+            # Flipped through zero: the old lot is fully closed, so its external
+            # basis is realized/gone (FIX 3 / P1) — clear it before the residual
+            # opens a fresh lot at the fill price, or it would leak into the new
+            # opposite-sign lot and overstate cost_basis() indefinitely.
             self._avg_cost = price
+            self._external_basis = DECIMAL_ZERO
         return realized
 
     def close_quantity(self, qty: Decimal) -> None:

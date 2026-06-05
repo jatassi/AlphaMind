@@ -527,6 +527,40 @@ def test_long_assignment_optrd_without_side_still_opens_long_lot() -> None:
     assert derivation.cost_basis_usd == money("0")
 
 
+def test_flip_through_zero_clears_stale_external_basis() -> None:
+    """P1: a fill that flips the lot through zero discards the old lot's external basis.
+
+    An unpriced OPTRD addend (``cost_basis_delta_usd`` with no ``equity_qty``)
+    accrues ``external_basis``. When a single fill then flips the lot through zero,
+    the old lot is fully closed — its external basis is realized/gone — and the
+    residual opens a fresh opposite-sign lot. The external basis must NOT leak into
+    the new lot: ``cost_basis()`` reflects only the new lot. Before the fix it
+    cleared only at exact zero, overstating the flipped lot's basis indefinitely.
+    """
+    events = (
+        # Long 10 @ 100 → net +10, avg 100.
+        _fill_event(event_key="open-long", side="buy", fill_price=100.0, fill_quantity=10.0),
+        # Unpriced OPTRD addend: +500 external basis on the open lot.
+        _lifecycle_event(
+            event_key="activity:trd-ext",
+            event_type=BrokerEventType.OPTRD,
+            cost_basis_delta_usd="500.00",
+            at_seconds=10,
+        ),
+        # Sell 30 @ 130 → closes the +10 long (realizes (130-100)*10 = +300) and
+        # flips through zero, opening a -20 short at 130.
+        _fill_event(
+            event_key="flip-sell", side="sell", fill_price=130.0, fill_quantity=30.0, at_seconds=20
+        ),
+    )
+
+    derivation = derive_thesis_pnl(_THESIS, events)
+
+    assert derivation.realized_pnl_usd == signed_money("300.00")
+    # New short lot only: 20 * 130 = 2600. The stale 500 external basis is gone.
+    assert derivation.cost_basis_usd == money("2600.00")
+
+
 def test_derivation_is_deterministic_for_a_fixed_event_set() -> None:
     """AC#1/#5: the same event set yields the same figures across repeated folds."""
     events = (
