@@ -60,6 +60,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegStatus,
     BracketLegType,
     BracketRecord,
+    EnforcementBinding,
     PriceTrigger,
     TriggerSignal,
 )
@@ -150,7 +151,16 @@ def _is_options_or_strategy(position: PositionRecord) -> bool:
 
 
 def _is_active_eligible_leg(leg: BracketLeg) -> bool:
-    """Return True when *leg* is a price-based active leg eligible for firing."""
+    """Return True when *leg* is a price-based active leg eligible for firing.
+
+    A BROKER_ENFORCED leg (an equity native bracket child, or the options
+    capital floor — a resting GTC ``stop_limit``) is NOT monitor-eligible: the
+    broker owns its close, and the monitor submitting its own close would
+    double-close against the broker's fill (ALP-856 absorb-on-broker-fire /
+    ADR-0003). Only MONITOR_ENFORCED armed Intent fires through this watcher.
+    """
+    if leg.enforcement_binding is EnforcementBinding.BROKER_ENFORCED:
+        return False
     if leg.status is not BracketLegStatus.ACTIVE:
         return False
     if leg.leg_type not in (BracketLegType.PRICE_STOP, BracketLegType.TAKE_PROFIT):

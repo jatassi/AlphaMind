@@ -225,6 +225,43 @@ def _pl_target_bracket(
     )
 
 
+def _broker_enforced_floor_bracket(
+    *,
+    bracket_id: str = "brk-1",
+    position_id: str = "pos-1",
+    floor_price: float = 865.0,
+) -> BracketRecord:
+    """A bracket whose stop leg is the BROKER_ENFORCED capital floor (ALP-856).
+
+    The floor rests at the broker (a GTC ``stop_limit``); the monitor never
+    submits a close for it — that would double-close against the broker's own
+    fill. A second MONITOR_ENFORCED mechanical leg satisfies the hard-backstop
+    requirement so the record is valid.
+    """
+    floor_leg = BracketLeg(
+        leg_id="leg-floor",
+        leg_type=BracketLegType.PRICE_STOP,
+        order_id=OrderId("alpaca-floor-uuid"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"),
+            threshold_usd=floor_price,
+            direction="LTE",
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.ACTIVE,
+        enforcement_binding=EnforcementBinding.BROKER_ENFORCED,
+    )
+    return BracketRecord(
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
+        status=BracketStatus.ACTIVE,
+        entry_order_id=OrderId("ord-entry-1"),
+        protective_legs=(floor_leg,),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
+    )
+
+
 class FakePositionRepository:
     def __init__(self, positions: tuple[PositionRecord, ...]) -> None:
         self._positions = positions
@@ -397,6 +434,45 @@ class TestAlreadyFiredTracking:
         # Exactly one fire even though the trigger remains satisfied.
         assert len(submitter.options_calls) == 1
         assert len(log.entries) == 1
+
+
+class TestBrokerEnforcedFloorAbsorb:
+    """ALP-856 absorb-on-broker-fire — the monitor never closes a broker floor.
+
+    The broker-enforced capital floor rests at the broker. When it fills, the
+    monitor must NOT also submit a close — that double-closes against the broker's
+    own fill. The monitor enforces this by dropping a BROKER_ENFORCED leg from
+    firing eligibility: even when the floor's trigger condition reads satisfied,
+    the monitor leaves the close to the broker.
+    """
+
+    async def test_monitor_does_not_close_a_broker_enforced_floor(self) -> None:
+        position = _options_position(direction=Direction.LONG)
+        # Spot below the floor → the floor's condition is satisfied. A
+        # monitor-enforced leg would fire here; the broker floor must not.
+        bracket = _broker_enforced_floor_bracket(floor_price=865.0)
+        cache = await _seed_cache({"NVDA": 860.0})
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+
+        await _run_bracket_stop_cycle(
+            config=_config(),
+            position_repository=FakePositionRepository((position,)),
+            bracket_repository=FakeBracketRepository((bracket,)),
+            cache=cache,
+            submitter=submitter,
+            activity_log=log.emit,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
+            now=_NOW,
+            risk_free_rate=0.045,
+            fired_legs=set(),
+        )
+
+        # The broker owns the floor's close — the monitor submits nothing.
+        assert submitter.options_calls == []
+        assert log.entries == []
 
 
 class TestPreSubmitFailureRetries:
