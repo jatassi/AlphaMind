@@ -127,7 +127,7 @@ async def test_loop_reads_broker_and_beats_heartbeat(tmp_path: Path) -> None:
     await _seed_cache(cache, "AAPL")
     hb_path = tmp_path / "safety_core.heartbeat"
     clock = {"t": 0.0}
-    sink = FileHeartbeatSink(path=hb_path, monotonic=lambda: clock["t"])
+    sink = FileHeartbeatSink(path=hb_path, clock=lambda: clock["t"])
 
     await run_safety_core(
         get_positions=broker.get_positions,
@@ -157,7 +157,7 @@ async def test_frozen_monitor_proper_does_not_freeze_safety_core(tmp_path: Path)
     broker = _StubBroker(account=_account(), positions=(_position(),))
     cache = UnderlyingPriceCache()
     await _seed_cache(cache, "AAPL")
-    sink = FileHeartbeatSink(path=tmp_path / "hb", monotonic=lambda: 0.0)
+    sink = FileHeartbeatSink(path=tmp_path / "hb", clock=lambda: 0.0)
 
     frozen_started = asyncio.Event()
 
@@ -192,7 +192,7 @@ async def test_loop_surfaces_breach_to_signal_sink(tmp_path: Path) -> None:
     cache = UnderlyingPriceCache()
     for s in ("AAPL", "TSLA", "NVDA"):
         await _seed_cache(cache, s)
-    sink = FileHeartbeatSink(path=tmp_path / "hb", monotonic=lambda: 0.0)
+    sink = FileHeartbeatSink(path=tmp_path / "hb", clock=lambda: 0.0)
     seen: list[SafetyEvaluation] = []
 
     await run_safety_core(
@@ -225,7 +225,7 @@ async def test_loop_tolerates_a_failing_tick(tmp_path: Path) -> None:
     broker = _StubBroker(account=_account(), positions=(_position(),))
     cache = UnderlyingPriceCache()
     await _seed_cache(cache, "AAPL")
-    sink = FileHeartbeatSink(path=tmp_path / "hb", monotonic=lambda: 0.0)
+    sink = FileHeartbeatSink(path=tmp_path / "hb", clock=lambda: 0.0)
 
     await run_safety_core(
         get_positions=_flaky_get_positions,

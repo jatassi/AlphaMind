@@ -2,7 +2,7 @@
 
 The heartbeat is the safety core's liveness signal to its out-of-process
 watchdog — written to a **file**, never the shared DB (ADR-0004: the safety
-core writes nothing to the DB). ``FileHeartbeatSink.beat`` writes a monotonic
+core writes nothing to the DB). ``FileHeartbeatSink.beat`` writes a wall-clock
 timestamp; ``FileHeartbeatProbe.age`` reads it back so the watchdog can detect
 staleness without sharing the core's loop or its DB session.
 """
@@ -21,7 +21,7 @@ def test_beat_then_probe_round_trips_age(tmp_path: Path) -> None:
     """A beat at t0, probed at t0+5, reports ~5s of age."""
     clock = {"now": 100.0}
     path = tmp_path / "safety_core.heartbeat"
-    sink = FileHeartbeatSink(path=path, monotonic=lambda: clock["now"])
+    sink = FileHeartbeatSink(path=path, clock=lambda: clock["now"])
     probe = FileHeartbeatProbe(path=path)
 
     sink.beat()
@@ -41,7 +41,7 @@ def test_beat_overwrites_previous(tmp_path: Path) -> None:
     """A later beat resets the timer — age is measured from the most recent beat."""
     clock = {"now": 100.0}
     path = tmp_path / "safety_core.heartbeat"
-    sink = FileHeartbeatSink(path=path, monotonic=lambda: clock["now"])
+    sink = FileHeartbeatSink(path=path, clock=lambda: clock["now"])
     probe = FileHeartbeatProbe(path=path)
 
     sink.beat()

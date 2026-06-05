@@ -26,11 +26,13 @@ from pathlib import Path
 class FileHeartbeatSink:
     """Writes the safety core's latest beat timestamp to a file (atomically)."""
 
-    def __init__(self, *, path: Path, monotonic: Callable[[], float] = time.time) -> None:
-        # ``monotonic`` names the injected clock port (default wall-clock epoch);
-        # tests substitute a deterministic float source.
+    def __init__(self, *, path: Path, clock: Callable[[], float] = time.time) -> None:
+        # ``clock`` is the injected wall-clock port (default ``time.time``); tests
+        # substitute a deterministic float source. It MUST be wall-clock, never
+        # ``time.monotonic`` — a monotonic clock is per-process and meaningless to
+        # the separate watchdog process reading this beat across the boundary.
         self._path = path
-        self._now = monotonic
+        self._now = clock
 
     def beat(self) -> None:
         """Record the current timestamp as the latest heartbeat.

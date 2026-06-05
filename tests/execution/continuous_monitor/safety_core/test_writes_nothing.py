@@ -121,7 +121,7 @@ async def test_loop_run_writes_nothing_to_db(tmp_path: Path) -> None:
             get_positions=lambda: positions,
             get_account=lambda: account,
             price_cache=cache,
-            heartbeat=FileHeartbeatSink(path=tmp_path / "hb", monotonic=lambda: 0.0),
+            heartbeat=FileHeartbeatSink(path=tmp_path / "hb", clock=lambda: 0.0),
             limits=SafetyLimits(max_gross_exposure_pct=200.0, max_position_concentration_pct=25.0),
             max_age_seconds=900.0,
             loop=_loop,
