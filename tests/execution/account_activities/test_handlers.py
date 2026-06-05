@@ -155,6 +155,89 @@ async def test_re_polling_same_activity_does_not_double_book(
     assert ledger_record.realized_pnl_usd == signed_money("-1250.00")
 
 
+async def test_repoll_closes_option_when_opexp_row_exists_but_option_still_open(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """AC1: expiry is crash-idempotent — an OPEXP row + an OPEN option re-closes.
+
+    If an OPEXP row ever co-exists with an OPEN option (a partial-commit / crash
+    that committed the event row but not the booking), a ``newly``-gated booking
+    permanently skips the close. Mirroring the assignment path, expiry must gate
+    the booking on the option still being OPEN: re-resolve, and book if found.
+    Simulated by committing only the OPEXP row while leaving the option OPEN — the
+    re-poll must close it.
+    """
+    _engine, factory = db
+    await _seed_open_option(factory, contract_count=5.0, premium_paid_per_contract=250.0)
+
+    # Pre-seed ONLY the OPEXP row — the crash committed it but not the booking.
+    async with factory() as sess:
+        sess.add(
+            BrokerEventLogRow(
+                event_key="activity:act-exp-1",
+                event_type="OPEXP",
+                thesis_id="thesis-1",
+                invocation_id=INV_ID,
+                position_id="pos-1",
+                raw_payload_json=json.dumps(
+                    {
+                        "activity_id": "act-exp-1",
+                        "occ_symbol": _OCC,
+                        "realized_pnl_delta_usd": "-1250.00",
+                        "closed_contract_qty": 5.0,
+                    },
+                    sort_keys=True,
+                ),
+                broker_timestamp=_TXN,
+                captured_at=_TXN,
+            )
+        )
+        await sess.commit()
+
+    # Re-poll the same expiry: the option is still OPEN, so the booking must run.
+    ctx, handle = await open_handle(factory)
+    try:
+        await integrate_lifecycle_event(handle, _expiry_event())
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        pos = await sess.get(PositionRow, "pos-1")
+        assert pos is not None
+        # The crash-window OPEXP no longer skips the close — the option is CLOSED.
+        assert pos.status == "CLOSED"
+        # Still exactly one OPEXP row (idempotent append), not two.
+        events = (await sess.execute(select(BrokerEventLogRow))).scalars().all()
+        assert len(events) == 1
+
+
+async def test_repoll_after_clean_expiry_is_a_no_op(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """AC1: a re-poll after a clean expiry (option already CLOSED) is a clean no-op.
+
+    Once expiry closed the option, ``_find_open_option_position`` returns None and
+    the durable OPEXP row marks a clean no-op — no raise, no double-book.
+    """
+    _engine, factory = db
+    await _seed_open_option(factory, contract_count=5.0, premium_paid_per_contract=250.0)
+
+    ctx, handle = await open_handle(factory)
+    try:
+        await integrate_lifecycle_event(handle, _expiry_event())
+        # Re-poll after the option already closed: a clean no-op.
+        await integrate_lifecycle_event(handle, _expiry_event())
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        pos = await sess.get(PositionRow, "pos-1")
+        assert pos is not None
+        assert pos.status == "CLOSED"
+        events = (await sess.execute(select(BrokerEventLogRow))).scalars().all()
+        assert len(events) == 1
+
+
 def _assignment_event(
     activity_type: LifecycleActivityType, *, side: str = "buy"
 ) -> LifecycleEvent:

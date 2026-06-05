@@ -159,11 +159,23 @@ async def _already_booked(handle: InvocationHandle, event_key: str) -> bool:
 
 
 async def handle_expiry(handle: InvocationHandle, event: LifecycleEvent) -> None:
-    """Book an OTM expiry (``OPEXP``): realized PnL = -premium; close the option."""
-    if await _already_booked(handle, event_key_for(event.activity_id)):
-        return
+    """Book an OTM expiry (``OPEXP``): realized PnL = -premium; close the option.
+
+    Crash-idempotent the same way the assignment path is: the booking is gated on
+    the option still being OPEN, NOT on the event-log append's ``newly`` (AC1). If
+    an OPEXP row ever co-exists with an OPEN option (a partial-commit / crash that
+    committed the row but not the booking), a ``newly``-gated booking would skip
+    the close forever. Resolving the option first makes the path self-healing:
+    book while OPEN, clean no-op once closed, surface only when genuinely unknown.
+    """
     found = await _find_open_option_position(handle, event.occ_symbol)
     if found is None:
+        # No OPEN/PENDING option to re-resolve. Either (a) a clean post-booking
+        # re-poll — the prior invocation closed the option and durably committed
+        # the OPEXP row, so this is a no-op; or (b) a genuinely unknown event. The
+        # durable OPEXP row distinguishes them: present → (a) no-op; absent → (b).
+        if await _already_booked(handle, event_key_for(event.activity_id)):
+            return
         msg = (
             f"OPEXP {event.activity_id!r} references option {event.occ_symbol!r} "
             f"with no matching OPEN/PENDING local position"
@@ -173,7 +185,11 @@ async def handle_expiry(handle: InvocationHandle, event: LifecycleEvent) -> None
     # Compute the booking first (pure) so the realized-PnL delta can ride the
     # event-log payload — the 03c derivation reproduces it from the log alone.
     result = book_expiry(option_record)
-    newly = await _append_lifecycle_event(
+    # Append the OPEXP row (idempotent on event_key — a crash-committed row from a
+    # prior poll collapses to the one row), then book: the option is still OPEN so
+    # the booking runs exactly once. Once it closes the option a later re-poll
+    # resolves ``found is None`` above and never reaches here.
+    await _append_lifecycle_event(
         handle,
         event_key=event_key_for(event.activity_id),
         event_type=BrokerEventType.OPEXP,
@@ -190,8 +206,6 @@ async def handle_expiry(handle: InvocationHandle, event: LifecycleEvent) -> None
         },
         broker_timestamp=event.transaction_time,
     )
-    if not newly:
-        return
     await _persist_booking(handle, option_row=option_row, result=result)
 
 
