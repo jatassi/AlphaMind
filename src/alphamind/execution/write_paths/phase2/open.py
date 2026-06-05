@@ -31,6 +31,7 @@ from alphamind.commands.command_models import (
 from alphamind.commands.submission_results import SubmissionResult
 from alphamind.execution.broker_adapter.order_options import (
     derive_capital_floor_client_order_id,
+    floor_price_per_contract,
 )
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.oms.command_ids import parse_pm_command_id, synthesize_id_suffix
@@ -1027,20 +1028,23 @@ def _strategy_target_to_bracket_leg(
 def _capital_floor_price(command: OpenCommand) -> float | None:
     """The PnL-denominated capital-floor price per contract for an options OPEN.
 
-    Mirrors ``broker_adapter.order_options._floor_price_per_contract``: the planned
-    entry premium per contract (``dollar_value / (qty * multiplier)``) minus the
-    per-contract loss the PM-authored ``max_loss`` represents — the level the
-    resting broker floor (``stop_limit``) closes the position at. ``None`` for an
-    equity OPEN (no floor) or a strategy OPEN (the single-leg floor is not
-    submitted for multi-leg positions at this story).
+    ``None`` for an equity OPEN (no floor) or a strategy OPEN (the single-leg
+    floor is not submitted for multi-leg positions at this story). Otherwise
+    delegates the arithmetic to the shared
+    :func:`broker_adapter.order_options.floor_price_per_contract`, so the
+    writeback's recorded floor price is byte-identical to the broker submission's
+    (ALP-856 / CU1 — one formula, not two mirrored copies).
     """
     if not isinstance(command.instrument, OptionInstrument):
         return None
     floor = command.capital_protection_floor
     if floor is None:
         return None
-    contracts = command.position_size.quantity * LISTED_OPTION_CONTRACT_MULTIPLIER
-    return (float(command.position_size.dollar_value) - float(floor.max_loss)) / contracts
+    return floor_price_per_contract(
+        dollar_value=float(command.position_size.dollar_value),
+        max_loss=float(floor.max_loss),
+        quantity=command.position_size.quantity,
+    )
 
 
 def _capital_floor_order_id(command_id: str) -> str:

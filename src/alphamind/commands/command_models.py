@@ -576,7 +576,7 @@ class OpenCommand(BaseModel):
     def _validate_floor_below_outlay(self) -> OpenCommand:
         # The broker floor's per-contract stop price is
         # ``(dollar_value - max_loss) / (quantity * multiplier)`` (ALP-856 /
-        # ``order_options._floor_price_per_contract``). A floor whose ``max_loss``
+        # ``order_options.floor_price_per_contract``). A floor whose ``max_loss``
         # meets-or-exceeds the planned outlay derives a non-positive stop price
         # that Alpaca rejects (422); the rejection lands AFTER the entry is live,
         # so the cross-field check is enforced at the command boundary instead —
