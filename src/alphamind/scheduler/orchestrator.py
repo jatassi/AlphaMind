@@ -898,12 +898,23 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         phase2_handle = InvocationHandle(session=session, invocation_id=invocation_id)
         await _update_row_phase2(phase2_handle, phase2_summary=phase2_summary)
         # ALP-836 integrity guard — the single authoritative phase-2 stamp. Withhold
-        # it (leaving phase2_completed_at NULL + logging loudly) when any order is
-        # stuck in PENDING_SUBMIT for this invocation: a lost post-submit backfill
-        # behind a live broker order. The invocation reads as incomplete + the
-        # Phase-1 reconcile order-backfill repairs it next run, rather than papering
-        # over the strand by marking the phase done.
-        if not await invocation_has_pending_submit_strand(session, invocation_id=invocation_id):
+        # it (leaving phase2_completed_at NULL) when any order is stuck in
+        # PENDING_SUBMIT for this invocation: a lost post-submit backfill behind a
+        # live broker order. The invocation reads as incomplete rather than papering
+        # over the strand by marking the phase done. The normal abandon path drives
+        # such a row to a terminal status (FL3); a residual strand here is the rare
+        # lost-commit case (process death between the broker submit and the backfill
+        # commit), so it is surfaced as an operator-visible warning rather than
+        # silently withheld — there is no order-backfill that self-heals it next run.
+        if await invocation_has_pending_submit_strand(session, invocation_id=invocation_id):
+            log.warning(
+                "phase2_completed_at withheld for invocation %s — an unresolved "
+                "PENDING_SUBMIT order strand (a lost post-submit backfill behind a "
+                "live broker order) remains; operator follow-up required, there is "
+                "no automatic recovery sweep",
+                invocation_id,
+            )
+        else:
             await stamp_phase_completion(phase2_handle, column="phase2_completed_at")
         await session.commit()
     progress.phase_done("phase2", commands_submitted=phase2_summary.commands_submitted)

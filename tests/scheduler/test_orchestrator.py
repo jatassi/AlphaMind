@@ -1188,6 +1188,88 @@ class TestRunInvocationFailuresThreeTxBoundaries:
         assert row.phase1_completed_at is not None
         assert row.phase2_completed_at is None
 
+    async def test_pending_submit_strand_withholds_phase2_stamp_and_warns(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """FL4 — a residual PENDING_SUBMIT strand withholds ``phase2_completed_at``
+        AND surfaces an operator-visible warning (not silent withholding).
+
+        The dispatch stub seeds the lost-backfill signature this invocation: an
+        order row in PENDING_SUBMIT keyed by ``client_order_id = inv-{id}.…``. The
+        orchestrator's ALP-836 guard then withholds the stamp; FL4 requires that
+        residual strand to be logged for operator follow-up since there is no
+        recovery sweep that self-heals it.
+        """
+        import logging
+
+        from alphamind.portfolio_state.records.orders import OrderStatus
+        from alphamind.scheduler import orchestrator as module
+        from alphamind.scheduler.orchestrator import run_invocation
+        from tests.state._fk_substrate import (
+            stub_bracket_row,
+            stub_order_row,
+            stub_position_row,
+        )
+
+        async def _dispatch_seeds_strand(**kw: Any) -> Any:
+            from alphamind.scheduler.phase2_dispatch import Phase2Summary
+
+            invocation_id = kw["invocation_id"]
+            # The lost-backfill strand: position + bracket + a PENDING_SUBMIT order
+            # whose client_order_id is scoped to THIS invocation. Cyclic FKs land in
+            # one deferred-FK transaction (post-snapshot, so no snapshot decode).
+            async with async_factory() as session:
+                session.add(stub_position_row("pos-strand", bracket_id="brk-strand"))
+                session.add(stub_bracket_row("brk-strand", "pos-strand", "ord-strand"))
+                session.add(
+                    stub_order_row(
+                        "ord-strand",
+                        "brk-strand",
+                        position_id="pos-strand",
+                        status=OrderStatus.PENDING_SUBMIT.value,
+                        client_order_id=f"{invocation_id}.ENV-1.0.0",
+                    )
+                )
+                await session.commit()
+            return Phase2Summary(commands_submitted=0, commands_rejected=0)
+
+        _patch_no_op_pipeline(monkeypatch)
+        monkeypatch.setattr(module, "dispatch_phase2", _dispatch_seeds_strand)
+
+        with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.orchestrator"):
+            await run_invocation(
+                context=_make_context(
+                    session_factory=async_factory,
+                    env_path=env_path,
+                    archive_root=archive_root,
+                ),
+                trigger_type="manual",
+                trigger_source="cli",
+                trigger_reason="test",
+                firing_run_type=RunType.market_hours_rolling,
+                now=_NOW,
+            )
+
+        async with async_factory() as session:
+            row = (await session.execute(select(InvocationRow))).scalar_one()
+        # The strand withholds the stamp …
+        assert row.phase2_completed_at is None
+        # … and the residual strand is surfaced for operator follow-up.
+        warnings = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING
+            and r.name == "alphamind.scheduler.orchestrator"
+            and "PENDING_SUBMIT" in r.getMessage()
+        ]
+        assert len(warnings) == 1
+        assert "phase2_completed_at withheld" in warnings[0].getMessage()
+
 
 def _stub_only_llm_and_broker(
     monkeypatch: pytest.MonkeyPatch,
