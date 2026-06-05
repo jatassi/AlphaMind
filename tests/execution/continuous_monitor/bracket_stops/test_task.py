@@ -239,7 +239,9 @@ def _broker_enforced_floor_bracket(
     requirement so the record is valid.
     """
     floor_leg = BracketLeg(
-        leg_id="leg-floor",
+        # Production form: f"{bracket_id}-leg-floor"
+        # (open._capital_floor_bracket_leg).
+        leg_id=f"{bracket_id}-leg-floor",
         leg_type=BracketLegType.PRICE_STOP,
         order_id=OrderId("alpaca-floor-uuid"),
         trigger=PriceTrigger(
@@ -292,7 +294,10 @@ def _monitor_stop_plus_floor_bracket(
         enforcement_binding=EnforcementBinding.MONITOR_ENFORCED,
     )
     floor_leg = BracketLeg(
-        leg_id="leg-floor",
+        # Production form: f"{bracket_id}-leg-floor"
+        # (open._capital_floor_bracket_leg) — the closer matches the floor by this
+        # suffix (FL11), so the fixture must mint the real id.
+        leg_id=f"{bracket_id}-leg-floor",
         leg_type=BracketLegType.PRICE_STOP,
         order_id=OrderId(floor_order_id),
         trigger=PriceTrigger(

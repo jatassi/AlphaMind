@@ -634,6 +634,58 @@ class TestCancelRestingFloor:
             "an un-cancellable resting floor must escalate beyond WARNING"
         )
 
+    async def test_only_the_capital_floor_leg_is_cancelled_not_native_children(
+        self,
+    ) -> None:
+        """FL11 — cancel-on-monitor-fire targets ONLY the capital-floor leg
+        (``{bracket_id}-leg-floor``), never every BROKER_ENFORCED leg. An equity
+        native bracket's take-profit / stop children are also BROKER_ENFORCED but
+        the broker manages their OCO cancellation natively — cancelling them here
+        would be a double-cancel. The closer resolves and cancels only the floor."""
+        resolved: list[str] = []
+
+        async def _resolver(order_id: str) -> str | None:
+            resolved.append(order_id)
+            return "floor-alpaca-uuid" if order_id == "ORD-FLOOR-xyz" else "native-alpaca-uuid"
+
+        # A bracket carrying BOTH a BROKER_ENFORCED native-bracket take-profit
+        # child (``brk-1-leg-target``) AND the capital floor (``brk-1-leg-floor``).
+        native_child = BracketLeg(
+            leg_id="brk-1-leg-target",
+            leg_type=BracketLegType.TAKE_PROFIT,
+            order_id=OrderId("ORD-NATIVE-TP"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("NVDA"), threshold_usd=900.0, direction="GTE"
+            ),
+            enforcement=BracketLegEnforcement.MECHANICAL,
+            enforcement_binding=EnforcementBinding.BROKER_ENFORCED,
+            status=BracketLegStatus.ACTIVE,
+        )
+        base = _bracket(floor_order_id="ORD-FLOOR-xyz")
+        bracket = dataclasses.replace(base, protective_legs=(*base.protective_legs, native_child))
+
+        position = _options_position()
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+        await _prepare_and_submit(
+            position=position,
+            bracket=bracket,
+            trigger_reason=PositionExitMethod.STOP_TRIGGERED,
+            submitter=submitter,
+            activity_log=log,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-20260511T143000Z-aabbccdd",
+            trigger_id=1,
+            now=_NOW,
+            estimated_exit_price=10.0,
+            realized_pnl_usd=-200.0,
+            floor_alpaca_id_resolver=_resolver,
+        )
+        # Only the floor leg's order_id is resolved + cancelled; the native child
+        # is left to the broker's native OCO (never resolved, never cancelled).
+        assert resolved == ["ORD-FLOOR-xyz"]
+        assert submitter.cancelled_floors == ["floor-alpaca-uuid"]
+
 
 async def _none() -> str | None:
     return None
