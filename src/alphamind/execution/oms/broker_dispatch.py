@@ -65,6 +65,7 @@ from alphamind.execution.broker_adapter import (
     OptionsSubmission,
     SubmissionOutcome,
     Submitted,
+    derive_capital_floor_client_order_id,
     submit_cancel,
     submit_equity_add,
     submit_equity_close,
@@ -73,6 +74,7 @@ from alphamind.execution.broker_adapter import (
     submit_mleg_close,
     submit_mleg_open,
     submit_options_add,
+    submit_options_capital_floor,
     submit_options_close,
     submit_options_open,
     submit_replace,
@@ -255,13 +257,12 @@ async def _dispatch_open(
         )
         return _wrap_equity(outcome)
     if isinstance(instrument, OptionInstrument):
-        outcome_o = await submit_options_open(
+        return await _dispatch_options_open(
             command,
             client=client,
             execution=execution,
             client_order_id=client_order_id,
         )
-        return _wrap_options(outcome_o)
     if isinstance(instrument, StrategyInstrument):
         outcome_m = await submit_mleg_open(
             command,
@@ -272,6 +273,53 @@ async def _dispatch_open(
         return _wrap_mleg(outcome_m)
     msg = f"OpenCommand carries unsupported instrument: {type(instrument).__name__}"
     raise NotImplementedError(msg)
+
+
+async def _dispatch_options_open(
+    command: OpenCommand,
+    *,
+    client: TradingClient,
+    execution: ExecutionConfig,
+    client_order_id: ClientOrderId,
+) -> SubmissionOutcome[BrokerDispatchResult]:
+    """Submit an options entry AND its always-on broker-enforced capital floor (ALP-856).
+
+    Invariant 4 (ADR-0003): every open options position carries a resting
+    broker-enforced exit. After the single-leg entry submits, this places the
+    PM-authored, PnL-denominated GTC ``stop_limit`` capital floor (``02d`` level,
+    derived by :func:`submit_options_capital_floor`) under its own
+    ``client_order_id`` (derived from the entry's so its fill self-attributes).
+    The floor's real broker ``alpaca_order_id`` rides back on the dispatch
+    result's ``leg_alpaca_order_ids`` under ``"capital_floor"`` so the OPEN
+    writeback stamps it onto the broker-enforced floor leg, and
+    cancel-on-monitor-fire can cancel the resting floor by id.
+
+    The entry submits first: if it fails (gateway exhaustion → the caller
+    abandons the durable pre-commit), no floor is attempted. The floor is
+    mandatory, so a floor submission failure is surfaced as the dispatch outcome
+    — the caller tears down the OPEN rather than leaving the position
+    broker-unprotected.
+    """
+    entry_outcome = await submit_options_open(
+        command,
+        client=client,
+        execution=execution,
+        client_order_id=client_order_id,
+    )
+    if isinstance(entry_outcome, GatewaySubmissionFailed):
+        return entry_outcome
+    floor_outcome = await submit_options_capital_floor(
+        command,
+        client=client,
+        execution=execution,
+        client_order_id=derive_capital_floor_client_order_id(client_order_id),
+    )
+    if isinstance(floor_outcome, GatewaySubmissionFailed):
+        return floor_outcome
+    return _wrap_options(
+        entry_outcome,
+        leg_alpaca_order_ids={"capital_floor": floor_outcome.payload.alpaca_order_id},
+    )
 
 
 async def _dispatch_add(  # noqa: PLR0913 — ADD threads every per-asset-type parameter the broker translator requires.
@@ -535,6 +583,8 @@ def _wrap_equity(
 
 def _wrap_options(
     outcome: SubmissionOutcome[OptionsSubmission],
+    *,
+    leg_alpaca_order_ids: Mapping[str, AlpacaOrderId] | None = None,
 ) -> SubmissionOutcome[BrokerDispatchResult]:
     if isinstance(outcome, GatewaySubmissionFailed):
         return outcome
@@ -547,6 +597,10 @@ def _wrap_options(
             order_class=sub.order_class,
             payload_kind="options",
             raw_submission=sub,
+            # ALP-856 — the resting broker-enforced capital floor's id, carried
+            # under ``"capital_floor"`` for an options OPEN; empty for options
+            # ADD / CLOSE (no floor submitted on those).
+            leg_alpaca_order_ids=leg_alpaca_order_ids or {},
         ),
         attempt_count=outcome.attempt_count,
     )

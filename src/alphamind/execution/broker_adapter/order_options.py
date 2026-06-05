@@ -58,8 +58,22 @@ from alphamind.execution.broker_adapter.retry import (
     submit_with_retry,
 )
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
-from alphamind.execution.oms.command_ids import is_engine_originated, is_pm_originated
+from alphamind.execution.oms.command_ids import (
+    derive_pm_command_id,
+    is_engine_originated,
+    is_pm_originated,
+    parse_pm_command_id,
+)
 from alphamind.portfolio_state.records.positions import OptionContractType
+
+# The capital floor is a second broker order submitted alongside the options
+# entry on the same OPEN, so it needs its OWN ``client_order_id`` distinct from
+# the entry's (Alpaca rejects a duplicate). The floor id is the entry's
+# PM-originated id re-derived with the ``command_ordinal`` shifted by this
+# reserved offset: it stays pattern-valid, carries the SAME thesis + invocation
+# FK (so a floor fill self-attributes, ALP-844), and cannot collide with a real
+# sibling command ordinal (no envelope carries this many commands).
+_CAPITAL_FLOOR_ORDINAL_OFFSET = 1_000_000
 
 
 @dataclass(frozen=True)
@@ -239,6 +253,28 @@ async def submit_options_capital_floor(
         limit_price=floor_price,
     )
     return await _submit(client, request, execution, occ_symbol=occ_symbol)
+
+
+def derive_capital_floor_client_order_id(entry_client_order_id: str) -> str:
+    """Derive the floor's ``client_order_id`` from the options entry's (ALP-856).
+
+    The capital floor is a second broker order submitted on the same options OPEN
+    as the entry, so it needs its own ``client_order_id`` — Alpaca rejects a
+    duplicate. The floor id is the entry's PM-originated id re-derived with the
+    ``command_ordinal`` shifted by :data:`_CAPITAL_FLOOR_ORDINAL_OFFSET`: it stays
+    pattern-valid, carries the SAME thesis + invocation FK so a floor fill
+    self-attributes (ALP-844), and cannot collide with a real sibling command
+    ordinal. An OPEN is always PM-originated (the engine emits only CLOSE), so a
+    non-PM id is a programming error and raises ``ValueError`` via the parser.
+    """
+    components = parse_pm_command_id(entry_client_order_id)
+    return derive_pm_command_id(
+        invocation_id=components.invocation_id,
+        envelope_id=components.envelope_id,
+        command_ordinal=components.command_ordinal + _CAPITAL_FLOOR_ORDINAL_OFFSET,
+        attempt_seq=components.attempt_seq,
+        thesis_id=components.thesis_id,
+    )
 
 
 async def submit_options_close(
