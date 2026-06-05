@@ -148,6 +148,15 @@ async def precommit_command(
             )
         ).scalar_one_or_none()
         if existing is not None:
+            # FL8: on a replay where the entry row landed but the floor was not
+            # yet stamped (e.g. the commit that included the floor stamp was lost),
+            # still stamp the floor before returning True.  _precommit_capital_floor
+            # is idempotent — if the floor is already stamped it just re-applies the
+            # same values.  We commit the session here (it holds the IMMEDIATE write
+            # lock from begin_write_immediate above) so the stamp is durable.
+            if isinstance(command, OpenCommand):
+                await _precommit_capital_floor(session, command, command_id=result.command_id)
+                await session.commit()
             return True
 
         handle = InvocationHandle(session=session, invocation_id=invocation_id)
@@ -188,13 +197,25 @@ async def _precommit_capital_floor(
     OrderRow was inserted by ``_writeback_open`` with ``alpaca_order_id`` NULL;
     here it gets its durable-Intent stamp (PENDING_SUBMIT + the floor's
     ``client_order_id``), exactly mirroring the entry row's pre-commit.
+
+    Idempotent: if the floor is already stamped PENDING_SUBMIT (or beyond), the
+    status/client_order_id assignment is harmlessly re-applied. Raises
+    ``RuntimeError`` if the floor OrderRow is absent — a missing floor row at
+    precommit is a flush-ordering bug, not a tolerable no-op.
     """
     if not isinstance(command.instrument, OptionInstrument):
         return
     floor_oid = _capital_floor_order_id(command_id)
+    # CU3: session.get is a cheap identity-map hit here because _writeback_open
+    # already added+flushed this row in the same session (no DB round-trip).
     floor_row = await session.get(OrderRow, floor_oid)
     if floor_row is None:
-        return
+        msg = (
+            f"_precommit_capital_floor: floor OrderRow {floor_oid!r} not found — "
+            "expected _writeback_open to have inserted+flushed it before this call; "
+            "a missing floor row is a flush-ordering bug, not a tolerable state"
+        )
+        raise RuntimeError(msg)
     floor_row.status = OrderStatus.PENDING_SUBMIT.value
     floor_row.client_order_id = derive_capital_floor_client_order_id(command_id)
 
@@ -279,16 +300,28 @@ async def _backfill_open_leg_ids(
     # ALP-856 — the floor's broker id rides under ``"capital_floor"`` and lands on
     # the floor OrderRow (matched by id, since the floor shares the PRICE_STOP role).
     floor_real = leg_alpaca_order_ids.get("capital_floor")
+    # FL5: for an options OPEN with a tracked floor row, a missing "capital_floor"
+    # id in the dispatch result is a malformed result — silently skipping would
+    # leave the floor PENDING_SUBMIT with NULL alpaca_order_id (live at broker but
+    # un-cancellable).  Surface the anomaly immediately.
+    if capital_floor_order_id is not None and floor_real is None:
+        msg = (
+            f"_backfill_open_leg_ids: options OPEN has floor row {capital_floor_order_id!r} "
+            "but dispatch result is missing the 'capital_floor' key in leg_alpaca_order_ids — "
+            "the floor is live at broker with no local alpaca_order_id (un-cancellable strand); "
+            f"got keys: {sorted(leg_alpaca_order_ids)}"
+        )
+        raise RuntimeError(msg)
     stop_stamped = False
     for row in rows:
         if capital_floor_order_id is not None and row.order_id == capital_floor_order_id:
-            if floor_real is not None:
-                row.alpaca_order_id = floor_real
-                row.alpaca_order_id_chain_json = json.dumps([floor_real])
-                # The floor is a tracked broker order — flip it PENDING_SUBMIT →
-                # PENDING on its broker-id backfill, exactly like the entry row.
-                row.status = OrderStatus.PENDING.value
-                row.last_update_timestamp = now
+            # floor_real is guaranteed non-None here (checked above).
+            row.alpaca_order_id = floor_real
+            row.alpaca_order_id_chain_json = json.dumps([floor_real])
+            # The floor is a tracked broker order — flip it PENDING_SUBMIT →
+            # PENDING on its broker-id backfill, exactly like the entry row.
+            row.status = OrderStatus.PENDING.value
+            row.last_update_timestamp = now
             continue
         dispatch_key = _LEG_ROLE_TO_DISPATCH_KEY.get(row.order_role)
         if dispatch_key is None:
@@ -471,10 +504,12 @@ async def invocation_has_pending_submit_strand(
     never got its broker id (the GS-husk signature, now made impossible to LOSE
     by atomicity but still detectable if the backfill commit itself was lost).
     The orchestrator withholds the ``phase2_completed_at`` stamp when this returns
-    ``True``, leaving the invocation visibly incomplete + recoverable (the Phase-1
-    reconcile order-backfill repairs it next run). Scoped to THIS invocation by
-    the ``client_order_id`` prefix so a prior-invocation strand under recovery
-    does not block an otherwise-clean phase 2. Logs loudly on a hit.
+    ``True``, leaving the invocation visibly incomplete as a signal that manual or
+    automated recovery is required (``backfill_pending_submit_orders`` is removed;
+    there is no automatic reconcile-path that backfills a PENDING_SUBMIT row).
+    Scoped to THIS invocation by the ``client_order_id`` prefix so a
+    prior-invocation strand under recovery does not block an otherwise-clean
+    phase 2. Logs loudly on a hit.
     """
     prefix = _command_id_prefix(invocation_id)
     rows = (
@@ -489,8 +524,8 @@ async def invocation_has_pending_submit_strand(
         if client_order_id and client_order_id.startswith(prefix):
             logger.error(
                 "phase2 integrity: order %s (client_order_id=%s) stuck in PENDING_SUBMIT — "
-                "a lost post-submit backfill behind a live broker order; withholding "
-                "phase2_completed_at (invocation left recoverable for the reconcile backfill)",
+                "a lost post-submit backfill; the floor is live at broker with no local "
+                "alpaca_order_id; withholding phase2_completed_at — operator recovery required",
                 order_id,
                 client_order_id,
             )
