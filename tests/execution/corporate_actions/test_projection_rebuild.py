@@ -266,6 +266,37 @@ async def test_zero_fill_terminal_event_advances_order_status_to_cancelled(
         assert row.last_update_timestamp != seeded_ts
 
 
+async def test_async_rejected_event_advances_order_status_to_rejected(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """CR3 — an async post-acceptance ``rejected`` event lands a
+    TERMINAL_ORDER_STATUS row whose disposition the rebuild projects PENDING →
+    REJECTED, so the order reaches a terminal projection (the reservation no
+    longer reads against a live PENDING order) instead of stranding forever."""
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await _entry_order(factory, alpaca_order_id="broker-uuid-rej")
+    await _append_events(
+        factory,
+        _terminal_event(
+            event_key="tevt-rej",
+            alpaca_order_id="broker-uuid-rej",
+            client_order_id="inv-1.ENV-1.0.0",
+            terminal_status=OrderStatus.REJECTED,
+        ),
+    )
+
+    ctx, handle = await open_handle(factory)
+    summary = await rebuild_projection(handle, alpaca_positions=(), alpaca_account=None)
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.order_statuses_projected == 1
+    async with factory() as sess:
+        row = await sess.get(OrderRow, "ord-entry-1")
+        assert row is not None
+        assert row.status == OrderStatus.REJECTED.value
+
+
 async def test_terminal_event_resolves_order_by_client_order_id_when_uuid_null(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
