@@ -525,6 +525,68 @@ class TestPreSubmitFailureRetries:
         assert fired_legs == {("brk-1", "leg-stop-1")}
 
 
+class TestPerPositionIsolation:
+    """CL2 — one position's failure skips ONLY that position, not the whole tick.
+
+    The per-leg evaluators swallow their own ValueErrors; an unexpected error that
+    escapes them (e.g. a NET_MARK stop mis-routed onto a single-option position →
+    TypeError) must not abort the cycle and silently leave every remaining
+    position's protective stop unevaluated (the silent-wedge class).
+    """
+
+    async def test_one_position_failure_does_not_skip_the_others(self) -> None:
+        # Position A carries a NET_MARK stop but is a SINGLE-OPTION position — the
+        # strategy net-mark evaluator raises TypeError (an uncaught mis-route) that
+        # escapes _evaluate_bracket_legs.
+        position_a = _options_position(position_id="pos-A", bracket_id="brk-A")
+        misrouted_leg = BracketLeg(
+            leg_id="leg-misroute",
+            leg_type=BracketLegType.PRICE_STOP,
+            order_id=None,
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("NVDA"), threshold_usd=1.0, direction="GTE"
+            ),
+            enforcement=BracketLegEnforcement.MECHANICAL,
+            status=BracketLegStatus.ACTIVE,
+            trigger_signal=TriggerSignal.NET_MARK,  # NET_MARK on a single option → TypeError
+        )
+        bracket_a = BracketRecord(
+            bracket_id=BracketId("brk-A"),
+            position_id=PositionId("pos-A"),
+            status=BracketStatus.ACTIVE,
+            entry_order_id=OrderId("ord-A"),
+            protective_legs=(misrouted_leg,),
+            modification_history=(),
+            corporate_action_cancellation_reason=None,
+        )
+        # Position B is a normal directional price-stop that SHOULD fire this tick.
+        position_b = _options_position(position_id="pos-B", bracket_id="brk-B")
+        bracket_b = _price_stop_bracket(bracket_id="brk-B", position_id="pos-B", threshold=865.0)
+
+        cache = await _seed_cache({"NVDA": 860.0})  # below 865 → position B fires
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+        # Order A first so its failure would, pre-fix, abort the tick before B.
+        await _run_bracket_stop_cycle(
+            config=_config(),
+            position_repository=FakePositionRepository((position_a, position_b)),
+            bracket_repository=FakeBracketRepository((bracket_a, bracket_b)),
+            cache=cache,
+            submitter=submitter,
+            activity_log=log.emit,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
+            now=_NOW,
+            risk_free_rate=0.045,
+            fired_legs=set(),
+        )
+        # Position B's stop still fired despite position A's TypeError mis-route.
+        assert submitter.options_calls == [("pos-B", submitter.options_calls[0][1])]
+        assert len(log.entries) == 1
+        assert log.entries[0].position_id == "pos-B"
+
+
 class TestTriggerIdsSharedWithCascade:
     """Regression — bracket-stop fires consume from the shared TriggerIdGenerator.
 

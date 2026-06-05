@@ -239,32 +239,49 @@ async def _run_bracket_stop_cycle(  # noqa: PLR0913 — kernel surfaces every co
         return
     brackets_by_position: dict[str, BracketRecord] = {b.position_id: b for b in brackets}
     for position in eligible_positions:
-        bracket = brackets_by_position.get(position.position_id)
-        if bracket is None:
+        # Per-position isolation (CL2 / silent-wedge class): one position's
+        # unexpected failure skips ONLY that position, never the whole tick. The
+        # per-leg evaluators already swallow their own ValueErrors; this catches
+        # anything that escapes them so a single mis-routed/malformed position
+        # cannot leave every remaining position's protective stop unevaluated.
+        # ``CancelledError`` re-raised so supervisor shutdown / watchdog
+        # cancellation bubbles up.
+        try:
+            bracket = brackets_by_position.get(position.position_id)
+            if bracket is None:
+                continue
+            spot = _spot_for_position(
+                position,
+                cache,
+                as_of=now,
+                max_age_seconds=config.underlying_price_max_age_seconds,
+                stale_tickers=_stale,
+            )
+            if spot is None or spot <= 0.0:
+                continue
+            await _evaluate_bracket_legs(
+                position=position,
+                bracket=bracket,
+                spot=spot,
+                submitter=submitter,
+                activity_log=activity_log,
+                invocation_id_provider=invocation_id_provider,
+                close_order_precommitter=close_order_precommitter,
+                trigger_ids=trigger_ids,
+                monitor_session_id=monitor_session_id,
+                now=now,
+                risk_free_rate=risk_free_rate,
+                fired_legs=fired_legs,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception(
+                "bracket_stops: per-position evaluation failed for position %s; "
+                "skipping this position only",
+                position.position_id,
+            )
             continue
-        spot = _spot_for_position(
-            position,
-            cache,
-            as_of=now,
-            max_age_seconds=config.underlying_price_max_age_seconds,
-            stale_tickers=_stale,
-        )
-        if spot is None or spot <= 0.0:
-            continue
-        await _evaluate_bracket_legs(
-            position=position,
-            bracket=bracket,
-            spot=spot,
-            submitter=submitter,
-            activity_log=activity_log,
-            invocation_id_provider=invocation_id_provider,
-            close_order_precommitter=close_order_precommitter,
-            trigger_ids=trigger_ids,
-            monitor_session_id=monitor_session_id,
-            now=now,
-            risk_free_rate=risk_free_rate,
-            fired_legs=fired_legs,
-        )
 
 
 async def _evaluate_bracket_legs(  # noqa: PLR0913 — fans out the cycle's per-position context
