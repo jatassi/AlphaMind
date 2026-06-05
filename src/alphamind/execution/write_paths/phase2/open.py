@@ -1169,10 +1169,13 @@ def _capital_floor_bracket_leg(
 ) -> BracketLeg | None:
     """Build the options OPEN's broker-enforced capital-floor leg (ALP-856).
 
-    ``None`` when no floor was submitted (equity / strategy OPEN — the floor is
-    absent). Otherwise a BROKER_ENFORCED PRICE_STOP leg whose ``order_id`` is the
-    floor's durable OMS ``order_id`` (the precommitted :class:`OrderRecord`), NOT
-    the broker Alpaca id — so the DEFERRABLE FK to ``orders.order_id`` is satisfied
+    ``order_id`` and ``price`` are both-or-neither (FL10): ``None`` when no floor
+    was submitted (equity / strategy OPEN — the floor is absent), a built leg when
+    both are present, and a ``ValueError`` for a partial-None (which would build an
+    un-cancellable leg). When built, a BROKER_ENFORCED PRICE_STOP leg whose
+    ``order_id`` is the floor's durable OMS ``order_id`` (the precommitted
+    :class:`OrderRecord`), NOT the broker Alpaca id — so the DEFERRABLE FK to
+    ``orders.order_id`` is satisfied
     (the merged design stamped the broker id here, which references no ``orders``
     row → ``FOREIGN KEY constraint failed`` under production ``foreign_keys=ON``).
     The closer's cancel-on-monitor-fire resolves this ``order_id`` → the floor
@@ -1182,18 +1185,27 @@ def _capital_floor_bracket_leg(
     monitor-evaluated condition. A long floor closes by SELLing on a decline (LTE);
     a short floor BUYs on a rise (GTE).
     """
-    if capital_floor_order_id is None and capital_floor_price is None:
+    # Both-or-neither (FL10): the caller (`_capital_floor_order_for_open`) mints
+    # the floor OMS order_id and its price together, or supplies neither (equity /
+    # strategy OPEN). A partial-None would build an un-cancellable floor leg
+    # (order_id=None) resting on a structural threshold fallback — a programming
+    # error, so reject it rather than silently degrade.
+    if (capital_floor_order_id is None) != (capital_floor_price is None):
+        raise ValueError(
+            "_capital_floor_bracket_leg requires both-or-neither of "
+            "capital_floor_order_id and capital_floor_price; got "
+            f"order_id={capital_floor_order_id!r}, price={capital_floor_price!r} "
+            "(a partial floor builds an un-cancellable BROKER_ENFORCED leg)"
+        )
+    if capital_floor_order_id is None or capital_floor_price is None:
         return None
-    # A positive structural threshold keeps the PriceTrigger valid even if the
-    # floor price is unavailable.
-    threshold = capital_floor_price if capital_floor_price is not None else 0.01
     return BracketLeg(
         leg_id=f"{bracket_id}-leg-floor",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=(OrderId(capital_floor_order_id) if capital_floor_order_id is not None else None),
+        order_id=OrderId(capital_floor_order_id),
         trigger=PriceTrigger(
             underlying_ticker=make_symbol(ticker),
-            threshold_usd=threshold,
+            threshold_usd=capital_floor_price,
             direction="GTE" if direction == "short" else "LTE",
         ),
         enforcement=BracketLegEnforcement.MECHANICAL,
