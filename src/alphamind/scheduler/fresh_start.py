@@ -288,9 +288,7 @@ async def run_fresh_start_bootstrap(
     # 6): drain the ``status="open"`` cursor into a tuple so a resting husk-order
     # is refused alongside an open position. The cursor is short on a fresh
     # account (zero or a handful of orders), so buffering it is cheap.
-    open_orders = tuple(
-        [order async for order in queries.get_orders(status="open")]
-    )
+    open_orders = tuple([order async for order in queries.get_orders(status="open")])
     async with session_factory() as session:
         await bootstrap_singletons_from_alpaca(
             session=session,

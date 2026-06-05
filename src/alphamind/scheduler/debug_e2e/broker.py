@@ -21,11 +21,10 @@ import logging
 from collections.abc import AsyncIterator, Mapping, Sequence
 from datetime import date
 from decimal import Decimal
+from typing import Literal
 
 from alpaca.data.enums import CorporateActionsType
 from alpaca.data.models.corporate_actions import CorporateAction
-
-from typing import Literal
 
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.broker_adapter.entry_pricing import TouchQuote
@@ -183,7 +182,14 @@ class LogOnlyAccountStateQueries:
         fresh-start open-orders precondition) so a debug-e2e run drains an empty
         cursor rather than reaching the broker.
         """
-        log.info("[debug_e2e] LogOnlyAccountStateQueries.get_orders(status=%s)", status)
+        log.info(
+            "[debug_e2e] LogOnlyAccountStateQueries.get_orders("
+            "status=%s since=%s until=%s symbols=%s)",
+            status,
+            since.isoformat() if since is not None else None,
+            until.isoformat() if until is not None else None,
+            symbols,
+        )
         return
         yield  # pragma: no cover — makes this an async generator
 
