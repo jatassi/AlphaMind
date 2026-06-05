@@ -55,7 +55,12 @@ from alphamind.execution.write_paths.unattributed_fill_persistence import (
     mark_unattributed_fill_alerted,
 )
 from alphamind.state.records import FillRecord, UnattributedFill
-from alphamind.state.records_broker_event_log import BrokerEventRecord, BrokerEventType
+from alphamind.state.records_broker_event_log import (
+    BrokerEventRecord,
+    BrokerEventType,
+    serialize_event_payload,
+)
+from alphamind.state.tables.invocations import InvocationRow
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.theses import ThesisRow
@@ -219,12 +224,21 @@ async def _resolve_attribution(db: AsyncSession, report: FillReport) -> _FillAtt
     """
     link = _parse_broker_carried_link(report.client_order_id)
     if link is not None:
+        # FS5 — ``broker_event_log.thesis_id`` is DEFERRABLE INITIALLY DEFERRED, so
+        # appending a row that names a not-yet-committed thesis passes the INSERT
+        # but violates at ``db.commit()`` and strands the whole report (neither
+        # logged nor quarantined). On a genesis OPEN fast-fill the thesis row may
+        # not have committed yet; treat it as not-yet-attributable and quarantine
+        # (return None) so the drain retries once the thesis lands — exactly the
+        # uncommitted-edge quarantine the order-row path already takes below.
+        if not await _thesis_row_exists(db, link.thesis_id):
+            return None
         # The linked path needs the thesis (from the link) and its position; the
         # order-row resolution hop is only relevant on the projection-cache path.
         position_id = await _resolve_position_id_for_thesis(db, link.thesis_id)
         return _FillAttribution(
             thesis_id=link.thesis_id,
-            invocation_id=link.invocation_id,
+            invocation_id=await _resolve_link_invocation_id(db, link.invocation_id),
             position_id=position_id,
             oms_order_id=await _resolve_oms_order_id(db, report),
         )
@@ -255,10 +269,50 @@ def _fill_event_record(
         thesis_id=attribution.thesis_id,
         invocation_id=attribution.invocation_id,
         position_id=attribution.position_id,
-        raw_payload_json=report.model_dump_json(),
+        # F1 — encode like the other three event producers (account-activities,
+        # corporate-actions, terminal order status): the canonical sort_keys +
+        # default=str serializer, so FILL rows are byte-consistent with the rest
+        # of the log. No correctness change — event_key is tuple-derived.
+        raw_payload_json=serialize_event_payload(report.model_dump(mode="json")),
         broker_timestamp=report.fill_timestamp,
         captured_at=datetime.now(UTC),
     )
+
+
+async def _thesis_row_exists(db: AsyncSession, thesis_id: ThesisId) -> bool:
+    """Whether the linked ``theses`` row has committed (FS5).
+
+    The broker-carried link names the thesis a fill attributes to, but
+    ``broker_event_log.thesis_id`` is a DEFERRABLE INITIALLY DEFERRED FK — a row
+    that names a thesis whose ``theses`` row has not committed passes the INSERT
+    and only violates at ``db.commit()``, stranding the whole report. Checking
+    existence up front (mirroring :func:`_resolve_position_id_for_thesis`'s cheap
+    ``select``) lets the caller quarantine the fill for the drain to retry once
+    the thesis lands, instead of crashing the transaction.
+    """
+    stmt = select(ThesisRow.thesis_id).where(ThesisRow.thesis_id == thesis_id)
+    return (await db.execute(stmt)).scalars().one_or_none() is not None
+
+
+async def _resolve_link_invocation_id(
+    db: AsyncSession, invocation_id: InvocationId
+) -> InvocationId | None:
+    """Return the linked ``invocation_id`` only when its ``invocations`` row exists.
+
+    CL3 — on a cold-start DB the monitor's invocation provider returns the
+    ``monitor-bootstrap`` sentinel, which the closer weaves into the engine
+    ``client_order_id`` and a returning fill parses back as
+    ``InvocationId("inv-monitor-bootstrap")``. ``broker_event_log.invocation_id``
+    is a DEFERRABLE INITIALLY DEFERRED FK to ``invocations``, so storing a value
+    with no matching row violates at ``db.commit()`` and strands the fill. The
+    column is nullable and the thesis link still attributes the fill, so a link
+    invocation with no committed ``invocations`` row is stored as ``NULL`` rather
+    than as a non-existent FK. This special-cases the bootstrap sentinel without
+    hard-coding it: any not-yet-committed invocation nulls the same way.
+    """
+    stmt = select(InvocationRow.invocation_id).where(InvocationRow.invocation_id == invocation_id)
+    exists = (await db.execute(stmt)).scalars().one_or_none() is not None
+    return invocation_id if exists else None
 
 
 async def _resolve_position_id_for_thesis(
@@ -392,16 +446,24 @@ async def _sync_terminal_status_if_any(
     the log by the single (pipeline) writer (04a). Own short-lived transaction,
     mirroring the per-fill write.
 
-    Scoped to **zero-fill** terminals (``cumulative_filled_quantity == 0``): a
-    partially-filled-then-terminal order is left to the fill path + Phase 1,
+    Scoped to **known zero-fill** terminals (``cumulative_filled_quantity == 0``):
+    a partially-filled-then-terminal order is left to the fill path + Phase 1,
     which own ``filled_quantity`` and integrate the partials. The no-fill case is
     the one the fill path does not cover, so it is the only one this path owns
     (the ALP-739 zero-fill scoping, preserved).
+
+    A ``None`` cumulative is unknown-not-zero (FS3): the broker reported no
+    ``filled_qty``, so this path cannot prove the order is no-fill — a
+    partially-filled-then-canceled order can arrive with a ``None`` cumulative,
+    and projecting a no-fill terminal over it would mis-fire ``entry_no_fill`` /
+    retire an order that had partials. So the append is skipped for an unknown
+    cumulative too; the fill path owns it.
     """
     terminal_status = terminal_order_status_for(report)
     if terminal_status is None:
         return
-    if report.cumulative_filled_quantity > 0:
+    cumulative = report.cumulative_filled_quantity
+    if cumulative is None or cumulative > 0:
         return
     async with session_factory() as db:
         attribution = await _resolve_terminal_attribution(db, report)
@@ -459,7 +521,7 @@ async def _resolve_terminal_attribution(
     if link is not None:
         return _FillAttribution(
             thesis_id=link.thesis_id,
-            invocation_id=link.invocation_id,
+            invocation_id=await _resolve_link_invocation_id(db, link.invocation_id),
             position_id=await _resolve_position_id_for_thesis(db, link.thesis_id),
             oms_order_id=None,
         )

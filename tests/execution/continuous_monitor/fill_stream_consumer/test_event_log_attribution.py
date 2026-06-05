@@ -292,6 +292,81 @@ class TestNativeLegStrandHole:
         assert len(queued) == 1
 
 
+class TestUncommittedThesisStrandHole:
+    async def test_linked_fill_whose_thesis_is_uncommitted_is_quarantined_not_stranded(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A linked fill whose ``client_order_id`` names a thesis row that has not
+        committed yet (genesis OPEN fast-fill race) must be QUARANTINED — not
+        appended with a deferred ``thesis_id`` FK that violates at ``commit()``.
+
+        ``broker_event_log.thesis_id`` is DEFERRABLE INITIALLY DEFERRED, so an
+        append referencing a not-yet-committed thesis passes the INSERT but
+        raises at commit, stranding the fill (neither logged nor quarantined).
+        The drain retries once the thesis lands (FS5 / B1)."""
+        from alphamind.execution.write_paths.unattributed_fill_persistence import (
+            list_unattributed_fills,
+        )
+
+        # A linked PM command id whose thesis id is NOT one the fixture seeded —
+        # the OPEN's Phase-2 commit has not landed the ``theses`` row yet.
+        uncommitted_thesis_id = derive_open_thesis_id("MSFT", _BASE_COMMAND_ID)
+        assert uncommitted_thesis_id != _THESIS_ID
+        unlanded_command_id = derive_pm_command_id(
+            invocation_id=_INVOCATION_ID,
+            envelope_id="ENV-SA-1",
+            command_ordinal=0,
+            attempt_seq=0,
+            thesis_id=uncommitted_thesis_id,
+        )
+        report = _fill_report(client_order_id=unlanded_command_id, order_id=uuid4())
+
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
+
+        # No deferred-FK-violating event-log row landed — and the commit did not raise.
+        assert await _read_event_log(session_factory) == []
+        # It was quarantined for the drain to retry once the thesis commits.
+        async with session_factory() as session:
+            queued = await list_unattributed_fills(session)
+        assert len(queued) == 1
+
+
+class TestBootstrapSentinelInvocation:
+    async def test_close_fill_with_bootstrap_sentinel_invocation_persists_null_invocation(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A self-attributing close fill whose engine link carries the cold-start
+        ``monitor-bootstrap`` sentinel invocation persists with ``invocation_id``
+        NULL — not the non-existent ``inv-monitor-bootstrap`` FK that would
+        violate the deferred ``invocations`` FK at commit and strand the fill.
+
+        On a fresh DB with no invocations the monitor's provider returns the
+        ``monitor-bootstrap`` sentinel; the closer weaves it into the engine
+        ``client_order_id`` and the returning fill parses it back as
+        ``InvocationId("inv-monitor-bootstrap")``. The column is nullable and the
+        thesis link still attributes the fill, so the sentinel (no matching
+        ``invocations`` row) is stored as NULL (CL3)."""
+        bootstrap_command_id = derive_engine_command_id(
+            monitor_session_id="mon-20260511T120000Z-deadbeef",
+            trigger_id=2,
+            thesis_id=_THESIS_ID,
+            invocation_id="monitor-bootstrap",
+        )
+        report = _fill_report(client_order_id=bootstrap_command_id, order_id=uuid4())
+
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
+
+        rows = await _read_event_log(session_factory)
+        assert len(rows) == 1
+        (row,) = rows
+        assert row.event_type == "FILL"
+        assert row.thesis_id == _THESIS_ID
+        # The bootstrap sentinel invocation has no ``invocations`` row -> stored NULL,
+        # not the non-existent FK that would have raised at commit.
+        assert row.invocation_id is None
+        assert row.position_id == "pos-1"
+
+
 class TestEventLogIdempotency:
     async def test_same_fill_delivered_twice_collapses_to_one_row(
         self, session_factory: async_sessionmaker[AsyncSession]
@@ -447,6 +522,48 @@ class TestTerminalStatusEvent:
             filled_qty="3",
             price=None,
         )
+
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
+
+        assert await _read_event_log(session_factory) == []
+
+    async def test_none_cumulative_terminal_is_not_treated_as_zero_fill(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A canceled event whose broker ``filled_qty`` is ``None`` (broker
+        reported nothing, not 0) must NOT append a zero-fill terminal event.
+
+        A partially-filled-then-canceled order can arrive with a ``None``
+        cumulative; defaulting that to ``0.0`` would let it pass the zero-fill
+        terminal guard and mis-project a no-fill terminal over an order that had
+        partials. ``None`` is unknown-not-zero, so the fill path + Phase 1 own
+        it and this path skips (FS3)."""
+        unknown_cumulative = TradeUpdate(
+            event="canceled",
+            order=Order(
+                id=uuid4(),
+                client_order_id=_PM_LINKED_COMMAND_ID,
+                created_at=_now_utc(),
+                updated_at=_now_utc(),
+                submitted_at=_now_utc(),
+                symbol="AAPL",
+                asset_class=AssetClass.US_EQUITY,
+                order_class=OrderClass.SIMPLE,
+                order_type=OrderType.LIMIT,
+                type=OrderType.LIMIT,
+                side=OrderSide.BUY,
+                time_in_force=TimeInForce.DAY,
+                status=AlpacaOrderStatus.CANCELED,
+                extended_hours=False,
+                qty="10",
+                filled_qty=None,
+            ),
+            timestamp=_now_utc(),
+            price=None,
+            qty=None,
+        )
+        (report,) = translate_trade_update(unknown_cumulative)
+        assert report.cumulative_filled_quantity is None
 
         await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
 
