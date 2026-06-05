@@ -45,7 +45,9 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from alphamind._kernel.ids import InvocationId, ThesisId
 from alphamind.execution.broker_adapter.queries import PositionSnapshot, TradeAccountSnapshot
+from alphamind.execution.write_paths.thesis_pnl_ledger import rederive_thesis_pnl_ledger
 from alphamind.portfolio_state.records.orders import OrderStatus
 from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
@@ -214,9 +216,7 @@ async def rebuild_projection(
     del alpaca_account  # No per-delta cash comparison — the rebuild has no adjudication.
 
     order_statuses_projected = await _project_terminal_order_statuses(handle.session)
-    # The per-thesis PnL-ledger re-derivation (critical #1) wiring lands in the
-    # next commit in this series.
-    theses_rederived = 0
+    theses_rederived = await _rederive_all_thesis_ledgers(handle.session, handle)
     intent_backed_symbols = await _intent_backed_symbols(handle.session)
     broker_facts = classify_broker_facts_without_intent(
         alpaca_positions=alpaca_positions,
@@ -310,6 +310,39 @@ async def _resolve_order_row(
             )
         ).scalar_one_or_none()
     return None
+
+
+async def _rederive_all_thesis_ledgers(session: AsyncSession, handle: InvocationHandle) -> int:
+    """Re-derive the PnL ledger for every thesis carrying events in the log.
+
+    Story 03c's :func:`rederive_thesis_pnl_ledger` is the single writer of
+    ``thesis_pnl_ledger`` — but it had no production caller, so the table was dark.
+    The rebuild wires it: enumerate the distinct ``thesis_id`` values present on the
+    broker-event log (the only theses whose realized PnL the log can derive), and
+    re-derive each. The write is an idempotent replace, so a rebuild reproduces the
+    same ledger rows. Returns the count of ledgers re-derived.
+    """
+    thesis_ids = (
+        (
+            await session.execute(
+                select(BrokerEventLogRow.thesis_id)
+                .where(BrokerEventLogRow.thesis_id.is_not(None))
+                .distinct()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    invocation_id = InvocationId(handle.invocation_id)
+    rederived = 0
+    for thesis_id in thesis_ids:
+        # The ``is_not(None)`` filter guarantees a non-NULL value at runtime; the
+        # mypy-visible ``str | None`` column type does not narrow, so guard it.
+        if thesis_id is None:
+            continue
+        await rederive_thesis_pnl_ledger(session, ThesisId(thesis_id), invocation_id)
+        rederived += 1
+    return rederived
 
 
 async def _intent_backed_symbols(session: AsyncSession) -> frozenset[str]:

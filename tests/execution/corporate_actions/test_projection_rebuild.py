@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import PositionId, ThesisId
@@ -39,6 +41,7 @@ from alphamind.state.records_broker_event_log import (
 )
 from alphamind.state.tables.broker_event_log_codec import record_to_row as event_record_to_row
 from alphamind.state.tables.orders import OrderRow
+from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
 
 from ._handler_substrate import (
     NOW,
@@ -110,6 +113,35 @@ def _terminal_event(
         thesis_id=ThesisId(thesis_id) if thesis_id else None,
         invocation_id=None,
         position_id=None if position_id is None else PositionId(position_id),
+        raw_payload_json=serialize_event_payload(payload),
+        broker_timestamp=NOW,
+        captured_at=NOW,
+    )
+
+
+def _fill_event(
+    *,
+    event_key: str,
+    alpaca_order_id: str,
+    fill_price: float,
+    fill_quantity: float,
+    side: str,
+    thesis_id: str = "thesis-1",
+    position_id: str = "pos-1",
+) -> BrokerEventRecord:
+    """A FILL event-log record the thesis-PnL fold can derive a lot from."""
+    payload = {
+        "alpaca_order_id": alpaca_order_id,
+        "fill_price": fill_price,
+        "fill_quantity": fill_quantity,
+        "raw_event_payload": {"order": {"side": side}},
+    }
+    return BrokerEventRecord(
+        event_key=event_key,
+        event_type=BrokerEventType.FILL,
+        thesis_id=ThesisId(thesis_id),
+        invocation_id=None,
+        position_id=PositionId(position_id),
         raw_payload_json=serialize_event_payload(payload),
         broker_timestamp=NOW,
         captured_at=NOW,
@@ -311,3 +343,52 @@ async def test_broker_position_without_intent_surfaces_as_projection_state(
     assert summary.broker_facts_without_intent == (
         BrokerFactNoIntent(symbol="DVN", asset_class="us_equity", qty=42.0, side="long"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Critical #1 — the thesis PnL ledger is populated after the rebuild.
+# ---------------------------------------------------------------------------
+
+
+async def test_rebuild_populates_thesis_pnl_ledger_from_the_log(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """Critical #1 — the rebuild wires ``rederive_thesis_pnl_ledger``: a thesis
+    carrying FILL events in the log gets a ``thesis_pnl_ledger`` row derived from
+    the log (previously dark — no production caller)."""
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_position_cluster(
+        factory,
+        make_open_equity_position(share_count=10.0),
+        make_pending_entry_order(),
+        make_active_thesis(),
+        make_active_bracket(),
+    )
+    # A single buy FILL opens a 10-share lot at $150 → cost_basis 1500, realized 0.
+    await _append_events(
+        factory,
+        _fill_event(
+            event_key="fevt-1",
+            alpaca_order_id="broker-uuid-1",
+            fill_price=150.0,
+            fill_quantity=10.0,
+            side="buy",
+        ),
+    )
+
+    async with factory() as sess:
+        before = (await sess.execute(select(ThesisPnlLedgerRow))).scalars().all()
+    assert before == []  # dark before the rebuild
+
+    ctx, handle = await open_handle(factory)
+    summary = await rebuild_projection(handle, alpaca_positions=(), alpaca_account=None)
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.theses_rederived == 1
+    async with factory() as sess:
+        ledger = (await sess.execute(select(ThesisPnlLedgerRow))).scalars().all()
+        assert len(ledger) == 1
+        assert ledger[0].thesis_id == "thesis-1"
+        assert ledger[0].cost_basis_usd == pytest.approx(1500.0)
+        assert ledger[0].realized_pnl_usd == pytest.approx(0.0)
