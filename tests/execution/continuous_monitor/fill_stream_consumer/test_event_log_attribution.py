@@ -292,6 +292,45 @@ class TestNativeLegStrandHole:
         assert len(queued) == 1
 
 
+class TestUncommittedThesisStrandHole:
+    async def test_linked_fill_whose_thesis_is_uncommitted_is_quarantined_not_stranded(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A linked fill whose ``client_order_id`` names a thesis row that has not
+        committed yet (genesis OPEN fast-fill race) must be QUARANTINED — not
+        appended with a deferred ``thesis_id`` FK that violates at ``commit()``.
+
+        ``broker_event_log.thesis_id`` is DEFERRABLE INITIALLY DEFERRED, so an
+        append referencing a not-yet-committed thesis passes the INSERT but
+        raises at commit, stranding the fill (neither logged nor quarantined).
+        The drain retries once the thesis lands (FS5 / B1)."""
+        from alphamind.execution.write_paths.unattributed_fill_persistence import (
+            list_unattributed_fills,
+        )
+
+        # A linked PM command id whose thesis id is NOT one the fixture seeded —
+        # the OPEN's Phase-2 commit has not landed the ``theses`` row yet.
+        uncommitted_thesis_id = derive_open_thesis_id("MSFT", _BASE_COMMAND_ID)
+        assert uncommitted_thesis_id != _THESIS_ID
+        unlanded_command_id = derive_pm_command_id(
+            invocation_id=_INVOCATION_ID,
+            envelope_id="ENV-SA-1",
+            command_ordinal=0,
+            attempt_seq=0,
+            thesis_id=uncommitted_thesis_id,
+        )
+        report = _fill_report(client_order_id=unlanded_command_id, order_id=uuid4())
+
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
+
+        # No deferred-FK-violating event-log row landed — and the commit did not raise.
+        assert await _read_event_log(session_factory) == []
+        # It was quarantined for the drain to retry once the thesis commits.
+        async with session_factory() as session:
+            queued = await list_unattributed_fills(session)
+        assert len(queued) == 1
+
+
 class TestEventLogIdempotency:
     async def test_same_fill_delivered_twice_collapses_to_one_row(
         self, session_factory: async_sessionmaker[AsyncSession]

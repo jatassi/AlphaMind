@@ -219,6 +219,15 @@ async def _resolve_attribution(db: AsyncSession, report: FillReport) -> _FillAtt
     """
     link = _parse_broker_carried_link(report.client_order_id)
     if link is not None:
+        # FS5 — ``broker_event_log.thesis_id`` is DEFERRABLE INITIALLY DEFERRED, so
+        # appending a row that names a not-yet-committed thesis passes the INSERT
+        # but violates at ``db.commit()`` and strands the whole report (neither
+        # logged nor quarantined). On a genesis OPEN fast-fill the thesis row may
+        # not have committed yet; treat it as not-yet-attributable and quarantine
+        # (return None) so the drain retries once the thesis lands — exactly the
+        # uncommitted-edge quarantine the order-row path already takes below.
+        if not await _thesis_row_exists(db, link.thesis_id):
+            return None
         # The linked path needs the thesis (from the link) and its position; the
         # order-row resolution hop is only relevant on the projection-cache path.
         position_id = await _resolve_position_id_for_thesis(db, link.thesis_id)
@@ -259,6 +268,21 @@ def _fill_event_record(
         broker_timestamp=report.fill_timestamp,
         captured_at=datetime.now(UTC),
     )
+
+
+async def _thesis_row_exists(db: AsyncSession, thesis_id: ThesisId) -> bool:
+    """Whether the linked ``theses`` row has committed (FS5).
+
+    The broker-carried link names the thesis a fill attributes to, but
+    ``broker_event_log.thesis_id`` is a DEFERRABLE INITIALLY DEFERRED FK — a row
+    that names a thesis whose ``theses`` row has not committed passes the INSERT
+    and only violates at ``db.commit()``, stranding the whole report. Checking
+    existence up front (mirroring :func:`_resolve_position_id_for_thesis`'s cheap
+    ``select``) lets the caller quarantine the fill for the drain to retry once
+    the thesis lands, instead of crashing the transaction.
+    """
+    stmt = select(ThesisRow.thesis_id).where(ThesisRow.thesis_id == thesis_id)
+    return (await db.execute(stmt)).scalars().one_or_none() is not None
 
 
 async def _resolve_position_id_for_thesis(
