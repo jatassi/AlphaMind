@@ -1,10 +1,15 @@
 """Periodic fill-backfill backstop (ALP-763).
 
-A fast Phase-2 entry fill can be dropped / quarantined before its ``orders``
-row commits. The websocket disconnect-recovery
+A PM- or engine-originated fill self-attributes off its broker-carried link
+(ADR-0002), so it no longer depends on a committed ``orders`` row — the prior
+PM fast-fill race is closed. What this backstop now catches is the link-LESS
+native-bracket protective child: its ``client_order_id`` is Alpaca-generated, so
+it attributes only through the order-row projection cache, and a fill that
+arrives before that row's position→thesis edge commits is quarantined (B1) until
+the edge lands. The websocket disconnect-recovery
 (:func:`recover_missed_fills_since`) only runs on a websocket RECONNECT and
 keys its ``since`` off ``max(fill_records.fill_timestamp)`` — which, once a
-LATER fill lands, permanently excludes the earlier dropped fill.
+LATER fill lands, permanently excludes the earlier quarantined fill.
 
 This task is the backstop: a sweep that runs ON AN INTERVAL (no disconnect
 needed) with an INDEPENDENT, generous lookback bound (``now - lookback``,
@@ -15,14 +20,16 @@ It REUSES the tested primitives rather than inventing a parallel translator:
 
 * :func:`recover_missed_fills_since` (ALP-389) — the get_orders → OrderSnapshot
   → FillReport recovery routine;
-* :func:`persist_fill_report` (the shared persist entry) — resolve → append OR
-  quarantine, never drops (``retry_resolve=False`` here: no per-fill retry);
+* :func:`persist_fill_report` (the shared persist entry) — self-attribute via
+  the broker-carried link → append to the event log (+ ``fill_records`` when an
+  order row resolves), only quarantining a genuinely out-of-band fill; never
+  drops;
 * :func:`drain_unattributed_fills` — integrate any queued fill whose order row
   now exists.
 
-``append_fill_record``'s dedupe makes re-feeding an already-persisted fill a
-no-op, so the generous lookback window costs only redundant reads, never
-duplicate rows.
+The event-log + ``fill_records`` idempotency (``event_key`` / dedupe key) makes
+re-feeding an already-captured fill a no-op, so the generous lookback window
+costs only redundant reads, never duplicate rows.
 
 The loop owns the run-forever lifecycle: a sweep error logs and continues to
 the next interval (matching the reconnect-supervisor tolerance in the fill
@@ -132,17 +139,12 @@ async def _run_sweep(
     The ``since`` bound is independent of ``fill_records`` state — a generous
     ``now - lookback`` so a fill dropped earlier in the swing-trading horizon
     is still in-window. Each recovered ``FillReport`` flows through the shared
-    :func:`persist_fill_report` (resolve → append OR quarantine), so a fill
-    whose order row exists is appended (dedupe collapses re-feeds of
-    already-persisted fills) and one whose row is still missing is parked. The
-    trailing :func:`drain_unattributed_fills` then integrates any previously
-    quarantined fill whose order row has since materialized.
-
-    ``retry_resolve=False``: the backfill skips the live consumer's
-    sub-second in-process retry. The backfill is itself the slow path and
-    recovers fills that may never resolve (out-of-band orders); paying a
-    multi-second sleep per unresolved fill is pure waste here. A fill whose
-    row commits late is integrated by the trailing drain instead.
+    :func:`persist_fill_report`, which self-attributes via the broker-carried
+    link and appends to the event log (dedupe collapses re-feeds of
+    already-captured fills), only quarantining a genuinely out-of-band fill that
+    carries no link. The trailing :func:`drain_unattributed_fills` then
+    integrates any previously-quarantined fill whose order row has since
+    materialized into ``fill_records``.
     """
     until = now()
     since = until - lookback
@@ -151,11 +153,15 @@ async def _run_sweep(
     # ``AccountStateQueries`` and can swap in a stub.
     gen: AsyncIterator[FillReport] = recover_missed_fills_since(queries, since=since, until=until)  # type: ignore[arg-type]
     async for report in gen:
+        # FS1 — backfill sweeps are a REST-recovery path: each report carries the
+        # order's CUMULATIVE fill, so flag the persist to append only the residual
+        # gap over what is already logged (gap-free, exactly-once) rather than
+        # re-logging the full cumulative and double-counting in the 03c fold.
         await persist_fill_report(
             report,
             session_factory=session_factory,
             enrichment_callable=enrichment_callable,
-            retry_resolve=False,
+            recovered=True,
         )
     await drain_unattributed_fills(
         session_factory=session_factory,

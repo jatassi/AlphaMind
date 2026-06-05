@@ -276,3 +276,84 @@ def test_gateway_submission_failed_is_frozen_dataclass() -> None:
     failed = GatewaySubmissionFailed(reason="r", attempt_count=3, last_error_class="ConnectError")
     with pytest.raises(FrozenInstanceError):
         cast(Any, failed).attempt_count = 99
+
+
+# ---------------------------------------------------------------------------
+# bounded_broker_call — time-bounded write offload (ALP-841 class, write side)
+# ---------------------------------------------------------------------------
+
+
+class TestBoundedBrokerCall:
+    """A synchronous Alpaca write call (``submit_order`` / ``replace`` / ``cancel``)
+    runs on a worker thread bounded by a wall-clock ``wait_for``, so a hung socket
+    can neither freeze the calling event loop nor park the caller (e.g. the
+    monitor's fire-close) for the full client-factory socket timeout.
+    """
+
+    def test_hung_call_does_not_block_event_loop(self) -> None:
+        """While the call is parked, a concurrent coroutine still makes progress."""
+        import asyncio
+        import threading
+
+        from alphamind.execution.broker_adapter.retry import bounded_broker_call
+
+        release = threading.Event()
+
+        def hang() -> str:
+            release.wait(timeout=5.0)
+            return "ack"
+
+        async def scenario() -> int:
+            ticks = 0
+
+            async def call() -> str:
+                return await bounded_broker_call(hang)
+
+            async def heartbeat() -> None:
+                nonlocal ticks
+                for _ in range(5):
+                    await asyncio.sleep(0)
+                    ticks += 1
+
+            call_task = asyncio.create_task(call())
+            await heartbeat()
+            release.set()
+            assert await call_task == "ack"
+            return ticks
+
+        ticks = asyncio.run(scenario())
+        assert ticks == 5, "concurrent coroutine starved → submit ran inline on the loop"
+
+    def test_hung_call_times_out_and_is_classified_transient(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A call exceeding the budget raises ``TimeoutError`` — which ``is_transient``
+        classifies as retriable, so ``submit_with_retry`` retries it (not a permanent
+        rejection)."""
+        import asyncio
+        import threading
+
+        import alphamind.execution.broker_adapter.retry as retry_mod
+        from alphamind.execution.broker_adapter.errors import is_transient
+        from alphamind.execution.broker_adapter.retry import bounded_broker_call
+
+        never_released = threading.Event()
+
+        def hang() -> str:
+            never_released.wait(timeout=5.0)
+            return "ack"
+
+        monkeypatch.setattr(retry_mod, "_SUBMIT_TIMEOUT_SECONDS", 0.05)
+
+        async def run() -> None:
+            await bounded_broker_call(hang)
+
+        try:
+            with pytest.raises(TimeoutError) as excinfo:
+                asyncio.run(run())
+        finally:
+            never_released.set()
+
+        # The timeout routes down the transient path so the submit retry loop
+        # re-attempts rather than surfacing a permanent rejection.
+        assert is_transient(excinfo.value)

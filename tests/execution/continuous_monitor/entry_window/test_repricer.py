@@ -3,9 +3,9 @@
 The repricer decides reprice-vs-cancel from the entry's fill state, whether it
 is a repriceable equity limit, and how many times it has already been repriced
 (``modification_count`` vs the budget). These tests drive each branch with
-fakes — recorded fills, an un-routed synthetic id, a spent budget, a non-equity
-entry, a missing quote, and the three broker-replace classifications — asserting
-the returned outcome and which seams fired.
+fakes — recorded fills, an un-routed entry (no broker id — None), a spent
+budget, a non-equity entry, a missing quote, and the three broker-replace
+classifications — asserting the returned outcome and which seams fired.
 """
 
 from __future__ import annotations
@@ -128,14 +128,14 @@ def _repricer(rec: _Recorder, *, max_reprice_count: int = 2) -> BrokerEntryWindo
 
 def _target(
     *,
-    alpaca_order_id: str = "alpaca-uuid-xyz",
+    alpaca_order_id: str | None = "alpaca-uuid-xyz",
     has_recorded_fills: bool = False,
     is_equity_limit: bool = True,
     direction: str = "short",
     modification_count: int = 0,
 ) -> RepriceTarget:
     return RepriceTarget(
-        alpaca_order_id=AlpacaOrderId(alpaca_order_id),
+        alpaca_order_id=AlpacaOrderId(alpaca_order_id) if alpaca_order_id is not None else None,
         has_recorded_fills=has_recorded_fills,
         is_equity_limit=is_equity_limit,
         ticker="ZS",
@@ -213,8 +213,11 @@ async def test_recorded_fill_skips_reprice_and_cancel() -> None:
     assert rec.cancelled == []
 
 
-async def test_synthetic_broker_id_is_retried() -> None:
-    rec = _Recorder(target=_target(alpaca_order_id="alp-ORD-entry-1"))
+async def test_unrouted_entry_is_retried() -> None:
+    """A not-yet-routed entry carries NO broker id (None, ALP-847 — the synthetic
+    'alp-' placeholder is deleted); the repricer retries rather than acting on a
+    missing id."""
+    rec = _Recorder(target=_target(alpaca_order_id=None))
     outcome = await _repricer(rec).handle(bracket=_bracket(), now=_NOW)
 
     assert outcome is EntryWindowDeadlineOutcome.FAILED

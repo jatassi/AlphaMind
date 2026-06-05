@@ -134,10 +134,10 @@ async def seeded_db(db_path: str) -> AsyncIterator[str]:
             text("""
                 INSERT INTO bracket_legs
                     (bracket_leg_id, bracket_id, leg_index, leg_type, trigger_kind,
-                     trigger_payload_json, enforcement, leg_status)
+                     trigger_payload_json, enforcement, enforcement_binding, leg_status)
                 VALUES
                     ('leg-detail-1', 'brk-detail-1', 0, 'PRICE_STOP', 'PRICE',
-                     '{"trigger_price": "200.00"}', 'MECHANICAL', 'ACTIVE')
+                     '{"trigger_price": "200.00"}', 'MECHANICAL', 'monitor_enforced', 'ACTIVE')
             """)
         )
 

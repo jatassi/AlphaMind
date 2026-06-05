@@ -89,6 +89,7 @@ from alphamind.distillation.regime import RegimeLabel as DistillationRegimeLabel
 from alphamind.execution.write_paths.phase1 import (
     Phase1Summary,
     process_unprocessed_fills,
+    rederive_thesis_ledgers,
 )
 from alphamind.execution.write_paths.phase2.atomic import (
     invocation_has_pending_submit_strand,
@@ -136,6 +137,8 @@ from alphamind.risk_guardrails.state_delivery.config import (
     StateDeliveryConfig,
     load_state_delivery_config,
 )
+from alphamind.scheduler.account_activities_poll import run_account_activities_poll
+from alphamind.scheduler.borrow_accrual import run_borrow_accrual
 from alphamind.scheduler.control.events import SSEEventEmitter
 from alphamind.scheduler.control.models import (
     InvocationEndedEvent,
@@ -434,6 +437,24 @@ def _ca_queries_factory_from_debug_e2e(
     return lambda _venue, _mode: debug_settings.ca_queries
 
 
+def _activities_source_factory_from_debug_e2e(
+    context: RunInvocationContext,
+) -> Any:
+    """``AccountActivitiesSource`` factory derived from ``context.debug_e2e`` (ALP-846).
+
+    Mirrors :func:`_account_queries_factory_from_debug_e2e`; ``None`` on the
+    production path (``run_account_activities_poll`` builds the Alpaca-backed
+    ``AccountStateQueries``), the bundle's log-only account queries on debug-e2e
+    so the harness stays offline. The log-only stand-in's
+    ``get_account_activities`` yields nothing — the synthetic portfolio carries
+    no option-lifecycle events.
+    """
+    debug_settings = context.debug_e2e
+    if debug_settings is None:
+        return None
+    return lambda _venue, _mode: debug_settings.account_queries
+
+
 def _quote_source_factory_from_debug_e2e(
     context: RunInvocationContext,
 ) -> Any:
@@ -727,8 +748,41 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
                 market_inputs=phase1_inputs.market_inputs,
                 config=state_persistence_config,
                 borrow_cost_resolver=borrow_cost_resolver,
-                alpaca_orders=phase1_inputs.alpaca_orders,
             )
+            # ALP-846 / W1b — option-lifecycle account-activities poll. A
+            # pipeline-cadence task (ADR-0004 evicts it from the always-on
+            # monitor): it appends OPEXP/OPEXC/OPASN/OPTRD events to the
+            # broker-event log and books realized PnL inside this same write
+            # transaction (single writer = pipeline). A booking error (a missing
+            # local position, or the surfacing condition where an assignment is
+            # not fully described by the paired OPTRD) propagates to abort the
+            # write unit — it is a real inconsistency, not a transient.
+            await run_account_activities_poll(
+                write_handle,
+                venue_config=venue_config,
+                execution_mode=execution_mode,
+                activities_source_factory=_activities_source_factory_from_debug_e2e(context),
+            )
+            # ALP-855 / W4a — daily SHORT-equity borrow accrual, relocated out of
+            # the always-on monitor (ADR-0004) into this pipeline write unit
+            # (single writer = pipeline, ADR-0005). The once-per-trading-day guard
+            # makes the few-times-per-day pipeline cadence book the accrual exactly
+            # once; it reuses the invocation's session + the already-built
+            # ``borrow_cost_resolver`` (no per-tick InvocationRow, no daily timer).
+            await run_borrow_accrual(
+                write_handle,
+                borrow_cost_resolver=borrow_cost_resolver,
+                now=now,
+            )
+            # CR1 — re-derive the per-thesis PnL ledgers AFTER the activities poll
+            # (and borrow accrual) have appended this invocation's
+            # OPEXP/OPEXC/OPASN/OPTRD option-lifecycle events to the broker-event
+            # log. ``process_unprocessed_fills`` projects order status + classifies
+            # broker facts from the *fill* log, but a thesis-ledger derived there
+            # would miss a same-invocation lifecycle event (it is not on the log
+            # until the poll runs). Re-deriving here, still inside the single
+            # Phase-1 write transaction, folds the complete log into the ledger.
+            await rederive_thesis_ledgers(write_handle)
             await _update_row_phase1(
                 write_handle,
                 phase1_summary=summary,
@@ -797,7 +851,8 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     # the live ``TradingClient`` on its own side (alpaca-py is not picklable
     # across the subprocess boundary). Debug-e2e / log-only runs pass
     # ``None`` so the submit_envelope wrapper's broker-routing gate stays
-    # False and synthetic-``alp-{order_id}`` placeholders persist. The
+    # False and orders persist with NO broker id (NULL, ALP-847 — never a
+    # synthetic placeholder). The
     # ``ExecutionConfig`` is reused from ``pipeline_config.loaded.execution``
     # rather than re-parsing ``execution.yaml`` — ``parse_loaded_config``
     # already did the work inside ``insert_invocation_record``.
@@ -843,12 +898,23 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         phase2_handle = InvocationHandle(session=session, invocation_id=invocation_id)
         await _update_row_phase2(phase2_handle, phase2_summary=phase2_summary)
         # ALP-836 integrity guard — the single authoritative phase-2 stamp. Withhold
-        # it (leaving phase2_completed_at NULL + logging loudly) when any order is
-        # stuck in PENDING_SUBMIT for this invocation: a lost post-submit backfill
-        # behind a live broker order. The invocation reads as incomplete + the
-        # Phase-1 reconcile order-backfill repairs it next run, rather than papering
-        # over the strand by marking the phase done.
-        if not await invocation_has_pending_submit_strand(session, invocation_id=invocation_id):
+        # it (leaving phase2_completed_at NULL) when any order is stuck in
+        # PENDING_SUBMIT for this invocation: a lost post-submit backfill behind a
+        # live broker order. The invocation reads as incomplete rather than papering
+        # over the strand by marking the phase done. The normal abandon path drives
+        # such a row to a terminal status (FL3); a residual strand here is the rare
+        # lost-commit case (process death between the broker submit and the backfill
+        # commit), so it is surfaced as an operator-visible warning rather than
+        # silently withheld — there is no order-backfill that self-heals it next run.
+        if await invocation_has_pending_submit_strand(session, invocation_id=invocation_id):
+            log.warning(
+                "phase2_completed_at withheld for invocation %s — an unresolved "
+                "PENDING_SUBMIT order strand (a lost post-submit backfill behind a "
+                "live broker order) remains; operator follow-up required, there is "
+                "no automatic recovery sweep",
+                invocation_id,
+            )
+        else:
             await stamp_phase_completion(phase2_handle, column="phase2_completed_at")
         await session.commit()
     progress.phase_done("phase2", commands_submitted=phase2_summary.commands_submitted)

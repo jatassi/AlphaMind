@@ -14,6 +14,9 @@ Design intent (historical): `docs/design/pipeline-control-and-events-schema.md`,
 | Module | Responsibility |
 |---|---|
 | `__main__.py` | Entry point for ``python -m alphamind.scheduler``. |
+| `account_activities_poll.py` | Scheduler-layer registration of the account-activities poll (ALP-846 / W1b). |
+| `borrow_accrual.py` | Scheduler-layer borrow-accrual accrual, relocated from the always-on monitor (ALP-855 / W4a). |
+| `borrow_accrual_kernel.py` | Pure recompute kernel for the daily borrow-accrual tick (ALP-719 / relocated ALP-855). |
 | `control/` | Pipeline ``/control`` + ``/events`` HTTP surface. |
 | `debug_e2e/` | Debug-e2e mode package — two-symbol public surface. |
 | `driver.py` | APScheduler driver for the pipeline scheduler. |

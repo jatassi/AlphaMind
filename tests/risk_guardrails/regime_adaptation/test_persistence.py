@@ -428,22 +428,6 @@ class TestAlembicMigration:
         finally:
             eng.dispose()
 
-    def test_downgrade_drops_regime_adaptation_state_table(self, tmp_path: Path) -> None:
-        db_path = tmp_path / "alembic.db"
-        cfg = _alembic_config(db_path)
-        command.upgrade(cfg, "head")
-        # Downgrade to the parent of this story's revision so the regime
-        # adaptation table is dropped regardless of how many later
-        # migrations have stacked on top.
-        command.downgrade(cfg, "8a8d4e44b305")
-
-        eng = make_engine(str(db_path))
-        try:
-            insp = inspect(eng)
-            assert "regime_adaptation_state" not in set(insp.get_table_names())
-        finally:
-            eng.dispose()
-
     def test_downgrade_to_base_drops_table(self, tmp_path: Path) -> None:
         db_path = tmp_path / "alembic.db"
         cfg = _alembic_config(db_path)

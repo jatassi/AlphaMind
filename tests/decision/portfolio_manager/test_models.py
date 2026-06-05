@@ -110,6 +110,7 @@ def _close_command_basic() -> CloseCommand:
 def _full_thesis_for_open() -> Thesis:
     return Thesis(
         summary="Long NVDA on AI capex tailwind.",
+        nature="directional",
         components=(
             ThesisComponent(
                 component_type="entry_rationale",
@@ -126,6 +127,7 @@ def _hard_price_leg() -> PriceLeg:
     return PriceLeg(
         type="price",
         is_hard=True,
+        trigger_signal="underlying_price",
         condition=PriceCondition(
             underlying_trigger="NVDA",
             comparator="<=",
@@ -169,6 +171,7 @@ _OPEN_COMMAND_PAYLOAD: dict[str, Any] = {
         {
             "type": "price",
             "is_hard": True,
+            "trigger_signal": "underlying_price",
             "condition": {
                 "underlying_trigger": "NVDA",
                 "comparator": "<=",
@@ -179,6 +182,7 @@ _OPEN_COMMAND_PAYLOAD: dict[str, Any] = {
     ],
     "thesis": {
         "summary": "Long NVDA.",
+        "nature": "directional",
         "components": [
             {
                 "component_type": "entry_rationale",

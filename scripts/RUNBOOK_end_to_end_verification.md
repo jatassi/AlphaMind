@@ -245,9 +245,10 @@ first invocation runs.
 
 **When to use.** Exactly once, before the daemon is started for the
 first time against a fresh paper or live account. After this bootstrap,
-the daemon takes over and the reconciliation auto-correct path (ALP-619)
-keeps `cash_ledger.current_cash_usd` aligned with Alpaca on every
-subsequent invocation.
+the daemon takes over: the Projection is rebuilt each invocation by
+folding the broker-event log onto the live broker snapshot (ADR-0001),
+so `cash_ledger.current_cash_usd` stays aligned without a separate
+auto-correct path.
 
 **Prerequisites.**
 
@@ -278,15 +279,14 @@ normally (no `--fresh-start`).
 
 **Hard-fail paths.** The flag refuses to run when:
 
-- Alpaca reports any open positions. The error names the offending
-  symbol(s). Reset the Alpaca account first, or — if the positions are
-  intentional — populate both singletons by hand (see the recovery
-  section below) and rely on ALP-619's reconciliation auto-correct path
-  to take it from there.
+- Alpaca reports any open positions or open orders. The error names the
+  offending symbol(s). Reset the Alpaca account first — the genesis
+  cutover procedure (`docs/runbooks/genesis-cutover.md`) is the supported
+  path when starting from a flat new account.
 - `cash_ledger` already has a row. The error includes the existing
-  `current_cash_usd`. ALP-619 handles drift on existing rows; a
-  re-bootstrap is never the correct path once the singleton is
-  populated.
+  `current_cash_usd`. The Projection rebuilds from the broker-event log on
+  every invocation (ADR-0001); a re-bootstrap is never the correct path
+  once the singleton is populated.
 - `drawdown_state` already has a row. The error includes the existing
   `equity_high_water_mark_usd`. Same recovery as above.
 

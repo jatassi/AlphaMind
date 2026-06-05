@@ -20,6 +20,7 @@ from alphamind._kernel.money import Price, money, price
 from alphamind.commands.command_models import (
     AddCommand,
     BracketOrderParameters,
+    CapitalProtectionFloor,
     Direction,
     EntryOrder,
     EntryWindow,
@@ -62,6 +63,7 @@ def _hard_leg(ticker: str, trigger: Price = _DEFAULT_STOP_TRIGGER) -> PriceLeg:
     return PriceLeg(
         type="price",
         is_hard=True,
+        trigger_signal="underlying_price",
         condition=PriceCondition(underlying_trigger=ticker, comparator=">=", trigger_price=trigger),
         order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
     )
@@ -70,6 +72,7 @@ def _hard_leg(ticker: str, trigger: Price = _DEFAULT_STOP_TRIGGER) -> PriceLeg:
 def _thesis(ticker: str) -> Thesis:
     return Thesis(
         summary=f"Short {ticker} on momentum break.",
+        nature="directional",
         components=(
             ThesisComponent(
                 component_type="entry_rationale",
@@ -255,6 +258,7 @@ async def test_non_equity_entry_left_verbatim() -> None:
         ),
         invalidation_legs=(_hard_leg("NVDA"),),
         thesis=_thesis("NVDA"),
+        capital_protection_floor=CapitalProtectionFloor(max_loss=money(600.0)),
     )
     source = _FakeQuoteSource({"NVDA": _BID_ASK})
 

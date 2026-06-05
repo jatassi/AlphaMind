@@ -26,6 +26,7 @@ from alphamind._kernel.ids import (
     OrderId,
     PositionId,
     Symbol,
+    ThesisId,
 )
 from alphamind._kernel.money import money, price
 from alphamind._kernel.regime import (
@@ -36,6 +37,7 @@ from alphamind.analysis.synthesizer.models import BriefSource
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.commands.command_models import (
     BracketOrderParameters,
+    CapitalProtectionFloor,
     EntryOrder,
     EquityInstrument,
     PositionSize,
@@ -144,6 +146,15 @@ def _bypass_init_PositionView(**kwargs: object) -> Any:  # noqa: N802
     from alphamind.portfolio_state.views.positions import PositionView
 
     obj = object.__new__(PositionView)
+    for k, v in kwargs.items():
+        object.__setattr__(obj, k, v)
+    return obj
+
+
+def _bypass_init_OrderRecord(**kwargs: object) -> Any:  # noqa: N802
+    from alphamind.portfolio_state.records.orders import OrderRecord
+
+    obj = object.__new__(OrderRecord)
     for k, v in kwargs.items():
         object.__setattr__(obj, k, v)
     return obj
@@ -368,6 +379,7 @@ def _open_command(
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="underlying_price",
                 condition=PriceCondition(
                     underlying_trigger=underlying,
                     comparator="<=",
@@ -378,6 +390,7 @@ def _open_command(
         ),
         thesis=Thesis(
             summary=f"Long {underlying}.",
+            nature="directional",
             components=(
                 OMSThesisComponent(
                     component_type="entry_rationale",
@@ -597,20 +610,39 @@ def _make_pm_view(positions: tuple[Any, ...] = ()) -> PortfolioManagerView:
     )
 
 
+_FIXTURE_THESIS_ID = "THE-NVDA-0123456789abcdef0123456789abcdef"
+"""Default originating thesis FK the fixture positions / pending orders carry so
+CLOSE / ADD / ADJUST / CANCEL resolve a real broker-carried link (ALP-844)."""
+
+
+def _pending_order_for_cancel(order_id: str = "ORD-1") -> Any:
+    """A minimal pending :class:`OrderRecord` the CANCEL fixture targets.
+
+    Only the fields the order→thesis lookup reads are populated; the rest are
+    left unset (the lookup never touches them)."""
+    return _bypass_init_OrderRecord(
+        order_id=order_id,
+        originating_thesis_id=_FIXTURE_THESIS_ID,
+    )
+
+
 def _position_view(position_id: str, *, record: PositionRecord | None = None) -> Any:
     """Build a sparse :class:`StrategistPositionView` referencing *position_id*.
 
-    Tests that only need the view to participate in position-id lookups can
-    leave *record* implicit; callers that need the lookup to resolve to a
-    typed :class:`PositionRecord` (e.g., AddCommand projections) pass one in.
+    The default record carries a ``thesis_id`` and a pending order (``ORD-1``)
+    with an ``originating_thesis_id`` so CLOSE / ADD / ADJUST / CANCEL commands
+    can resolve their broker-carried thesis FK (ALP-844). Callers needing a
+    typed record (e.g., AddCommand instrument projections) pass one in.
     """
-    inner_record = record or _bypass_init_PositionRecord(position_id=position_id)
+    inner_record = record or _bypass_init_PositionRecord(
+        position_id=position_id, thesis_id=_FIXTURE_THESIS_ID
+    )
     inner_view = _bypass_init_PositionView(record=inner_record)
     return _bypass_init_StrategistPositionView(
         position=inner_view,
         thesis=None,
         bracket=None,
-        pending_orders=(),
+        pending_orders=(_pending_order_for_cancel(),),
         modification_trail=(),
     )
 
@@ -1153,8 +1185,15 @@ async def test_state_cell_isolation() -> None:
 
 @pytest.mark.asyncio
 async def test_synthetic_command_id_format() -> None:
-    """An accepted command's command_id matches the regex
-    ``^inv-{invocation_id}\\.ENV-(REC|SA|SA-ORD)-[0-9]+\\.[0-9]+\\.[0-9]+$``."""
+    """An accepted command's command_id is a structurally-valid PM-originated
+    id carrying the broker-carried thesis FK (ALP-844) — it parses cleanly and
+    its thesis round-trips to the OPEN's deterministic ``THE-NVDA-{suffix}``."""
+    from alphamind.execution.oms.command_ids import (
+        is_pm_originated,
+        parse_pm_command_id,
+        synthesize_id_suffix,
+    )
+
     envelope = _make_analyst_envelope()
     _, server, _ = _build_state_and_server(envelope_for_routing=envelope)
 
@@ -1162,8 +1201,10 @@ async def test_synthetic_command_id_format() -> None:
     payload = json.loads(text)
     cmd_id = payload["submission_results"][0]["command_id"]
 
-    pattern = re.compile(r"^inv-[A-Za-z0-9_\-:]+\.ENV-(REC|SA|SA-ORD)-[0-9]+\.[0-9]+\.[0-9]+$")
-    assert pattern.match(cmd_id), f"command_id {cmd_id!r} does not match expected format"
+    assert is_pm_originated(cmd_id), f"command_id {cmd_id!r} is not a valid PM-originated id"
+    components = parse_pm_command_id(cmd_id)
+    assert components.envelope_id == "ENV-REC-1"
+    assert components.thesis_id == f"THE-NVDA-{synthesize_id_suffix(cmd_id)}"
 
 
 # ---------------------------------------------------------------------------
@@ -1206,10 +1247,18 @@ async def test_layer_1_parse_failure_captured_in_failed_submission_log() -> None
     entry = failed_log[0]
     assert entry.raw_args == bogus_args
     assert "source_provenance" in entry.validation_error_repr
-    pattern = re.compile(r"^inv-[A-Za-z0-9_\-:]+\.ENV-REC-99\.0\.0$")
+    # A rejected / malformed envelope is not a real order and must NOT route
+    # through the thesis-required order-derivation contract (ALP-844). The
+    # forensic id uses its own ``ENV-REC-INVALID.…`` synthetic scheme that is
+    # deliberately NOT a parseable PM/engine command id.
+    from alphamind.execution.oms.command_ids import is_engine_originated, is_pm_originated
+
+    pattern = re.compile(r"^ENV-REC-INVALID\.inv-[A-Za-z0-9_\-:]+\.ENV-REC-99\.0\.0$")
     assert pattern.match(entry.command_id), (
-        f"command_id {entry.command_id!r} does not match expected Layer-1 format"
+        f"command_id {entry.command_id!r} does not match expected forensic format"
     )
+    assert not is_pm_originated(entry.command_id)
+    assert not is_engine_originated(entry.command_id)
     # Parsed submission_log untouched — Layer-1 failures don't reach there.
     assert len(get_state().submission_log) == 0
     # State cell unchanged.
@@ -1941,11 +1990,16 @@ async def test_open_acknowledgment_carries_deterministic_position_and_order_ids(
     ack = payload["submission_results"][0]["acknowledgment"]
     state = get_state()
 
+    # The Phase-2 minted ids hash the *base* command id; the broker-carried
+    # link (ALP-844) is stripped by ``synthesize_id_suffix`` so the suffix is
+    # identical regardless of which thesis FK the id carries. We pass the
+    # OPEN's deterministic thesis here so the call is well-formed.
     expected_command_id = derive_pm_command_id(
         invocation_id=state.invocation_id,
         envelope_id="ENV-REC-1",
         command_ordinal=0,
         attempt_seq=0,
+        thesis_id=ThesisId("THE-NVDA-0123456789abcdef0123456789abcdef"),
     )
     expected_suffix = synthesize_id_suffix(expected_command_id)
     ticker = "NVDA"
@@ -2051,6 +2105,128 @@ def test_add_command_raises_when_position_lookup_returns_none() -> None:
         _command_to_validation_request(
             _add_command(position_id="POS-NVDA-MISSING"),
             position_lookup=lambda _id: None,
+        )
+
+
+# ---------------------------------------------------------------------------
+# ALP-844 — broker-carried link: originating thesis FK in the command id
+# ---------------------------------------------------------------------------
+
+
+def _equity_position_with_thesis(*, position_id: str, thesis_id: str | None) -> PositionRecord:
+    from alphamind.portfolio_state.records.positions import (
+        Direction as PSDirection,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        EquityPositionDetails,
+    )
+
+    return _bypass_init_PositionRecord(
+        position_id=position_id,
+        thesis_id=thesis_id,
+        direction=PSDirection.LONG,
+        details=EquityPositionDetails(
+            ticker="NVDA",  # type: ignore[arg-type]
+            share_count=100.0,
+            average_cost_basis_per_share=750.0,
+        ),
+    )
+
+
+def test_resolve_thesis_open_matches_phase2_minted_thesis_id() -> None:
+    """An OPEN's broker-carried thesis FK equals the ``THE-{ticker}-{suffix}``
+    thesis_id Phase 2 mints from the same base command id — so a fill
+    self-attributes to the very thesis row the OPEN creates (ALP-844)."""
+    from alphamind.decision.portfolio_manager.submit_envelope.process import (
+        _resolve_originating_thesis,
+    )
+    from alphamind.execution.oms.command_ids import synthesize_id_suffix
+
+    base = "inv-2026-05-05.ENV-REC-1.0.0"
+    resolved = _resolve_originating_thesis(
+        _open_command(underlying="NVDA"),
+        base_command_id=base,
+        position_lookup=lambda _id: None,
+        order_thesis_lookup=lambda _id: None,
+    )
+    assert resolved == f"THE-NVDA-{synthesize_id_suffix(base)}"
+
+
+def test_resolve_thesis_close_reads_position_thesis() -> None:
+    from alphamind.decision.portfolio_manager.submit_envelope.process import (
+        _resolve_originating_thesis,
+    )
+
+    thesis = "THE-NVDA-0123456789abcdef0123456789abcdef"
+    record = _equity_position_with_thesis(position_id="POS-NVDA-001", thesis_id=thesis)
+    resolved = _resolve_originating_thesis(
+        _close_command(position_id="POS-NVDA-001"),
+        base_command_id="inv-X.ENV-SA-1.0.0",
+        position_lookup={"POS-NVDA-001": record}.get,
+        order_thesis_lookup=lambda _id: None,
+    )
+    assert resolved == thesis
+
+
+def test_resolve_thesis_close_raises_when_position_thesis_is_none() -> None:
+    """A monitor/PM-managed position always carries a thesis; a CLOSE against a
+    thesis-less position must raise rather than mint a thesis-less id — the
+    sentinel path the prior attempt introduced is gone."""
+    from alphamind.decision.portfolio_manager.submit_envelope.process import (
+        _resolve_originating_thesis,
+    )
+
+    record = _equity_position_with_thesis(position_id="POS-NVDA-001", thesis_id=None)
+    with pytest.raises(ValueError, match="originating thesis"):
+        _resolve_originating_thesis(
+            _close_command(position_id="POS-NVDA-001"),
+            base_command_id="inv-X.ENV-SA-1.0.0",
+            position_lookup={"POS-NVDA-001": record}.get,
+            order_thesis_lookup=lambda _id: None,
+        )
+
+
+def test_resolve_thesis_close_raises_when_position_absent() -> None:
+    from alphamind.decision.portfolio_manager.submit_envelope.process import (
+        _resolve_originating_thesis,
+    )
+
+    with pytest.raises(ValueError, match="absent from the PM view"):
+        _resolve_originating_thesis(
+            _close_command(position_id="POS-GONE"),
+            base_command_id="inv-X.ENV-SA-1.0.0",
+            position_lookup=lambda _id: None,
+            order_thesis_lookup=lambda _id: None,
+        )
+
+
+def test_resolve_thesis_cancel_reads_order_thesis() -> None:
+    from alphamind.decision.portfolio_manager.submit_envelope.process import (
+        _resolve_originating_thesis,
+    )
+
+    thesis = ThesisId("THE-NVDA-0123456789abcdef0123456789abcdef")
+    order_thesis: dict[str, ThesisId] = {"ORD-1": thesis}
+    resolved = _resolve_originating_thesis(
+        _cancel_command(order_id="ORD-1"),
+        base_command_id="inv-X.ENV-SA-1.0.0",
+        position_lookup=lambda _id: None,
+        order_thesis_lookup=order_thesis.get,
+    )
+    assert resolved == thesis
+
+
+def test_resolve_thesis_cancel_raises_when_order_thesis_unresolvable() -> None:
+    from alphamind.decision.portfolio_manager.submit_envelope.process import (
+        _resolve_originating_thesis,
+    )
+
+    with pytest.raises(ValueError, match="ORD-1"):
+        _resolve_originating_thesis(
+            _cancel_command(order_id="ORD-1"),
+            base_command_id="inv-X.ENV-SA-1.0.0",
+            position_lookup=lambda _id: None,
+            order_thesis_lookup=lambda _id: None,
         )
 
 
@@ -2286,6 +2462,7 @@ def test_strategy_open_validation_request_carries_per_leg_directions() -> None:
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="net_mark",
                 condition=PriceCondition(
                     underlying_trigger="NVDA",
                     comparator="<=",
@@ -2296,6 +2473,7 @@ def test_strategy_open_validation_request_carries_per_leg_directions() -> None:
         ),
         thesis=Thesis(
             summary="Spread.",
+            nature="non_directional",
             components=(
                 OMSThesisComponent(
                     component_type="entry_rationale",
@@ -2306,6 +2484,7 @@ def test_strategy_open_validation_request_carries_per_leg_directions() -> None:
                 ),
             ),
         ),
+        capital_protection_floor=CapitalProtectionFloor(max_loss=money(500.0)),
     )
     request = _build_constructive_request_from_open(command)
     assert request.instrument.asset_type is InstrumentType.STRATEGY

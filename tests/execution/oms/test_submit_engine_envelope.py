@@ -231,7 +231,7 @@ async def _seed_cash_ledger(
 def _open_position(
     position_id: str = "POS-NVDA-001",
     *,
-    thesis_id: str = "THE-NVDA-1",
+    thesis_id: str = "THE-NVDA-0123456789abcdef0123456789abcdef",
     bracket_id: str = "BRK-NVDA-1",
     ticker: str = "NVDA",
 ) -> PositionRecord:
@@ -268,7 +268,7 @@ def _open_position(
 
 
 def _active_thesis(
-    thesis_id: str = "THE-NVDA-1", position_id: str = "POS-NVDA-001"
+    thesis_id: str = "THE-NVDA-0123456789abcdef0123456789abcdef", position_id: str = "POS-NVDA-001"
 ) -> ThesisRecord:
     components = tuple(
         ThesisComponent(
@@ -498,10 +498,20 @@ async def test_happy_path_persists_close_order_and_emits_activity_log(
     )
     await ctx.__aexit__(None, None, None)
 
-    # Result-shape assertions
+    # Result-shape assertions. The embedded CLOSE carries command_id=None, so
+    # the OMS derives it carrying the broker-carried link (ALP-844): the closed
+    # position's thesis + this invocation, woven into the canonical engine id.
+    from alphamind.execution.oms.command_ids import parse_engine_command_id
+
     assert result.command_ordinal == 0
     assert result.status == "accepted"
-    assert result.command_id == "MON.session-abc.42.0"
+    derived = parse_engine_command_id(result.command_id)
+    assert derived.monitor_session_id == "session-abc"
+    assert derived.trigger_id == 42
+    assert derived.thesis_id == "THE-NVDA-0123456789abcdef0123456789abcdef"
+    # The parsed invocation_id is the FULL inv-prefixed form (FK-valid against
+    # invocations.invocation_id) — it equals the handle's invocation id verbatim.
+    assert derived.invocation_id == handle.invocation_id
     assert result.acknowledgment is not None
     assert result.acknowledgment.position_id == "POS-NVDA-001"
 
@@ -529,11 +539,14 @@ async def test_derives_command_id_when_embedded_close_lacks_one(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """When the embedded CLOSE has command_id=None, ``submit_engine_envelope``
-    derives it via ``derive_engine_command_id`` and confirms the regex.
+    derives it via ``derive_engine_command_id`` carrying the broker-carried link
+    (ALP-844) — the closed position's thesis (*why*) + this invocation (*when*).
     """
-    import re
-
     from alphamind.execution.oms import build_initial_submit_engine_envelope_state
+    from alphamind.execution.oms.command_ids import (
+        is_engine_originated,
+        parse_engine_command_id,
+    )
     from alphamind.execution.oms.submit_engine_envelope import submit_engine_envelope
 
     _, factory = db
@@ -553,8 +566,14 @@ async def test_derives_command_id_when_embedded_close_lacks_one(
     )
     await ctx.__aexit__(None, None, None)
 
-    assert result.command_id == "MON.session-abc.42.0"
-    assert re.match(r"^MON\.[^.]+\.[0-9]+\.[0-9]+$", result.command_id)
+    assert is_engine_originated(result.command_id)
+    derived = parse_engine_command_id(result.command_id)
+    assert derived.monitor_session_id == "session-abc"
+    assert derived.trigger_id == 42
+    assert derived.thesis_id == "THE-NVDA-0123456789abcdef0123456789abcdef"
+    # The parsed invocation_id is the FULL inv-prefixed form (FK-valid against
+    # invocations.invocation_id) — it equals the handle's invocation id verbatim.
+    assert derived.invocation_id == handle.invocation_id
 
 
 async def test_validates_command_id_consistency_with_envelope(
@@ -572,11 +591,15 @@ async def test_validates_command_id_consistency_with_envelope(
 
     state = build_initial_submit_engine_envelope_state(monitor_session_id=_MONITOR_SESSION)
     # Envelope's session/trigger encoded as `session-abc.42`; embedded CLOSE
-    # carries command_id with a *different* session, so the bijection is
-    # violated.
+    # carries a well-formed command_id with a *different* session, so the
+    # bijection is violated (exercises the session-mismatch branch, not a parse
+    # failure).
+    mismatched = CommandId(
+        "MON.session-OTHER.42.0~the-THE-NVDA-0123456789abcdef0123456789abcdef~inv-X"
+    )
     bad_envelope = _engine_envelope(
         envelope_id=EnvelopeId("MON.session-abc.42"),
-        commands=(_engine_close_command(command_id=CommandId("MON.session-OTHER.42.0")),),
+        commands=(_engine_close_command(command_id=mismatched),),
     )
 
     ctx, handle = await _open_handle(factory)
@@ -646,10 +669,13 @@ async def test_cascade_id_threads_through_to_activity_log(
         factory,
         _open_position(
             position_id=PositionId("POS-NVDA-002"),
-            thesis_id=ThesisId("THE-NVDA-2"),
+            thesis_id=ThesisId("THE-NVDA-fedcba9876543210fedcba9876543210"),
             bracket_id=BracketId("BRK-NVDA-2"),
         ),
-        _active_thesis(thesis_id=ThesisId("THE-NVDA-2"), position_id=PositionId("POS-NVDA-002")),
+        _active_thesis(
+            thesis_id=ThesisId("THE-NVDA-fedcba9876543210fedcba9876543210"),
+            position_id=PositionId("POS-NVDA-002"),
+        ),
         _active_bracket(bracket_id=BracketId("BRK-NVDA-2"), position_id=PositionId("POS-NVDA-002")),
     )
 

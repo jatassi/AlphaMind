@@ -6,7 +6,8 @@ Covers:
   on ``status``.
 - ``BracketLegRow`` SQLAlchemy model: column shape, indexes (incl. UNIQUE
   on ``(bracket_id, leg_index)``), CHECK constraints on ``leg_type`` /
-  ``trigger_kind`` / ``enforcement`` / ``leg_status``, FK to ``brackets``.
+  ``trigger_kind`` / ``enforcement`` / ``enforcement_binding`` /
+  ``leg_status``, FK to ``brackets``.
 - Round-trip codec: ``record_to_rows`` / ``rows_to_record`` faithful for
   every leg type, every trigger kind, with and without ``PLAnchorSpec``,
   with and without modification history.
@@ -41,6 +42,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
+    EnforcementBinding,
     EventTrigger,
     PLAnchorSpec,
     PriceTrigger,
@@ -112,6 +114,7 @@ def _price_stop_leg(
     leg_id: str = "brk1::1",
     order_id: str | None = "ord-ps",
     pl_anchor: PLAnchorSpec | None = None,
+    enforcement_binding: EnforcementBinding = EnforcementBinding.MONITOR_ENFORCED,
 ) -> BracketLeg:
     return BracketLeg(
         leg_id=leg_id,
@@ -125,6 +128,7 @@ def _price_stop_leg(
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
         pl_anchor=pl_anchor,
+        enforcement_binding=enforcement_binding,
     )
 
 
@@ -300,6 +304,7 @@ class TestBracketLegsTable:
                 trigger_payload_json="{}",
                 pl_anchor_json=None,
                 enforcement=BracketLegEnforcement.MECHANICAL.value,
+                enforcement_binding=EnforcementBinding.MONITOR_ENFORCED.value,
                 leg_status=BracketLegStatus.PENDING_ACTIVATION.value,
             )
         )
@@ -324,6 +329,7 @@ class TestBracketLegsTable:
                 trigger_payload_json="{}",
                 pl_anchor_json=None,
                 enforcement=BracketLegEnforcement.MECHANICAL.value,
+                enforcement_binding=EnforcementBinding.MONITOR_ENFORCED.value,
                 leg_status=BracketLegStatus.PENDING_ACTIVATION.value,
             )
         )
@@ -336,7 +342,9 @@ class TestBracketLegsTable:
             ("leg_type", "UNKNOWN_LEG_TYPE"),
             ("trigger_kind", "OTHER"),
             ("enforcement", "OTHER_ENFORCEMENT"),
+            ("enforcement_binding", "OTHER_BINDING"),
             ("leg_status", "OTHER_STATUS"),
+            ("trigger_signal", "OTHER_SIGNAL"),
         ],
     )
     def test_check_rejects_unknown_vocabulary_value(
@@ -359,6 +367,7 @@ class TestBracketLegsTable:
             "trigger_payload_json": "{}",
             "pl_anchor_json": None,
             "enforcement": BracketLegEnforcement.MECHANICAL.value,
+            "enforcement_binding": EnforcementBinding.MONITOR_ENFORCED.value,
             "leg_status": BracketLegStatus.PENDING_ACTIVATION.value,
         }
         kwargs[field] = bad_value
@@ -385,6 +394,29 @@ class TestBracketCodecRoundTrip:
     def test_three_leg_mechanical_bracket_round_trips(self, session: Session) -> None:
         original = _three_leg_bracket()
         assert _round_trip(session, original) == original
+
+    def test_broker_enforced_binding_round_trips(self, session: Session) -> None:
+        """ADR-0003: the typed broker-vs-monitor binding survives the codec."""
+        original = BracketRecord(
+            bracket_id=BracketId("brk-binding"),
+            position_id=PositionId("pos-binding"),
+            status=BracketStatus.PENDING_ENTRY,
+            entry_order_id=OrderId("entry-binding"),
+            protective_legs=(
+                _price_stop_leg(
+                    leg_id="brk-binding::0",
+                    enforcement_binding=EnforcementBinding.BROKER_ENFORCED,
+                ),
+            ),
+            modification_history=(),
+            corporate_action_cancellation_reason=None,
+            entry_window_deadline=None,
+        )
+        rehydrated = _round_trip(session, original)
+        assert rehydrated == original
+        assert (
+            rehydrated.protective_legs[0].enforcement_binding is EnforcementBinding.BROKER_ENFORCED
+        )
 
     def test_event_invalidation_advisory_leg_round_trips(self, session: Session) -> None:
         # An event-invalidation advisory leg has no order_id; the bracket still
@@ -461,6 +493,53 @@ class TestBracketCodecRoundTrip:
         legs = _read_legs(session, "brk-anchor")
         assert legs[0].pl_anchor_json is not None
         assert legs[1].pl_anchor_json is None
+
+    def test_trigger_signal_round_trips_on_invalidation_leg(self, session: Session) -> None:
+        """ALP-852 — a non-directional PRICE_STOP's trigger_signal survives the codec.
+
+        The continuous monitor reads ``trigger_signal`` off the rehydrated leg to
+        select the thesis-invalidation trigger evaluator, so it must round-trip
+        through the SQL layer faithfully.
+        """
+        from alphamind.portfolio_state.records.orders import TriggerSignal
+
+        leg = BracketLeg(
+            leg_id="brk-sig::0",
+            leg_type=BracketLegType.PRICE_STOP,
+            order_id=OrderId("ord-sig"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("NVDA"), threshold_usd=8.0, direction="LTE"
+            ),
+            enforcement=BracketLegEnforcement.MECHANICAL,
+            status=BracketLegStatus.PENDING_ACTIVATION,
+            trigger_signal=TriggerSignal.OPTION_PRICE,
+        )
+        original = BracketRecord(
+            bracket_id=BracketId("brk-sig"),
+            position_id=PositionId("pos-sig"),
+            status=BracketStatus.PENDING_ENTRY,
+            entry_order_id=OrderId("entry-sig"),
+            protective_legs=(leg,),
+            modification_history=(),
+            corporate_action_cancellation_reason=None,
+            entry_window_deadline=None,
+        )
+        rehydrated = _round_trip(session, original)
+        assert rehydrated == original
+        assert rehydrated.protective_legs[0].trigger_signal is TriggerSignal.OPTION_PRICE
+        # A leg with no trigger_signal persists NULL and rehydrates to None.
+        legs = _read_legs(session, "brk-sig")
+        assert legs[0].trigger_signal == TriggerSignal.OPTION_PRICE.value
+
+    def test_absent_trigger_signal_round_trips_as_none(self, session: Session) -> None:
+        """A leg with no trigger_signal persists NULL and rehydrates as None."""
+        original = _three_leg_bracket()
+        rehydrated = _round_trip(session, original)
+        assert rehydrated == original
+        for leg in rehydrated.protective_legs:
+            assert leg.trigger_signal is None
+        for row in _read_legs(session, "brk1"):
+            assert row.trigger_signal is None
 
     def test_leg_index_preserves_ordering(self) -> None:
         original = _three_leg_bracket()

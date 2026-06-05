@@ -25,6 +25,7 @@ from alphamind.portfolio_state.records.theses import (
     ThesisComponent,
     ThesisComponentOutcome,
     ThesisComponentType,
+    ThesisNature,
     ThesisRecord,
     ThesisRecordStatus,
     ThesisResolutionCategory,
@@ -103,6 +104,7 @@ def record_to_rows(
         thesis_id=record.thesis_id,
         position_id=record.position_id,
         status=record.status.value,
+        nature=record.nature.value,
         resolution_timestamp=(
             None if record.resolution_timestamp is None else _isoformat(record.resolution_timestamp)
         ),
@@ -147,6 +149,7 @@ def rows_to_record(
         thesis_id=ThesisId(thesis_row.thesis_id),
         position_id=PositionId(thesis_row.position_id),
         summary=thesis_row.summary,
+        nature=ThesisNature(thesis_row.nature),
         key_catalyst=payload["key_catalyst"],
         position_size_rationale=thesis_row.position_size_rationale,
         components=components,

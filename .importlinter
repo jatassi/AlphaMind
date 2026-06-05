@@ -500,3 +500,37 @@ source_modules =
     alphamind.pipeline
 forbidden_modules =
     alphamind.scheduler.debug_e2e
+
+# ALP-857 / W4b — the isolated safety core (breach detection + price-staleness,
+# the lone no-floor safety item) is its own out-of-process service. Per ADR-0004
+# it must import NEITHER pipeline NOR monitor internals: a freeze of the monitor
+# proper must not be able to freeze the safety core, and the safety core must not
+# carry the monitor's DB-writing / orchestration machinery. This is an
+# architectural invariant, so it lives here (not a grep test).
+#
+# The safety core legitimately imports the shared price-stream transport
+# (``underlying_stream``), the monitor ``session`` value object, and
+# ``logging_setup`` — none are forbidden. It must not reach the supervisor (a
+# loop-resident watchdog it deliberately escapes), the breach-loop / cascade /
+# emergency / bracket-stops / greeks / entry-window / fill / activities task
+# packages, the control surface, the monitor ``__main__`` composition root, or
+# the pipeline / scheduler composition roots. Each is enumerated (grimp rejects
+# forbidding an ancestor of the source package).
+[importlinter:contract:safety-core-isolation]
+name = Safety core imports neither pipeline nor monitor internals
+type = forbidden
+source_modules =
+    alphamind.execution.continuous_monitor.safety_core
+forbidden_modules =
+    alphamind.pipeline
+    alphamind.scheduler
+    alphamind.execution.continuous_monitor.supervisor
+    alphamind.execution.continuous_monitor.breach_loop
+    alphamind.execution.continuous_monitor.cascade_dispatch
+    alphamind.execution.continuous_monitor.emergency_trigger
+    alphamind.execution.continuous_monitor.bracket_stops
+    alphamind.execution.continuous_monitor.greeks_refresh
+    alphamind.execution.continuous_monitor.entry_window
+    alphamind.execution.continuous_monitor.fill_stream_consumer
+    alphamind.execution.continuous_monitor.activities_backfill
+    alphamind.execution.continuous_monitor.control

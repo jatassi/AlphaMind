@@ -71,8 +71,10 @@ from alphamind.execution.broker_adapter import (
 # Fixtures and helpers
 # ---------------------------------------------------------------------------
 
-_CLIENT_ORDER_ID_INV = "inv-2026-05-09T09-30Z.ENV-REC-1.0.0"
-_CLIENT_ORDER_ID_MON = "MON.sess-abc.42.0"
+_CLIENT_ORDER_ID_INV = (
+    "inv-2026-05-09T09-30Z.ENV-REC-1.0.0~the-THE-NVDA-0123456789abcdef0123456789abcdef"
+)
+_CLIENT_ORDER_ID_MON = "MON.sess-abc.42.0~the-THE-AAPL-fedcba9876543210fedcba9876543210~inv-X"
 
 
 def _make_execution_config() -> ExecutionConfig:
@@ -102,6 +104,7 @@ def _make_execution_config() -> ExecutionConfig:
 def _make_thesis() -> Thesis:
     return Thesis(
         summary="Test thesis",
+        nature="directional",
         components=(
             ThesisComponent(
                 component_type="entry_rationale",
@@ -118,6 +121,7 @@ def _make_price_leg(ticker: str = "AAPL", trigger: float = 150.0) -> PriceLeg:
     return PriceLeg(
         type="price",
         is_hard=True,
+        trigger_signal="underlying_price",
         condition=PriceCondition(
             underlying_trigger=ticker,
             comparator="<=",
@@ -437,6 +441,7 @@ async def test_open_with_target_and_price_stop_produces_bracket() -> None:
     price_leg = PriceLeg(
         type="price",
         is_hard=True,
+        trigger_signal="underlying_price",
         condition=PriceCondition(
             underlying_trigger="AAPL", comparator="<=", trigger_price=price(150.0)
         ),

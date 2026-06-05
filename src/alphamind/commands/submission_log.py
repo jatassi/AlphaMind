@@ -41,7 +41,8 @@ class SubmissionLogEntry:
     ``.alpaca_order_id`` attribute and cast back to the typed shape at
     their boundary. ``None`` (the default) signals the legacy / debug-e2e
     log-only path that never routed through a broker — Phase 2 writeback
-    falls back to synthetic ``alp-{order_id}`` placeholders in that case.
+    persists the order with NO broker id (``alpaca_order_id`` NULL, ALP-847 —
+    never a synthetic placeholder) in that case.
 
     ``abandoned_entries`` (also ALP-711) carries per-broker-failure markers
     the scheduler's ``dispatch_phase2`` uses to emit ``COMMAND_ABANDONED``

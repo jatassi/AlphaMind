@@ -29,10 +29,14 @@ re-creates a husk at genesis (a Broker-Owned Fact with no Intent).
 - [ ] `fresh_start` precondition extended to assert **open-orders-empty** *and*
       positions-empty (a resting bracket/entry with no Intent is the husk in order form).
 - [ ] New-design service inventory ready to install: `alphamind-collector` (unchanged),
-      `alphamind-pipeline` (projection + Intent writer), `alphamind-monitor` (precision/
-      data — fill stream, bracket-stops, greeks, entry-window, recovery sweep),
+      `alphamind-scheduler` (projection + Intent writer, entry point
+      `python -m alphamind.scheduler run`), `alphamind-monitor` (precision/data — fill
+      stream, bracket-stops, greeks, entry-window, recovery sweep),
       `alphamind-safety-core` (**new** — isolated breach + price-staleness), and the
-      **out-of-process watchdog** for the safety core (per ADR-0004).
+      **out-of-process watchdog** `alphamind-safety-core-watchdog` for the safety core
+      (per ADR-0004). Install scripts: `scripts/install_pipeline_scheduler_service.ps1`,
+      `scripts/install_monitor_service.ps1`, `scripts/install_safety_core_service.ps1`
+      (installs both safety-core + watchdog).
 
 ## New account checklist (provision + verify before cutover)
 

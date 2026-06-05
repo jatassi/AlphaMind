@@ -1236,6 +1236,139 @@ class TestGetOptionContracts:
 
 
 # ---------------------------------------------------------------------------
+# 10b. Sync REST is offloaded off the event loop, time-bounded (ALP-850 / ALP-841)
+# ---------------------------------------------------------------------------
+
+
+class TestSyncRestOffloadedFromEventLoop:
+    """The paginating query generators run their blocking REST call on a worker
+    thread bounded by a wall-clock timeout, so a hung broker call can neither
+    freeze the calling event loop (the ALP-841 wedge) nor block forever.
+    """
+
+    def test_hung_get_orders_does_not_block_event_loop(self) -> None:
+        """A get_orders REST call that never returns must not freeze the loop.
+
+        While the generator is parked on its (blocked) page fetch, a concurrent
+        coroutine on the same loop must continue to make progress — proving the
+        sync call was offloaded rather than run inline on the loop.
+        """
+        import threading
+
+        from alphamind.execution.broker_adapter.queries import AccountStateQueries
+
+        release = threading.Event()
+
+        def hang(*_args: Any, **_kwargs: Any) -> list[Any]:
+            # Block the worker thread until the test releases it — emulates a
+            # broker socket that never responds.
+            release.wait(timeout=5.0)
+            return []
+
+        client = _fake_client()
+        client.get_orders.side_effect = hang
+
+        async def scenario() -> int:
+            qs = AccountStateQueries(client)
+            ticks = 0
+
+            async def consume_orders() -> None:
+                async for _ in qs.get_orders():
+                    pass
+
+            async def heartbeat() -> None:
+                nonlocal ticks
+                # If the REST call were inline on the loop, the generator task
+                # would monopolise it and these ticks would never advance.
+                for _ in range(5):
+                    await asyncio.sleep(0)
+                    ticks += 1
+
+            order_task = asyncio.create_task(consume_orders())
+            await heartbeat()
+            release.set()
+            await order_task
+            return ticks
+
+        ticks = asyncio.run(scenario())
+        assert ticks == 5, "concurrent coroutine starved → REST call ran inline on the loop"
+
+    def test_hung_get_orders_times_out(self) -> None:
+        """A REST call that exceeds the per-page budget raises ``TimeoutError``."""
+        import threading
+
+        import alphamind.execution.broker_adapter.queries as q_mod
+        from alphamind.execution.broker_adapter.queries import AccountStateQueries
+
+        never_released = threading.Event()
+
+        def hang(*_args: Any, **_kwargs: Any) -> list[Any]:
+            never_released.wait(timeout=5.0)
+            return []
+
+        client = _fake_client()
+        client.get_orders.side_effect = hang
+
+        original = q_mod._REST_TIMEOUT_SECONDS
+        try:
+            q_mod._REST_TIMEOUT_SECONDS = 0.05
+            qs = AccountStateQueries(client)
+            with pytest.raises(TimeoutError):
+                asyncio.run(_collect_orders(qs))
+        finally:
+            q_mod._REST_TIMEOUT_SECONDS = original
+            never_released.set()
+
+    def test_hung_get_account_activities_times_out(self) -> None:
+        """The activities generator's REST call is likewise time-bounded."""
+        import threading
+
+        import alphamind.execution.broker_adapter.queries as q_mod
+        from alphamind.execution.broker_adapter.queries import AccountStateQueries
+
+        never_released = threading.Event()
+
+        def hang(*_args: Any, **_kwargs: Any) -> list[Any]:
+            never_released.wait(timeout=5.0)
+            return []
+
+        client = _fake_client()
+        client.get.side_effect = hang
+
+        original = q_mod._REST_TIMEOUT_SECONDS
+        try:
+            q_mod._REST_TIMEOUT_SECONDS = 0.05
+            qs = AccountStateQueries(client)
+            with pytest.raises(TimeoutError):
+                asyncio.run(_collect_activities(qs))
+        finally:
+            q_mod._REST_TIMEOUT_SECONDS = original
+            never_released.set()
+
+    def test_get_orders_runs_off_the_calling_thread(self) -> None:
+        """The blocking SDK call executes on a worker thread, not the caller's."""
+        import threading
+
+        from alphamind.execution.broker_adapter.queries import AccountStateQueries
+
+        calling_thread = threading.get_ident()
+        observed: list[int] = []
+
+        def record_thread(*_args: Any, **_kwargs: Any) -> list[Any]:
+            observed.append(threading.get_ident())
+            return []
+
+        client = _fake_client()
+        client.get_orders.side_effect = record_thread
+
+        qs = AccountStateQueries(client)
+        asyncio.run(_collect_orders(qs))
+
+        assert observed, "the SDK call never ran"
+        assert observed[0] != calling_thread, "REST call ran on the event-loop thread"
+
+
+# ---------------------------------------------------------------------------
 # 11. Public surface re-exports
 # ---------------------------------------------------------------------------
 

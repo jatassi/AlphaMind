@@ -12,8 +12,9 @@ forget cancel returns "accepted" even for an order that races to FILLED):
    of reconciliation).
 2. If a fill is already recorded → ``SKIPPED_FILLED``: the entry filled, so never
    cancel/dissolve — reconciliation will flip the bracket to ``ACTIVE``.
-3. If the entry has no broker id yet (synthetic ``alp-…`` placeholder — not yet
-   routed) → ``FAILED`` (retry once it is acked); there is nothing to cancel.
+3. If the entry has no broker id yet (``alpaca_order_id is None`` — not yet
+   routed; ALP-847 deleted the synthetic ``alp-…`` placeholder) → ``FAILED``
+   (retry once it is acked); there is nothing to cancel.
 4. Otherwise ask the broker to cancel. A transient gateway failure or a non-
    terminal 4xx (auth / rate-limit / malformed) → ``FAILED`` (retry, do NOT latch
    the bracket as handled). A confirmed cancel or an already-terminal 404/422,
@@ -48,10 +49,6 @@ from alphamind.portfolio_state.records.orders import BracketRecord
 log = logging.getLogger(__name__)
 
 _CANCEL_REASON = "entry_window_expired"
-# An un-routed entry order persists with this placeholder broker id until
-# trade_updates ack it (see write_paths/phase2/_shared.py); a real Alpaca id is
-# a UUID. We must not treat a 404 on a placeholder as "already filled / gone".
-_SYNTHETIC_ALPACA_ID_PREFIX = "alp-"
 
 
 class BrokerCancelClassification(Enum):
@@ -89,9 +86,13 @@ class EntryCancelTarget:
     ``has_recorded_fills`` reflects ``fill_records`` (raw fills written by the
     fill-stream consumer before reconciliation), so a fill that has been
     observed but not yet reconciled to the bracket still blocks the cancel.
+
+    ``alpaca_order_id`` is ``None`` for a not-yet-routed entry (ALP-847 deleted
+    the synthetic ``alp-`` placeholder) — there is no broker order to cancel, so
+    the canceller retries rather than misreading a missing id as terminal.
     """
 
-    alpaca_order_id: AlpacaOrderId
+    alpaca_order_id: AlpacaOrderId | None
     has_recorded_fills: bool
 
 
@@ -116,10 +117,6 @@ type EntryCancelTargetResolver = Callable[[str], Awaitable[EntryCancelTarget | N
 type BrokerCancel = Callable[[AlpacaOrderId], Awaitable[BrokerCancelClassification]]
 # entry_order_id + cancel_reason → run the Phase-2 CANCEL writeback under a fresh handle.
 type CancelWriteback = Callable[[str, str], Awaitable[None]]
-
-
-def _is_synthetic(alpaca_order_id: str) -> bool:
-    return alpaca_order_id.startswith(_SYNTHETIC_ALPACA_ID_PREFIX)
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,13 +155,12 @@ class BrokerEntryWindowCanceller:
                 bracket.bracket_id,
             )
             return EntryWindowDeadlineOutcome.SKIPPED_FILLED
-        if _is_synthetic(target.alpaca_order_id):
-            # Not yet routed to the broker — nothing to cancel yet; retry once it
-            # is acked rather than misreading a placeholder 404 as terminal.
+        if target.alpaca_order_id is None:
+            # Not yet routed to the broker (no broker id) — nothing to cancel yet;
+            # retry once it is acked rather than misreading a missing id as terminal.
             log.warning(
-                "entry_window: bracket %s entry %s not yet broker-routed; retrying",
+                "entry_window: bracket %s entry not yet broker-routed (no broker id); retrying",
                 bracket.bracket_id,
-                target.alpaca_order_id,
             )
             return EntryWindowDeadlineOutcome.FAILED
         classification = await self.broker_cancel(target.alpaca_order_id)

@@ -12,8 +12,8 @@ Phase-2 extension of the ALP-824 fix):
 * :func:`precommit_command` — (A) durable pre-broker intent. Writes the command's
   full local graph (OPEN: position + thesis + bracket + protective legs + entry;
   CLOSE/ADD/ADJUST: the order against an existing position) with the **dispatched**
-  order in ``PENDING_SUBMIT`` carrying the synthetic ``alp-{order_id}`` placeholder
-  and ``client_order_id = command_id``, and reserves capital. Idempotent on
+  order in ``PENDING_SUBMIT`` carrying NO broker id (``alpaca_order_id`` NULL,
+  ALP-847) and ``client_order_id = command_id``, and reserves capital. Idempotent on
   ``client_order_id`` — a replay finds the existing row and re-reserves nothing.
 * :func:`backfill_command_broker_ids` — (C) after a successful dispatch, stamp the
   real ``alpaca_order_id`` (+ ALP-746 native-bracket leg ids) and flip the
@@ -47,9 +47,11 @@ from alphamind.commands.command_models import (
     CloseCommand,
     OMSCommand,
     OpenCommand,
+    OptionInstrument,
 )
 from alphamind.commands.pm_envelope import PMEnvelope
 from alphamind.commands.submission_results import SubmissionResult
+from alphamind.execution.broker_adapter import derive_capital_floor_client_order_id
 from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
 from alphamind.execution.write_paths.phase2 import (
     _dispatch_command_writeback,
@@ -61,7 +63,7 @@ from alphamind.execution.write_paths.phase2.add import _add_order_id
 from alphamind.execution.write_paths.phase2.adjust import _adjust_replacement_order_id
 from alphamind.execution.write_paths.phase2.cancel import _writeback_cancel
 from alphamind.execution.write_paths.phase2.close import _close_order_id
-from alphamind.execution.write_paths.phase2.open import _new_open_ids
+from alphamind.execution.write_paths.phase2.open import _capital_floor_order_id, _new_open_ids
 from alphamind.persistence.session import begin_write_immediate
 from alphamind.portfolio_state.records.orders import OrderRole, OrderStatus
 from alphamind.state.invocation_context.context import InvocationHandle
@@ -146,10 +148,20 @@ async def precommit_command(
             )
         ).scalar_one_or_none()
         if existing is not None:
+            # FL8: on a replay where the entry row landed but the floor was not
+            # yet stamped (e.g. the commit that included the floor stamp was lost),
+            # still stamp the floor before returning True.  _precommit_capital_floor
+            # is idempotent — if the floor is already stamped it just re-applies the
+            # same values.  We commit the session here (it holds the IMMEDIATE write
+            # lock from begin_write_immediate above) so the stamp is durable.
+            if isinstance(command, OpenCommand):
+                await _precommit_capital_floor(session, command, command_id=result.command_id)
+                await session.commit()
             return True
 
         handle = InvocationHandle(session=session, invocation_id=invocation_id)
-        # Build the full local graph with synthetic ids (no broker id yet).
+        # Build the full local graph with NO broker ids yet (ALP-847 — the real
+        # alpaca_order_id is backfilled on dispatch; no synthetic placeholder).
         await _dispatch_command_writeback(
             handle, command=command, result=result, dispatch_result=None
         )
@@ -165,8 +177,47 @@ async def precommit_command(
             raise RuntimeError(msg)
         row.status = OrderStatus.PENDING_SUBMIT.value
         row.client_order_id = result.command_id
+        # ALP-856 — an options OPEN also pre-commits a durable OrderRow for the
+        # always-on capital floor (a second tracked broker order), keyed by the
+        # floor's deterministic ``client_order_id``. It rides the same atomic
+        # precommit/backfill path as the entry: PENDING_SUBMIT now, broker id
+        # backfilled after dispatch.
+        if isinstance(command, OpenCommand):
+            await _precommit_capital_floor(session, command, command_id=result.command_id)
         await session.commit()
     return True
+
+
+async def _precommit_capital_floor(
+    session: AsyncSession, command: OpenCommand, *, command_id: str
+) -> None:
+    """Mark the options OPEN's capital-floor OrderRow PENDING_SUBMIT (ALP-856).
+
+    A no-op for an equity / strategy OPEN (no floor row was written). The floor
+    OrderRow was inserted by ``_writeback_open`` with ``alpaca_order_id`` NULL;
+    here it gets its durable-Intent stamp (PENDING_SUBMIT + the floor's
+    ``client_order_id``), exactly mirroring the entry row's pre-commit.
+
+    Idempotent: if the floor is already stamped PENDING_SUBMIT (or beyond), the
+    status/client_order_id assignment is harmlessly re-applied. Raises
+    ``RuntimeError`` if the floor OrderRow is absent — a missing floor row at
+    precommit is a flush-ordering bug, not a tolerable no-op.
+    """
+    if not isinstance(command.instrument, OptionInstrument):
+        return
+    floor_oid = _capital_floor_order_id(command_id)
+    # CU3: session.get is a cheap identity-map hit here because _writeback_open
+    # already added+flushed this row in the same session (no DB round-trip).
+    floor_row = await session.get(OrderRow, floor_oid)
+    if floor_row is None:
+        msg = (
+            f"_precommit_capital_floor: floor OrderRow {floor_oid!r} not found — "
+            "expected _writeback_open to have inserted+flushed it before this call; "
+            "a missing floor row is a flush-ordering bug, not a tolerable state"
+        )
+        raise RuntimeError(msg)
+    floor_row.status = OrderStatus.PENDING_SUBMIT.value
+    floor_row.client_order_id = derive_capital_floor_client_order_id(command_id)
 
 
 async def backfill_command_broker_ids(
@@ -209,6 +260,9 @@ async def backfill_command_broker_ids(
                 session,
                 bracket_id=row.bracket_id,
                 leg_alpaca_order_ids=dict(dispatch_result.leg_alpaca_order_ids),
+                capital_floor_order_id=_capital_floor_order_id(result.command_id)
+                if isinstance(command.instrument, OptionInstrument)
+                else None,
                 now=now,
             )
         await session.commit()
@@ -219,15 +273,20 @@ async def _backfill_open_leg_ids(
     *,
     bracket_id: str,
     leg_alpaca_order_ids: dict[str, str],
+    capital_floor_order_id: str | None = None,
     now: str,
 ) -> None:
-    """Stamp native-bracket protective children with their real broker ids (ALP-746).
+    """Stamp native-bracket protective children + the capital floor with broker ids.
 
     Take-profit → the bracket's TAKE_PROFIT order; stop-loss → the first
     PRICE_STOP order (Alpaca's native bracket submits exactly one stop child,
-    mapped from the first PriceLeg). Legs with no broker counterpart (TIME_STOP,
-    advisory EVENT legs, any PRICE_STOP beyond the first) keep their synthetic
-    placeholder.
+    mapped from the first PriceLeg). The ALP-856 capital floor → its own
+    ``PRICE_STOP`` OrderRow, resolved by ``capital_floor_order_id`` (not by role —
+    it shares the PRICE_STOP role with the invalidation stop) and stamped from the
+    ``"capital_floor"`` key. The floor row is excluded from the native-bracket stop
+    selection. Legs with no broker counterpart (TIME_STOP, advisory EVENT legs, any
+    PRICE_STOP beyond the first) keep NO broker id (``alpaca_order_id`` NULL,
+    ALP-847) — they are monitor-enforced Intent.
     """
     rows = list(
         (
@@ -238,8 +297,32 @@ async def _backfill_open_leg_ids(
             )
         ).scalars()
     )
+    # ALP-856 — the floor's broker id rides under ``"capital_floor"`` and lands on
+    # the floor OrderRow (matched by id, since the floor shares the PRICE_STOP role).
+    floor_real = leg_alpaca_order_ids.get("capital_floor")
+    # FL5: for an options OPEN with a tracked floor row, a missing "capital_floor"
+    # id in the dispatch result is a malformed result — silently skipping would
+    # leave the floor PENDING_SUBMIT with NULL alpaca_order_id (live at broker but
+    # un-cancellable).  Surface the anomaly immediately.
+    if capital_floor_order_id is not None and floor_real is None:
+        msg = (
+            f"_backfill_open_leg_ids: options OPEN has floor row {capital_floor_order_id!r} "
+            "but dispatch result is missing the 'capital_floor' key in leg_alpaca_order_ids — "
+            "the floor is live at broker with no local alpaca_order_id (un-cancellable strand); "
+            f"got keys: {sorted(leg_alpaca_order_ids)}"
+        )
+        raise RuntimeError(msg)
     stop_stamped = False
     for row in rows:
+        if capital_floor_order_id is not None and row.order_id == capital_floor_order_id:
+            # floor_real is guaranteed non-None here (checked above).
+            row.alpaca_order_id = floor_real
+            row.alpaca_order_id_chain_json = json.dumps([floor_real])
+            # The floor is a tracked broker order — flip it PENDING_SUBMIT →
+            # PENDING on its broker-id backfill, exactly like the entry row.
+            row.status = OrderStatus.PENDING.value
+            row.last_update_timestamp = now
+            continue
         dispatch_key = _LEG_ROLE_TO_DISPATCH_KEY.get(row.order_role)
         if dispatch_key is None:
             continue
@@ -401,8 +484,11 @@ def _command_id_prefix(invocation_id: str) -> str:
     """The ``client_order_id`` prefix for this invocation's commands.
 
     Mirrors :func:`alphamind.execution.oms.command_ids.derive_pm_command_id`: a
-    PM command_id is ``inv-{invocation_id}.{envelope}.{ordinal}.{seq}``, with the
-    ``inv-`` prefix added only when absent.
+    PM command_id is ``inv-{invocation_id}.{envelope}.{ordinal}.{seq}``
+    ``~the-{thesis}`` — the base id plus the ALP-844 broker-carried link suffix,
+    with the ``inv-`` prefix added only when absent. This prefix check matches on
+    the ``inv-{invocation_id}.`` head, which precedes the ``~the-`` suffix, so it
+    is unaffected by the broker-carried link.
     """
     prefix = invocation_id if invocation_id.startswith("inv-") else f"inv-{invocation_id}"
     return f"{prefix}."
@@ -418,10 +504,12 @@ async def invocation_has_pending_submit_strand(
     never got its broker id (the GS-husk signature, now made impossible to LOSE
     by atomicity but still detectable if the backfill commit itself was lost).
     The orchestrator withholds the ``phase2_completed_at`` stamp when this returns
-    ``True``, leaving the invocation visibly incomplete + recoverable (the Phase-1
-    reconcile order-backfill repairs it next run). Scoped to THIS invocation by
-    the ``client_order_id`` prefix so a prior-invocation strand under recovery
-    does not block an otherwise-clean phase 2. Logs loudly on a hit.
+    ``True``, leaving the invocation visibly incomplete as a signal that manual or
+    automated recovery is required (``backfill_pending_submit_orders`` is removed;
+    there is no automatic reconcile-path that backfills a PENDING_SUBMIT row).
+    Scoped to THIS invocation by the ``client_order_id`` prefix so a
+    prior-invocation strand under recovery does not block an otherwise-clean
+    phase 2. Logs loudly on a hit.
     """
     prefix = _command_id_prefix(invocation_id)
     rows = (
@@ -436,8 +524,8 @@ async def invocation_has_pending_submit_strand(
         if client_order_id and client_order_id.startswith(prefix):
             logger.error(
                 "phase2 integrity: order %s (client_order_id=%s) stuck in PENDING_SUBMIT — "
-                "a lost post-submit backfill behind a live broker order; withholding "
-                "phase2_completed_at (invocation left recoverable for the reconcile backfill)",
+                "a lost post-submit backfill; the floor is live at broker with no local "
+                "alpaca_order_id; withholding phase2_completed_at — operator recovery required",
                 order_id,
                 client_order_id,
             )

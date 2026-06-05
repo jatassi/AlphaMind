@@ -269,6 +269,11 @@ class TestEnumMembers:
             "STOCK_MERGER",
             "SPIN_OFF",
             "SYMBOL_CHANGE",
+            # Capture-only v1beta1 types (ALP-849 / W1c) — event-log capture, no
+            # position-mutation handler.
+            "WORTHLESS_REMOVAL",
+            "UNIT_SPLIT",
+            "REDEMPTION",
         }
         assert {m.name for m in CorporateActionType} == expected
 

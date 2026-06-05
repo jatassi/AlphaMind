@@ -25,6 +25,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from alphamind.persistence.models import Base
 from alphamind.portfolio_state.records.theses import (
+    ThesisNature,
     ThesisRecordStatus,
     ThesisResolutionCategory,
 )
@@ -60,6 +61,14 @@ class ThesisRow(Base):
         nullable=False,
     )
     status: Mapped[str] = mapped_column(Text, nullable=False)
+    # ALP-852 / ADR-0003 — the directional / non-directional thesis-shape tag the
+    # continuous monitor reads to select the thesis-invalidation stop's trigger
+    # signal. NOT NULL with a DIRECTIONAL server default so a pre-existing row (or
+    # a future direct-SQL writer that omits it) reads as the legacy underlying-
+    # triggered shape rather than a NULL the codec cannot map.
+    nature: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=ThesisNature.DIRECTIONAL.value
+    )
     resolution_timestamp: Mapped[str | None] = mapped_column(Text, nullable=True)
     resolution_category: Mapped[str | None] = mapped_column(Text, nullable=True)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
@@ -72,6 +81,10 @@ class ThesisRow(Base):
         CheckConstraint(
             _check_in("status", ThesisRecordStatus),
             name="ck_theses_status",
+        ),
+        CheckConstraint(
+            _check_in("nature", ThesisNature),
+            name="ck_theses_nature",
         ),
         CheckConstraint(
             "resolution_category IS NULL OR "

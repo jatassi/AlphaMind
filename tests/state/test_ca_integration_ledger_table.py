@@ -9,19 +9,15 @@ Covers:
   ``processing_status``.
 * ``mark_ca_activity_processed`` inserts inside the open ``InvocationContext``
   transaction; idempotent on the PK.
-* Alembic migration idempotency.
 """
 
 from __future__ import annotations
 
-from argparse import Namespace
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import inspect, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import (
@@ -52,8 +48,6 @@ from alphamind.state.invocation_context.records import (
 from alphamind.state.tables.corporate_action_integration_ledger import (
     CorporateActionIntegrationLedgerRow,
 )
-
-_REVISION = "f7a9d3c2e5b1"
 
 INTEGRATED_AT = datetime(2026, 5, 7, 13, 0, 0, tzinfo=UTC)
 
@@ -252,50 +246,3 @@ class TestMarkCaActivityProcessed:
         assert len(rows) == 1
         # First-write-wins: the original invocation_id is preserved.
         assert rows[0].processing_invocation_id == "inv-1"
-
-
-# ---------------------------------------------------------------------------
-# Alembic migration idempotency
-# ---------------------------------------------------------------------------
-
-
-def _alembic_config(db_path: Path) -> Config:
-    repo_root = Path(__file__).parents[2]
-    return Config(
-        repo_root / "alembic.ini",
-        cmd_opts=Namespace(x=[f"db={db_path}"]),
-    )
-
-
-class TestCaLedgerMigration:
-    def test_upgrade_head_creates_table(self, tmp_path: Path) -> None:
-        db_path = tmp_path / "alembic.db"
-        command.upgrade(_alembic_config(db_path), "head")
-
-        eng = make_engine(str(db_path))
-        try:
-            insp = inspect(eng)
-            tables = set(insp.get_table_names())
-            assert "corporate_action_integration_ledger" in tables
-            indexes = {
-                idx["name"] for idx in insp.get_indexes("corporate_action_integration_ledger")
-            }
-            assert "ix_ca_ledger_processing_invocation_id" in indexes
-            assert "ix_ca_ledger_processing_status" in indexes
-        finally:
-            eng.dispose()
-
-    def test_upgrade_then_downgrade_then_upgrade_is_idempotent(self, tmp_path: Path) -> None:
-        db_path = tmp_path / "alembic.db"
-        cfg = _alembic_config(db_path)
-        command.upgrade(cfg, _REVISION)
-        command.downgrade(cfg, "-1")
-        command.upgrade(cfg, _REVISION)
-
-        eng = make_engine(str(db_path))
-        try:
-            insp = inspect(eng)
-            tables = set(insp.get_table_names())
-            assert "corporate_action_integration_ledger" in tables
-        finally:
-            eng.dispose()

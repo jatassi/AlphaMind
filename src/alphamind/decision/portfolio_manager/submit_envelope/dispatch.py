@@ -37,6 +37,7 @@ from alphamind.decision.portfolio_manager.submit_envelope.types import (
     _BreachedRule,
 )
 from alphamind.persistence.retry import run_with_sqlite_busy_retry
+from alphamind.portfolio_state.records.orders import EnforcementBinding
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -45,6 +46,7 @@ from alphamind.portfolio_state.records.positions import (
     StrategyPositionDetails,
     position_direction,
 )
+from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.positions_codec import (
@@ -271,10 +273,6 @@ async def _route_one_command(
     by the self-guarding ``_precommit_if_atomic`` / ``_abandon_if_atomic`` /
     ``_finalize_dispatch_if_persisting`` helpers (no-ops on the fixture path).
     """
-    from alphamind.execution.broker_adapter import GatewaySubmissionFailed, Submitted
-    from alphamind.execution.broker_adapter.errors import classify_alpaca_error
-    from alphamind.execution.broker_adapter.order_options import PermanentRejectionError
-
     # ALP-747 stale-anchor coherence backstop — rejected before any pre-commit.
     if ctx.quote_source is not None:
         stale_reason = await _stale_anchor_rejection_reason(command, quote_source=ctx.quote_source)
@@ -299,6 +297,66 @@ async def _route_one_command(
     # pre-commit does not mutate. A resolution failure (missing position/leg)
     # propagates before any pre-commit, leaving no half-mutated graph.
     context_kwargs = await _dispatcher_context_for(command, invocation_handle=ctx.invocation_handle)
+
+    # ALP-847 — route a CANCEL/ADJUST on the TARGET LEG'S typed
+    # ``enforcement_binding`` (ADR-0003), NOT on ``target_alpaca_order_id is
+    # None``. Keying on id-nullity conflated three cases: a genuinely
+    # monitor-enforced leg (→ local, correct), a broker-enforced order that is
+    # transiently NULL because it is un-acked / PENDING_SUBMIT (→ wrongly
+    # local-cancelled while the broker order proceeds), and the wrong leg in a
+    # multi-leg bracket. The binding disambiguates them:
+    #
+    # * ``monitor_enforced`` — armed Intent, no broker order → LOCAL Intent
+    #   change (the ALP-837 synthetic-id path is unrepresentable).
+    # * ``broker_enforced`` with a real id → broker dispatch against that id.
+    # * ``broker_enforced`` but id still NULL (un-acked) → REJECT, the safe
+    #   default — surfaces the rare PENDING_SUBMIT race rather than silently
+    #   local-cancelling a live (or about-to-be-live) broker order.
+    if isinstance(command, CancelCommand | AdjustCommand):
+        # ``target_enforcement_binding`` is a routing-only field — pop it so it
+        # never reaches the broker dispatcher's per-asset kwargs.
+        binding = context_kwargs.pop("target_enforcement_binding", None)
+        if binding is EnforcementBinding.MONITOR_ENFORCED:
+            return await _route_monitor_enforced_local(ctx, command=command, result=result)
+        if (
+            binding is EnforcementBinding.BROKER_ENFORCED
+            and context_kwargs.get("target_alpaca_order_id") is None
+        ):
+            reason = (
+                "broker-enforced order not yet routable (no broker id) — "
+                "the order is un-acked / PENDING_SUBMIT; refusing to local-cancel "
+                "a live broker order"
+            )
+            logger.warning(
+                "broker_dispatch: rejecting %s before submission — %s", result.command_id, reason
+            )
+            return (
+                _to_rejection(result, code="broker_enforced_not_yet_routable", reason=reason),
+                None,
+                _abandoned(result, command, reason, 0),
+            )
+
+    return await _dispatch_to_broker(
+        ctx, command=command, result=result, context_kwargs=context_kwargs
+    )
+
+
+async def _dispatch_to_broker(
+    ctx: _BrokerRouteCtx,
+    *,
+    command: OMSCommand,
+    result: SubmissionResult,
+    context_kwargs: dict[str, Any],
+) -> tuple[SubmissionResult, BrokerDispatchResult | None, _AbandonedCommandEntry | None]:
+    """(A) pre-commit → (B) dispatch → (C) backfill / (F) teardown for one command.
+
+    The broker-routing body of :func:`_route_one_command`, reached once the
+    stale-anchor backstop and the ALP-847 monitor-enforced-local branch have both
+    passed. ``context_kwargs`` is the resolved per-command dispatcher context.
+    """
+    from alphamind.execution.broker_adapter import GatewaySubmissionFailed, Submitted
+    from alphamind.execution.broker_adapter.errors import classify_alpaca_error
+    from alphamind.execution.broker_adapter.order_options import PermanentRejectionError
 
     # (A) Pre-commit the durable order row before dispatch. If it cannot land, the
     # command aborts without dispatching — never a broker order without a row.
@@ -468,6 +526,61 @@ async def _finalize_dispatch_if_persisting(
     )
 
 
+async def _route_monitor_enforced_local(
+    ctx: _BrokerRouteCtx,
+    *,
+    command: CancelCommand | AdjustCommand,
+    result: SubmissionResult,
+) -> tuple[SubmissionResult, BrokerDispatchResult | None, _AbandonedCommandEntry | None]:
+    """Apply a monitor-enforced leg's CANCEL/ADJUST as a LOCAL Intent change (ALP-847).
+
+    A monitor-enforced leg has no broker order, so its CANCEL/ADJUST never goes to
+    the broker — there is no synthetic id to send (the ALP-837 path is
+    unrepresentable). The local writeback alone realizes the change:
+
+    * CANCEL → ``persist_cancel_writeback`` marks the leg's order CANCELLED and
+      releases nothing (a protective leg reserves no capital).
+    * ADJUST → ``precommit_command`` runs the ADJUST writeback, which cancels the
+      old leg and inserts a fresh monitor-enforced replacement (``alpaca_order_id``
+      None — no broker dispatch follows, so the precommit IS the final state).
+
+    No-op writeback on the fixture path (no ``session_factory``); the result is
+    still ``accepted`` so the submission log reflects the local action. Returns no
+    dispatch entry and no abandoned entry.
+    """
+    if ctx.session_factory is not None and ctx.invocation_id is not None:
+        from alphamind.execution.write_paths.phase2.atomic import (
+            persist_cancel_writeback,
+            precommit_command,
+        )
+
+        if isinstance(command, CancelCommand):
+            await run_with_sqlite_busy_retry(
+                partial(
+                    persist_cancel_writeback,
+                    ctx.session_factory,
+                    invocation_id=ctx.invocation_id,
+                    command=command,
+                )
+            )
+        else:
+            await run_with_sqlite_busy_retry(
+                partial(
+                    precommit_command,
+                    ctx.session_factory,
+                    invocation_id=ctx.invocation_id,
+                    command=command,
+                    result=result,
+                )
+            )
+    logger.info(
+        "broker_dispatch: %s on a monitor-enforced leg applied locally (no broker call) — %s",
+        command.command_type.upper(),
+        result.command_id,
+    )
+    return result, None, None
+
+
 def _abandoned(
     result: SubmissionResult, command: OMSCommand, reason: str, attempt_count: int
 ) -> _AbandonedCommandEntry:
@@ -631,13 +744,34 @@ async def _adjust_command_context(
         OrderRow.bracket_id == position.bracket_id, OrderRow.status == "PENDING"
     )
     rows = (await invocation_handle.session.execute(stmt)).scalars().all()
-    target = next((r for r in rows if r.order_role in target_roles), None)
-    if target is None:
+    candidates = [r for r in rows if r.order_role in target_roles]
+    if not candidates:
         msg = (
             f"ADJUST against bracket {position.bracket_id!r} found no "
             f"PENDING protective leg matching roles {sorted(target_roles)} to replace"
         )
         raise ValueError(msg)
+
+    # Select the target leg by its typed binding (ALP-847): a multi-leg bracket
+    # can carry both a broker-enforced and a monitor-enforced leg on the same
+    # role (e.g. two PRICE_STOPs). Prefer the BROKER_ENFORCED leg so the ADJUST
+    # hits the live Alpaca order rather than leaving it stale and mutating only
+    # the monitor leg. ``binding_by_order_id`` maps each candidate's order_id to
+    # its leg binding; absent (non-protective) → BROKER_ENFORCED (see
+    # :func:`_leg_enforcement_binding`).
+    binding_by_order_id = {
+        r.order_id: await _leg_enforcement_binding(invocation_handle, r.order_id)
+        for r in candidates
+    }
+    target = next(
+        (
+            r
+            for r in candidates
+            if binding_by_order_id[r.order_id] is EnforcementBinding.BROKER_ENFORCED
+        ),
+        candidates[0],
+    )
+    target_binding = binding_by_order_id[target.order_id]
 
     # Strategy→us_option_strategy/mleg; option→us_option/simple;
     # equity→us_equity/simple (Alpaca treats bracket children as simple on
@@ -662,6 +796,7 @@ async def _adjust_command_context(
         "target_alpaca_order_id": target.alpaca_order_id,
         "target_asset_class": target_asset_class,
         "target_order_class": target_order_class,
+        "target_enforcement_binding": target_binding,
     }
 
 
@@ -681,16 +816,39 @@ def _adjust_target_roles(command: AdjustCommand) -> frozenset[str]:
     return frozenset(roles)
 
 
+async def _leg_enforcement_binding(invocation_handle: Any, order_id: str) -> EnforcementBinding:
+    """Read the protective leg's typed ``enforcement_binding`` by its ``order_id``.
+
+    The binding is the Broker-Owned-Fact-vs-Intent distinction (ADR-0003) the
+    dispatch router keys on. It lives on ``bracket_legs`` (populated by the OPEN
+    writeback, 02c), keyed by the leg's ``order_id``. A target ``order_id`` with
+    no ``bracket_legs`` row (a non-protective order — e.g. a primary entry) is
+    treated as ``BROKER_ENFORCED``: it always carries a real broker order, so a
+    CANCEL must dispatch, never local-cancel.
+    """
+    stmt = _select(BracketLegRow.enforcement_binding).where(BracketLegRow.order_id == order_id)
+    binding = (await invocation_handle.session.execute(stmt)).scalars().one_or_none()
+    if binding is None:
+        return EnforcementBinding.BROKER_ENFORCED
+    return EnforcementBinding(binding)
+
+
 async def _cancel_command_context(
     command: CancelCommand, *, invocation_handle: Any
 ) -> dict[str, Any]:
-    """Resolve CANCEL context — reads target order by OMS id, returns
-    ``alpaca_order_id``."""
+    """Resolve CANCEL context — reads target order by OMS id, returns its
+    ``alpaca_order_id`` and the target leg's typed ``enforcement_binding`` (the
+    router keys on the binding, not on id-nullity — ALP-847)."""
     order_row = await invocation_handle.session.get(OrderRow, command.order_id)
     if order_row is None:
         msg = f"CANCEL references missing order_id={command.order_id!r}"
         raise ValueError(msg)
-    return {"target_alpaca_order_id": order_row.alpaca_order_id}
+    return {
+        "target_alpaca_order_id": order_row.alpaca_order_id,
+        "target_enforcement_binding": await _leg_enforcement_binding(
+            invocation_handle, command.order_id
+        ),
+    }
 
 
 async def _read_position(position_id: PositionId, *, invocation_handle: Any) -> Any:

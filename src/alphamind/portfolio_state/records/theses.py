@@ -24,6 +24,22 @@ class ThesisRecordStatus(StrEnum):
     CANCELLED = "CANCELLED"
 
 
+class ThesisNature(StrEnum):
+    """Whether the thesis is invalidated by an underlying move or by option PnL.
+
+    The persisted counterpart of the wire ``Thesis.nature`` tag (ALP-848 /
+    ADR-0003). A ``DIRECTIONAL`` thesis is invalidated by an underlying price
+    level (a long call on an up-move); a ``NON_DIRECTIONAL`` vol / spread thesis
+    has no single invalidating underlying level — its PnL is nonlinear in the
+    underlying. The nature determines which signal the thesis-invalidation stop
+    fires on (see ``BracketLeg.trigger_signal``), selected by the continuous
+    monitor (ALP-852).
+    """
+
+    DIRECTIONAL = "DIRECTIONAL"
+    NON_DIRECTIONAL = "NON_DIRECTIONAL"
+
+
 class ThesisComponentType(StrEnum):
     ENTRY_RATIONALE = "ENTRY_RATIONALE"
     TARGET_RATIONALE = "TARGET_RATIONALE"
@@ -112,6 +128,12 @@ class ThesisRecord:
     resolution_category: ThesisResolutionCategory | None
     resolution_pnl_usd: float | None
     entry_fill_gap_usd: float | None
+    # ALP-852 / ADR-0003 — the thesis-shape tag (directional vs non-directional)
+    # the continuous monitor reads to select the thesis-invalidation stop's
+    # trigger signal. Defaults to DIRECTIONAL: an underlying-triggered stop is
+    # the legacy uniform behaviour and the conservative default for any record
+    # constructed before the OPEN command carried a nature tag.
+    nature: ThesisNature = ThesisNature.DIRECTIONAL
     # The analyst's prose rationale for *why this size at this conviction*.
     # Read by the PM's sizing-proportionality evaluation criterion.
     # Persisted from the analyst's proposal at OPEN time; not modified by

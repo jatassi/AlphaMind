@@ -11,9 +11,10 @@ any broker-side failure degrades the bundle (returning no-op defaults +
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from alpaca.data.enums import CorporateActionsType
@@ -29,6 +30,7 @@ from alphamind.config.models.venue import (
 from alphamind.execution.broker_adapter.entry_pricing import TouchQuote
 from alphamind.execution.broker_adapter.queries import (
     AccountStateQueries,
+    OrderSnapshot,
     PositionSnapshot,
     TradeAccountSnapshot,
 )
@@ -121,6 +123,19 @@ class _StubQueries:
 
     def get_positions(self) -> tuple[PositionSnapshot, ...]:
         return self._positions
+
+    async def get_orders(
+        self,
+        *,
+        status: Literal["open", "closed", "all"] = "all",
+        since: datetime | None = None,
+        until: datetime | None = None,
+        symbols: tuple[str, ...] | None = None,
+    ) -> AsyncIterator[OrderSnapshot]:
+        # gather_phase1_inputs does not consume orders; the method is present
+        # only to satisfy the AccountStateQueriesP protocol surface.
+        return
+        yield  # pragma: no cover — makes this an async generator
 
 
 class _StubCorporateActionsQueries:
@@ -707,6 +722,17 @@ class TestGatherPhase1Inputs:
 
             def get_positions(self) -> tuple[PositionSnapshot, ...]:
                 return ()
+
+            async def get_orders(
+                self,
+                *,
+                status: Literal["open", "closed", "all"] = "all",
+                since: datetime | None = None,
+                until: datetime | None = None,
+                symbols: tuple[str, ...] | None = None,
+            ) -> AsyncIterator[OrderSnapshot]:
+                return
+                yield  # pragma: no cover — makes this an async generator
 
         session, handle = await _open_phase1_handle(
             async_factory=async_factory,

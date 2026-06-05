@@ -105,9 +105,10 @@ class OrderStatus(StrEnum):
     # PENDING_SUBMIT (ALP-836) is the durable-intent state of an order whose row
     # has been committed locally but has NOT yet been accepted by the broker — the
     # atomicity-first window between the pre-dispatch commit and the post-submit
-    # ``alpaca_order_id`` backfill. The row carries the synthetic ``alp-{order_id}``
-    # placeholder until the real broker id is backfilled, at which point it
-    # transitions to PENDING. A row stuck in PENDING_SUBMIT means the broker never
+    # ``alpaca_order_id`` backfill. The row carries NO broker id (``alpaca_order_id``
+    # NULL, ALP-847 — the synthetic ``alp-`` placeholder is deleted) until the real
+    # broker id is backfilled, at which point it transitions to PENDING. A row
+    # stuck in PENDING_SUBMIT means the broker never
     # accepted the order (lost backfill, rejection, or process death between the
     # pre-commit and dispatch) — recoverable by the reconcile-by-``client_order_id``
     # backfill, and never a live-broker-order-without-a-local-row strand.
@@ -139,11 +140,48 @@ class BracketLegEnforcement(StrEnum):
     ADVISORY = "ADVISORY"
 
 
+class EnforcementBinding(StrEnum):
+    """How a protective leg's exit is *enforced* — a Broker-Owned Fact or Intent.
+
+    The typed broker-vs-monitor distinction from ADR-0003. Orthogonal to
+    ``BracketLegEnforcement`` (MECHANICAL/ADVISORY, the leg's semantic role):
+    this names *who* enforces the leg.
+
+    * ``BROKER_ENFORCED`` — backed by a real broker order (an equity native
+      bracket/OTO child, or an options capital-protection ``stop_limit``); its
+      execution is a Broker-Owned Fact and survives a monitor outage.
+    * ``MONITOR_ENFORCED`` — armed Intent with no broker order; the continuous
+      monitor watches the condition and submits a fresh self-attributing close
+      when it fires. "Cancel" is a local Intent state change, not a broker call.
+    """
+
+    BROKER_ENFORCED = "broker_enforced"
+    MONITOR_ENFORCED = "monitor_enforced"
+
+
 class BracketLegStatus(StrEnum):
     PENDING_ACTIVATION = "PENDING_ACTIVATION"
     ACTIVE = "ACTIVE"
     TRIGGERED = "TRIGGERED"
     CANCELLED = "CANCELLED"
+
+
+class TriggerSignal(StrEnum):
+    """Which signal a thesis-invalidation stop fires on (ALP-852 / ADR-0003).
+
+    The persisted counterpart of the wire ``PriceLeg.trigger_signal`` tag,
+    matched to the thesis nature: ``UNDERLYING_PRICE`` for a *directional* thesis
+    (the underlying crosses an invalidating level); ``OPTION_PRICE`` for a
+    *non-directional* single-option vol thesis (its own mark is the faithful
+    signal); ``NET_MARK`` for a *non-directional* multi-leg spread (the strategy
+    net mark). The continuous monitor reads this off the invalidation leg to
+    select the trigger evaluator — an underlying-level trigger is meaningless
+    for a spread whose PnL is nonlinear in the underlying.
+    """
+
+    UNDERLYING_PRICE = "underlying_price"
+    OPTION_PRICE = "option_price"
+    NET_MARK = "net_mark"
 
 
 # Mechanical leg types that satisfy the hard-backstop requirement
@@ -225,7 +263,17 @@ class OrderRecord:
     quantity: float
     duration: OrderDuration
     status: OrderStatus
-    alpaca_order_id: AlpacaOrderId
+    # ADR-0003 / ALP-847: the broker's real Alpaca order id, or ``None`` for an
+    # order with no broker counterpart. ``None`` covers two cases: a not-yet-
+    # routed order (PENDING_SUBMIT — durable Intent keyed by ``client_order_id``,
+    # backfilled with the real id on dispatch) and a monitor-enforced protective
+    # leg (armed Intent the continuous monitor enforces — it never has a broker
+    # order). The synthetic ``alp-{order_id}`` placeholder is deleted: a leg with
+    # no broker order has NO broker id (invariant 5), never a counterfeit one.
+    alpaca_order_id: AlpacaOrderId | None
+    # Empty for an order with no broker id; otherwise the lineage of real broker
+    # ids (cancel-and-replace ADJUST appends). The last element equals
+    # ``alpaca_order_id`` when both are present.
     alpaca_order_id_chain: tuple[AlpacaOrderId, ...]
     submission_timestamp: datetime
     last_update_timestamp: datetime
@@ -368,8 +416,16 @@ class OrderRecord:
                 raise ValueError(msg)
 
     def _check_alpaca_chain(self) -> None:
+        # ALP-847 — an order with no broker id (a not-yet-routed order or a
+        # monitor-enforced protective leg) carries ``alpaca_order_id=None`` and an
+        # empty chain; the two are bound together so a stray half-state can't form.
+        if self.alpaca_order_id is None:
+            if self.alpaca_order_id_chain:
+                msg = "alpaca_order_id is None requires an empty alpaca_order_id_chain"
+                raise ValueError(msg)
+            return
         if not self.alpaca_order_id_chain:
-            msg = "alpaca_order_id_chain must be non-empty"
+            msg = "alpaca_order_id_chain must be non-empty when alpaca_order_id is set"
             raise ValueError(msg)
         if self.alpaca_order_id != self.alpaca_order_id_chain[-1]:
             msg = (
@@ -553,11 +609,26 @@ class BracketLeg:
     enforcement: BracketLegEnforcement
     status: BracketLegStatus
     pl_anchor: PLAnchorSpec | None = None
+    # ADR-0003: the typed broker-vs-monitor binding. Defaults to
+    # MONITOR_ENFORCED — the conservative case (armed Intent with no broker
+    # order); the broker-enforced legs (native equity bracket child, options
+    # capital floor) are set explicitly by the later bracket stories.
+    enforcement_binding: EnforcementBinding = EnforcementBinding.MONITOR_ENFORCED
+    # ALP-852 / ADR-0003 — which signal a thesis-invalidation PRICE_STOP fires
+    # on, matched to the thesis nature (set by the OPEN writeback from the wire
+    # ``PriceLeg.trigger_signal``). The continuous monitor reads it to select the
+    # trigger evaluator: ``UNDERLYING_PRICE`` (directional) vs ``OPTION_PRICE`` /
+    # ``NET_MARK`` (non-directional). ``None`` on a TAKE_PROFIT / TIME / EVENT leg
+    # — those carry no thesis-invalidation trigger signal — and on a legacy
+    # PRICE_STOP predating the tag (the monitor reads ``None`` as the legacy
+    # underlying-triggered shape).
+    trigger_signal: TriggerSignal | None = None
 
     def __post_init__(self) -> None:
         self._validate_event_invalidation()
         self._validate_trigger_matches_leg_type()
         self._validate_pl_anchor_compatibility()
+        self._validate_trigger_signal_leg_type()
 
     def _validate_event_invalidation(self) -> None:
         if self.leg_type == BracketLegType.EVENT_INVALIDATION and self.order_id is not None:
@@ -587,6 +658,18 @@ class BracketLeg:
             msg = (
                 f"leg_type={self.leg_type!r} requires pl_anchor.spec_type="
                 f"{expected_spec_type!r}; got {self.pl_anchor.spec_type!r}"
+            )
+            raise ValueError(msg)
+
+    def _validate_trigger_signal_leg_type(self) -> None:
+        # ALP-852 — ``trigger_signal`` names the thesis-invalidation stop's
+        # signal, so it is only meaningful on a PRICE_STOP leg. A TAKE_PROFIT
+        # leg fires on its own target geometry (price target or strategy net
+        # P/L), and a TIME / EVENT leg has no price signal at all.
+        if self.trigger_signal is not None and self.leg_type is not BracketLegType.PRICE_STOP:
+            msg = (
+                f"trigger_signal is only valid on a PRICE_STOP thesis-invalidation "
+                f"leg; got leg_type={self.leg_type!r}"
             )
             raise ValueError(msg)
 

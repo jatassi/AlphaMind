@@ -13,16 +13,42 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from alphamind._kernel.money import price
-from alphamind.commands.command_models import EntryOrder, OpenCommand
+from alphamind._kernel.money import money, price
+from alphamind.commands.command_models import (
+    BracketOrderParameters,
+    CapitalProtectionFloor,
+    EntryOrder,
+    OpenCommand,
+    OptionInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+)
+from alphamind.commands.command_models import (
+    ThesisComponent as OMSThesisComponent,
+)
+from alphamind.commands.submission_results import (
+    Acknowledgment,
+    SubmissionResult,
+    _ValidationMetadata,
+)
+from alphamind.execution.broker_adapter.order_options import (
+    derive_capital_floor_client_order_id,
+)
 from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
+from alphamind.execution.oms.command_ids import derive_open_thesis_id, derive_pm_command_id
 from alphamind.execution.write_paths.phase2.atomic import (
     abandon_command,
     backfill_command_broker_ids,
     dispatched_order_id,
     precommit_command,
 )
+from alphamind.execution.write_paths.phase2.open import _capital_floor_order_id
 from alphamind.portfolio_state.records.orders import OrderRole, OrderStatus
+from alphamind.risk_guardrails.guardrail_evaluation import Greeks
+from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.cash_ledger import CASH_LEDGER_SINGLETON_ID, CashLedgerRow
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.positions import PositionRow
@@ -87,6 +113,124 @@ def _limit_open() -> OpenCommand:
     )
 
 
+def _open_cid(envelope_id: str, *, ticker: str = "NVDA") -> str:
+    """A realistic broker-carried OPEN command id (ALP-844) for ``_limit_open``.
+
+    Phase-2 OPEN writeback (reached here via ``precommit_command`` →
+    ``dispatched_order_id`` → ``_new_open_ids``) resolves the thesis by parsing
+    the command id, so an OPEN's pre-commit must carry a thesis-bearing PM id.
+    Mints the thesis off the link-free base id with the canonical helper, exactly
+    as the production PM-submit path does, for ``_open_command``'s NVDA ticker.
+    """
+    base = f"inv-X.{envelope_id}.0.0"
+    return derive_pm_command_id(
+        invocation_id="inv-X",
+        envelope_id=envelope_id,
+        command_ordinal=0,
+        attempt_seq=0,
+        thesis_id=derive_open_thesis_id(ticker, base),
+    )
+
+
+def _options_open() -> OpenCommand:
+    """An options OPEN carrying the mandatory PnL-denominated capital floor (ALP-848).
+
+    Single-leg long call with a LIMIT entry so the OPEN reserves capital, and a
+    ``capital_protection_floor`` so the dispatcher submits the always-on
+    broker-enforced floor alongside the entry (ALP-856).
+    """
+    return OpenCommand(
+        command_type="open",
+        instrument=OptionInstrument(
+            asset_type="option",
+            underlying="NVDA",
+            strike=price(900.0),
+            expiration="2026-06-19",
+            contract_type="call",
+            direction="long",
+        ),
+        entry_order=EntryOrder(type="limit", limit_price=price(12.0), stop_price=None),
+        position_size=PositionSize(quantity=2.0, dollar_value=money(2_400.0)),
+        target=Target(
+            target_type="absolute_price",
+            price=price(20.0),
+            pl_percentage=None,
+            pl_dollar=None,
+            order_type="limit",
+        ),
+        invalidation_legs=(
+            PriceLeg(
+                type="price",
+                is_hard=True,
+                trigger_signal="underlying_price",
+                condition=PriceCondition(
+                    underlying_trigger="NVDA",
+                    comparator="<=",
+                    trigger_price=price(750.0),
+                ),
+                order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
+            ),
+        ),
+        thesis=Thesis(
+            summary="Long NVDA call.",
+            nature="directional",
+            components=(
+                OMSThesisComponent(
+                    component_type="entry_rationale",
+                    linked_leg="entry",
+                    instrument_reference="NVDA",
+                    narrative="Capex tailwind.",
+                    key_assumptions=("Capex stays elevated.",),
+                ),
+            ),
+        ),
+        capital_protection_floor=CapitalProtectionFloor(max_loss=money(800.0)),
+    )
+
+
+def _options_open_result(command_id: str) -> SubmissionResult:
+    """An accepted ``SubmissionResult`` carrying the validation greeks an options
+    OPEN writeback requires (``OptionsPositionDetails`` cannot build without
+    ``validation_metadata.greeks`` + ``.implied_volatility``)."""
+    return SubmissionResult(
+        command_ordinal=0,
+        status="accepted",
+        command_id=command_id,
+        acknowledgment=Acknowledgment(
+            validation_metadata=_ValidationMetadata(
+                greeks=Greeks(delta=0.5, gamma=0.02, theta=-0.04, vega=0.2),
+                implied_volatility=0.30,
+                delta_adjusted_exposure=0.0,
+                per_rule_headroom=(),
+            ),
+        ),
+    )
+
+
+async def _read_order_by_order_id(
+    factory: async_sessionmaker[AsyncSession], order_id: str
+) -> OrderRow | None:
+    async with factory() as sess:
+        return await sess.get(OrderRow, order_id)
+
+
+async def _read_floor_leg_order_id(
+    factory: async_sessionmaker[AsyncSession], *, bracket_id: str
+) -> str | None:
+    """The ``order_id`` of the bracket's BROKER_ENFORCED capital-floor leg."""
+    async with factory() as sess:
+        rows = list(
+            (
+                await sess.execute(
+                    select(BracketLegRow).where(BracketLegRow.bracket_id == bracket_id)
+                )
+            ).scalars()
+        )
+    floor = [r for r in rows if r.enforcement_binding == "broker_enforced"]
+    assert len(floor) == 1, f"expected exactly one broker-enforced floor leg, got {len(floor)}"
+    return floor[0].order_id
+
+
 # ---------------------------------------------------------------------------
 # (A) pre-commit
 # ---------------------------------------------------------------------------
@@ -108,8 +252,9 @@ async def test_precommit_close_writes_pending_submit_row(
     assert row is not None
     assert row.status == OrderStatus.PENDING_SUBMIT.value
     assert row.order_role == OrderRole.CLOSE.value
-    # Synthetic placeholder until backfill — never a real broker id pre-dispatch.
-    assert row.alpaca_order_id.startswith("alp-")
+    # ALP-847 — a not-yet-routed order carries NO broker id (NULL), never a
+    # synthetic placeholder; the real id is backfilled on dispatch.
+    assert row.alpaca_order_id is None
 
 
 @pytest.mark.asyncio
@@ -120,12 +265,13 @@ async def test_precommit_open_reserves_capital_and_marks_entry_pending_submit(
     await _seed_invocation_substrate(factory, invocation_id=_INV)
     await _seed_cash_ledger(factory)
     cmd = _limit_open()
-    result = _accepted_result(0, "inv-X.ENV-SA-2.0.0")
+    cid = _open_cid("ENV-SA-2")
+    result = _accepted_result(0, cid)
 
     landed = await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
 
     assert landed is True
-    row = await _read_order_by_client_order_id(factory, "inv-X.ENV-SA-2.0.0")
+    row = await _read_order_by_client_order_id(factory, cid)
     assert row is not None
     assert row.order_role == OrderRole.ENTRY.value
     assert row.status == OrderStatus.PENDING_SUBMIT.value
@@ -141,7 +287,8 @@ async def test_precommit_is_idempotent_no_double_reservation(
     await _seed_invocation_substrate(factory, invocation_id=_INV)
     await _seed_cash_ledger(factory)
     cmd = _limit_open()
-    result = _accepted_result(0, "inv-X.ENV-SA-3.0.0")
+    cid = _open_cid("ENV-SA-3")
+    result = _accepted_result(0, cid)
 
     assert await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
     # Replay — must be a no-op: one row, one reservation.
@@ -149,11 +296,7 @@ async def test_precommit_is_idempotent_no_double_reservation(
 
     async with factory() as sess:
         rows = (
-            (
-                await sess.execute(
-                    select(OrderRow).where(OrderRow.client_order_id == "inv-X.ENV-SA-3.0.0")
-                )
-            )
+            (await sess.execute(select(OrderRow).where(OrderRow.client_order_id == cid)))
             .scalars()
             .all()
         )
@@ -198,7 +341,8 @@ async def test_backfill_open_stamps_native_bracket_leg_ids(
     await _seed_invocation_substrate(factory, invocation_id=_INV)
     await _seed_cash_ledger(factory)
     cmd = _limit_open()
-    result = _accepted_result(0, "inv-X.ENV-SA-5.0.0")
+    cid = _open_cid("ENV-SA-5")
+    result = _accepted_result(0, cid)
     await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
 
     await backfill_command_broker_ids(
@@ -211,7 +355,7 @@ async def test_backfill_open_stamps_native_bracket_leg_ids(
         ),
     )
 
-    entry = await _read_order_by_client_order_id(factory, "inv-X.ENV-SA-5.0.0")
+    entry = await _read_order_by_client_order_id(factory, cid)
     assert entry is not None
     bracket_id = entry.bracket_id
     async with factory() as sess:
@@ -223,6 +367,76 @@ async def test_backfill_open_stamps_native_bracket_leg_ids(
         }
     assert legs[OrderRole.TAKE_PROFIT.value] == "tp-uuid"
     assert legs[OrderRole.PRICE_STOP.value] == "sl-uuid"
+
+
+# ---------------------------------------------------------------------------
+# (A)+(C) options OPEN capital floor — durable floor OrderRow + FK-safe leg
+# (ALP-856 / FS4): the floor is a tracked broker order with its own OrderRow,
+# the floor bracket_legs.order_id points at that OrderRow (satisfying the FK),
+# and the floor's broker id is backfilled onto OrderRow.alpaca_order_id.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_options_open_atomic_path_persists_floor_orderrow_fk_safe(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-856 — an options OPEN through the ALP-836 atomic path persists the
+    floor's OrderRow + the floor ``bracket_legs`` row through an FK-enforced DB
+    with NO ``FOREIGN KEY constraint failed``, and the floor leg's ``order_id``
+    resolves to an OrderRow whose ``alpaca_order_id`` is the backfilled broker id.
+
+    The floor is precommitted PENDING_SUBMIT with ``alpaca_order_id`` NULL keyed
+    by its deterministic floor ``client_order_id``; the broker id rides back on
+    ``leg_alpaca_order_ids['capital_floor']`` and is backfilled onto the floor
+    OrderRow (not onto the leg, which points at the OMS order_id).
+    """
+    _, factory = db
+    await _seed_invocation_substrate(factory, invocation_id=_INV)
+    await _seed_cash_ledger(factory)
+    cmd = _options_open()
+    cid = _open_cid("ENV-REC-9")
+    result = _options_open_result(cid)
+
+    # (A) pre-commit — durable graph, no broker ids; floor PENDING_SUBMIT.
+    landed = await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
+    assert landed is True
+
+    floor_cid = derive_capital_floor_client_order_id(cid)
+    floor_order_id = _capital_floor_order_id(cid)
+    floor_row = await _read_order_by_order_id(factory, floor_order_id)
+    assert floor_row is not None, "the floor OrderRow must be precommitted"
+    assert floor_row.status == OrderStatus.PENDING_SUBMIT.value
+    assert floor_row.client_order_id == floor_cid
+    assert floor_row.alpaca_order_id is None
+
+    # The floor bracket_legs.order_id points at the floor OMS order_id (FK-safe).
+    entry = await _read_order_by_client_order_id(factory, cid)
+    assert entry is not None
+    leg_order_id = await _read_floor_leg_order_id(factory, bracket_id=entry.bracket_id)
+    assert leg_order_id == floor_order_id
+
+    # (C) backfill — the floor's broker id lands on the floor OrderRow.
+    await backfill_command_broker_ids(
+        factory,
+        command=cmd,
+        result=result,
+        dispatch_result=_dispatch_result(
+            "entry-uuid",
+            leg_alpaca_order_ids={"capital_floor": "floor-uuid"},
+            payload_kind="options",
+        ),
+    )
+
+    floor_row = await _read_order_by_order_id(factory, floor_order_id)
+    assert floor_row is not None
+    assert floor_row.status == OrderStatus.PENDING.value
+    assert floor_row.alpaca_order_id == "floor-uuid"
+    # The leg still points at the OMS order_id; resolving it → OrderRow →
+    # alpaca id recovers the resting floor's real broker id (the closer path).
+    resolved = await _read_order_by_order_id(factory, leg_order_id)
+    assert resolved is not None
+    assert resolved.alpaca_order_id == "floor-uuid"
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +471,8 @@ async def test_abandon_open_tears_down_graph_and_releases_capital(
     await _seed_invocation_substrate(factory, invocation_id=_INV)
     await _seed_cash_ledger(factory)
     cmd = _limit_open()
-    result = _accepted_result(0, "inv-X.ENV-SA-7.0.0")
+    cid = _open_cid("ENV-SA-7")
+    result = _accepted_result(0, cid)
     await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
     assert await _read_reserved_capital(factory) == pytest.approx(9000.0)
 
@@ -265,7 +480,7 @@ async def test_abandon_open_tears_down_graph_and_releases_capital(
         factory, invocation_id=_INV, command=cmd, result=result, reason="broker_gateway_failure"
     )
 
-    entry = await _read_order_by_client_order_id(factory, "inv-X.ENV-SA-7.0.0")
+    entry = await _read_order_by_client_order_id(factory, cid)
     assert entry is not None
     assert entry.status == OrderStatus.CANCELLED.value
     # No phantom open: the never-filled position is driven terminal, capital freed.
@@ -273,6 +488,66 @@ async def test_abandon_open_tears_down_graph_and_releases_capital(
         pos = await sess.get(PositionRow, entry.position_id)
         assert pos is not None
         assert pos.status == "CANCELLED"
+    assert await _read_reserved_capital(factory) == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_abandon_options_open_cancels_pending_submit_floor_no_strand(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """FL3 — abandoning an options OPEN whose floor row is still PENDING_SUBMIT
+    cancels/clears the floor so no PENDING_SUBMIT strand survives the teardown.
+
+    On a floor-submit failure the entry is live but the floor's OrderRow is left
+    PENDING_SUBMIT (its broker-id backfill never ran). The entry-CANCEL teardown
+    (``abandon_command`` → ``_writeback_cancel`` → ``_cancel_pending_protective_orders``)
+    must sweep the floor leg out of PENDING_SUBMIT, or its ``inv-{id}.``
+    ``client_order_id`` keeps ``invocation_has_pending_submit_strand`` True forever
+    → ``phase2_completed_at`` withheld with no recovery, and the resting floor is
+    never cancelled. The floor reserves no capital, so none is released here.
+    """
+    from alphamind.execution.write_paths.phase2.atomic import (
+        invocation_has_pending_submit_strand,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory, invocation_id=_INV)
+    await _seed_cash_ledger(factory)
+    cmd = _options_open()
+    # The entry id (and thus the floor's derived client_order_id) must carry the
+    # invocation prefix the strand guard scopes by, so a surviving floor strand is
+    # observable.
+    cid = derive_pm_command_id(
+        invocation_id=_INV,
+        envelope_id="ENV-REC-3",
+        command_ordinal=0,
+        attempt_seq=0,
+        thesis_id=derive_open_thesis_id("NVDA", f"{_INV}.ENV-REC-3.0.0"),
+    )
+    result = _options_open_result(cid)
+    await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
+
+    # The floor is precommitted PENDING_SUBMIT and would strand the invocation.
+    floor_order_id = _capital_floor_order_id(cid)
+    floor_row = await _read_order_by_order_id(factory, floor_order_id)
+    assert floor_row is not None
+    assert floor_row.status == OrderStatus.PENDING_SUBMIT.value
+    async with factory() as session:
+        assert await invocation_has_pending_submit_strand(session, invocation_id=_INV) is True
+
+    # (F) abandon the entry — the floor-submit-failure teardown path.
+    await abandon_command(
+        factory, invocation_id=_INV, command=cmd, result=result, reason="floor_submit_failed"
+    )
+
+    # The floor row is cleared out of PENDING_SUBMIT (CANCELLED), so no strand
+    # remains and the invocation can stamp phase2_completed_at.
+    floor_row = await _read_order_by_order_id(factory, floor_order_id)
+    assert floor_row is not None
+    assert floor_row.status == OrderStatus.CANCELLED.value
+    async with factory() as session:
+        assert await invocation_has_pending_submit_strand(session, invocation_id=_INV) is False
+    # The floor reserves no capital — the only reservation freed is the entry's.
     assert await _read_reserved_capital(factory) == pytest.approx(0.0)
 
 
@@ -294,109 +569,134 @@ async def test_abandon_missing_precommit_is_noop(
     assert await _read_order_by_client_order_id(factory, "inv-X.ENV-SA-8.0.0") is None
 
 
+# ---------------------------------------------------------------------------
+# FL9 — _precommit_capital_floor raises when floor OrderRow is missing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_precommit_capital_floor_raises_when_floor_row_missing(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """FL9 — _precommit_capital_floor must raise (not silently return) when the
+    floor OrderRow is absent at stamp time.
+
+    A missing floor row at precommit is a real bug (flush ordering or missing
+    _writeback_open step) — silently skipping it leaves the floor permanently
+    unstamped with no signal. The correct behaviour is to surface a RuntimeError
+    immediately so the anomaly is caught before the transaction commits.
+    """
+    from alphamind.execution.write_paths.phase2.atomic import _precommit_capital_floor
+
+    _, factory = db
+    await _seed_invocation_substrate(factory, invocation_id=_INV)
+    cmd = _options_open()
+    cid = _open_cid("ENV-SA-20")
+    # Open a session WITHOUT running _writeback_open — the floor OrderRow is absent.
+    async with factory() as session:
+        with pytest.raises(RuntimeError, match="floor OrderRow"):
+            await _precommit_capital_floor(session, cmd, command_id=cid)
+
+
+# ---------------------------------------------------------------------------
+# FL8 — precommit replay stamps floor when entry committed but floor not yet stamped
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_precommit_replay_stamps_floor_when_entry_committed_but_floor_unstamped(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """FL8 — on a replay where the entry row is already committed but the floor
+    was not yet stamped PENDING_SUBMIT, precommit_command must still stamp the
+    floor before returning True.
+
+    The idempotency short-circuit fires because the entry client_order_id row
+    exists; the fix is that it must still run _precommit_capital_floor (idempotent
+    if already stamped) before returning True so the floor is never skipped.
+    """
+    from alphamind.execution.write_paths.phase2.open import _capital_floor_order_id
+
+    _, factory = db
+    await _seed_invocation_substrate(factory, invocation_id=_INV)
+    await _seed_cash_ledger(factory)
+    cmd = _options_open()
+    cid = _open_cid("ENV-SA-21")
+    result = _options_open_result(cid)
+
+    # First call — full precommit including floor stamp.
+    assert await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
+
+    # Simulate the case where the floor stamp was lost: reset the floor row back
+    # to SUBMITTED (no PENDING_SUBMIT, no client_order_id) to represent a partial
+    # commit where only the entry row landed.
+    floor_order_id = _capital_floor_order_id(cid)
+    async with factory() as sess:
+        await sess.begin()
+        floor_row = await sess.get(OrderRow, floor_order_id)
+        assert floor_row is not None
+        floor_row.status = OrderStatus.PENDING.value  # reset: pretend floor stamp was lost
+        floor_row.client_order_id = None
+        await sess.commit()
+
+    # Replay — entry row exists so the idempotency guard fires.
+    # The floor must still be re-stamped PENDING_SUBMIT before returning True.
+    landed = await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
+    assert landed is True
+
+    floor_row_after = await _read_order_by_order_id(factory, floor_order_id)
+    assert floor_row_after is not None
+    assert floor_row_after.status == OrderStatus.PENDING_SUBMIT.value, (
+        "floor must be stamped PENDING_SUBMIT on replay even when entry row already exists"
+    )
+
+
+# ---------------------------------------------------------------------------
+# FL5 — backfill raises when options OPEN dispatch result omits capital_floor id
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_backfill_raises_when_options_open_result_missing_floor_id(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """FL5 — backfill_command_broker_ids must raise when the dispatch result for
+    an options OPEN omits the 'capital_floor' key from leg_alpaca_order_ids.
+
+    A malformed/empty dispatch result that omits 'capital_floor' while the floor
+    OrderRow exists would silently leave the floor in PENDING_SUBMIT with NULL
+    alpaca_order_id — live at broker but un-cancellable.  The fix asserts/raises
+    so the anomaly surfaces immediately rather than leaving a silent strand.
+    """
+    _, factory = db
+    await _seed_invocation_substrate(factory, invocation_id=_INV)
+    await _seed_cash_ledger(factory)
+    cmd = _options_open()
+    cid = _open_cid("ENV-SA-22")
+    result = _options_open_result(cid)
+    await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
+
+    # Dispatch result for an options OPEN but 'capital_floor' key is absent.
+    with pytest.raises(RuntimeError, match="capital_floor"):
+        await backfill_command_broker_ids(
+            factory,
+            command=cmd,
+            result=result,
+            dispatch_result=_dispatch_result(
+                "entry-uuid",
+                # 'capital_floor' key deliberately omitted — this is the malformed case.
+                leg_alpaca_order_ids={"take_profit": "tp-uuid"},
+                payload_kind="options",
+            ),
+        )
+
+
 def test_dispatched_order_id_is_none_for_cancel() -> None:
     from alphamind._kernel.ids import OrderId
     from alphamind.commands.command_models import CancelCommand
 
     cancel = CancelCommand(command_type="cancel", order_id=OrderId("ord-x"), cancel_reason="stale")
     assert dispatched_order_id(cancel, command_id="inv-X.ENV-SA-9.0.0") is None
-
-
-# ---------------------------------------------------------------------------
-# (E) reconcile order→broker-link backfill (lost-(C) recovery)
-# ---------------------------------------------------------------------------
-
-
-def _order_snapshot(*, order_id: str, client_order_id: str, status: str = "filled") -> object:
-    from datetime import UTC, datetime
-
-    from alphamind.execution.broker_adapter.queries import OrderSnapshot
-
-    return OrderSnapshot(
-        order_id=order_id,
-        client_order_id=client_order_id,
-        symbol="NVDA",
-        asset_class="us_equity",
-        qty=10.0,
-        filled_qty=10.0 if status == "filled" else 0.0,
-        side="sell",
-        order_type="market",
-        time_in_force="day",
-        order_class="simple",
-        status=status,
-        submitted_at=datetime(2026, 6, 3, tzinfo=UTC),
-        filled_at=None,
-        replaced_by=None,
-        replaces=None,
-        legs=None,
-    )
-
-
-@pytest.mark.asyncio
-async def test_backfill_pending_submit_orders_recovers_lost_link(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
-) -> None:
-    """ALP-836 (E) — a PENDING_SUBMIT row whose post-submit backfill was lost is
-    recovered: matched to the live Alpaca order by client_order_id, stamped with
-    the real alpaca_order_id, and flipped PENDING_SUBMIT → PENDING."""
-    from alphamind.execution.corporate_actions.reconciliation import (
-        backfill_pending_submit_orders,
-    )
-    from alphamind.state.invocation_context.context import InvocationHandle
-
-    _, factory = db
-    await _seed_open_close_substrate(factory)
-    cmd = _close_command()
-    result = _accepted_result(0, "inv-X.ENV-SA-E.0.0")
-    # Pre-commit but NEVER backfill — the row is stuck in PENDING_SUBMIT with the
-    # synthetic placeholder (the lost-(C) state).
-    await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
-    row = await _read_order_by_client_order_id(factory, "inv-X.ENV-SA-E.0.0")
-    assert row is not None
-    assert row.status == OrderStatus.PENDING_SUBMIT.value
-    assert row.alpaca_order_id.startswith("alp-")
-
-    snapshot = _order_snapshot(order_id="real-broker-uuid", client_order_id="inv-X.ENV-SA-E.0.0")
-    async with factory() as session:
-        handle = InvocationHandle(session=session, invocation_id=_INV)
-        n = await backfill_pending_submit_orders(handle, alpaca_orders=(snapshot,))  # type: ignore[arg-type]
-        await session.commit()
-    assert n == 1
-
-    row = await _read_order_by_client_order_id(factory, "inv-X.ENV-SA-E.0.0")
-    assert row is not None
-    assert row.alpaca_order_id == "real-broker-uuid"
-    assert row.status == OrderStatus.PENDING.value
-
-
-@pytest.mark.asyncio
-async def test_backfill_pending_submit_orders_noop_without_match(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
-) -> None:
-    """A PENDING_SUBMIT row with no matching Alpaca order is left untouched (the
-    dispatch likely never landed) — no spurious id stamp."""
-    from alphamind.execution.corporate_actions.reconciliation import (
-        backfill_pending_submit_orders,
-    )
-    from alphamind.state.invocation_context.context import InvocationHandle
-
-    _, factory = db
-    await _seed_open_close_substrate(factory)
-    cmd = _close_command()
-    result = _accepted_result(0, "inv-X.ENV-SA-F.0.0")
-    await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
-
-    other = _order_snapshot(order_id="unrelated", client_order_id="some-other-command")
-    async with factory() as session:
-        handle = InvocationHandle(session=session, invocation_id=_INV)
-        n = await backfill_pending_submit_orders(handle, alpaca_orders=(other,))  # type: ignore[arg-type]
-        await session.commit()
-    assert n == 0
-
-    row = await _read_order_by_client_order_id(factory, "inv-X.ENV-SA-F.0.0")
-    assert row is not None
-    assert row.status == OrderStatus.PENDING_SUBMIT.value
-    assert row.alpaca_order_id.startswith("alp-")
 
 
 # ---------------------------------------------------------------------------

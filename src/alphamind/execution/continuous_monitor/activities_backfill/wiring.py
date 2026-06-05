@@ -7,7 +7,7 @@ session factory, and the paper-mode enrichment callable — into the
 ``(session, config)`` closure shape the supervisor expects, then registers the
 resulting coroutine factory under the name ``fill_backfill``.
 
-Mirrors :func:`register_borrow_accrual_task` and the fill consumer's
+Mirrors :func:`register_greeks_refresh_task` and the fill consumer's
 ``_register_fill_stream_consumer`` closure: each injected production-substrate
 factory is a small, independently-testable constructor. The factories are the
 same ones the fill consumer uses, so the backstop sweeps the identical broker

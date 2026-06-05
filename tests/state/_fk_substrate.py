@@ -28,11 +28,14 @@ from alphamind.portfolio_state.records.positions import (
 )
 from alphamind.portfolio_state.records.theses import ThesisRecordStatus
 from alphamind.state.tables.brackets import BracketRow
+from alphamind.state.tables.invocations import InvocationRow
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
 from alphamind.state.tables.theses import ThesisRow
 
 _TS = "2026-05-07T14:30:00Z"
+_DEFAULT_PROCESS_LIFETIME_ID = "plt-stub-1"
 
 
 def stub_position_row(
@@ -162,3 +165,62 @@ def seed_position_cluster(
     session.add(stub_thesis_row(thesis_id, position_id))
     session.add(stub_order_row(entry_order_id, bracket_id, position_id=position_id))
     session.add(stub_bracket_row(bracket_id, position_id, entry_order_id))
+
+
+def stub_process_lifetime_row(
+    process_lifetime_id: str = _DEFAULT_PROCESS_LIFETIME_ID,
+) -> ProcessLifetimeRow:
+    """Minimal ``process_lifetimes`` row — the ``invocations`` FK target."""
+    return ProcessLifetimeRow(
+        process_lifetime_id=process_lifetime_id,
+        process_role="monitor",
+        process_start_at=_TS,
+        process_pid=1,
+        hostname="stub-host",
+        git_sha="0" * 40,
+        git_branch="main",
+        git_dirty=0,
+        python_version="3.13.0",
+        pip_freeze_hash="0" * 64,
+        pip_freeze_snapshot_path="snapshot/path",
+        anthropic_sdk_version="0.0.0",
+        claude_agent_sdk_version="0.0.0",
+        os_release="stub-os",
+    )
+
+
+def stub_invocation_row(
+    invocation_id: str,
+    *,
+    process_lifetime_id: str = _DEFAULT_PROCESS_LIFETIME_ID,
+) -> InvocationRow:
+    """Minimal ``invocations`` row — the broker-event-log ``invocation_id`` FK
+    target a broker-carried link points at.
+
+    Requires the ``process_lifetimes`` parent (``stub_process_lifetime_row``)
+    to be committed first / in the same transaction.
+    """
+    return InvocationRow(
+        invocation_id=invocation_id,
+        process_lifetime_id=process_lifetime_id,
+        start_at=_TS,
+        phase1_completed_at=None,
+        phase2_completed_at=None,
+        trigger_type="manual",
+        trigger_source="continuous_monitor",
+        trigger_reason="test-fixture",
+        git_sha_at_invocation="0" * 40,
+        active_profile="default",
+        active_regime="normal",
+        active_mode="normal",
+        active_overlays_json="[]",
+        resolved_config_hash="0" * 64,
+        resolved_config_snapshot_path="snapshot/path",
+        feature_flags_snapshot_json="{}",
+        data_calibration_state_snapshot_path="snapshot/path",
+        data_source_freshness_json="{}",
+        fill_collection_summary_json=None,
+        command_execution_summary_json=None,
+        staleness_flag=0,
+        snapshot_metadata_json=None,
+    )

@@ -253,7 +253,13 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # and config/run_types/ (overlay file pre_open.yaml -> market_open.yaml),
     # both of which feed the resolved-config canonical bytes — only the label
     # changed; the resolved budgets/roster are identical.
-    expected = "61ab825d799b59e2611c5b0262bc9070e2ac4a7498ead4c110e0220486aeb58d"
+    # Pin updated 2026-06-05 (borrow_accrual_tick_local_time removed, ALP-855):
+    # the borrow-accrual daily timer was relocated out of the always-on monitor
+    # into the pipeline's Phase-1 write unit (ADR-0004/0005), so the monitor's
+    # configured wall-clock tick time is dead config and was dropped from
+    # config/continuous_monitor.yaml and ContinuousMonitorConfig, shifting the
+    # resolved-config canonical bytes.
+    expected = "0e05cd7b03f2236c87dbef19efb935c5810aab08d52346a220b9198ec3af9070"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

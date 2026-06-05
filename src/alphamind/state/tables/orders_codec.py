@@ -150,6 +150,9 @@ def record_to_row(record: OrderRecord) -> OrderRow:
         duration=record.duration.value,
         status=record.status.value,
         alpaca_order_id=record.alpaca_order_id,
+        # ALP-847 — an order with no broker id (not-yet-routed, or a monitor-
+        # enforced leg) stores NULL + an empty chain; the codec round-trips the
+        # absence faithfully rather than minting a placeholder.
         alpaca_order_id_chain_json=json.dumps(list(record.alpaca_order_id_chain)),
         submission_timestamp=record.submission_timestamp.isoformat(),
         last_update_timestamp=record.last_update_timestamp.isoformat(),
@@ -185,7 +188,9 @@ def row_to_record(row: OrderRow) -> OrderRecord:
         quantity=row.quantity,
         duration=OrderDuration(row.duration),
         status=OrderStatus(row.status),
-        alpaca_order_id=AlpacaOrderId(row.alpaca_order_id),
+        alpaca_order_id=(
+            AlpacaOrderId(row.alpaca_order_id) if row.alpaca_order_id is not None else None
+        ),
         alpaca_order_id_chain=chain,
         submission_timestamp=submission_ts,
         last_update_timestamp=last_update_ts,

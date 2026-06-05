@@ -10,15 +10,11 @@ Covers:
 
 from __future__ import annotations
 
-from argparse import Namespace
 from collections.abc import Iterator
 from datetime import UTC, date, datetime
-from pathlib import Path
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -485,113 +481,6 @@ class TestInvariantRejection:
         assert fetched is not None
         with pytest.raises(ValueError, match="instrument_type"):
             row_to_record(fetched)
-
-
-# ---------------------------------------------------------------------------
-# Alembic migration — idempotency + shape
-# ---------------------------------------------------------------------------
-
-
-_REVISION = "c8e3f4a2b1d6"
-_PRIOR_REVISION = "b5d2e3f4c6a7"
-
-
-def _alembic_config(db_path: Path) -> Config:
-    repo_root = Path(__file__).parents[2]
-    return Config(
-        repo_root / "alembic.ini",
-        cmd_opts=Namespace(x=[f"db={db_path}"]),
-    )
-
-
-class TestPositionsMigration:
-    def test_upgrade_creates_positions_table(self, tmp_path: Path) -> None:
-        db_path = tmp_path / "alembic.db"
-        command.upgrade(_alembic_config(db_path), _REVISION)
-
-        eng = make_engine(str(db_path))
-        try:
-            insp = inspect(eng)
-            tables = set(insp.get_table_names())
-            assert "positions" in tables
-
-            cols = {c["name"] for c in insp.get_columns("positions")}
-            assert cols == {
-                "position_id",
-                "thesis_id",
-                "bracket_id",
-                "status",
-                "direction",
-                "entry_timestamp",
-                "instrument_type",
-                "details_json",
-                "execution_history_json",
-                "realized_pnl_to_date_usd",
-                "corporate_action_adjustment_needed",
-                "parent_position_id",
-                "origin",
-            }
-
-            indexes = {idx["name"] for idx in insp.get_indexes("positions")}
-            assert "ix_positions_status" in indexes
-            assert "ix_positions_thesis_id" in indexes
-        finally:
-            eng.dispose()
-
-    def test_downgrade_drops_positions_table(self, tmp_path: Path) -> None:
-        db_path = tmp_path / "alembic.db"
-        cfg = _alembic_config(db_path)
-        command.upgrade(cfg, _REVISION)
-        command.downgrade(cfg, _PRIOR_REVISION)
-
-        eng = make_engine(str(db_path))
-        try:
-            insp = inspect(eng)
-            tables = set(insp.get_table_names())
-            assert "positions" not in tables
-        finally:
-            eng.dispose()
-
-    def test_upgrade_then_downgrade_then_upgrade_is_idempotent(self, tmp_path: Path) -> None:
-        db_path = tmp_path / "alembic.db"
-        cfg = _alembic_config(db_path)
-        command.upgrade(cfg, _REVISION)
-        command.downgrade(cfg, _PRIOR_REVISION)
-        command.upgrade(cfg, _REVISION)
-
-        eng = make_engine(str(db_path))
-        try:
-            insp = inspect(eng)
-            assert "positions" in set(insp.get_table_names())
-        finally:
-            eng.dispose()
-
-    def test_migration_check_constraints_reject_invalid_values(self, tmp_path: Path) -> None:
-        db_path = tmp_path / "alembic.db"
-        command.upgrade(_alembic_config(db_path), _REVISION)
-
-        eng = make_engine(str(db_path))
-        # Each VALUES row violates exactly one CHECK (status / direction /
-        # instrument_type, in order) — the migration's CHECK constraints
-        # must reject all three.
-        insert_template = (
-            "INSERT INTO positions (position_id, status, direction, "
-            "instrument_type, details_json, execution_history_json, "
-            "corporate_action_adjustment_needed) VALUES "
-            "('p1', '{status}', '{direction}', '{instrument_type}', "
-            "'{{}}', '[]', 0)"
-        )
-        bad_inserts = (
-            insert_template.format(status="BOGUS", direction="LONG", instrument_type="EQUITY"),
-            insert_template.format(status="PENDING", direction="BOGUS", instrument_type="EQUITY"),
-            insert_template.format(status="PENDING", direction="LONG", instrument_type="BOGUS"),
-        )
-        try:
-            for sql in bad_inserts:
-                with eng.begin() as conn, pytest.raises(IntegrityError):
-                    conn.execute(text(sql))
-        finally:
-            eng.dispose()
 
 
 # ---------------------------------------------------------------------------

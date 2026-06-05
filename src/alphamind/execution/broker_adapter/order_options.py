@@ -22,7 +22,6 @@ rejections`` (``options_level_not_approved``, ``contract_expired``,
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal, cast
@@ -55,10 +54,26 @@ from alphamind.execution.broker_adapter.retry import (
     GatewaySubmissionFailed,
     SubmissionOutcome,
     Submitted,
+    bounded_broker_call,
     submit_with_retry,
 )
-from alphamind.execution.oms.command_ids import is_engine_originated, is_pm_originated
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
+from alphamind.execution.oms.command_ids import (
+    derive_pm_command_id,
+    is_engine_originated,
+    is_pm_originated,
+    parse_pm_command_id,
+)
 from alphamind.portfolio_state.records.positions import OptionContractType
+
+# The capital floor is a second broker order submitted alongside the options
+# entry on the same OPEN, so it needs its OWN ``client_order_id`` distinct from
+# the entry's (Alpaca rejects a duplicate). The floor id is the entry's
+# PM-originated id re-derived with the ``command_ordinal`` shifted by this
+# reserved offset: it stays pattern-valid, carries the SAME thesis + invocation
+# FK (so a floor fill self-attributes, ALP-844), and cannot collide with a real
+# sibling command ordinal (no envelope carries this many commands).
+_CAPITAL_FLOOR_ORDINAL_OFFSET = 1_000_000
 
 
 @dataclass(frozen=True)
@@ -186,6 +201,82 @@ async def submit_options_add(
     return await _submit(client, request, execution, occ_symbol=occ_symbol)
 
 
+async def submit_options_capital_floor(
+    command: OpenCommand,
+    *,
+    client: TradingClient,
+    execution: ExecutionConfig,
+    client_order_id: str,
+) -> SubmissionOutcome[OptionsSubmission]:
+    """Submit the always-on broker-enforced capital-protection floor (W3c / ALP-856).
+
+    On an options OPEN, places a single-leg **GTC** ``stop_limit`` that closes the
+    position once its loss reaches the PM-authored, PnL-denominated
+    ``capital_protection_floor.max_loss`` (story 02d). The floor is *wedge-survivable*
+    — it rests at the broker and fires even with the monitor stopped (invariant 4 /
+    ADR-0003); ``stop_limit`` (not ``stop_market``) bounds bad fills, accepting
+    possible non-fill in a true gap (caught by the monitor + guardrail).
+
+    The floor closes the position, so its side is the reverse of the entry: a long
+    (``BUY``-to-open) floor SELLs, a short floor BUYs. The trigger price is
+    PnL-denominated, derived from the floor's ``max_loss`` against the planned entry
+    premium — no new numeric threshold lives in code (the level is PM judgment per
+    OPEN). The ``stop_trigger`` and ``limit`` collapse to that one floor price: a
+    ``stop_limit`` resting exactly at the floor, fully PM-authored.
+    """
+    instrument = _require_option_instrument(command.instrument, command_kind="open")
+    floor = command.capital_protection_floor
+    if floor is None:
+        msg = (
+            "submit_options_capital_floor requires command.capital_protection_floor; "
+            "an options OPEN always carries one (ALP-848)"
+        )
+        raise ValueError(msg)
+    occ_symbol = _occ_from_instrument(instrument)
+    # The floor *closes* the position, so its side reverses the entry.
+    side = OrderSide.SELL if instrument.direction == "long" else OrderSide.BUY
+    qty = command.position_size.quantity
+    floor_price = floor_price_per_contract(
+        dollar_value=float(command.position_size.dollar_value),
+        max_loss=float(floor.max_loss),
+        quantity=qty,
+    )
+    _validate_client_order_id(client_order_id)
+    request = StopLimitOrderRequest(
+        symbol=occ_symbol,
+        side=side,
+        qty=qty,
+        time_in_force=TimeInForce.GTC,
+        order_class=OrderClass.SIMPLE,
+        client_order_id=client_order_id,
+        stop_price=floor_price,
+        limit_price=floor_price,
+    )
+    return await _submit(client, request, execution, occ_symbol=occ_symbol)
+
+
+def derive_capital_floor_client_order_id(entry_client_order_id: str) -> str:
+    """Derive the floor's ``client_order_id`` from the options entry's (ALP-856).
+
+    The capital floor is a second broker order submitted on the same options OPEN
+    as the entry, so it needs its own ``client_order_id`` — Alpaca rejects a
+    duplicate. The floor id is the entry's PM-originated id re-derived with the
+    ``command_ordinal`` shifted by :data:`_CAPITAL_FLOOR_ORDINAL_OFFSET`: it stays
+    pattern-valid, carries the SAME thesis + invocation FK so a floor fill
+    self-attributes (ALP-844), and cannot collide with a real sibling command
+    ordinal. An OPEN is always PM-originated (the engine emits only CLOSE), so a
+    non-PM id is a programming error and raises ``ValueError`` via the parser.
+    """
+    components = parse_pm_command_id(entry_client_order_id)
+    return derive_pm_command_id(
+        invocation_id=components.invocation_id,
+        envelope_id=components.envelope_id,
+        command_ordinal=components.command_ordinal + _CAPITAL_FLOOR_ORDINAL_OFFSET,
+        attempt_seq=components.attempt_seq,
+        thesis_id=components.thesis_id,
+    )
+
+
 async def submit_options_close(
     command: CloseCommand,
     *,
@@ -296,6 +387,29 @@ def _build_close_request(
     raise ValueError(msg)
 
 
+def floor_price_per_contract(*, dollar_value: float, max_loss: float, quantity: float) -> float:
+    """Translate the PnL-denominated floor (``max_loss`` USD) to a per-contract price.
+
+    The PM authors the floor in PnL terms (story 02d); the broker order needs a
+    per-contract trigger price. The planned entry premium per contract is
+    ``dollar_value / (quantity * multiplier)`` (the position's planned dollars
+    spread over its contracts), and the position has lost ``max_loss`` when the
+    contract price has dropped by ``max_loss / (quantity * multiplier)``:
+
+        floor_price = (dollar_value - max_loss) / (quantity * multiplier)
+
+    Both terms are PM-authored OPEN fields — no numeric threshold is introduced
+    here. A floor whose ``max_loss`` meets-or-exceeds the planned outlay implies a
+    non-positive trigger price, which Alpaca would reject; the
+    :class:`~alphamind.commands.command_models.OpenCommand`
+    ``_validate_floor_below_outlay`` cross-field validator (FL2) rejects
+    ``max_loss >= position_size.dollar_value`` at the command boundary, so the
+    derived price reaching this helper is always positive.
+    """
+    contracts = quantity * LISTED_OPTION_CONTRACT_MULTIPLIER
+    return (dollar_value - max_loss) / contracts
+
+
 def _validate_client_order_id(client_order_id: str) -> None:
     """Refuse empty or non-canonical IDs before any SDK call.
 
@@ -385,8 +499,10 @@ async def _submit(
         # branch only fires in raw-data mode, which the adapter never enables
         # (``AlpacaClientFactory.build_trading_client`` does not pass
         # ``raw_data=True``). Cast at the boundary keeps the rest of the
-        # function strictly typed.
-        return cast(Order, await asyncio.to_thread(client.submit_order, request))
+        # function strictly typed. ``bounded_broker_call`` time-bounds the
+        # offloaded sync call so a hung socket cannot park the caller (e.g. the
+        # monitor's fire-close) for the full client-factory socket timeout.
+        return cast(Order, await bounded_broker_call(lambda: client.submit_order(request)))
 
     try:
         outcome = await submit_with_retry(

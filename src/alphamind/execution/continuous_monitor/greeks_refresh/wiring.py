@@ -3,11 +3,12 @@
 Two pieces:
 
 * :class:`SqlGreeksWriter` — concrete :class:`GreeksWriter` that opens a
-  fresh ``AsyncSession`` per call, loads the position row, projects a
-  fresh :class:`PositionRecord` with the new greeks, and commits. Mirrors
-  ``state_persistence.write_paths.phase1._persist_position_update``'s
-  shape but does NOT require an open ``InvocationContext`` — the monitor
-  runs across invocations.
+  fresh ``AsyncSession`` per call and **upserts** the position's row in the
+  single-writer (monitor-owned) ``position_greeks`` side table (ADR-0005 /
+  story 04b). The greeks are the lone computed decoration; the refresh writes
+  its *own* table keyed by ``position_id`` and **never** RMW's the
+  pipeline-owned ``positions`` row — the second-writer pattern that generated
+  ALP-824. One row per position, one transaction per call.
 
 * :func:`register_greeks_refresh_task` — entry-point wiring helper that
   the :file:`__main__.py` calls during daemon setup. Constructs the
@@ -19,13 +20,16 @@ Two pieces:
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 from collections.abc import Iterable
+from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import PositionId
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.broker_adapter.retry import Submitted, submit_with_retry
 from alphamind.execution.continuous_monitor.greeks_refresh.iv_provider import (
@@ -49,19 +53,12 @@ from alphamind.execution.continuous_monitor.underlying_stream.subscriptions impo
     OpenPositionsReader,
 )
 from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
-from alphamind.portfolio_state.records.positions import (
-    OptionGreeks,
-    OptionsPositionDetails,
-    StrategyLeg,
-    StrategyPositionDetails,
-)
+from alphamind.portfolio_state.records.positions import OptionGreeks
+from alphamind.state.records_position_greeks import PositionGreeksRecord
 from alphamind.state.tables.invocations import InvocationRow
-from alphamind.state.tables.positions import PositionRow
-from alphamind.state.tables.positions_codec import (
-    record_to_row as position_record_to_row,
-)
-from alphamind.state.tables.positions_codec import (
-    row_to_record as position_row_to_record,
+from alphamind.state.tables.position_greeks import PositionGreeksRow
+from alphamind.state.tables.position_greeks_codec import (
+    record_to_row as greeks_record_to_row,
 )
 
 log = logging.getLogger(__name__)
@@ -73,40 +70,44 @@ _DEFAULT_RISK_FREE_RATE = 0.045
 _DTB3_SERIES_ID = "DTB3"
 
 
+def _utcnow() -> datetime:
+    """Refresh-instant fallback when the greeks carry no ``as_of_timestamp``.
+
+    The failure path preserves a prior ``as_of_timestamp`` (possibly ``None``
+    on a never-refreshed position); the side table's ``updated_at`` is
+    non-nullable, so an unstamped greeks value falls back to the wall clock.
+    """
+    return datetime.now(UTC)
+
+
 # ---------------------------------------------------------------------------
 # Concrete writer
 # ---------------------------------------------------------------------------
 
 
 class SqlGreeksWriter:
-    """Concrete :class:`GreeksWriter` backed by ``AsyncSession`` writes.
+    """Concrete :class:`GreeksWriter` that upserts the ``position_greeks`` side table.
 
-    Each call opens a fresh session, loads the position row, projects the
-    typed ``PositionRecord``, mutates only the greeks field on the
-    ``details`` payload, and rewrites the row's ``details_json``. One row
-    per call, one transaction per call — matches the fill-stream consumer's
-    single-row-write contract.
+    Single-writer (monitor-owned), keyed by ``position_id`` (ADR-0005). Each
+    call opens a fresh session, upserts the one greeks row for the position,
+    and commits — **never** an RMW/UPDATE on the pipeline-owned ``positions``
+    row. One row per call, one transaction per call — matches the fill-stream
+    consumer's single-row-write contract.
+
+    The side table carries one greeks row per position. For a single-leg
+    options position that is its ``OptionGreeks``; for a multi-leg strategy
+    that is the *aggregated* ``strategy_greeks`` (the per-leg breakdown is an
+    in-memory recompute detail, not a persisted decoration — downstream risk
+    reads the position-level aggregate). ``iv`` carries ``OptionGreeks.iv_used``
+    and ``updated_at`` carries ``OptionGreeks.as_of_timestamp`` (the monitor's
+    refresh instant), falling back to ``now`` when the greeks carry no stamp.
     """
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def update_options_greeks(self, *, position_id: str, greeks: OptionGreeks) -> None:
-        async with self._session_factory() as sess:
-            row = await self._load_row(sess, position_id)
-            record = position_row_to_record(row)
-            details = record.details
-            if not isinstance(details, OptionsPositionDetails):
-                msg = (
-                    f"position_id={position_id!r} is not an OptionsPositionDetails "
-                    f"row; got {type(details).__name__}"
-                )
-                raise TypeError(msg)
-            new_details = dataclasses.replace(details, greeks=greeks)
-            new_record = dataclasses.replace(record, details=new_details)
-            new_row = position_record_to_row(new_record)
-            row.details_json = new_row.details_json
-            await sess.commit()
+        await self._upsert(position_id=position_id, greeks=greeks)
 
     async def update_strategy_greeks(
         self,
@@ -115,38 +116,57 @@ class SqlGreeksWriter:
         per_leg: dict[str, OptionGreeks],
         aggregated: OptionGreeks,
     ) -> None:
-        async with self._session_factory() as sess:
-            row = await self._load_row(sess, position_id)
-            record = position_row_to_record(row)
-            details = record.details
-            if not isinstance(details, StrategyPositionDetails):
-                msg = (
-                    f"position_id={position_id!r} is not a StrategyPositionDetails "
-                    f"row; got {type(details).__name__}"
-                )
-                raise TypeError(msg)
-            new_legs: list[StrategyLeg] = []
-            for leg in details.legs:
-                leg_greeks = per_leg.get(leg.leg_id, leg.options.greeks)
-                new_options = dataclasses.replace(leg.options, greeks=leg_greeks)
-                new_legs.append(dataclasses.replace(leg, options=new_options))
-            new_details = dataclasses.replace(
-                details, legs=tuple(new_legs), strategy_greeks=aggregated
-            )
-            new_record = dataclasses.replace(record, details=new_details)
-            new_row = position_record_to_row(new_record)
-            row.details_json = new_row.details_json
-            await sess.commit()
+        # The side table holds one row per position: the strategy-level
+        # aggregate. ``per_leg`` is an in-memory recompute detail with no
+        # persisted home in the single-row-per-position side table.
+        del per_leg
+        await self._upsert(position_id=position_id, greeks=aggregated)
 
-    async def _load_row(self, sess: AsyncSession, position_id: str) -> PositionRow:
-        result = await sess.execute(
-            select(PositionRow).where(PositionRow.position_id == position_id)
+    async def _upsert(self, *, position_id: str, greeks: OptionGreeks) -> None:
+        """Append-only-idempotent upsert: one ``INSERT ... ON CONFLICT DO UPDATE``.
+
+        A single write statement with **no preceding read** in the same
+        transaction — the write lock is taken directly, so ``PRAGMA busy_timeout``
+        governs cross-writer contention rather than a deferred read snapshot whose
+        later write-upgrade a concurrent committer could race into
+        ``SQLITE_BUSY_SNAPSHOT`` (ADR-0005). Idempotent on ``position_id`` (PK),
+        so re-running a cycle overwrites the row in place.
+        """
+        record = PositionGreeksRecord(
+            position_id=PositionId(position_id),
+            delta=greeks.delta,
+            gamma=greeks.gamma,
+            theta=greeks.theta,
+            vega=greeks.vega,
+            iv=greeks.iv_used,
+            updated_at=greeks.as_of_timestamp or _utcnow(),
         )
-        row = result.scalar_one_or_none()
-        if row is None:
-            msg = f"no such position: {position_id!r}"
-            raise LookupError(msg)
-        return row
+        row = greeks_record_to_row(record)
+        values = {
+            "position_id": row.position_id,
+            "delta": row.delta,
+            "gamma": row.gamma,
+            "theta": row.theta,
+            "vega": row.vega,
+            "iv": row.iv,
+            "updated_at": row.updated_at,
+        }
+        stmt = sqlite_insert(PositionGreeksRow).values(**values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[PositionGreeksRow.position_id],
+            set_={k: v for k, v in values.items() if k != "position_id"},
+        )
+        async with self._session_factory() as sess:
+            try:
+                await sess.execute(stmt)
+                await sess.commit()
+            except IntegrityError as exc:
+                # The DEFERRED ``position_id`` FK to ``positions`` fires at COMMIT
+                # when the position does not exist; translate to the writer's
+                # typed "no such position" contract.
+                await sess.rollback()
+                msg = f"no such position: {position_id!r}"
+                raise LookupError(msg) from exc
 
 
 # ---------------------------------------------------------------------------

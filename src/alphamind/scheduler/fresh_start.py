@@ -11,12 +11,14 @@ adapter and writes the two singleton rows so the rest of the pipeline can
 run from cold start. The bootstrap is a one-shot operation gated behind
 ``--fresh-start`` on the scheduler CLI.
 
-The reconciliation auto-correct path (ALP-619) handles drift on *existing*
-``cash_ledger`` rows but explicitly short-circuits when the row is absent
-(``_reconcile_cash`` returns 0 on ``cash_row is None``); ALP-620 fills the
-cold-start gap that ALP-619 leaves open.
+The projection rebuild (ALP-854 / W2a) re-derives positions/cash on *existing*
+state from the broker-event log applied to the live broker snapshot, but a
+cold-start DB has no singleton rows to rebuild onto; ALP-620 fills that
+cold-start gap by writing the initial ``cash_ledger`` / ``drawdown_state`` rows.
 
-Hard-fail preconditions:
+Hard-fail preconditions (the account must be FLAT — broker positions empty
+**and** broker open orders empty, per the genesis-cutover runbook §6 and
+broker-boundary-redesign invariant 6):
 
 * Alpaca reports any positions — the flag is for genuinely-empty accounts.
   An existing position means the operator should either reset the paper
@@ -24,10 +26,15 @@ Hard-fail preconditions:
   ``PositionRecord`` (with thesis_id + cost basis + execution history)
   from the snapshot isn't possible, so synthesizing one here would corrupt
   the activity log.
+* Alpaca reports any open orders — a resting bracket / entry order with no
+  local Intent is the husk in *order* form (a Broker-Owned Fact with no
+  Intent at genesis). Bootstrapping onto it would re-create the exact
+  reconciliation husk the redesign exists to make impossible, so the
+  precondition refuses; the operator resets the paper account first.
 * ``cash_ledger`` already has a row — a populated row implies a prior
   invocation, and silently overwriting it would clobber the live cash
-  state. The reconciliation auto-correct path handles drift on populated
-  rows.
+  state. The projection rebuild keeps the populated row consistent with the
+  broker thereafter.
 * ``drawdown_state`` already has a row — same logic; an existing HWM row
   must not be silently reset. The two singletons share the same
   ``id='current'`` PK, so the asymmetric-state branch (one populated, the
@@ -66,6 +73,7 @@ from alphamind.execution.broker_adapter.client_factory import (
 from alphamind.execution.broker_adapter.protocols import AccountStateQueriesP
 from alphamind.execution.broker_adapter.queries import (
     AccountStateQueries,
+    OrderSnapshot,
     PositionSnapshot,
     TradeAccountSnapshot,
 )
@@ -178,15 +186,18 @@ async def bootstrap_singletons_from_alpaca(
     session: AsyncSession,
     account: TradeAccountSnapshot,
     positions: tuple[PositionSnapshot, ...],
+    open_orders: tuple[OrderSnapshot, ...] = (),
     now: datetime,
 ) -> None:
     """Insert ``cash_ledger`` + ``drawdown_state`` from an Alpaca snapshot.
 
     Raises :class:`FreshStartPreconditionError` if Alpaca reports any
-    positions, if ``cash_ledger`` already has a row, or if
-    ``drawdown_state`` already has a row. Does NOT commit — the caller
-    owns the transaction so the bootstrap and any preceding / following
-    writes are atomic.
+    positions, any open orders, if ``cash_ledger`` already has a row, or
+    if ``drawdown_state`` already has a row. The positions-empty **and**
+    open-orders-empty pair is the FLAT-account precondition (genesis-cutover
+    runbook §6 / invariant 6). Does NOT commit — the caller owns the
+    transaction so the bootstrap and any preceding / following writes are
+    atomic.
     """
     if positions:
         symbols = ", ".join(sorted(pos.symbol for pos in positions))
@@ -194,8 +205,20 @@ async def bootstrap_singletons_from_alpaca(
             f"--fresh-start refuses to run: Alpaca reports {len(positions)} "
             f"open position(s) ({symbols}). The flag is for genuinely-empty "
             "accounts. Reset the Alpaca paper account first, or rely on the "
-            "reconciliation auto-correct path (ALP-619) once the cash_ledger "
-            "singleton is populated by hand."
+            "projection rebuild (ALP-854) once the cash_ledger singleton is "
+            "populated by hand."
+        )
+        raise FreshStartPreconditionError(msg)
+
+    if open_orders:
+        order_symbols = ", ".join(sorted(order.symbol for order in open_orders))
+        msg = (
+            f"--fresh-start refuses to run: Alpaca reports {len(open_orders)} "
+            f"open order(s) ({order_symbols}). The account must be FLAT — open "
+            "orders empty as well as positions empty (invariant 6). A resting "
+            "bracket / entry order with no local Intent is the husk in order "
+            "form; bootstrapping onto it would re-create the reconciliation husk "
+            "the redesign makes impossible. Reset the Alpaca paper account first."
         )
         raise FreshStartPreconditionError(msg)
 
@@ -205,8 +228,8 @@ async def bootstrap_singletons_from_alpaca(
             "--fresh-start refuses to run: cash_ledger already initialized "
             f"(current_cash_usd={existing_cash_row.current_cash_usd}). The "
             "flag is for first-run only; a populated cash_ledger row implies "
-            "a prior invocation. Use the reconciliation auto-correct path "
-            "(ALP-619) to reconcile drift instead."
+            "a prior invocation. The projection rebuild (ALP-854) keeps it "
+            "consistent with the broker instead."
         )
         raise FreshStartPreconditionError(msg)
 
@@ -261,11 +284,17 @@ async def run_fresh_start_bootstrap(
     queries = factory(venue_config, execution_mode)
     account = queries.get_account()
     positions = queries.get_positions()
+    # The FLAT-account precondition also requires open orders empty (invariant
+    # 6): drain the ``status="open"`` cursor into a tuple so a resting husk-order
+    # is refused alongside an open position. The cursor is short on a fresh
+    # account (zero or a handful of orders), so buffering it is cheap.
+    open_orders = tuple([order async for order in queries.get_orders(status="open")])
     async with session_factory() as session:
         await bootstrap_singletons_from_alpaca(
             session=session,
             account=account,
             positions=positions,
+            open_orders=open_orders,
             now=now,
         )
         await session.commit()

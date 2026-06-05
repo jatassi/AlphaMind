@@ -16,6 +16,7 @@ whose ``get_orders`` yields ``OrderSnapshot``s, mirroring the
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -51,6 +52,7 @@ from alphamind.persistence.session import (
     make_engine,
     make_session_factory,
 )
+from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.fill_records import FillRecordRow
 from tests.state._fk_substrate import seed_position_cluster, stub_order_row
 
@@ -180,6 +182,23 @@ async def _read_fill_records(
     async with session_factory() as session:
         result = await session.execute(select(FillRecordRow))
         return list(result.scalars().all())
+
+
+async def _read_broker_events(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> list[BrokerEventLogRow]:
+    async with session_factory() as session:
+        result = await session.execute(select(BrokerEventLogRow))
+        return list(result.scalars().all())
+
+
+def _logged_fill_quantity_total(rows: list[BrokerEventLogRow]) -> float:
+    """Sum ``fill_quantity`` over the FILL rows — the qty the 03c fold sees."""
+    return sum(
+        float(json.loads(r.raw_payload_json)["fill_quantity"])
+        for r in rows
+        if r.event_type == "FILL"
+    )
 
 
 async def _seed_order_row(
@@ -319,9 +338,11 @@ class TestIdempotent:
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         """The same Alpaca order surfaces in every sweep (its terminal snapshot
-        persists in the broker's get_orders window). The first sweep appends one
-        fill; subsequent sweeps over the identical snapshot must collapse to the
-        same dedupe key and add no duplicate row."""
+        persists in the broker's get_orders window). The first sweep recovers it
+        into the gap-free ``broker_event_log`` exactly once; subsequent sweeps
+        over the identical snapshot collapse on the ``event_key`` PK and add no
+        duplicate row — neither in the event log (the AC's named substrate) nor
+        in the ``fill_records`` projection."""
         entry_uuid = str(uuid4())
         await _seed_order_row(session_factory, order_id="ORD-IDEM-1", alpaca_order_id=entry_uuid)
         # A single stable snapshot returned on EVERY get_orders call — its
@@ -349,8 +370,65 @@ class TestIdempotent:
         with pytest.raises(asyncio.CancelledError):
             await task
 
-        # Many sweeps over the same snapshot → still exactly one fill row.
+        # Many sweeps over the same snapshot → recovered exactly once.
+        assert len(await _read_broker_events(session_factory)) == 1
         assert len(await _read_fill_records(session_factory)) == 1
+
+    async def test_sweep_appends_only_residual_gap_over_logged_partials(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """FS1 wiring — the backfill sweep passes ``recovered=True`` so a cumulative
+        snapshot reconciles to the residual gap over the per-event partials the live
+        websocket already logged. A 60-share partial is on ``broker_event_log``; the
+        sweep sees the order's cumulative 100 → ONE 40-share residual lands, not a
+        full-100 duplicate, so the 03c fold totals 100 exactly once.
+
+        Were ``recovered=True`` dropped at the caller, the cumulative would append
+        as a second 100-share FILL and the logged total would be 160."""
+        entry_uuid = str(uuid4())
+        await _seed_order_row(session_factory, order_id="ORD-GAP-1", alpaca_order_id=entry_uuid)
+        # A live 60-share partial pre-logged into broker_event_log for this order.
+        partial = _fill_report(
+            order_id=entry_uuid, client_order_id="inv.CMD-GAP.0.0", price_=189.42, qty=60.0
+        )
+        partial = partial.model_copy(
+            update={"fill_quantity": 60.0, "cumulative_filled_quantity": 60.0}
+        )
+        await persist_fill_report(
+            partial, session_factory=session_factory, enrichment_callable=None
+        )
+        assert _logged_fill_quantity_total(await _read_broker_events(session_factory)) == 60.0
+
+        # The sweep sees the order's CUMULATIVE state (100 filled @ avg).
+        queries = _FakeAccountStateQueries(
+            snapshots=[
+                _order_snapshot(
+                    order_id=entry_uuid, client_order_id="inv.CMD-GAP.0.0", filled_qty=100.0
+                ),
+            ]
+        )
+        task = asyncio.create_task(
+            run_fill_backfill(
+                _session(),
+                _config(),
+                **_run_kwargs(session_factory, queries),
+            )
+        )
+        await _wait_for_broker_events(session_factory, expected=2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        rows = await _read_broker_events(session_factory)
+        # The log totals 100 exactly once: the 60-share partial + a 40-share residual.
+        assert _logged_fill_quantity_total(rows) == 100.0
+        residuals = [
+            r
+            for r in rows
+            if r.event_type == "FILL"
+            and float(json.loads(r.raw_payload_json)["fill_quantity"]) == 40.0
+        ]
+        assert len(residuals) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -358,43 +436,22 @@ class TestIdempotent:
 # ---------------------------------------------------------------------------
 
 
-class TestBackfillSkipsRetrySleep:
-    """ALP-763 #5 — the backfill calls the shared persist with
-    ``retry_resolve=False``, so an unresolved fill is quarantined IMMEDIATELY
-    without paying the live consumer's multi-second in-process retry sleep."""
+class TestBackfillQuarantinesOutOfBand:
+    """A backfill-recovered fill that carries no broker-carried link AND has no
+    local order row (a genuinely out-of-band / manually-placed order) is parked
+    on ``unattributed_fills`` — never dropped — by the shared persist path."""
 
-    async def test_unresolved_fill_quarantines_without_sleeping(
+    async def test_unresolved_out_of_band_fill_is_quarantined(
         self,
         session_factory: async_sessionmaker[AsyncSession],
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # A fill whose order row does NOT exist (the live consumer would retry
-        # with sleeps before giving up; the backfill must not).
+        # A fill with a link-less client_order_id and no local order row: there
+        # is nothing to self-attribute it to, so it is quarantined.
         entry_uuid = str(uuid4())
         queries = _FakeAccountStateQueries(
             snapshots=[
-                _order_snapshot(order_id=entry_uuid, client_order_id="inv.CMD-NOROW.0.0"),
+                _order_snapshot(order_id=entry_uuid, client_order_id="out-of-band-manual"),
             ]
-        )
-
-        from alphamind.execution.continuous_monitor.fill_stream_consumer.persistence import (
-            _RESOLVE_RETRY_DELAYS,
-        )
-
-        sleeps: list[float] = []
-        real_sleep = asyncio.sleep
-
-        async def recording_sleep(seconds: float) -> None:
-            sleeps.append(seconds)
-            # Preserve real yielding so the test's own poll loop still advances.
-            await real_sleep(0)
-
-        # The retry path lives in the shared persistence module; monkeypatching
-        # ``persistence.asyncio.sleep`` patches the asyncio module globally, so
-        # we filter for the retry-specific delays rather than any sleep.
-        monkeypatch.setattr(
-            "alphamind.execution.continuous_monitor.fill_stream_consumer.persistence.asyncio.sleep",
-            recording_sleep,
         )
 
         task = asyncio.create_task(
@@ -410,13 +467,10 @@ class TestBackfillSkipsRetrySleep:
         with pytest.raises(asyncio.CancelledError):
             await task
 
-        # Quarantined immediately, no fill row, and crucially NO retry sleeps:
-        # none of the recorded sleeps are the persistence retry delays.
         assert await _read_fill_records(session_factory) == []
         async with session_factory() as session:
             queued = await list_unattributed_fills(session)
         assert len(queued) == 1
-        assert not any(s in _RESOLVE_RETRY_DELAYS for s in sleeps)
 
 
 class TestDrainsQueue:
@@ -538,6 +592,22 @@ async def _wait_for_rows(
     rows: list[FillRecordRow] = []
     while asyncio.get_event_loop().time() < deadline:
         rows = await _read_fill_records(session_factory)
+        if len(rows) >= expected:
+            return rows
+        await asyncio.sleep(0.01)
+    return rows
+
+
+async def _wait_for_broker_events(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    expected: int,
+    timeout_seconds: float = 5.0,
+) -> list[BrokerEventLogRow]:
+    deadline = asyncio.get_event_loop().time() + timeout_seconds
+    rows: list[BrokerEventLogRow] = []
+    while asyncio.get_event_loop().time() < deadline:
+        rows = await _read_broker_events(session_factory)
         if len(rows) >= expected:
             return rows
         await asyncio.sleep(0.01)

@@ -302,14 +302,20 @@ class TestTerminalOrderStatusFor:
         report = _equity_fill_report(event_type="expired", fill_price=None, fill_quantity=None)
         assert terminal_order_status_for(report) is OrderStatus.EXPIRED
 
+    def test_rejected_maps_to_rejected(self) -> None:
+        # An async post-acceptance broker rejection is a zero-fill terminal
+        # disposition (CR3): without a TERMINAL_ORDER_STATUS the order stays
+        # PENDING forever and its reserved capital never clears.
+        report = _equity_fill_report(event_type="rejected", fill_price=None, fill_quantity=None)
+        assert terminal_order_status_for(report) is OrderStatus.REJECTED
+
     @pytest.mark.parametrize(
         "event_type",
-        ["filled", "partially_filled", "new", "replaced", "rejected", "done_for_day"],
+        ["filled", "partially_filled", "new", "replaced", "done_for_day"],
     )
     def test_non_terminal_events_map_to_none(self, event_type: str) -> None:
         # Fill-bearing and other non-terminal-disposition events carry no
-        # terminal-unfilled status this path acts on. ``rejected`` is
-        # deliberately excluded — a rejected order was never accepted.
+        # terminal-unfilled status this path acts on.
         report = _equity_fill_report(event_type=event_type)
         assert terminal_order_status_for(report) is None
 

@@ -22,7 +22,6 @@ validation.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -51,6 +50,7 @@ from alphamind.config.models.execution import ExecutionConfig
 from alphamind.execution.broker_adapter.retry import (
     SubmissionOutcome,
     Submitted,
+    bounded_broker_call,
     submit_with_retry,
 )
 from alphamind.execution.oms.command_ids import is_engine_originated, is_pm_originated
@@ -325,13 +325,16 @@ async def _submit(
 ) -> SubmissionOutcome[MLEGSubmission]:
     """Wrap the SDK call in ``submit_with_retry`` and adapt the result.
 
-    The Alpaca call is sync; ``asyncio.to_thread`` keeps the event loop
-    responsive while the request is in flight. ``client_order_id`` is
-    embedded on ``request`` itself, so it is not threaded again here.
+    The Alpaca call is sync; ``bounded_broker_call`` offloads it to a worker
+    thread (keeping the event loop responsive) under a ``wait_for`` bound.
+    ``client_order_id`` is embedded on ``request`` itself, so it is not threaded
+    again here.
     """
 
     async def call() -> Any:
-        return await asyncio.to_thread(client.submit_order, request)
+        # ``bounded_broker_call`` time-bounds the offloaded sync call so a hung
+        # socket cannot park the caller for the full client-factory socket timeout.
+        return await bounded_broker_call(lambda: client.submit_order(request))
 
     outcome = await submit_with_retry(
         call, window_seconds=execution.submission_retry_window_seconds

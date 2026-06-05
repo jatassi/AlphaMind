@@ -61,6 +61,16 @@ per-step PASS / FAIL report.
    `install_command_center_service.ps1`); a missing dependency causes the
    Windows SCM to refuse the start.
 
+The full prod runtime is **six** NSSM services (see `RUNBOOK_production.md`'s
+service table): `alphamind-collector`, `alphamind-scheduler`,
+`alphamind-monitor`, `alphamind-safety-core`, `alphamind-safety-core-watchdog`,
+and `AlphaMindCommandCenter`. The `alphamind-safety-core` service is the isolated
+breach + price-staleness safety core (ADR-0004 / ALP-857); its dedicated
+out-of-process watchdog `alphamind-safety-core-watchdog` restarts it on heartbeat
+staleness. The command center does **not** depend on the safety-core services and
+does not surface their state — they are monitored via their logs
+(`safety_core.*.log`) and the heartbeat file, per `RUNBOOK_production.md` §7/§9.
+
 ## Initial bring-up
 
 The first time a command center comes up on a machine. Each step is
@@ -144,7 +154,7 @@ The verify script uses an in-memory verifier; production registration uses a
 real WebAuthn authenticator (YubiKey, platform passkey via Windows Hello,
 TouchID on macOS, etc.).
 
-1. Open `http://127.0.0.1:8080/` in a WebAuthn-capable browser.
+1. Open `http://127.0.0.1:8090/` in a WebAuthn-capable browser.
 2. The first-launch UI prompts for the setup token (paste the value from
    step 4).
 3. Choose a username (operator handle — e.g. "operator").
@@ -186,8 +196,8 @@ Exit code 0 confirms readiness. Any FAIL line short-circuits to exit code 1.
 
 ### Accessing the UI
 
-- From the trading machine itself: `http://127.0.0.1:8080/` (or `http://localhost:8080/`).
-- From other machines on the same LAN: use the hostname declared in the `access:` block (e.g. `http://alphamind.local:8080/`). See the dedicated § LAN access (local network) below for the full supported recipe (hostname choice via mDNS vs hosts-file, the two YAML edits, restart, re-enrollment, firewall steps, and verification).
+- From the trading machine itself: `http://127.0.0.1:8090/` (or `http://localhost:8090/`).
+- From other machines on the same LAN: use the hostname declared in the `access:` block (e.g. `http://alphamind.local:8090/`). See the dedicated § LAN access (local network) below for the full supported recipe (hostname choice via mDNS vs hosts-file, the two YAML edits, restart, re-enrollment, firewall steps, and verification).
 
 The full remote (internet) path via VPS Caddy + WireGuard remains deferred to a future story (see design doc § Access surfaces and the old "Operator handover note" content now superseded by the LAN section). For day-to-day on the trading machine, RDP/console + localhost still works; LAN extends it without RDP.
 
@@ -344,16 +354,20 @@ lockfile (it is checked into the repo).
 
 ### 7. Frontend build OK but UI shows "API unreachable"
 
-The dev workflow runs Vite at :5173 with a proxy to FastAPI :8080. In dev,
-the daemon needs `COMMAND_CENTER_DEV_MODE=1` set so the FastAPI StaticFiles
-mount is skipped (Vite serves the SPA). Production never sets this env var
-— FastAPI serves both API + SPA from :8080.
+The dev workflow runs Vite at :5173 with a proxy to FastAPI :8090 (the
+configured `bind.port` in `config/command-center.yaml`). In dev, the daemon
+needs `COMMAND_CENTER_DEV_MODE=1` set so the FastAPI StaticFiles mount is
+skipped (Vite serves the SPA). Production never sets this env var — FastAPI
+serves both API + SPA from :8090.
 
 If you see "API unreachable" in dev, confirm:
 
-- FastAPI is running on :8080 with `COMMAND_CENTER_DEV_MODE=1`.
+- FastAPI is running on :8090 with `COMMAND_CENTER_DEV_MODE=1`.
 - Vite is running on :5173 (its console prints the URL on start).
-- `vite.config.ts`'s proxy block points at :8080 (it does by default).
+- `vite.config.ts`'s `API_TARGET` matches the FastAPI bind port (default
+  `http://127.0.0.1:8090`; the file comment may still reference 8080 if
+  it was written before the port move — update `API_TARGET` to match
+  `config/command-center.yaml`'s `bind.port` if they disagree).
 
 ## Recovery
 
@@ -364,9 +378,11 @@ The command center's three owned tables (`alerts`, `webauthn_credentials`,
 pipeline + monitor's state. The canonical recovery is the same as for the
 pipeline / monitor:
 
-1. Stop all four services:
+1. Stop all six services (reverse-dependency order; stop watchdog before core):
    ```powershell
    nssm stop AlphaMindCommandCenter
+   nssm stop alphamind-safety-core-watchdog
+   nssm stop alphamind-safety-core
    nssm stop alphamind-monitor
    nssm stop alphamind-scheduler
    nssm stop alphamind-collector
@@ -375,11 +391,13 @@ pipeline / monitor:
    `archive/` directory carries periodic snapshots; pick the most recent
    verified-good copy).
 3. `uv run alembic upgrade head` to bring the restored DB's schema current.
-4. Restart the four services in dependency order:
+4. Restart all six services in dependency order (core before watchdog):
    ```powershell
    nssm start alphamind-collector
    nssm start alphamind-scheduler
    nssm start alphamind-monitor
+   nssm start alphamind-safety-core
+   nssm start alphamind-safety-core-watchdog
    nssm start AlphaMindCommandCenter
    ```
 5. Re-register passkeys — the restored DB carries the prior credentials, so
@@ -447,12 +465,12 @@ hard-coded allow-list on the server.
    ```yaml
    bind:
      host: "0.0.0.0"        # or the LAN IP e.g. "192.168.1.42"
-     port: 8080
+     port: 8090             # keep the default loopback port; or choose any free port
    # ... db / frontend / pipeline / monitor keys unchanged ...
    access:
      scheme: "http"         # "http" for plain LAN; "https" only if you
      host: "alphamind.local"  # terminate TLS locally on the trading machine
-     port: 8080             # explicit for non-80/443 ports
+     port: 8090             # explicit for non-80/443 ports; MUST match bind.port
    ```
 
 3. **Edit `config/security.yaml`** (keep rpId in sync; required for passkeys):
@@ -478,7 +496,7 @@ hard-coded allow-list on the server.
    (§ Recovery → Credential reset): stop service, delete
    `webauthn_credentials` + `operator_sessions` rows, restart (token
    re-mints), then from a *LAN client browser* open
-   `http://alphamind.local:8080/`, paste the fresh setup token, and
+   `http://alphamind.local:8090/`, paste the fresh setup token, and
    complete registration.
 
    Once one credential for the new rpId exists, the in-session "Add a
@@ -490,9 +508,10 @@ hard-coded allow-list on the server.
    LAN subnet to the bind port. This is *not* configured in AlphaMind YAML
    or code — handle it on the host:
 
-   - **Windows Firewall:** Inbound rule for TCP 8080, scope limited to
-     LAN subnet (or "Allow" if you trust the LAN).
-   - **Linux (ufw example):** `sudo ufw allow from 192.168.1.0/24 to any port 8080 proto tcp`
+   - **Windows Firewall:** Inbound rule for TCP 8090 (or whichever port
+     you set in `bind.port`), scope limited to LAN subnet (or "Allow" if
+     you trust the LAN).
+   - **Linux (ufw example):** `sudo ufw allow from 192.168.1.0/24 to any port 8090 proto tcp`
    - **macOS:** System Settings → Network → Firewall → allow the Python/Uvicorn
      process or open the port for LAN clients.
 
@@ -505,7 +524,7 @@ hard-coded allow-list on the server.
      WARNING (or that it correctly directs you here if you left
      `access.host` as localhost while widening bind).
    - From a different machine on the LAN, browse to the new URL
-     (e.g. `http://alphamind.local:8080/`). No certificate errors (http).
+     (e.g. `http://alphamind.local:8090/`). No certificate errors (http).
    - First-launch or post-reset: setup token prompt appears; paste from
      trading-machine log.
    - Passkey registration + login succeeds end-to-end.
@@ -534,12 +553,12 @@ LAN access suggestion (ALP-724 plan):
          access:
            scheme: "http"
            host: "alphamind.local"
-           port: 8080
+           port: 8090
     3. In security.yaml align:
          webauthn:
            relying_party_id: "alphamind.local"
     4. Restart service; re-enroll via setup token from LAN URL
-    5. Firewall: allow LAN subnet → :8080
+    5. Firewall: allow LAN subnet → :8090
   Full recipe + troubleshooting: RUNBOOK_command_center.md § "LAN access (local network)"
 ```
 

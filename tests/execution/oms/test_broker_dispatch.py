@@ -17,12 +17,14 @@ suite runs offline.
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
+from alpaca.common.exceptions import APIError
 from alpaca.trading.enums import (
     OrderClass,
     OrderSide,
@@ -35,6 +37,7 @@ from alpaca.trading.requests import (
     LimitOrderRequest,
     MarketOrderRequest,
     OptionLegRequest,
+    StopLimitOrderRequest,
 )
 
 from alphamind._kernel.ids import (
@@ -51,6 +54,7 @@ from alphamind.commands.command_models import (
     AdjustCommand,
     BracketOrderParameters,
     CancelCommand,
+    CapitalProtectionFloor,
     CloseCommand,
     EntryOrder,
     EquityInstrument,
@@ -90,14 +94,22 @@ from alphamind.execution.oms.broker_dispatch import (
 # Common fixture builders
 # ---------------------------------------------------------------------------
 
-_CLIENT_ORDER_ID = "inv-2026-05-09T09-30Z.ENV-REC-1.0.0"
+# A PM-originated client_order_id carrying the broker-carried link (ALP-844):
+# base id + the originating thesis FK.
+_CLIENT_ORDER_ID = (
+    "inv-2026-05-09T09-30Z.ENV-REC-1.0.0~the-THE-NVDA-0123456789abcdef0123456789abcdef"
+)
 
 
 def _execution_config() -> ExecutionConfig:
+    return _execution_config_with_window(30)
+
+
+def _execution_config_with_window(window_seconds: int) -> ExecutionConfig:
     return ExecutionConfig(
         greeks_refresh=GreeksRefresh(scheduled_interval_minutes=5, move_trigger_pct=0.01),
         conservative_delta_buffer_pct=0.0,
-        submission_retry_window_seconds=30,
+        submission_retry_window_seconds=window_seconds,
         paper_harness=PaperHarness(
             spread_buffer_pct=0.0,
             impact_coefficients={
@@ -120,6 +132,7 @@ def _execution_config() -> ExecutionConfig:
 def _thesis(ticker: str = "AAPL") -> Thesis:
     return Thesis(
         summary="Test thesis",
+        nature="directional",
         components=(
             ThesisComponent(
                 component_type="entry_rationale",
@@ -143,6 +156,7 @@ def _equity_open_command(ticker: str = "AAPL") -> OpenCommand:
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="underlying_price",
                 condition=PriceCondition(
                     underlying_trigger=ticker,
                     comparator="<=",
@@ -173,6 +187,7 @@ def _option_open_command(underlying: str = "NVDA") -> OpenCommand:
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="underlying_price",
                 condition=PriceCondition(
                     underlying_trigger=underlying,
                     comparator="<=",
@@ -182,6 +197,7 @@ def _option_open_command(underlying: str = "NVDA") -> OpenCommand:
             ),
         ),
         thesis=_thesis(underlying),
+        capital_protection_floor=CapitalProtectionFloor(max_loss=money(500.0)),
     )
 
 
@@ -210,7 +226,9 @@ def _strategy_open_command(underlying: str = "SPY") -> OpenCommand:
             ),
         ),
         entry_order=EntryOrder(type="market"),
-        position_size=PositionSize(quantity=1.0, dollar_value=money(500.0)),
+        # dollar_value strictly above the floor's max_loss (500) so the derived
+        # broker floor stop price stays positive (FL2 cross-field validator).
+        position_size=PositionSize(quantity=1.0, dollar_value=money(1_000.0)),
         # A strategy take-profit must be pl_percentage (ALP-611).
         target=Target(
             target_type="pl_percentage", pl_percentage=80.0, price=price(10.0), order_type="limit"
@@ -219,6 +237,7 @@ def _strategy_open_command(underlying: str = "SPY") -> OpenCommand:
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="underlying_price",
                 condition=PriceCondition(
                     underlying_trigger=underlying,
                     comparator="<=",
@@ -228,6 +247,7 @@ def _strategy_open_command(underlying: str = "SPY") -> OpenCommand:
             ),
         ),
         thesis=_thesis(underlying),
+        capital_protection_floor=CapitalProtectionFloor(max_loss=money(500.0)),
     )
 
 
@@ -298,6 +318,19 @@ def _make_fake_leg(order_type: AlpacaOrderType) -> MagicMock:
     leg.id = uuid.uuid4()
     leg.order_type = order_type
     return leg
+
+
+def _permanent_api_error() -> APIError:
+    """An ``APIError`` carrying a permanent (4xx) status — a broker rejection.
+
+    Mirrors ``tests/execution/broker_adapter/test_order_options.py::_make_api_error``;
+    ``classify_alpaca_error`` maps the 403 to a non-retriable
+    :class:`PermanentRejection`, surfaced as ``PermanentRejectionError``.
+    """
+    body = json.dumps({"code": 42, "message": "options level not approved"})
+    fake_http_error = MagicMock()
+    fake_http_error.response.status_code = 403
+    return cast(APIError, cast(Any, APIError)(body, http_error=fake_http_error))
 
 
 # ---------------------------------------------------------------------------
@@ -444,11 +477,163 @@ async def test_dispatch_open_options_routes_to_submit_options_open() -> None:
     result = outcome.payload
     assert result.payload_kind == "options"
     assert isinstance(result.raw_submission, OptionsSubmission)
-    submitted = client.submit_order.call_args[0][0]
+    # The ENTRY is the first submit_order call (the second is the always-on
+    # broker-enforced capital floor, ALP-856 — see the dedicated floor tests).
+    submitted = client.submit_order.call_args_list[0][0][0]
     # OCC: NVDA padded to 6 chars + YYMMDD + C/P + 8-digit strike-thousandths.
     assert submitted.symbol == "NVDA  260619C00900000"
     assert submitted.order_class == OrderClass.SIMPLE
     assert submitted.time_in_force == TimeInForce.DAY
+
+
+@pytest.mark.asyncio
+async def test_dispatch_open_options_submits_entry_and_resting_capital_floor() -> None:
+    """An options OPEN submits the entry AND the always-on broker-enforced floor.
+
+    Invariant 4 (ADR-0003 / ALP-856): every open options position carries a
+    resting broker-enforced exit. ``_dispatch_open`` submits the single-leg entry
+    first, then the GTC ``stop_limit`` capital floor — two ``submit_order`` calls.
+    The floor's real broker id surfaces on the result's ``leg_alpaca_order_ids``
+    under ``"capital_floor"`` so the OPEN writeback can stamp the broker-enforced
+    floor leg, and cancel-on-monitor-fire can cancel it by id.
+    """
+    entry_order = _make_fake_alpaca_order(order_class=OrderClass.SIMPLE)
+    floor_order = _make_fake_alpaca_order(order_class=OrderClass.SIMPLE)
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=[entry_order, floor_order])
+
+    outcome = await dispatch_command_to_broker(
+        _option_open_command(),
+        client=client,
+        queries=MagicMock(),
+        execution=_execution_config(),
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+    )
+
+    assert isinstance(outcome, Submitted)
+    result = outcome.payload
+    # The dispatch result is the ENTRY's ack (the position's primary order).
+    assert result.payload_kind == "options"
+    assert result.alpaca_order_id == str(entry_order.id)
+    # Two broker submissions: entry (DAY) then floor (GTC stop_limit).
+    assert client.submit_order.call_count == 2
+    entry_req = client.submit_order.call_args_list[0][0][0]
+    floor_req = client.submit_order.call_args_list[1][0][0]
+    assert entry_req.time_in_force == TimeInForce.DAY
+    assert floor_req.time_in_force == TimeInForce.GTC
+    assert isinstance(floor_req, StopLimitOrderRequest)
+    # A long (BUY-to-open) floor closes by SELLing.
+    assert floor_req.side == OrderSide.SELL
+    # The floor's broker id is carried for the writeback to stamp on the leg.
+    assert result.leg_alpaca_order_ids == {"capital_floor": str(floor_order.id)}
+    # The floor carries its OWN client_order_id (Alpaca rejects a duplicate),
+    # distinct from the entry's but pattern-valid + carrying the same thesis FK.
+    assert floor_req.client_order_id != entry_req.client_order_id
+
+
+@pytest.mark.asyncio
+async def test_dispatch_open_options_permanent_floor_rejection_cancels_entry() -> None:
+    """A permanent floor rejection cancels the live entry, then surfaces the failure.
+
+    The capital floor is mandatory (invariant 4): an options OPEN must not be
+    left broker-unprotected. The entry submits FIRST and goes live; when the
+    floor's broker submission is permanently rejected (e.g. options level not
+    approved), leaving the entry resting would orphan an unprotected options
+    position (FL1). ``_dispatch_options_open`` first ``submit_cancel``s the live
+    entry by its real broker id, THEN re-raises the
+    :class:`PermanentRejectionError` so the caller also tears down local state.
+    """
+    from alphamind.execution.broker_adapter.order_options import PermanentRejectionError
+
+    entry_order = _make_fake_alpaca_order(order_class=OrderClass.SIMPLE)
+
+    # Entry submits cleanly; the floor (the only StopLimit request) is rejected
+    # by the broker for a permanent (4xx) reason.
+    def _submit(request: object) -> MagicMock:
+        if isinstance(request, StopLimitOrderRequest):
+            raise _permanent_api_error()
+        return entry_order
+
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=_submit)
+    client.cancel_order_by_id = MagicMock(return_value=None)
+
+    with pytest.raises(PermanentRejectionError):
+        await dispatch_command_to_broker(
+            _option_open_command(),
+            client=client,
+            queries=MagicMock(),
+            execution=_execution_config(),
+            client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+        )
+
+    # The live entry was retracted at the broker before the failure surfaced.
+    client.cancel_order_by_id.assert_called_once_with(str(entry_order.id))
+
+
+@pytest.mark.asyncio
+async def test_dispatch_open_options_floor_gateway_failure_cancels_entry() -> None:
+    """A floor gateway-submission failure cancels the live entry, then surfaces it.
+
+    When the floor submission exhausts the retry window (transient failures →
+    ``GatewaySubmissionFailed``) after the entry went live, ``_dispatch_options_open``
+    first ``submit_cancel``s the live entry by its real broker id, THEN returns
+    the ``GatewaySubmissionFailed`` outcome — never leaving the entry resting
+    without its mandatory floor (FL1).
+    """
+    import httpx
+
+    entry_order = _make_fake_alpaca_order(order_class=OrderClass.SIMPLE)
+
+    # Entry submits cleanly; the floor (the only StopLimit request) keeps
+    # raising a transient-classified error → retry window exhausts.
+    def _submit(request: object) -> MagicMock:
+        if isinstance(request, StopLimitOrderRequest):
+            raise httpx.ConnectError("network down")
+        return entry_order
+
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=_submit)
+    client.cancel_order_by_id = MagicMock(return_value=None)
+    # Tight retry window so the floor exhausts in <1s.
+    cfg = _execution_config_with_window(1)
+
+    outcome = await dispatch_command_to_broker(
+        _option_open_command(),
+        client=client,
+        queries=MagicMock(),
+        execution=cfg,
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+    )
+
+    assert isinstance(outcome, GatewaySubmissionFailed)
+    # The live entry was retracted at the broker before the failure surfaced.
+    client.cancel_order_by_id.assert_called_once_with(str(entry_order.id))
+
+
+@pytest.mark.asyncio
+async def test_dispatch_open_equity_submits_no_capital_floor() -> None:
+    """An equity OPEN submits no capital floor — the native bracket protects it.
+
+    Equities carry a native Alpaca bracket (broker-enforced take-profit + stop
+    child), so there is no separate options-style resting floor. ``_dispatch_open``
+    makes exactly one broker submission and surfaces no ``capital_floor`` leg id.
+    """
+    fake_order = _make_fake_alpaca_order(order_class=OrderClass.BRACKET)
+    client = MagicMock()
+    client.submit_order = MagicMock(return_value=fake_order)
+
+    outcome = await dispatch_command_to_broker(
+        _equity_open_command(),
+        client=client,
+        queries=MagicMock(),
+        execution=_execution_config(),
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+    )
+
+    assert isinstance(outcome, Submitted)
+    assert client.submit_order.call_count == 1
+    assert "capital_floor" not in outcome.payload.leg_alpaca_order_ids
 
 
 # ---------------------------------------------------------------------------
@@ -802,7 +987,9 @@ async def test_dispatch_engine_guardrail_close_routes_to_submit_equity_close() -
         client=client,
         queries=queries,
         execution=_execution_config(),
-        client_order_id=ClientOrderId("MON.session-abc.42.0"),
+        client_order_id=ClientOrderId(
+            "MON.session-abc.42.0~the-THE-AAPL-0123456789abcdef0123456789abcdef~inv-X"
+        ),
         position_symbol="AAPL",
         position_qty=10.0,
         position_side="long",
@@ -828,27 +1015,7 @@ async def test_dispatch_returns_gateway_submission_failed_on_retry_exhaustion() 
     client.submit_order = MagicMock(side_effect=httpx.ConnectError("network down"))
     queries = MagicMock()
     # Tight retry window so the test runs in <1s.
-    cfg = ExecutionConfig(
-        greeks_refresh=GreeksRefresh(scheduled_interval_minutes=5, move_trigger_pct=0.01),
-        conservative_delta_buffer_pct=0.0,
-        submission_retry_window_seconds=1,
-        paper_harness=PaperHarness(
-            spread_buffer_pct=0.0,
-            impact_coefficients={
-                OrderType.market: 0.1,
-                OrderType.limit: 0.05,
-                OrderType.stop: 0.08,
-            },
-            fee_schedule=FeeSchedule(
-                cat_per_executed_share=0.0,
-                taf_per_share_sells=0.0,
-                sec_pct_of_notional_sells=0.0,
-                orf_per_options_contract=0.0,
-                occ_per_options_contract=0.0,
-            ),
-        ),
-        pl_target_margin_pct=0.0,
-    )
+    cfg = _execution_config_with_window(1)
 
     outcome = await dispatch_command_to_broker(
         _equity_open_command(),

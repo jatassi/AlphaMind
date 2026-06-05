@@ -11,13 +11,19 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from alphamind._kernel.money import price
 from alphamind.commands.command_models import (
     ComponentType,
     EquityInstrument,
+    EventLeg,
+    OptionInstrument,
+    PriceLeg,
     StrategyInstrument,
     Target,
     Thesis,
+    TimeLeg,
 )
 from alphamind.commands.command_models import (
     StrategyLeg as WireStrategyLeg,
@@ -30,6 +36,7 @@ from alphamind.execution.write_paths.phase2.open import (
     _build_active_thesis,
     _build_pending_bracket,
     _build_pending_position,
+    _capital_floor_bracket_leg,
     _direction_from_instrument,
 )
 from alphamind.portfolio_state.records.orders import (
@@ -281,6 +288,302 @@ def test_single_leg_bracket_take_profit_build_unchanged() -> None:
     assert target_leg.trigger.threshold_usd == 160.0
 
 
+def _price_leg(trigger_price: float) -> PriceLeg:
+    """A wire PriceLeg with a stop-on-decline condition (LONG-stop shape)."""
+    from alphamind.commands.command_models import (
+        BracketOrderParameters,
+        PriceCondition,
+    )
+
+    return PriceLeg(
+        type="price",
+        is_hard=True,
+        trigger_signal="underlying_price",
+        condition=PriceCondition(
+            underlying_trigger="AAPL", comparator="<=", trigger_price=price(trigger_price)
+        ),
+        order_parameters=BracketOrderParameters(order_type="stop"),
+    )
+
+
+def _time_leg(deadline: datetime) -> TimeLeg:
+    from alphamind.commands.command_models import (
+        BracketOrderParameters,
+        TimeCondition,
+    )
+
+    return TimeLeg(
+        type="time",
+        is_hard=True,
+        condition=TimeCondition(deadline=deadline),
+        order_parameters=BracketOrderParameters(order_type="market"),
+    )
+
+
+def _event_leg() -> EventLeg:
+    from alphamind.commands.command_models import EventCondition
+
+    return EventLeg(
+        type="event",
+        is_hard=False,
+        condition=EventCondition(event_description="FOMC surprise hike"),
+    )
+
+
+def test_equity_open_first_stop_and_take_profit_are_broker_enforced() -> None:
+    """ALP-847 AC3 — on an equity OPEN, the take-profit and the FIRST price-stop
+    are broker-enforced (Alpaca's native bracket carries exactly one stop +
+    one take-profit child); a secondary price-stop and any time/event leg are
+    monitor-enforced (no broker counterpart)."""
+    from alphamind.portfolio_state.records.orders import EnforcementBinding
+
+    equity = EquityInstrument(asset_type="equity", ticker="AAPL", direction="long")
+    bracket = _build_pending_bracket(
+        bracket_id="BRK-AAPL-abc123",
+        position_id="POS-AAPL-abc123",
+        entry_order_id="ORD-AAPL-entry-abc123",
+        target=Target(target_type="absolute_price", price=price(160.0), order_type="limit"),
+        target_order_id="ORD-AAPL-target-abc123",
+        invalidation_leg_orders=(
+            (_price_leg(150.0), "ORD-AAPL-inv0-abc123"),
+            (_price_leg(145.0), "ORD-AAPL-inv1-abc123"),
+            (_time_leg(datetime(2026, 6, 1, tzinfo=UTC)), "ORD-AAPL-inv2-abc123"),
+            (_event_leg(), None),
+        ),
+        instrument=equity,
+        entry_window_deadline=None,
+    )
+    legs = bracket.protective_legs
+    take_profit = next(leg for leg in legs if leg.leg_type is BracketLegType.TAKE_PROFIT)
+    price_stops = [leg for leg in legs if leg.leg_type is BracketLegType.PRICE_STOP]
+    time_leg = next(leg for leg in legs if leg.leg_type is BracketLegType.TIME_EXPIRATION)
+    event_leg = next(leg for leg in legs if leg.leg_type is BracketLegType.EVENT_INVALIDATION)
+
+    assert take_profit.enforcement_binding is EnforcementBinding.BROKER_ENFORCED
+    assert price_stops[0].enforcement_binding is EnforcementBinding.BROKER_ENFORCED
+    assert price_stops[1].enforcement_binding is EnforcementBinding.MONITOR_ENFORCED
+    assert time_leg.enforcement_binding is EnforcementBinding.MONITOR_ENFORCED
+    assert event_leg.enforcement_binding is EnforcementBinding.MONITOR_ENFORCED
+
+
+def test_strategy_open_all_legs_are_monitor_enforced() -> None:
+    """ALP-847 AC3 — options/strategy positions have NO native bracket (Alpaca
+    does not support complex order classes on options), so every protective leg
+    is monitor-enforced — armed Intent the continuous monitor enforces."""
+    from alphamind.portfolio_state.records.orders import EnforcementBinding
+
+    bracket = _build_strategy_bracket()
+    for leg in bracket.protective_legs:
+        assert leg.enforcement_binding is EnforcementBinding.MONITOR_ENFORCED
+
+
+def test_build_pending_order_without_broker_id_carries_no_alpaca_id() -> None:
+    """ALP-847 — a protective leg with no broker order carries NO broker id.
+
+    The synthetic ``alp-{order_id}`` mint is deleted (invariant 5): with no
+    ``alpaca_order_id_override`` the built order's ``alpaca_order_id`` is None
+    and its chain is empty — never a placeholder. This is what renders the
+    ALP-837 cancel-of-a-non-existent-order path unrepresentable.
+    """
+    from alphamind.execution.write_paths.phase2._shared import _build_pending_order
+    from alphamind.portfolio_state.records.orders import (
+        OrderClass,
+        OrderDirection,
+        OrderRole,
+        OrderType,
+        PriceParameters,
+    )
+
+    order = _build_pending_order(
+        order_id="ORD-AAPL-inv0-abc123",
+        position_id="POS-AAPL-abc123",
+        bracket_id="BRK-AAPL-abc123",
+        role=OrderRole.PRICE_STOP,
+        order_class=OrderClass.OTO,
+        direction=OrderDirection.SELL,
+        order_type=OrderType.STOP,
+        price_parameters=PriceParameters(stop_trigger_price=price(150.0)),
+        ticker="AAPL",
+        pm_command_id="inv-1.env.0.0",
+        thesis_id="THE-AAPL-abc123",
+        timestamp=datetime(2026, 5, 29, 17, 30, tzinfo=UTC),
+        quantity=10.0,
+    )
+    assert order.alpaca_order_id is None
+    assert order.alpaca_order_id_chain == ()
+
+
+def test_build_pending_order_with_override_carries_real_broker_id() -> None:
+    """ALP-847 — a leg WITH a real broker order carries the broker's id.
+
+    The override (the broker's real Alpaca id captured at submission) stamps
+    both ``alpaca_order_id`` and the single-element chain — a leg backed by a
+    Broker-Owned Fact, the broker-enforced case.
+    """
+    from alphamind.execution.write_paths.phase2._shared import _build_pending_order
+    from alphamind.portfolio_state.records.orders import (
+        OrderClass,
+        OrderDirection,
+        OrderRole,
+        OrderType,
+        PriceParameters,
+    )
+
+    order = _build_pending_order(
+        order_id="ORD-AAPL-inv0-abc123",
+        position_id="POS-AAPL-abc123",
+        bracket_id="BRK-AAPL-abc123",
+        role=OrderRole.PRICE_STOP,
+        order_class=OrderClass.OTO,
+        direction=OrderDirection.SELL,
+        order_type=OrderType.STOP,
+        price_parameters=PriceParameters(stop_trigger_price=price(150.0)),
+        ticker="AAPL",
+        pm_command_id="inv-1.env.0.0",
+        thesis_id="THE-AAPL-abc123",
+        timestamp=datetime(2026, 5, 29, 17, 30, tzinfo=UTC),
+        quantity=10.0,
+        alpaca_order_id_override="real-broker-uuid-1234",
+    )
+    assert order.alpaca_order_id == "real-broker-uuid-1234"
+    assert order.alpaca_order_id_chain == ("real-broker-uuid-1234",)
+
+
+def _option_instrument() -> OptionInstrument:
+    return OptionInstrument(
+        asset_type="option",
+        underlying="NVDA",
+        strike=price(900.0),
+        expiration="2026-06-19",
+        contract_type="call",
+        direction="long",
+    )
+
+
+def test_options_open_records_broker_enforced_capital_floor_leg() -> None:
+    """ALP-856 — an options OPEN's bracket carries a BROKER_ENFORCED capital-floor
+    leg whose ``order_id`` is the floor's durable OMS ``order_id`` (the precommitted
+    floor OrderRow), NOT the broker Alpaca id.
+
+    The floor is a tracked broker order with its own OrderRow (FS4 / ALP-836). The
+    leg's ``order_id`` points at that OrderRow so the DEFERRABLE FK to
+    ``orders.order_id`` is satisfied (stamping the broker id here, as the merged
+    wiring did, would reference no ``orders`` row → ``FOREIGN KEY constraint
+    failed``). Cancel-on-monitor-fire
+    (``bracket_stops/closer._cancel_resting_floors``) resolves this ``order_id`` →
+    the floor OrderRow's ``alpaca_order_id`` → ``submitter.cancel_floor``.
+    """
+    from alphamind.portfolio_state.records.orders import (
+        BracketLegType,
+        EnforcementBinding,
+    )
+
+    bracket = _build_pending_bracket(
+        bracket_id="BRK-NVDA-abc123",
+        position_id="POS-NVDA-abc123",
+        entry_order_id="ORD-NVDA-entry-abc123",
+        target=Target(target_type="absolute_price", price=price(950.0), order_type="limit"),
+        target_order_id="ORD-NVDA-target-abc123",
+        invalidation_leg_orders=((_price_leg(850.0), "ORD-NVDA-inv0-abc123"),),
+        instrument=_option_instrument(),
+        entry_window_deadline=None,
+        capital_floor_order_id="ORD-FLOOR-abc123",
+        capital_floor_price=12.5,
+    )
+    floor_legs = [
+        leg
+        for leg in bracket.protective_legs
+        if leg.enforcement_binding is EnforcementBinding.BROKER_ENFORCED
+    ]
+    assert len(floor_legs) == 1
+    floor = floor_legs[0]
+    assert floor.leg_type is BracketLegType.PRICE_STOP
+    # The leg points at the floor's OMS order_id (the FK target), not the broker id.
+    assert floor.order_id == "ORD-FLOOR-abc123"
+    # The recorded resting threshold is the supplied floor price (FL10 — no 0.01
+    # structural fallback; the leg only builds when the real price is present).
+    assert isinstance(floor.trigger, PriceTrigger)
+    assert floor.trigger.threshold_usd == 12.5
+    # The thesis-invalidation stop stays monitor-enforced (no native bracket on options).
+    inv_legs = [
+        leg
+        for leg in bracket.protective_legs
+        if leg.leg_type is BracketLegType.PRICE_STOP
+        and leg.enforcement_binding is EnforcementBinding.MONITOR_ENFORCED
+    ]
+    assert len(inv_legs) == 1
+
+
+def test_capital_floor_bracket_leg_none_for_no_floor() -> None:
+    """Both floor inputs absent → no floor leg (equity / strategy OPEN)."""
+    leg = _capital_floor_bracket_leg(
+        bracket_id="BRK-AAPL-abc123",
+        ticker="AAPL",
+        capital_floor_order_id=None,
+        capital_floor_price=None,
+        direction="long",
+    )
+    assert leg is None
+
+
+def test_capital_floor_bracket_leg_rejects_partial_none() -> None:
+    """A partial-None floor (exactly one of order_id / price set) is a programming
+    error — it would build an un-cancellable floor leg (order_id=None) resting on
+    a 0.01 threshold fallback (FL10). Require both-or-neither: reject either half."""
+    with pytest.raises(ValueError, match="both-or-neither"):
+        _capital_floor_bracket_leg(
+            bracket_id="BRK-NVDA-abc123",
+            ticker="NVDA",
+            capital_floor_order_id="ORD-FLOOR-abc123",
+            capital_floor_price=None,
+            direction="long",
+        )
+    with pytest.raises(ValueError, match="both-or-neither"):
+        _capital_floor_bracket_leg(
+            bracket_id="BRK-NVDA-abc123",
+            ticker="NVDA",
+            capital_floor_order_id=None,
+            capital_floor_price=12.5,
+            direction="long",
+        )
+
+
+def test_equity_open_records_no_capital_floor_leg() -> None:
+    """ALP-856 — an equity OPEN carries no options-style capital-floor leg.
+
+    Equities are protected by the native Alpaca bracket; the broker-enforced
+    legs are the take-profit + first stop (ALP-847), never a separate resting
+    floor. ``_build_pending_bracket`` is never passed a floor id for equity, so
+    no extra BROKER_ENFORCED PRICE_STOP floor leg appears.
+    """
+    from alphamind.portfolio_state.records.orders import (
+        BracketLegType,
+        EnforcementBinding,
+    )
+
+    equity = EquityInstrument(asset_type="equity", ticker="AAPL", direction="long")
+    bracket = _build_pending_bracket(
+        bracket_id="BRK-AAPL-abc123",
+        position_id="POS-AAPL-abc123",
+        entry_order_id="ORD-AAPL-entry-abc123",
+        target=Target(target_type="absolute_price", price=price(160.0), order_type="limit"),
+        target_order_id="ORD-AAPL-target-abc123",
+        invalidation_leg_orders=((_price_leg(150.0), "ORD-AAPL-inv0-abc123"),),
+        instrument=equity,
+        entry_window_deadline=None,
+    )
+    # The only broker-enforced legs are the native bracket's take-profit + first
+    # stop — no leg carries an options floor's broker id, and there is no extra
+    # PRICE_STOP beyond the single invalidation stop.
+    price_stops = [
+        leg for leg in bracket.protective_legs if leg.leg_type is BracketLegType.PRICE_STOP
+    ]
+    assert len(price_stops) == 1
+    # That single stop is the native-bracket invalidation stop, not a floor leg.
+    assert price_stops[0].enforcement_binding is EnforcementBinding.BROKER_ENFORCED
+    assert price_stops[0].order_id == "ORD-AAPL-inv0-abc123"
+
+
 def test_build_pending_bracket_carries_entry_window_deadline() -> None:
     """``_build_pending_bracket`` stamps the supplied ``entry_window_deadline``
     onto the bracket (ALP-737) — the seam the OPEN writeback feeds from
@@ -332,6 +635,7 @@ def test_build_active_thesis_yields_unique_component_ids_for_multiple_same_type(
     thesis_id = "THE-MRVL-abc123"
     wire = Thesis(
         summary="MRVL pre-gap consolidation long",
+        nature="directional",
         components=(
             _wire_component("entry_rationale", narrative="pre-gap floor break"),
             _wire_component("target_rationale", narrative="resistance retest"),
@@ -371,6 +675,7 @@ def test_build_active_thesis_component_id_carries_thesis_id_and_type() -> None:
     thesis_id = "THE-AAPL-xyz789"
     wire = Thesis(
         summary="AAPL long",
+        nature="directional",
         components=(
             _wire_component("entry_rationale", narrative="strong setup"),
             _wire_component("target_rationale", narrative="resistance"),
@@ -399,6 +704,7 @@ def test_build_active_thesis_backfill_yields_unique_component_ids() -> None:
     thesis_id = "THE-NVDA-zzz999"
     wire = Thesis(
         summary="NVDA momentum — invalidation-only wire (entry+target backfilled)",
+        nature="directional",
         components=(
             _wire_component("invalidation_rationale", narrative="floor break"),
             _wire_component("invalidation_rationale", narrative="time-stop"),
@@ -416,3 +722,145 @@ def test_build_active_thesis_backfill_yields_unique_component_ids() -> None:
     assert len(ids) == len(set(ids)), f"duplicate component_ids: {ids}"
     # 2 wire invalidation components + 2 backfilled (entry + target) = 4.
     assert len(record.components) == 4
+
+
+# ---------------------------------------------------------------------------
+# Thesis nature + per-leg trigger signal persistence (ALP-852)
+# ---------------------------------------------------------------------------
+
+
+def _thesis_with_nature(nature: str) -> Thesis:
+    return Thesis(
+        summary="NVDA thesis",
+        nature=nature,  # type: ignore[arg-type]
+        components=(
+            _wire_component("entry_rationale", narrative="setup"),
+            _wire_component("target_rationale", narrative="resistance"),
+            _wire_component("invalidation_rationale", narrative="support break"),
+        ),
+    )
+
+
+def test_build_active_thesis_maps_directional_nature() -> None:
+    """ALP-852 — a wire ``directional`` nature persists as ThesisNature.DIRECTIONAL."""
+    from alphamind.portfolio_state.records.theses import ThesisNature
+
+    record = _build_active_thesis(
+        thesis_id="THE-NVDA-abc123",
+        position_id="POS-NVDA-abc123",
+        thesis=_thesis_with_nature("directional"),
+        timestamp=datetime(2026, 5, 26, 16, 24, 54, tzinfo=UTC),
+    )
+    assert record.nature is ThesisNature.DIRECTIONAL
+
+
+def test_build_active_thesis_maps_non_directional_nature() -> None:
+    """ALP-852 — a wire ``non_directional`` nature persists as NON_DIRECTIONAL."""
+    from alphamind.portfolio_state.records.theses import ThesisNature
+
+    record = _build_active_thesis(
+        thesis_id="THE-NVDA-abc123",
+        position_id="POS-NVDA-abc123",
+        thesis=_thesis_with_nature("non_directional"),
+        timestamp=datetime(2026, 5, 26, 16, 24, 54, tzinfo=UTC),
+    )
+    assert record.nature is ThesisNature.NON_DIRECTIONAL
+
+
+def _option_price_leg() -> PriceLeg:
+    """A non-directional wire PriceLeg firing on the option's own mark."""
+    from alphamind.commands.command_models import (
+        BracketOrderParameters,
+        PriceCondition,
+    )
+
+    return PriceLeg(
+        type="price",
+        is_hard=True,
+        trigger_signal="option_price",
+        condition=PriceCondition(
+            underlying_trigger="NVDA", comparator="<=", trigger_price=price(8.0)
+        ),
+        order_parameters=BracketOrderParameters(order_type="stop"),
+    )
+
+
+def test_invalidation_leg_carries_underlying_price_trigger_signal() -> None:
+    """ALP-852 — a directional wire PriceLeg persists trigger_signal=UNDERLYING_PRICE.
+
+    The monitor reads this off the leg to evaluate the directional stop against
+    the underlying.
+    """
+    from alphamind.portfolio_state.records.orders import TriggerSignal
+
+    equity = EquityInstrument(asset_type="equity", ticker="AAPL", direction="long")
+    bracket = _build_pending_bracket(
+        bracket_id="BRK-AAPL-abc123",
+        position_id="POS-AAPL-abc123",
+        entry_order_id="ORD-AAPL-entry-abc123",
+        target=Target(target_type="absolute_price", price=price(160.0), order_type="limit"),
+        target_order_id="ORD-AAPL-target-abc123",
+        invalidation_leg_orders=((_price_leg(150.0), "ORD-AAPL-inv0-abc123"),),
+        instrument=equity,
+        entry_window_deadline=None,
+    )
+    price_stop = next(
+        leg for leg in bracket.protective_legs if leg.leg_type is BracketLegType.PRICE_STOP
+    )
+    assert price_stop.trigger_signal is TriggerSignal.UNDERLYING_PRICE
+
+
+def test_non_directional_invalidation_leg_carries_option_price_trigger_signal() -> None:
+    """ALP-852 — a non-directional wire PriceLeg persists trigger_signal=OPTION_PRICE.
+
+    This is the field the monitor reads so a vol/spread thesis's invalidation
+    stop evaluates against the option mark rather than the underlying.
+    """
+    from alphamind.commands.command_models import OptionInstrument
+    from alphamind.portfolio_state.records.orders import TriggerSignal
+
+    option = OptionInstrument(
+        asset_type="option",
+        underlying="NVDA",
+        strike=price(850.0),
+        expiration="2026-06-19",
+        contract_type="call",
+        direction="long",
+    )
+    bracket = _build_pending_bracket(
+        bracket_id="BRK-NVDA-abc123",
+        position_id="POS-NVDA-abc123",
+        entry_order_id="ORD-NVDA-entry-abc123",
+        target=Target(target_type="absolute_price", price=price(60.0), order_type="limit"),
+        target_order_id="ORD-NVDA-target-abc123",
+        invalidation_leg_orders=((_option_price_leg(), "ORD-NVDA-inv0-abc123"),),
+        instrument=option,
+        entry_window_deadline=None,
+    )
+    price_stop = next(
+        leg for leg in bracket.protective_legs if leg.leg_type is BracketLegType.PRICE_STOP
+    )
+    assert price_stop.trigger_signal is TriggerSignal.OPTION_PRICE
+
+
+def test_time_and_event_legs_carry_no_trigger_signal() -> None:
+    """ALP-852 — TIME / EVENT legs carry no trigger_signal (no invalidation signal)."""
+    equity = EquityInstrument(asset_type="equity", ticker="AAPL", direction="long")
+    bracket = _build_pending_bracket(
+        bracket_id="BRK-AAPL-abc123",
+        position_id="POS-AAPL-abc123",
+        entry_order_id="ORD-AAPL-entry-abc123",
+        target=Target(target_type="absolute_price", price=price(160.0), order_type="limit"),
+        target_order_id="ORD-AAPL-target-abc123",
+        invalidation_leg_orders=(
+            (_time_leg(datetime(2026, 6, 1, tzinfo=UTC)), "ORD-AAPL-inv0-abc123"),
+            (_event_leg(), None),
+        ),
+        instrument=equity,
+        entry_window_deadline=None,
+    )
+    for leg in bracket.protective_legs:
+        if leg.leg_type in (BracketLegType.TIME_EXPIRATION, BracketLegType.EVENT_INVALIDATION):
+            assert leg.trigger_signal is None
+        if leg.leg_type is BracketLegType.TAKE_PROFIT:
+            assert leg.trigger_signal is None

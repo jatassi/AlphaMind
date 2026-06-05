@@ -13,8 +13,10 @@ from alphamind._kernel.ids import (
 )
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.continuous_monitor.bracket_stops.triggers import (
+    evaluate_option_mark_trigger,
     evaluate_pl_target_trigger,
     evaluate_price_based_trigger,
+    evaluate_strategy_net_mark_trigger,
     evaluate_strategy_pl_target_trigger,
 )
 from alphamind.portfolio_state.records.orders import (
@@ -578,6 +580,148 @@ class TestStrategyPlTargetTrigger:
         )
         assert fired_no_buffer is True
         assert fired_with_buffer is False
+
+
+# ---------------------------------------------------------------------------
+# Non-directional absolute option-mark and net-mark evaluators (ALP-861)
+# ---------------------------------------------------------------------------
+
+
+def _option_mark_stop_leg(*, threshold_usd: float, direction: str) -> BracketLeg:
+    """A non-directional single-option PRICE_STOP — no pl_anchor (the real shape).
+
+    The leg's ``PriceTrigger.threshold_usd`` is the absolute option-mark level
+    (carried from ``condition.trigger_price``); the comparator becomes the
+    ``direction``. The OPTION_PRICE evaluator reads these directly.
+    """
+    from alphamind.portfolio_state.records.orders import TriggerSignal
+
+    return BracketLeg(
+        leg_id="leg-opt-mark",
+        leg_type=BracketLegType.PRICE_STOP,
+        order_id=None,
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"),
+            threshold_usd=threshold_usd,
+            direction=direction,  # type: ignore[arg-type]
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.ACTIVE,
+        trigger_signal=TriggerSignal.OPTION_PRICE,
+    )
+
+
+def _net_mark_stop_leg(*, threshold_usd: float, direction: str) -> BracketLeg:
+    """A non-directional spread PRICE_STOP — no pl_anchor (the real shape)."""
+    from alphamind.portfolio_state.records.orders import TriggerSignal
+
+    return BracketLeg(
+        leg_id="leg-net-mark",
+        leg_type=BracketLegType.PRICE_STOP,
+        order_id=None,
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"),
+            threshold_usd=threshold_usd,
+            direction=direction,  # type: ignore[arg-type]
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.ACTIVE,
+        trigger_signal=TriggerSignal.NET_MARK,
+    )
+
+
+class TestOptionMarkTrigger:
+    """The single-option absolute-mark evaluator (``trigger_signal=OPTION_PRICE``).
+
+    Pure: it derives the option mark via Black-Scholes at ``spot`` and compares it
+    against the leg's ``threshold_usd`` per the ``GTE`` / ``LTE`` direction — no
+    ``pl_anchor`` involved. The strike-850 IV-0.30 ~39-DTE call marks ~$21 at spot
+    820, ~$35 at 850, ~$68 at 900.
+    """
+
+    def test_does_not_fire_when_mark_above_threshold_lte(self) -> None:
+        position = _options_position(direction=Direction.LONG, premium_paid=35.24, iv_used=0.30)
+        leg = _option_mark_stop_leg(threshold_usd=15.0, direction="LTE")
+        # spot 820 → mark ~$21 > $15 → no fire.
+        assert (
+            evaluate_option_mark_trigger(
+                position=position, leg=leg, spot=820.0, risk_free_rate=0.045, as_of=_NOW
+            )
+            is False
+        )
+
+    def test_fires_when_mark_above_threshold_gte(self) -> None:
+        position = _options_position(direction=Direction.LONG, premium_paid=35.24, iv_used=0.30)
+        leg = _option_mark_stop_leg(threshold_usd=60.0, direction="GTE")
+        # spot 900 → mark ~$68 ≥ $60 → fire (the GTE asymmetry).
+        assert (
+            evaluate_option_mark_trigger(
+                position=position, leg=leg, spot=900.0, risk_free_rate=0.045, as_of=_NOW
+            )
+            is True
+        )
+
+    def test_determinism_for_fixed_inputs(self) -> None:
+        """Purity — the same inputs yield the same answer on repeated calls."""
+        position = _options_position(direction=Direction.LONG, premium_paid=35.24, iv_used=0.30)
+        leg = _option_mark_stop_leg(threshold_usd=25.0, direction="LTE")
+        first = evaluate_option_mark_trigger(
+            position=position, leg=leg, spot=820.0, risk_free_rate=0.045, as_of=_NOW
+        )
+        second = evaluate_option_mark_trigger(
+            position=position, leg=leg, spot=820.0, risk_free_rate=0.045, as_of=_NOW
+        )
+        assert first == second
+
+    def test_strategy_position_misroute_raises(self) -> None:
+        """A-F5 — an OPTION_PRICE leg on a strategy position is a routing bug.
+
+        The single-option evaluator surfaces a clear TypeError rather than
+        silently scoring a strategy position against a single-option mark.
+        """
+        net_premium = _credit_spread_net_premium_at(entry_spot=850.0)
+        position = _credit_put_spread(net_premium_usd=net_premium)
+        leg = _option_mark_stop_leg(threshold_usd=5.0, direction="LTE")
+        with pytest.raises(TypeError, match="evaluate_strategy_pl_target_trigger"):
+            evaluate_option_mark_trigger(
+                position=position, leg=leg, spot=850.0, risk_free_rate=0.045, as_of=_NOW
+            )
+
+
+class TestStrategyNetMarkTrigger:
+    """The spread absolute-net-mark evaluator (``trigger_signal=NET_MARK``).
+
+    Pure: it computes the per-contract net mark — the magnitude of the signed sum
+    of per-leg Black-Scholes marks (cost to close one spread unit) — and compares
+    against the leg's ``threshold_usd`` per direction. The bull put credit spread
+    (short 850 / long 840 put) marks ~$4.74 to close at spot 850, rising to ~$7.89
+    at spot 780 as the short put richens.
+    """
+
+    def test_does_not_fire_when_net_mark_below_threshold_gte(self) -> None:
+        net_premium = _credit_spread_net_premium_at(entry_spot=850.0)
+        position = _credit_put_spread(net_premium_usd=net_premium)
+        leg = _net_mark_stop_leg(threshold_usd=6.0, direction="GTE")
+        # spot 850 → cost-to-close ~$4.74 < $6 → no fire.
+        assert (
+            evaluate_strategy_net_mark_trigger(
+                position=position, leg=leg, spot=850.0, risk_free_rate=0.045, as_of=_NOW
+            )
+            is False
+        )
+
+    def test_single_option_position_misroute_raises(self) -> None:
+        """A-F5 — a NET_MARK leg on a single-option position is a routing bug.
+
+        The strategy evaluator surfaces a clear TypeError rather than silently
+        scoring a single-option position as a spread.
+        """
+        position = _options_position(direction=Direction.LONG)
+        leg = _net_mark_stop_leg(threshold_usd=6.0, direction="GTE")
+        with pytest.raises(TypeError, match="requires a strategy position"):
+            evaluate_strategy_net_mark_trigger(
+                position=position, leg=leg, spot=820.0, risk_free_rate=0.045, as_of=_NOW
+            )
 
 
 class TestPriceBasedTriggerValidation:

@@ -46,6 +46,7 @@ from alphamind._kernel.ids import (
     ClientOrderId,
     OrderId,
     PositionId,
+    ThesisId,
 )
 from alphamind.commands.engine_envelope import EngineEnvelope
 from alphamind.commands.submission_results import (
@@ -68,6 +69,7 @@ if TYPE_CHECKING:
 
     from alphamind.config.models.execution import ExecutionConfig
     from alphamind.execution.broker_adapter import AccountStateQueries
+    from alphamind.state.tables.positions import PositionRow
 
 __all__ = [
     "SubmitEngineEnvelopeState",
@@ -191,11 +193,28 @@ async def submit_engine_envelope(
 
     embedded = envelope.commands[0]
 
+    # The targeted position row, fetched at most once. When command_id is None
+    # we read it here to resolve the broker-carried thesis link; the same row is
+    # then threaded into ``_dispatch_engine_close`` so the broker-routing path
+    # does not re-fetch it.
+    close_position_row: PositionRow | None = None
+
     # Derive or validate the embedded command_id.
     if embedded.command_id is None:
+        # Broker-carried link (ALP-844): the derived engine command id carries
+        # the closed position's thesis (*why*) + this invocation's id (*when*),
+        # so the resulting Alpaca order self-attributes end-to-end. The thesis
+        # is read off the targeted position record; the invocation is the OMS
+        # invocation handle's id (the engine envelope itself carries
+        # invocation_id=None by design — the *when* is the OMS write).
+        thesis_id, close_position_row = await _resolve_engine_close_thesis(
+            handle, position_id=embedded.position_id
+        )
         command_id = derive_engine_command_id(
             monitor_session_id=envelope_session,
             trigger_id=envelope_trigger,
+            thesis_id=thesis_id,
+            invocation_id=handle.invocation_id,
             command_ordinal=0,
         )
     else:
@@ -261,6 +280,7 @@ async def submit_engine_envelope(
             queries=queries,
             execution_config=execution_config,
             client_order_id=ClientOrderId(command_id),
+            position_row=close_position_row,
         )
         if isinstance(dispatch_outcome, _BrokerFailure):
             return (
@@ -334,6 +354,43 @@ async def submit_engine_envelope(
 
 
 # ---------------------------------------------------------------------------
+# Broker-carried link resolution (ALP-844)
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_engine_close_thesis(
+    handle: InvocationHandle, *, position_id: PositionId
+) -> tuple[ThesisId, PositionRow]:
+    """Read the originating thesis FK off the engine-close's target position.
+
+    The engine envelope carries only ``position_id``; its broker-carried link
+    (ALP-844) reaches the thesis through the position→thesis Intent edge. A
+    monitor-fired close acts on an AlphaMind-managed position, which always
+    carries a thesis (ADR 0002); a missing position or a ``thesis_id is None``
+    is a structural error and raises :class:`ValueError` rather than minting a
+    thesis-less id.
+
+    Returns the resolved :class:`ThesisId` alongside the fetched
+    :class:`PositionRow` so the broker-routing path can reuse the row instead of
+    re-fetching it.
+    """
+    from alphamind.state.tables.positions import PositionRow
+
+    pos_row = await handle.session.get(PositionRow, position_id)
+    if pos_row is None:
+        msg = f"engine CLOSE references missing position_id={position_id!r}"
+        raise ValueError(msg)
+    if pos_row.thesis_id is None:
+        msg = (
+            f"engine CLOSE on position_id={position_id!r} has no originating thesis_id; "
+            "an AlphaMind-managed position always carries a thesis (ADR 0002) — refusing "
+            "to derive a thesis-less engine command id."
+        )
+        raise ValueError(msg)
+    return ThesisId(pos_row.thesis_id), pos_row
+
+
+# ---------------------------------------------------------------------------
 # Broker-dispatch helpers (story 03e / ALP-390)
 # ---------------------------------------------------------------------------
 
@@ -346,13 +403,16 @@ async def _dispatch_engine_close(
     queries: AccountStateQueries,
     execution_config: ExecutionConfig,
     client_order_id: ClientOrderId,
+    position_row: PositionRow | None = None,
 ) -> AlpacaOrderId | _BrokerFailure:
     """Dispatch the engine-originated CLOSE through the broker adapter.
 
     Resolves position context (symbol / quantity / side) from the persisted
     position record under *handle*'s session — engine envelopes carry only
     ``position_id`` and the dispatcher needs the broker-grade fields per the
-    canonical CLOSE → broker translation contract.
+    canonical CLOSE → broker translation contract. ``position_row`` may be a
+    row already fetched by :func:`_resolve_engine_close_thesis`; when supplied it
+    is reused so the position is loaded at most once.
 
     Returns the broker's ``alpaca_order_id`` on success or a
     :class:`_BrokerFailure` carrying the failure reason.
@@ -371,7 +431,9 @@ async def _dispatch_engine_close(
         row_to_record as position_row_to_record,
     )
 
-    pos_row = await handle.session.get(PositionRow, close_command.position_id)
+    pos_row = position_row
+    if pos_row is None:
+        pos_row = await handle.session.get(PositionRow, close_command.position_id)
     if pos_row is None:
         msg = f"engine CLOSE references missing position_id={close_command.position_id!r}"
         raise ValueError(msg)

@@ -65,6 +65,7 @@ from alphamind.execution.broker_adapter import (
     OptionsSubmission,
     SubmissionOutcome,
     Submitted,
+    derive_capital_floor_client_order_id,
     submit_cancel,
     submit_equity_add,
     submit_equity_close,
@@ -73,6 +74,7 @@ from alphamind.execution.broker_adapter import (
     submit_mleg_close,
     submit_mleg_open,
     submit_options_add,
+    submit_options_capital_floor,
     submit_options_close,
     submit_options_open,
     submit_replace,
@@ -85,6 +87,9 @@ from alphamind.execution.broker_adapter.order_modify import (
 )
 from alphamind.execution.broker_adapter.order_modify import (
     ReplaceFields,
+)
+from alphamind.execution.broker_adapter.order_options import (
+    PermanentRejectionError,
 )
 
 __all__ = [
@@ -255,13 +260,12 @@ async def _dispatch_open(
         )
         return _wrap_equity(outcome)
     if isinstance(instrument, OptionInstrument):
-        outcome_o = await submit_options_open(
+        return await _dispatch_options_open(
             command,
             client=client,
             execution=execution,
             client_order_id=client_order_id,
         )
-        return _wrap_options(outcome_o)
     if isinstance(instrument, StrategyInstrument):
         outcome_m = await submit_mleg_open(
             command,
@@ -272,6 +276,95 @@ async def _dispatch_open(
         return _wrap_mleg(outcome_m)
     msg = f"OpenCommand carries unsupported instrument: {type(instrument).__name__}"
     raise NotImplementedError(msg)
+
+
+async def _dispatch_options_open(
+    command: OpenCommand,
+    *,
+    client: TradingClient,
+    execution: ExecutionConfig,
+    client_order_id: ClientOrderId,
+) -> SubmissionOutcome[BrokerDispatchResult]:
+    """Submit an options entry AND its always-on broker-enforced capital floor (ALP-856).
+
+    Invariant 4 (ADR-0003): every open options position carries a resting
+    broker-enforced exit. After the single-leg entry submits, this places the
+    PM-authored, PnL-denominated GTC ``stop_limit`` capital floor (``02d`` level,
+    derived by :func:`submit_options_capital_floor`) under its own
+    ``client_order_id`` (derived from the entry's so its fill self-attributes).
+    The floor's real broker ``alpaca_order_id`` rides back on the dispatch
+    result's ``leg_alpaca_order_ids`` under ``"capital_floor"`` so the OPEN
+    writeback stamps it onto the broker-enforced floor leg, and
+    cancel-on-monitor-fire can cancel the resting floor by id.
+
+    The entry submits first: if it fails (gateway exhaustion → the caller
+    abandons the durable pre-commit), no floor is attempted. Once the entry is
+    LIVE, the floor is mandatory — a mandatory floor means NO unprotected
+    options position — so ANY floor-submit failure (``GatewaySubmissionFailed``
+    or a permanently-rejecting ``PermanentRejectionError``) FIRST retracts the
+    live entry via :func:`submit_cancel` (so it cannot rest broker-unprotected,
+    FL1/ALP-856), THEN surfaces the failure as the dispatch outcome. The caller
+    still tears down the LOCAL graph; this cancel closes the broker side that the
+    local-graph abandon never touches.
+    """
+    entry_outcome = await submit_options_open(
+        command,
+        client=client,
+        execution=execution,
+        client_order_id=client_order_id,
+    )
+    if isinstance(entry_outcome, GatewaySubmissionFailed):
+        return entry_outcome
+    entry_alpaca_order_id = entry_outcome.payload.alpaca_order_id
+    try:
+        floor_outcome = await submit_options_capital_floor(
+            command,
+            client=client,
+            execution=execution,
+            client_order_id=derive_capital_floor_client_order_id(client_order_id),
+        )
+    except PermanentRejectionError:
+        # The floor was permanently rejected (e.g. options level not approved)
+        # AFTER the entry went live. Retract the live entry first so it cannot
+        # rest unprotected, then re-raise so the caller also abandons local state.
+        await _cancel_live_entry(
+            client=client, execution=execution, entry_alpaca_order_id=entry_alpaca_order_id
+        )
+        raise
+    if isinstance(floor_outcome, GatewaySubmissionFailed):
+        # The floor exhausted its retry window after the entry went live; retract
+        # the live entry first, then surface the gateway failure as the outcome.
+        await _cancel_live_entry(
+            client=client, execution=execution, entry_alpaca_order_id=entry_alpaca_order_id
+        )
+        return floor_outcome
+    return _wrap_options(
+        entry_outcome,
+        leg_alpaca_order_ids={"capital_floor": floor_outcome.payload.alpaca_order_id},
+    )
+
+
+async def _cancel_live_entry(
+    *,
+    client: TradingClient,
+    execution: ExecutionConfig,
+    entry_alpaca_order_id: AlpacaOrderId,
+) -> None:
+    """Retract a live options entry whose mandatory floor failed to submit (FL1).
+
+    The floor is mandatory: a floor-submit failure must leave NO unprotected
+    options position, so the live entry is cancelled at the broker before the
+    floor failure is surfaced. The cancel is best-effort — a
+    ``GatewaySubmissionFailed`` or ``PermanentRejectionError`` from the cancel
+    itself propagates so the boundary logs it (an already-terminal / unknown
+    entry is the broker's to reconcile), and the original floor failure is the
+    caller's teardown signal regardless.
+    """
+    await submit_cancel(
+        client=client,
+        execution=execution,
+        target_alpaca_order_id=entry_alpaca_order_id,
+    )
 
 
 async def _dispatch_add(  # noqa: PLR0913 — ADD threads every per-asset-type parameter the broker translator requires.
@@ -535,6 +628,8 @@ def _wrap_equity(
 
 def _wrap_options(
     outcome: SubmissionOutcome[OptionsSubmission],
+    *,
+    leg_alpaca_order_ids: Mapping[str, AlpacaOrderId] | None = None,
 ) -> SubmissionOutcome[BrokerDispatchResult]:
     if isinstance(outcome, GatewaySubmissionFailed):
         return outcome
@@ -547,6 +642,10 @@ def _wrap_options(
             order_class=sub.order_class,
             payload_kind="options",
             raw_submission=sub,
+            # ALP-856 — the resting broker-enforced capital floor's id, carried
+            # under ``"capital_floor"`` for an options OPEN; empty for options
+            # ADD / CLOSE (no floor submitted on those).
+            leg_alpaca_order_ids=leg_alpaca_order_ids or {},
         ),
         attempt_count=outcome.attempt_count,
     )

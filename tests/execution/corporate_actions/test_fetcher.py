@@ -719,19 +719,13 @@ async def test_output_is_sorted_ascending_by_transaction_time(
 
 
 # ---------------------------------------------------------------------------
-# Tests — out-of-scope event types
+# Tests — capture-only v1beta1 types (ALP-849 / W1c)
 # ---------------------------------------------------------------------------
 
 
-async def test_out_of_scope_event_types_are_dropped(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
-) -> None:
-    """``UnitSplit`` / ``Redemption`` / etc. are dropped silently (defense in depth)."""
-    _, factory = db
-    await _seed_invocation_substrate(factory)
-
-    unit_split = UnitSplit(
-        id=_uuid(200),
+def _unit_split(seed: int = 200) -> UnitSplit:
+    return UnitSplit(
+        id=_uuid(seed),
         corporate_action_type="unit_split",
         old_symbol="AAPL",
         old_cusip="037833100",
@@ -745,21 +739,61 @@ async def test_out_of_scope_event_types_are_dropped(
         process_date=date(2026, 5, 5),
         effective_date=date(2026, 5, 5),
     )
-    redemption = Redemption(
-        id=_uuid(201),
+
+
+def _redemption(seed: int = 201) -> Redemption:
+    return Redemption(
+        id=_uuid(seed),
         corporate_action_type="redemption",
         symbol="AAPL",
         cusip="037833100",
         rate=100.0,
         process_date=date(2026, 5, 5),
     )
-    worthless = WorthlessRemoval(
-        id=_uuid(202),
+
+
+def _worthless(seed: int = 202) -> WorthlessRemoval:
+    return WorthlessRemoval(
+        id=_uuid(seed),
         corporate_action_type="worthless_removal",
         symbol="AAPL",
         cusip="037833100",
         process_date=date(2026, 5, 5),
     )
+
+
+async def test_capture_only_types_are_surfaced_for_event_log_capture(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """``WorthlessRemoval`` / ``UnitSplit`` / ``Redemption`` — the v1beta1 types
+    the fetcher used to drop — are now surfaced as capture-only activities (no
+    position-mutation math, ``signed_cash_impact_usd == 0``) so Phase 1 captures
+    them onto the append-only event log (W1c)."""
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    queries = _FakeQueries(events=(_unit_split(), _redemption(), _worthless()))
+
+    result = await _run_fetch(factory, queries, _POSITIONS_AAPL_LONG)
+
+    by_type = {a.action_type for a in result}
+    assert by_type == {
+        CorporateActionType.UNIT_SPLIT,
+        CorporateActionType.REDEMPTION,
+        CorporateActionType.WORTHLESS_REMOVAL,
+    }
+    for activity in result:
+        assert activity.position_id == "pos-aapl"
+        assert activity.signed_cash_impact_usd == 0.0
+        assert activity.ratio_or_amount == 0.0
+
+
+async def test_rights_distribution_is_dropped(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """``RightsDistribution`` is not in the event-log CA vocabulary and is
+    dropped silently (defense in depth)."""
+    _, factory = db
+    await _seed_invocation_substrate(factory)
     rights = RightsDistribution(
         id=_uuid(203),
         corporate_action_type="rights_distribution",
@@ -771,7 +805,7 @@ async def test_out_of_scope_event_types_are_dropped(
         ex_date=date(2026, 5, 5),
         process_date=date(2026, 5, 5),
     )
-    queries = _FakeQueries(events=(unit_split, redemption, worthless, rights))
+    queries = _FakeQueries(events=(rights,))
 
     result = await _run_fetch(factory, queries, _POSITIONS_AAPL_LONG)
 

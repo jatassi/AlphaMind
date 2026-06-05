@@ -43,11 +43,13 @@ from alphamind._kernel.money import money, price, signed_money
 from alphamind.commands.command_models import (
     BracketAdjustment,
     BracketOrderParameters,
+    CapitalProtectionFloor,
     EntryOrder,
     EntryWindow,
     EquityInstrument,
     NewStopLevel,
     NewTargetLevel,
+    OptionInstrument,
     PositionSize,
     PriceCondition,
     PriceLeg,
@@ -59,6 +61,7 @@ from alphamind.commands.command_models import (
 from alphamind.commands.command_models import (
     ThesisComponent as OMSThesisComponent,
 )
+from alphamind.commands.submission_results import _ValidationMetadata
 from alphamind.decision.portfolio_manager.models import (
     AddCommand,
     AdjustCommand,
@@ -78,6 +81,12 @@ from alphamind.decision.portfolio_manager.submit_envelope import (
     SubmissionResult,
 )
 from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
+from alphamind.execution.oms.command_ids import (
+    derive_open_thesis_id,
+    derive_pm_base_command_id,
+    derive_pm_command_id,
+    parse_pm_command_id,
+)
 from alphamind.persistence.session import (
     make_async_engine,
     make_async_session_factory,
@@ -372,6 +381,7 @@ def _open_command(
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="underlying_price",
                 condition=PriceCondition(
                     underlying_trigger=underlying,
                     comparator="<=",
@@ -382,6 +392,7 @@ def _open_command(
         ),
         thesis=Thesis(
             summary=f"Long {underlying}.",
+            nature="directional",
             components=(
                 OMSThesisComponent(
                     component_type="entry_rationale",
@@ -522,6 +533,39 @@ def _accepted_result(command_ordinal: int, command_id: str) -> SubmissionResult:
         status="accepted",
         command_id=command_id,
         acknowledgment=Acknowledgment(),
+    )
+
+
+def _open_command_id(
+    *,
+    ticker: str = "NVDA",
+    envelope_id: str = "ENV-REC-1",
+    command_ordinal: int = 0,
+    attempt_seq: int = 0,
+) -> str:
+    """A realistic broker-carried OPEN command id (ALP-844).
+
+    Mirrors the production PM-submit path: mint the OPEN thesis off the
+    link-free *base* id via the single canonical helper, then embed it into the
+    command id. Phase-2 OPEN writeback resolves the thesis by parsing this id, so
+    every OPEN test must thread a thesis-bearing id (the broker-carried link is
+    the single source of truth for the OPEN thesis identity).
+    """
+    # Mirror the production PM-submit base-id shape exactly via the single
+    # canonical helper ``derive_pm_base_command_id`` (the same one PM-submit
+    # uses), so this fixture can never drift from the production base format.
+    base = derive_pm_base_command_id(
+        invocation_id=_INV_ID,
+        envelope_id=envelope_id,
+        command_ordinal=command_ordinal,
+        attempt_seq=attempt_seq,
+    )
+    return derive_pm_command_id(
+        invocation_id=_INV_ID,
+        envelope_id=envelope_id,
+        command_ordinal=command_ordinal,
+        attempt_seq=attempt_seq,
+        thesis_id=derive_open_thesis_id(ticker, base),
     )
 
 
@@ -1116,7 +1160,7 @@ async def test_open_command_writes_position_thesis_bracket_orders_and_events(
     results = (
         _accepted_result(
             command_ordinal=0,
-            command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0",
+            command_id=_open_command_id(),
         ),
     )
 
@@ -1163,6 +1207,48 @@ async def test_open_command_writes_position_thesis_bracket_orders_and_events(
     assert EventType.PM_DECISION.value in types
 
 
+async def test_open_persisted_thesis_id_equals_link_embedded_thesis(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """Single source of truth (ALP-844, A2): the ``thesis_id`` Phase-2 persists
+    on the OPEN's ``ThesisRecord`` EQUALS the thesis embedded in the broker-
+    carried ``client_order_id`` (``parse_pm_command_id(command_id).thesis_id``).
+
+    Phase-2 no longer re-constructs ``THE-{ticker}-{suffix}``; it reads the
+    thesis straight off the command id, so the embedded link is the one
+    authoritative copy. The position and entry order carry the SAME thesis_id,
+    binding the whole OPEN graph to that single identity.
+    """
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    envelope = _make_analyst_envelope(commands=(_open_command(underlying=Symbol("NVDA")),))
+    command_id = _open_command_id(ticker="NVDA")
+    embedded_thesis = parse_pm_command_id(command_id).thesis_id
+    results = (_accepted_result(command_ordinal=0, command_id=command_id),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        theses = (await sess.execute(select(ThesisRow))).scalars().all()
+        assert len(theses) == 1
+        assert theses[0].thesis_id == embedded_thesis
+
+        # The position binds to the same single identity — the whole OPEN graph
+        # threads one thesis_id, the one carried on the broker-carried link.
+        positions = (await sess.execute(select(PositionRow))).scalars().all()
+        assert positions[0].thesis_id == embedded_thesis
+
+
 async def test_open_command_threads_entry_window_deadline_onto_bracket(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
@@ -1192,7 +1278,7 @@ async def test_open_command_threads_entry_window_deadline_onto_bracket(
         ),
     )
     envelope = _make_analyst_envelope(commands=(command,))
-    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+    results = (_accepted_result(command_ordinal=0, command_id=_open_command_id()),)
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
@@ -1239,7 +1325,7 @@ async def test_open_command_persists_real_position_size_and_capital_reservation(
     )
     expected_notional = Decimal("1050.0") * Decimal("10.0")
     envelope = _make_analyst_envelope(commands=(cmd,))
-    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+    results = (_accepted_result(command_ordinal=0, command_id=_open_command_id()),)
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
@@ -1288,7 +1374,7 @@ async def test_persist_envelope_outcome_stamps_phase2_completion_on_invocation_r
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
 
     envelope = _make_analyst_envelope(commands=(_open_command(underlying=Symbol("NVDA")),))
-    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+    results = (_accepted_result(command_ordinal=0, command_id=_open_command_id()),)
 
     ctx, handle = await _open_handle(factory)
     invocation_id = handle.invocation_id
@@ -1917,7 +2003,7 @@ async def test_open_command_persists_target_and_invalidation_legs(
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
 
     envelope = _make_analyst_envelope(commands=(_open_command(underlying=Symbol("NVDA")),))
-    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+    results = (_accepted_result(command_ordinal=0, command_id=_open_command_id()),)
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
@@ -1937,10 +2023,10 @@ async def test_open_command_persists_target_and_invalidation_legs(
 async def test_open_command_stamps_captured_leg_ids_on_protective_orders(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """ALP-746 — a dispatch result's ``leg_alpaca_order_ids`` stamp the real
-    broker child ids onto the TAKE_PROFIT and PRICE_STOP orders; the entry
-    carries its own captured id and the TIME_STOP keeps the synthetic
-    placeholder (no broker counterpart)."""
+    """ALP-746 / ALP-847 — a dispatch result's ``leg_alpaca_order_ids`` stamp the
+    real broker child ids onto the TAKE_PROFIT and PRICE_STOP orders; the entry
+    carries its own captured id and the TIME_STOP carries NO broker id (None —
+    no broker counterpart, monitor-enforced Intent)."""
     from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
@@ -1959,6 +2045,7 @@ async def test_open_command_stamps_captured_leg_ids_on_protective_orders(
             PriceLeg(
                 type="price",
                 is_hard=True,
+                trigger_signal="underlying_price",
                 condition=PriceCondition(
                     underlying_trigger="NVDA", comparator="<=", trigger_price=price(750.0)
                 ),
@@ -1973,10 +2060,10 @@ async def test_open_command_stamps_captured_leg_ids_on_protective_orders(
         ),
     )
     envelope = _make_analyst_envelope(commands=(command,))
-    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+    results = (_accepted_result(command_ordinal=0, command_id=_open_command_id()),)
     dispatch = BrokerDispatchResult(
         alpaca_order_id=AlpacaOrderId(entry_uuid),
-        client_order_id=ClientOrderId(f"inv-{_INV_ID}.ENV-REC-1.0.0"),
+        client_order_id=ClientOrderId(_open_command_id()),
         status="accepted",
         order_class="bracket",
         payload_kind="equity",
@@ -2003,20 +2090,155 @@ async def test_open_command_stamps_captured_leg_ids_on_protective_orders(
         assert by_role["ENTRY"].alpaca_order_id == entry_uuid
         assert by_role["TAKE_PROFIT"].alpaca_order_id == tp_uuid
         assert by_role["PRICE_STOP"].alpaca_order_id == sl_uuid
-        # TIME_STOP has no broker counterpart → synthetic placeholder retained.
-        assert by_role["TIME_STOP"].alpaca_order_id.startswith("alp-")
+        # TIME_STOP has no broker counterpart → NO broker id (None, ALP-847).
+        assert by_role["TIME_STOP"].alpaca_order_id is None
+        assert by_role["TIME_STOP"].alpaca_order_id_chain_json == "[]"
         # The chain head must match the stamped id (OrderRecord invariant).
         assert by_role["TAKE_PROFIT"].alpaca_order_id_chain_json == f'["{tp_uuid}"]'
         assert by_role["PRICE_STOP"].alpaca_order_id_chain_json == f'["{sl_uuid}"]'
 
 
+def _options_open_command() -> OpenCommand:
+    """An options OPEN carrying the mandatory PnL-denominated capital floor (ALP-848)."""
+    return OpenCommand(
+        command_type="open",
+        instrument=OptionInstrument(
+            asset_type="option",
+            underlying="NVDA",
+            strike=price(900.0),
+            expiration="2026-06-19",
+            contract_type="call",
+            direction="long",
+        ),
+        entry_order=EntryOrder(type="limit", limit_price=price(12.0), stop_price=None),
+        position_size=PositionSize(quantity=2.0, dollar_value=money(2_400.0)),
+        target=Target(
+            target_type="absolute_price",
+            price=price(20.0),
+            pl_percentage=None,
+            pl_dollar=None,
+            order_type="limit",
+        ),
+        invalidation_legs=(
+            PriceLeg(
+                type="price",
+                is_hard=True,
+                trigger_signal="underlying_price",
+                condition=PriceCondition(
+                    underlying_trigger="NVDA", comparator="<=", trigger_price=price(750.0)
+                ),
+                order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
+            ),
+        ),
+        thesis=Thesis(
+            summary="Long NVDA call.",
+            nature="directional",
+            components=(
+                OMSThesisComponent(
+                    component_type="entry_rationale",
+                    linked_leg="entry",
+                    instrument_reference="NVDA",
+                    narrative="Capex tailwind.",
+                    key_assumptions=("Capex stays elevated.",),
+                ),
+            ),
+        ),
+        capital_protection_floor=CapitalProtectionFloor(max_loss=money(800.0)),
+    )
+
+
+def _options_open_result(command_id: str) -> SubmissionResult:
+    """An accepted result carrying the validation greeks an options OPEN requires."""
+    from alphamind.risk_guardrails.guardrail_evaluation import Greeks
+
+    return SubmissionResult(
+        command_ordinal=0,
+        status="accepted",
+        command_id=command_id,
+        acknowledgment=Acknowledgment(
+            validation_metadata=_ValidationMetadata(
+                greeks=Greeks(delta=0.5, gamma=0.02, theta=-0.04, vega=0.2),
+                implied_volatility=0.30,
+                delta_adjusted_exposure=0.0,
+                per_rule_headroom=(),
+            ),
+        ),
+    )
+
+
+async def test_options_open_single_pass_persists_floor_orderrow_fk_safe(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-856 — an options OPEN through the single-pass writeback path persists the
+    floor's OrderRow + the floor ``bracket_legs`` row through an FK-enforced DB with
+    NO ``FOREIGN KEY constraint failed``, and the floor leg's ``order_id`` resolves
+    to an OrderRow whose ``alpaca_order_id`` is the floor's broker id.
+
+    The single-pass path (``persist_envelope_outcome`` → ``_writeback_open`` with a
+    real ``dispatch_result``) knows the floor's broker id at write time, so it
+    stamps the floor OrderRow's ``alpaca_order_id`` directly; the floor leg points
+    at the floor OMS order_id, satisfying the DEFERRABLE FK to ``orders.order_id``.
+    """
+    from alphamind.execution.write_paths.phase2 import persist_envelope_outcome
+    from alphamind.execution.write_paths.phase2.open import _capital_floor_order_id
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    command_id = _open_command_id()
+    command = _options_open_command()
+    envelope = _make_analyst_envelope(commands=(command,))
+    results = (_options_open_result(command_id),)
+    dispatch = BrokerDispatchResult(
+        alpaca_order_id=AlpacaOrderId("entry-uuid"),
+        client_order_id=ClientOrderId(command_id),
+        status="accepted",
+        order_class="simple",
+        payload_kind="options",
+        raw_submission=None,
+        leg_alpaca_order_ids={"capital_floor": AlpacaOrderId("floor-uuid")},
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        dispatch_results=(dispatch,),
+    )
+    # The commit (FK-enforced) happens here — a mispointed floor leg FK would
+    # raise FOREIGN KEY constraint failed at this boundary.
+    await ctx.__aexit__(None, None, None)
+
+    floor_order_id = _capital_floor_order_id(command_id)
+    async with factory() as sess:
+        floor_row = await sess.get(OrderRow, floor_order_id)
+        assert floor_row is not None, "the floor OrderRow must be persisted"
+        assert floor_row.alpaca_order_id == "floor-uuid"
+        leg_rows = list(
+            (
+                await sess.execute(
+                    select(BracketLegRow).where(
+                        BracketLegRow.enforcement_binding == "broker_enforced"
+                    )
+                )
+            ).scalars()
+        )
+    assert len(leg_rows) == 1
+    # The floor leg points at the floor OMS order_id (FK target), and resolving
+    # that order_id recovers the floor's broker id.
+    assert leg_rows[0].order_id == floor_order_id
+
+
 async def test_open_command_stamps_stop_id_on_first_price_leg_only(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """ALP-746 — Alpaca's native bracket carries exactly one stop child (mapped
-    from the first PriceLeg by ``order_equity._bracket_params``). With two
+    """ALP-746 / ALP-847 — Alpaca's native bracket carries exactly one stop child
+    (mapped from the first PriceLeg by ``order_equity._bracket_params``). With two
     PriceLegs, only the first PRICE_STOP gets the captured stop UUID; the second
-    keeps the synthetic placeholder."""
+    carries NO broker id (None — monitor-enforced Intent)."""
     from alphamind.execution.write_paths.phase2 import (
         persist_envelope_outcome,
     )
@@ -2031,6 +2253,7 @@ async def test_open_command_stamps_stop_id_on_first_price_leg_only(
         return PriceLeg(
             type="price",
             is_hard=True,
+            trigger_signal="underlying_price",
             condition=PriceCondition(
                 underlying_trigger="NVDA", comparator="<=", trigger_price=price(trigger)
             ),
@@ -2042,10 +2265,10 @@ async def test_open_command_stamps_stop_id_on_first_price_leg_only(
         invalidation_legs=(_price_leg(750.0), _price_leg(700.0)),
     )
     envelope = _make_analyst_envelope(commands=(command,))
-    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+    results = (_accepted_result(command_ordinal=0, command_id=_open_command_id()),)
     dispatch = BrokerDispatchResult(
         alpaca_order_id=AlpacaOrderId("20bd94b5-8586-4bcc-a175-8490e29a17aa"),
-        client_order_id=ClientOrderId(f"inv-{_INV_ID}.ENV-REC-1.0.0"),
+        client_order_id=ClientOrderId(_open_command_id()),
         status="accepted",
         order_class="bracket",
         payload_kind="equity",
@@ -2071,9 +2294,10 @@ async def test_open_command_stamps_stop_id_on_first_price_leg_only(
         )
         assert len(stop_rows) == 2
         stop_ids = {r.alpaca_order_id for r in stop_rows}
-        # Exactly one carries the real broker stop id; the other keeps synthetic.
+        # Exactly one carries the real broker stop id; the other carries NO
+        # broker id (None, ALP-847 — monitor-enforced Intent).
         assert sl_uuid in stop_ids
-        assert any(sid.startswith("alp-") for sid in stop_ids)
+        assert None in stop_ids
 
 
 async def test_adjust_command_cancels_old_protective_order_and_submits_new(
@@ -3456,7 +3680,7 @@ async def test_open_reprice_cancel_returns_reserved_capital_to_zero(
         entry_order=EntryOrder(type="limit", limit_price=price(1000.0), stop_price=None),
     )
     envelope = _make_analyst_envelope(commands=(cmd,))
-    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+    results = (_accepted_result(command_ordinal=0, command_id=_open_command_id()),)
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
@@ -3838,7 +4062,7 @@ async def test_command_abandoned_emission_survives_per_command_rollback(
     await _seed_cash_ledger(factory)
 
     envelope = _make_analyst_envelope(commands=(_open_command(),))
-    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+    results = (_accepted_result(command_ordinal=0, command_id=_open_command_id()),)
 
     # Open a transaction, persist outcome, then synthetically raise so the
     # InvocationContext rolls back.

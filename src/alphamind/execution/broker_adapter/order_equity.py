@@ -16,7 +16,6 @@ Public API:
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from typing import Literal, cast
 
@@ -46,6 +45,7 @@ from alphamind.execution.broker_adapter.retry import (
     GatewaySubmissionFailed,
     SubmissionOutcome,
     Submitted,
+    bounded_broker_call,
     submit_with_retry,
 )
 from alphamind.execution.oms.command_ids import is_engine_originated, is_pm_originated
@@ -82,8 +82,9 @@ class EquityLegAck:
     captured here at submission, classified by ``order_type`` (LIMIT →
     take-profit, STOP / STOP_LIMIT → stop-loss). The Phase 2 OPEN writeback
     then stamps each captured id onto the matching protective-leg ``orders``
-    row, replacing the synthetic ``alp-…`` placeholder so a later protective
-    fill / OCO sibling-cancel resolves to the local row (ALP-746).
+    row, which carries a NULL ``alpaca_order_id`` until backfilled (ALP-847 — no
+    synthetic ``alp-…`` placeholder), so a later protective fill / OCO
+    sibling-cancel resolves to the local row (ALP-746).
     """
 
     alpaca_order_id: AlpacaOrderId
@@ -361,7 +362,9 @@ async def _submit_and_map(
     async def _submit() -> Order:
         # alpaca-py declares submit_order → Union[Order, dict]; we always receive
         # Order for non-mleg equity submissions. cast() informs the type checker.
-        return cast(Order, await asyncio.to_thread(client.submit_order, request))
+        # ``bounded_broker_call`` time-bounds the offloaded sync call so a hung
+        # socket cannot park the caller for the full client-factory socket timeout.
+        return cast(Order, await bounded_broker_call(lambda: client.submit_order(request)))
 
     outcome = await submit_with_retry(
         _submit,

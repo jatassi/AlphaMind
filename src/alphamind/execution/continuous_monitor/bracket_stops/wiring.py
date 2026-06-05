@@ -20,6 +20,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import AlpacaOrderId
 from alphamind.commands.command_models import (
     CloseCommand,
     StrategyType,
@@ -30,12 +31,17 @@ from alphamind.execution.broker_adapter.order_mleg import (
     strategy_legs_to_close_acks,
     submit_mleg_close,
 )
+from alphamind.execution.broker_adapter.order_modify import submit_cancel
 from alphamind.execution.broker_adapter.order_options import (
     PermanentRejectionError,
     build_occ_symbol,
     submit_options_close,
 )
 from alphamind.execution.broker_adapter.retry import GatewaySubmissionFailed, Submitted
+from alphamind.execution.continuous_monitor.bracket_stops.close_order_precommit import (
+    make_close_order_precommitter,
+    make_floor_alpaca_id_resolver,
+)
 from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     BracketCloseSubmitter,
     CloseSubmissionResult,
@@ -57,6 +63,7 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
 from alphamind.execution.continuous_monitor.underlying_stream.subscriptions import (
     OpenPositionsReader,
 )
+from alphamind.portfolio_state.events.activity_log import PositionExitMethod
 from alphamind.portfolio_state.records.orders import BracketRecord
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -177,6 +184,7 @@ class AlpacaBracketCloseSubmitter:
         position: PositionRecord,
         details: OptionsPositionDetails,
         client_order_id: str,
+        trigger_reason: PositionExitMethod,
     ) -> CloseSubmissionResult:
         occ_symbol = build_occ_symbol(
             details.underlying_ticker,
@@ -190,7 +198,7 @@ class AlpacaBracketCloseSubmitter:
         assert direction is not None  # single-leg options position
         intent = _DIRECTION_TO_CLOSE_INTENT[direction]
         outcome = await submit_options_close(
-            command=_build_synthetic_close_command(position),
+            command=_build_monitor_close_command(position, trigger_reason),
             client=self._trading_client,  # type: ignore[arg-type]
             execution=self._execution_config,
             client_order_id=client_order_id,
@@ -220,6 +228,7 @@ class AlpacaBracketCloseSubmitter:
         position: PositionRecord,
         details: StrategyPositionDetails,
         client_order_id_base: str,
+        trigger_reason: PositionExitMethod,
     ) -> CloseSubmissionResult:
         # The seam reverses each leg (LONG → sell_to_close, SHORT →
         # buy_to_close); ``submit_mleg_close`` receives close-side legs.
@@ -227,7 +236,7 @@ class AlpacaBracketCloseSubmitter:
         strategy_type = _strategy_type_from_label(details.strategy_type_label)
         try:
             outcome = await submit_mleg_close(
-                command=_build_synthetic_close_command(position),
+                command=_build_monitor_close_command(position, trigger_reason),
                 client=self._trading_client,  # type: ignore[arg-type]
                 execution=self._execution_config,
                 client_order_id=client_order_id_base,
@@ -242,7 +251,10 @@ class AlpacaBracketCloseSubmitter:
                 position.position_id,
             )
             return await self._per_leg_fallback(
-                position=position, details=details, client_order_id_base=client_order_id_base
+                position=position,
+                details=details,
+                client_order_id_base=client_order_id_base,
+                trigger_reason=trigger_reason,
             )
         if isinstance(outcome, GatewaySubmissionFailed):
             log.warning(
@@ -251,7 +263,10 @@ class AlpacaBracketCloseSubmitter:
                 position.position_id,
             )
             return await self._per_leg_fallback(
-                position=position, details=details, client_order_id_base=client_order_id_base
+                position=position,
+                details=details,
+                client_order_id_base=client_order_id_base,
+                trigger_reason=trigger_reason,
             )
         payload = outcome.payload
         return CloseSubmissionResult(
@@ -259,12 +274,37 @@ class AlpacaBracketCloseSubmitter:
             mode="strategy_combined",
         )
 
+    async def cancel_floor(self, *, alpaca_order_id: str) -> None:
+        """Cancel the resting broker-enforced capital floor by its broker id (ALP-856).
+
+        Wraps :func:`submit_cancel`. Best-effort cancel-on-monitor-fire: a
+        gateway failure or a permanent rejection (the floor already filled /
+        cancelled, a 404/422) is logged and swallowed — the monitor close has
+        already gone to the broker, and a lingering floor is at worst a stale
+        resting order the reconcile sweep surfaces. The closer wraps this call in
+        its own best-effort guard too; this layer keeps the broker-call
+        translation (gateway-failure / permanent-rejection mapping) co-located
+        with the other submitter broker calls.
+        """
+        outcome = await submit_cancel(
+            client=self._trading_client,  # type: ignore[arg-type]
+            execution=self._execution_config,
+            target_alpaca_order_id=AlpacaOrderId(alpaca_order_id),
+        )
+        if isinstance(outcome, GatewaySubmissionFailed):
+            log.warning(
+                "bracket_stops: floor cancel exhausted retries for %s: reason=%r",
+                alpaca_order_id,
+                outcome.reason,
+            )
+
     async def _per_leg_fallback(
         self,
         *,
         position: PositionRecord,
         details: StrategyPositionDetails,
         client_order_id_base: str,
+        trigger_reason: PositionExitMethod,
     ) -> CloseSubmissionResult:
         """Per-leg market-order fallback when the combined mleg close is rejected."""
         order_ids: list[str] = []
@@ -290,7 +330,7 @@ class AlpacaBracketCloseSubmitter:
                 raise ValueError(msg)
             intent = _DIRECTION_TO_CLOSE_INTENT[leg.direction]
             outcome = await submit_options_close(
-                command=_build_synthetic_close_command(position),
+                command=_build_monitor_close_command(position, trigger_reason),
                 client=self._trading_client,  # type: ignore[arg-type]
                 execution=self._execution_config,
                 client_order_id=leg_client_id,
@@ -317,13 +357,35 @@ class AlpacaBracketCloseSubmitter:
         )
 
 
-def _build_synthetic_close_command(position: PositionRecord) -> CloseCommand:
-    """Construct a CloseCommand the broker_adapter close path expects.
+def _build_monitor_close_command(
+    position: PositionRecord, trigger_reason: PositionExitMethod
+) -> CloseCommand:
+    """Build the real close command a fired Monitor-enforced leg submits.
 
-    The watcher does not route through the OMS, so we synthesize the minimum
-    fields the broker_adapter's translator reads — ``position_id``,
-    ``quantity="all"``, ``order_type="market"``, and ``close_rationale_type``.
+    This is a *fresh self-attributing close*, not a synthetic order and not an
+    engine-envelope cascade close: the broker-carried link rides the
+    ``client_order_id`` the closer threads (ALP-844), and the command is framed
+    by the leg's **thesis-shaped exit** — ``TARGET_REACHED`` → ``target_reached``;
+    a stop fire → ``thesis_invalidated`` (the leg's invalidation condition fired).
+    It deliberately does **not** carry ``risk_management_subtype="engine_guardrail"``
+    — that label marks the engine-envelope cascade close path
+    (:class:`~alphamind.commands.engine_envelope.EngineEnvelope`), which a
+    Monitor-enforced leg fire never routes through.
+
+    The broker_adapter close translator reads only ``position_id`` /
+    ``quantity="all"`` / ``order_type="market"`` / ``limit_price`` here; the
+    rationale carries the exit's *why* for an honest command shape.
     """
+    if trigger_reason is PositionExitMethod.TARGET_REACHED:
+        return CloseCommand(
+            command_id=None,
+            command_type="close",
+            position_id=position.position_id,
+            quantity="all",
+            order_type="market",
+            limit_price=None,
+            close_rationale_type="target_reached",
+        )
     return CloseCommand(
         command_id=None,
         command_type="close",
@@ -331,8 +393,8 @@ def _build_synthetic_close_command(position: PositionRecord) -> CloseCommand:
         quantity="all",
         order_type="market",
         limit_price=None,
-        close_rationale_type="risk_management",
-        risk_management_subtype="engine_guardrail",
+        close_rationale_type="thesis_invalidated",
+        invalidation_reason="monitor-enforced protective leg fired",
     )
 
 
@@ -392,16 +454,28 @@ def register_options_bracket_watcher_task(
     greeks-refresh wiring so the monitor process has one canonical set of
     these helpers (no near-duplicate envelopes).
 
-    ``trigger_ids`` is the cascade-dispatch :class:`TriggerIdGenerator`
-    constructed once per monitor session in ``_register_breach_loop``.
-    Sharing the instance keeps a bracket-stop fire and a cascade dispatch
-    in the same session from minting the same engine-originated
-    ``client_order_id`` (both encode ``MON.{session}.{trigger}.0``).
+    ``trigger_ids`` is the :class:`TriggerIdGenerator` constructed once per
+    monitor session in ``_run_daemon``. The bracket watcher is the monitor
+    proper's sole engine-originated submitter after ALP-857 (breach detection +
+    its cascade dispatch moved to the out-of-process safety core), so the
+    per-session counter guarantees each bracket-stop fire mints a unique
+    engine-originated ``client_order_id`` (``MON.{session}.{trigger}.0``).
     """
     bracket_repository = SqlBracketRepository(session_factory)
     activity_log = make_activity_log_emitter(session_factory)
     invocation_id_provider = make_invocation_id_provider(session_factory)
     risk_free_rate_provider = make_risk_free_rate_provider(session_factory)
+    # FS4 / ALP-836 — a monitor-fired close pre-commits a durable ``orders`` row
+    # keyed by its engine client_order_id BEFORE the broker submit, so the
+    # returning fill resolves an oms_order_id and Phase 1 closes the position
+    # (rather than the fill stranding in broker_event_log and the position
+    # staying phantom-open).
+    close_order_precommitter = make_close_order_precommitter(session_factory)
+    # ALP-856 — resolves a fired bracket's capital-floor leg ``order_id`` → the
+    # floor OrderRow's ``alpaca_order_id`` so cancel-on-monitor-fire cancels the
+    # resting Alpaca floor by its real broker id (the leg's order_id is the OMS
+    # order_id / FK target, not the alpaca id).
+    floor_alpaca_id_resolver = make_floor_alpaca_id_resolver(session_factory)
 
     async def _coro(session: MonitorSession, config: ContinuousMonitorConfig) -> None:
         cadence = float(config.bracket_stop_evaluation_cadence_seconds)
@@ -414,6 +488,8 @@ def register_options_bracket_watcher_task(
             submitter=submitter,
             activity_log=activity_log,
             invocation_id_provider=invocation_id_provider,
+            close_order_precommitter=close_order_precommitter,
+            floor_alpaca_id_resolver=floor_alpaca_id_resolver,
             risk_free_rate_provider=risk_free_rate_provider,
             trigger_ids=trigger_ids,
             # ALP-829 — drive the loop through supervised_loop so beats are

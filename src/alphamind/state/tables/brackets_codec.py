@@ -28,11 +28,13 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
+    EnforcementBinding,
     EventTrigger,
     PLAnchorSpec,
     PriceTrigger,
     TimeTrigger,
     TriggerPayload,
+    TriggerSignal,
 )
 from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.brackets import BracketRow
@@ -228,7 +230,9 @@ def _leg_column_values(leg: BracketLeg) -> dict[str, Any]:
             json.dumps(_pl_anchor_to_dict(leg.pl_anchor)) if leg.pl_anchor is not None else None
         ),
         "enforcement": leg.enforcement.value,
+        "enforcement_binding": leg.enforcement_binding.value,
         "leg_status": leg.status.value,
+        "trigger_signal": (None if leg.trigger_signal is None else leg.trigger_signal.value),
     }
 
 
@@ -254,8 +258,10 @@ def row_to_leg(row: BracketLegRow) -> BracketLeg:
         order_id=OrderId(row.order_id) if row.order_id is not None else None,
         trigger=_trigger_from_dict(json.loads(row.trigger_payload_json)),
         enforcement=BracketLegEnforcement(row.enforcement),
+        enforcement_binding=EnforcementBinding(row.enforcement_binding),
         status=BracketLegStatus(row.leg_status),
         pl_anchor=pl_anchor,
+        trigger_signal=(None if row.trigger_signal is None else TriggerSignal(row.trigger_signal)),
     )
 
 

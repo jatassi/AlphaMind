@@ -14,6 +14,8 @@ from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
 
+from .event_log_capture import capture_ca_event
+from .handlers.capture_only import handle_capture_only
 from .handlers.cash_dividends import (
     handle_cash_dividend_long,
     handle_cash_dividend_short,
@@ -42,6 +44,10 @@ _HANDLERS: dict[CorporateActionType, CAHandler] = {
     CorporateActionType.STOCK_MERGER: handle_stock_merger,
     CorporateActionType.SPIN_OFF: handle_spin_off,
     CorporateActionType.SYMBOL_CHANGE: handle_symbol_change,
+    # Capture-only v1beta1 types (W1c): event-log capture, no state mutation.
+    CorporateActionType.WORTHLESS_REMOVAL: handle_capture_only,
+    CorporateActionType.UNIT_SPLIT: handle_capture_only,
+    CorporateActionType.REDEMPTION: handle_capture_only,
 }
 
 
@@ -52,8 +58,12 @@ async def integrate_ca_activity(
 ) -> None:
     """Integrate one CA activity into AlphaMind state via the per-type dispatch table.
 
-    Routes *activity* to the appropriate handler in ``_HANDLERS`` based on
-    ``activity.action_type``.
+    Captures the CA on the append-only ``broker_event_log`` FIRST (ALP-849 / W1c:
+    fills + activities + corporate-actions, ADR-0002), then routes *activity* to
+    the appropriate handler in ``_HANDLERS`` based on ``activity.action_type`` for
+    the position / cash mutation. Capture is append-only and idempotent on the
+    ``event_key`` PK; the integration of the CA into the projection / Intent reads
+    the log.
 
     Args:
         handle: Open ``InvocationHandle`` from the surrounding ``InvocationContext``.
@@ -62,6 +72,7 @@ async def integrate_ca_activity(
             positions; required for options / strategy CAs and ignored on the
             equity branch.  Callers that have not wired a lookup pass ``None``.
     """
+    await capture_ca_event(handle, activity)
     handler = _HANDLERS[activity.action_type]
     await handler(handle, activity, alpaca_position_lookup)
 

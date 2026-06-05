@@ -1,85 +1,84 @@
-"""Terminal non-fill order-status sync (ALP-739).
+"""Terminal non-fill order-status → broker-event log (ALP-739 / ALP-849 W1c).
 
-The fill-stream consumer observes broker ``canceled`` / ``expired``
-trade-update events, but :func:`fill_report_to_fill_record` drops them — they
-append no fill. Their terminal disposition still has to reach the local
-``orders`` row, or an accepted entry that expires / cancels unfilled stays
-``PENDING`` in state (the ZS symptom in ALP-739) and the ``entry_no_fill``
-alert never sees it.
+The fill-stream consumer observes broker ``canceled`` / ``expired`` trade-update
+events, but :func:`fill_report_to_fill_record` drops them — they append no fill.
+Their terminal disposition still has to reach local state, or an accepted entry
+that expires / cancels unfilled stays ``PENDING`` (the ZS symptom in ALP-739) and
+the ``entry_no_fill`` alert never sees it.
 
-This helper is the narrow write that closes that gap: load the order, and if
-it is still in a non-terminal status, stamp the terminal status. The caller
-(the consumer) owns the transaction boundary, mirroring
-:func:`alphamind.execution.write_paths.fill_persistence.append_fill_record`.
+**This used to be an in-place read-modify-write on ``orders.status`` by the
+continuous monitor** — a second writer on a shared mutable row, the named
+violation of single-writer-by-construction (ADR-0005, invariant 1). It is now an
+**append** to the append-only ``broker_event_log`` (ADR-0002 W1c): a zero-fill
+terminal event lands as one immutable ``TERMINAL_ORDER_STATUS`` row, idempotent
+on the ``event_key`` PK. The ``orders.status`` row becomes a projection derived
+from the log, written only by the single (pipeline) writer — the monitor no
+longer RMWs it.
+
+This module owns the deterministic ``event_key`` derivation and the record
+builder; the actual insert goes through the canonical idempotent helper
+:func:`alphamind.execution.write_paths.broker_event_persistence.append_broker_event`.
 """
 
 from __future__ import annotations
 
-import logging
-from datetime import datetime
+import hashlib
+from datetime import UTC, datetime
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from alphamind._kernel.ids import InvocationId, PositionId, ThesisId
+from alphamind.execution.broker_adapter import FillReport
 from alphamind.portfolio_state.records.orders import OrderStatus
-from alphamind.state.tables.orders import OrderRow
-
-log = logging.getLogger(__name__)
-
-# A zero-fill terminal sync applies to a PENDING or PENDING_SUBMIT order: the
-# consumer gates this path on ``cumulative_filled_quantity == 0`` (see the caller
-# ``_sync_terminal_status_if_any``), and a zero-fill order has never been advanced
-# past those pre-fill states by Phase 1's fill integration. PENDING_SUBMIT
-# (ALP-836) is included so a broker ``canceled`` / ``expired`` event for an order
-# whose post-submit ``alpaca_order_id`` backfill was lost (still PENDING_SUBMIT)
-# still drives it terminal rather than leaving it wedged. Restricting the source
-# state to these two makes the write idempotent — a re-processed terminal event
-# (live + recovery overlap) finds an already-terminal status and no-ops, so
-# ``last_update_timestamp`` is not bumped twice. (A partially-filled order is
-# handled by the fill path + Phase 1, not here, so there is no "don't clobber a
-# FILLED status" case for this guard to defend.)
-_TRANSITIONABLE_FROM: frozenset[str] = frozenset(
-    {OrderStatus.PENDING.value, OrderStatus.PENDING_SUBMIT.value}
+from alphamind.state.records_broker_event_log import (
+    BrokerEventRecord,
+    BrokerEventType,
+    serialize_event_payload,
 )
 
 
-async def sync_terminal_order_status(
-    session: AsyncSession,
-    *,
-    order_id: str,
-    terminal_status: OrderStatus,
-    observed_at: datetime,
-) -> bool:
-    """Stamp *order_id*'s ``orders.status`` to a terminal non-fill value.
+def derive_terminal_event_key(report: FillReport, terminal_status: OrderStatus) -> str:
+    """Deterministic ``broker_event_log.event_key`` for a terminal non-fill event.
 
-    Transitions only from ``PENDING`` (the sole state a zero-fill order can be
-    in — see ``_TRANSITIONABLE_FROM``); a no-op (returns ``False``) when the
-    order is unknown or already past PENDING. ``last_update_timestamp`` is set
-    to *observed_at* — the moment the monitor recorded the transition, not the
-    broker event time — so the ``entry_no_fill`` alert's lookback window
-    catches a status synced late (e.g. recovered after a monitor outage).
-
-    The caller controls commit / rollback; this helper only mutates the row.
-    Returns ``True`` iff the row transitioned.
+    Identity is ``(alpaca_order_id, terminal_status)`` — the broker-authoritative
+    terminal disposition of the order, the same fact whether it arrives on the live
+    websocket or a later REST recovery replay, so both collapse onto one
+    ``broker_event_log`` row via the ``event_key`` PK (idempotency, ADR-0002). The
+    ``tevt-`` prefix distinguishes a terminal-status event key from the ``fevt-``
+    fill key, which shares the underlying ``alpaca_order_id``.
     """
-    row = await session.get(OrderRow, order_id)
-    if row is None:
-        log.debug(
-            "terminal-status sync: order_id=%s not found; skipping (target=%s)",
-            order_id,
-            terminal_status.value,
-        )
-        return False
-    if row.status not in _TRANSITIONABLE_FROM:
-        log.debug(
-            "terminal-status sync: order_id=%s already %s; not overwriting with %s",
-            order_id,
-            row.status,
-            terminal_status.value,
-        )
-        return False
-    row.status = terminal_status.value
-    row.last_update_timestamp = observed_at.isoformat()
-    return True
+    h = hashlib.sha256(f"{report.alpaca_order_id}|{terminal_status.value}".encode())
+    return f"tevt-{h.hexdigest()[:16]}"
 
 
-__all__ = ["sync_terminal_order_status"]
+def terminal_status_event_record(
+    report: FillReport,
+    terminal_status: OrderStatus,
+    *,
+    thesis_id: ThesisId | None,
+    invocation_id: InvocationId | None,
+    position_id: PositionId | None,
+) -> BrokerEventRecord:
+    """Project a zero-fill terminal non-fill event into its event-log record.
+
+    Carries the resolved broker-carried link (``thesis_id`` / ``invocation_id`` /
+    ``position_id``) on the INITIAL insert — append-only, never enriched (ADR-0005),
+    so a read-time consumer (the no-fill alert, 03c's per-thesis derivation) reads
+    the attribution straight off the row. ``raw_payload_json`` preserves the full
+    broker report for replay / audit. The terminal disposition the order reached
+    (``CANCELLED`` / ``EXPIRED``) is recorded under ``terminal_status`` in the
+    payload so the projection rebuild (04a) can derive ``orders.status`` from the log.
+    """
+    payload = report.model_dump(mode="json")
+    payload["terminal_status"] = terminal_status.value
+    return BrokerEventRecord(
+        event_key=derive_terminal_event_key(report, terminal_status),
+        event_type=BrokerEventType.TERMINAL_ORDER_STATUS,
+        thesis_id=thesis_id,
+        invocation_id=invocation_id,
+        position_id=position_id,
+        raw_payload_json=serialize_event_payload(payload),
+        broker_timestamp=report.fill_timestamp,
+        captured_at=datetime.now(UTC),
+    )
+
+
+__all__ = ["derive_terminal_event_key", "terminal_status_event_record"]

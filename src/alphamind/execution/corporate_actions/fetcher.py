@@ -37,11 +37,14 @@ from alpaca.data.models.corporate_actions import (
     CorporateAction,
     ForwardSplit,
     NameChange,
+    Redemption,
     ReverseSplit,
     SpinOff,
     StockAndCashMerger,
     StockDividend,
     StockMerger,
+    UnitSplit,
+    WorthlessRemoval,
 )
 from sqlalchemy import func, select
 
@@ -207,6 +210,33 @@ def _from_name_change(event: NameChange, _: PositionLookup) -> _Translated:
     )
 
 
+def _from_worthless_removal(event: WorthlessRemoval, _: PositionLookup) -> _Translated:
+    # Capture-only (no position-mutation math): the broker fact lands on the
+    # event log; quantity / basis / cash are left to a later integration if ever
+    # defined. ``ratio_or_amount`` / ``cash_factor`` stay zero.
+    return _Translated(
+        action_type=CorporateActionType.WORTHLESS_REMOVAL,
+        ticker=event.symbol,
+        primary_date=event.process_date,
+    )
+
+
+def _from_unit_split(event: UnitSplit, _: PositionLookup) -> _Translated:
+    return _Translated(
+        action_type=CorporateActionType.UNIT_SPLIT,
+        ticker=event.old_symbol,
+        primary_date=event.process_date,
+    )
+
+
+def _from_redemption(event: Redemption, _: PositionLookup) -> _Translated:
+    return _Translated(
+        action_type=CorporateActionType.REDEMPTION,
+        ticker=event.symbol,
+        primary_date=event.process_date,
+    )
+
+
 _TranslatorFn = Callable[[CorporateAction, PositionLookup], _Translated]
 
 
@@ -226,14 +256,20 @@ _TRANSLATORS: tuple[tuple[type[CorporateAction], _TranslatorFn], ...] = (
     (StockAndCashMerger, cast(_TranslatorFn, _from_stock_and_cash_merger)),
     (StockMerger, cast(_TranslatorFn, _from_stock_merger)),
     (NameChange, cast(_TranslatorFn, _from_name_change)),
+    # Capture-only types (ALP-849 / W1c): surfaced so Phase 1 appends them to the
+    # event log, but with no position-mutation math (zero ratio / cash).
+    (WorthlessRemoval, cast(_TranslatorFn, _from_worthless_removal)),
+    (UnitSplit, cast(_TranslatorFn, _from_unit_split)),
+    (Redemption, cast(_TranslatorFn, _from_redemption)),
 )
 
 
 def _translate(event: CorporateAction, position: PositionLookup) -> _Translated | None:
     """Map a v1beta1 typed event onto the local activity fields.
 
-    Returns ``None`` for event types the fetcher does not handle natively
-    (UnitSplit / Redemption / WorthlessRemoval / RightsDistribution).
+    Returns ``None`` only for ``RightsDistribution`` — the one v1beta1 type with
+    no event-log CA vocabulary member; every other type (including the
+    capture-only ``WorthlessRemoval`` / ``UnitSplit`` / ``Redemption``) translates.
     """
     for event_type, translator in _TRANSLATORS:
         if isinstance(event, event_type):
@@ -244,10 +280,10 @@ def _translate(event: CorporateAction, position: PositionLookup) -> _Translated 
 def _symbol_for(event: CorporateAction) -> str | None:
     """Return the ticker the fetcher matches against ``position_lookup_for_symbol``.
 
-    Returns ``None`` for out-of-scope event types (UnitSplit / Redemption /
-    WorthlessRemoval / RightsDistribution); callers drop those silently.
-    Mirrors the ``ticker`` field in :func:`_translate` so symbol resolution
-    can short-circuit the position lookup before paying for translation.
+    Returns ``None`` only for ``RightsDistribution`` (no event-log CA vocabulary
+    member); callers drop it silently. Mirrors the ``ticker`` field in
+    :func:`_translate` so symbol resolution can short-circuit the position
+    lookup before paying for translation.
     """
     match event:
         case ForwardSplit() | ReverseSplit() | StockDividend() | CashDividend():
@@ -256,8 +292,10 @@ def _symbol_for(event: CorporateAction) -> str | None:
             return event.source_symbol
         case CashMerger() | StockMerger() | StockAndCashMerger():
             return event.acquiree_symbol
-        case NameChange():
+        case NameChange() | UnitSplit():
             return event.old_symbol
+        case WorthlessRemoval() | Redemption():
+            return event.symbol
         case _:
             return None
 

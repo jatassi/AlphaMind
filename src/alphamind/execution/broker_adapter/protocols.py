@@ -15,13 +15,15 @@ surface (P9 — small Protocol surface).
 
 from __future__ import annotations
 
-from datetime import date
-from typing import Protocol, runtime_checkable
+from collections.abc import AsyncIterator
+from datetime import date, datetime
+from typing import Literal, Protocol, runtime_checkable
 
 from alpaca.data.enums import CorporateActionsType
 from alpaca.data.models.corporate_actions import CorporateAction
 
 from alphamind.execution.broker_adapter.queries import (
+    OrderSnapshot,
     PositionSnapshot,
     TradeAccountSnapshot,
 )
@@ -35,13 +37,24 @@ class AccountStateQueriesP(Protocol):
 
     Mirrors the as-built methods on
     :class:`~alphamind.execution.broker_adapter.queries.AccountStateQueries`
-    — both are synchronous because the underlying ``alpaca-py``
-    ``TradingClient`` wraps httpx synchronously.
+    — ``get_account`` / ``get_positions`` are synchronous because the
+    underlying ``alpaca-py`` ``TradingClient`` wraps httpx synchronously;
+    ``get_orders`` paginates, so it is an async generator (the fresh-start
+    open-orders precondition drains its ``status="open"`` cursor).
     """
 
     def get_account(self) -> TradeAccountSnapshot: ...
 
     def get_positions(self) -> tuple[PositionSnapshot, ...]: ...
+
+    def get_orders(
+        self,
+        *,
+        status: Literal["open", "closed", "all"] = ...,
+        since: datetime | None = ...,
+        until: datetime | None = ...,
+        symbols: tuple[str, ...] | None = ...,
+    ) -> AsyncIterator[OrderSnapshot]: ...
 
 
 @runtime_checkable

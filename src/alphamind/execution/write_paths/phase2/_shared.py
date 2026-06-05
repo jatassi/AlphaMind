@@ -294,15 +294,22 @@ def _build_pending_order(  # noqa: PLR0913 — captures every NOT-NULL OrderReco
     similarly.
 
     ``alpaca_order_id_override`` (broker-routing coordinated swap, story 03e /
-    ALP-390) wires the broker's real id; otherwise falls back to the synthetic
-    ``alp-{order_id}`` placeholder.
+    ALP-390) wires the broker's real id when one exists. When it is ``None`` the
+    order carries NO broker id (``alpaca_order_id=None``, empty chain) — a
+    not-yet-routed order (durable Intent keyed by ``client_order_id``, backfilled
+    on dispatch) or a monitor-enforced protective leg (armed Intent the monitor
+    enforces with no broker order). The synthetic ``alp-{order_id}`` placeholder
+    is deleted (ADR-0003 / ALP-847, invariant 5): a leg with no broker order has
+    no broker id, never a counterfeit one — which is what renders ALP-837
+    (cancel/adjust of a synthetic-id leg) unrepresentable.
     """
     if instrument_spec is None:
         if ticker is None:
             msg = "_build_pending_order requires either instrument_spec or ticker"
             raise ValueError(msg)
         instrument_spec = EquityInstrumentSpec(ticker=make_symbol(ticker))
-    alpaca_id = alpaca_order_id_override or f"alp-{order_id}"
+    alpaca_id = AlpacaOrderId(alpaca_order_id_override) if alpaca_order_id_override else None
+    alpaca_chain = (alpaca_id,) if alpaca_id is not None else ()
     return OrderRecord(
         order_id=OrderId(order_id),
         position_id=PositionId(position_id) if position_id is not None else None,
@@ -316,8 +323,8 @@ def _build_pending_order(  # noqa: PLR0913 — captures every NOT-NULL OrderReco
         quantity=quantity,
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
-        alpaca_order_id=AlpacaOrderId(alpaca_id),
-        alpaca_order_id_chain=(AlpacaOrderId(alpaca_id),),
+        alpaca_order_id=alpaca_id,
+        alpaca_order_id_chain=alpaca_chain,
         submission_timestamp=timestamp,
         last_update_timestamp=timestamp,
         filled_quantity=0.0,
@@ -541,6 +548,22 @@ _ALL_PROTECTIVE_ROLES: frozenset[str] = frozenset(
     {OrderRole.PRICE_STOP.value, OrderRole.TAKE_PROFIT.value, OrderRole.TIME_STOP.value}
 )
 
+# The options capital-floor OrderRow's ``order_id`` prefix (ALP-856). Mirrors
+# ``phase2.open._capital_floor_order_id`` (``ORD-FLOOR-{suffix}``); duplicated as a
+# literal here because ``open`` imports from this module, so importing it back
+# would cycle. The floor row shares the PRICE_STOP role with the invalidation
+# stop, so its id prefix — not its role — is what identifies it.
+_CAPITAL_FLOOR_ORDER_ID_PREFIX = "ORD-FLOOR-"
+
+
+def _is_capital_floor_order(row: OrderRow) -> bool:
+    """Is *row* the options OPEN's broker-enforced capital-floor OrderRow (ALP-856)?
+
+    Identified by the ``ORD-FLOOR-`` ``order_id`` prefix, not by role (the floor
+    shares the PRICE_STOP role with the invalidation stop).
+    """
+    return row.order_id.startswith(_CAPITAL_FLOOR_ORDER_ID_PREFIX)
+
 
 async def _cancel_pending_protective_orders(
     handle: InvocationHandle,
@@ -556,16 +579,33 @@ async def _cancel_pending_protective_orders(
     ADJUST / BracketAdjustment narrow via
     :func:`_protective_roles_for_change_fields` so only the targeted leg(s)
     transition to CANCELLED. Entry / add-entry roles are never touched here.
+
+    The options capital-floor OrderRow (ALP-856) is also cancelled when it is
+    still ``PENDING_SUBMIT`` — its broker-id backfill never ran (a floor-submit
+    failure leaves the entry live but the floor row durable-Intent only). On the
+    entry-CANCEL teardown (``abandon_command`` → ``_writeback_cancel``) the
+    bracket dissolves, so the floor must clear too: left ``PENDING_SUBMIT`` its
+    ``inv-{id}.`` ``client_order_id`` keeps
+    :func:`alphamind.execution.write_paths.phase2.atomic.invocation_has_pending_submit_strand`
+    True forever → ``phase2_completed_at`` withheld with no recovery (FL3 /
+    ALP-856). The floor reserves no capital (release none); cancelling the row
+    clears the strand. A non-floor ``PENDING_SUBMIT`` row is a legitimately
+    in-flight order and is NOT swept (only the floor leg is scoped in).
     """
     stmt = (
         select(OrderRow)
         .where(OrderRow.bracket_id == bracket_id)
-        .where(OrderRow.status == OrderStatus.PENDING.value)
+        .where(OrderRow.status.in_((OrderStatus.PENDING.value, OrderStatus.PENDING_SUBMIT.value)))
     )
     rows = list((await handle.session.execute(stmt)).scalars())
     cancelled: list[OrderRecord] = []
     for row in rows:
         if row.order_role not in target_roles:
+            continue
+        # A PENDING_SUBMIT row is only swept when it is the capital floor; any
+        # other PENDING_SUBMIT row is a legitimately in-flight order awaiting its
+        # broker-id backfill and must not be cancelled here.
+        if row.status == OrderStatus.PENDING_SUBMIT.value and not _is_capital_floor_order(row):
             continue
         row.status = OrderStatus.CANCELLED.value
         row.last_update_timestamp = timestamp.isoformat()

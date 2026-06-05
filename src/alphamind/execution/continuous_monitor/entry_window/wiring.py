@@ -286,7 +286,12 @@ def make_entry_cancel_target_resolver(
                 )
             ).scalar_one()
             return EntryCancelTarget(
-                alpaca_order_id=AlpacaOrderId(row.alpaca_order_id),
+                # ALP-847 — a not-yet-routed entry carries NO broker id (NULL);
+                # pass ``None`` through so the canceller retries rather than
+                # cancelling a non-existent order.
+                alpaca_order_id=(
+                    AlpacaOrderId(row.alpaca_order_id) if row.alpaca_order_id is not None else None
+                ),
                 has_recorded_fills=fill_count > 0,
             )
 
@@ -360,7 +365,10 @@ def make_reprice_target_resolver(
             else ""
         )
         return RepriceTarget(
-            alpaca_order_id=AlpacaOrderId(row.alpaca_order_id),
+            # ALP-847 — a not-yet-routed entry carries NO broker id (NULL).
+            alpaca_order_id=(
+                AlpacaOrderId(row.alpaca_order_id) if row.alpaca_order_id is not None else None
+            ),
             has_recorded_fills=fill_count > 0,
             is_equity_limit=is_equity_limit,
             ticker=ticker,
