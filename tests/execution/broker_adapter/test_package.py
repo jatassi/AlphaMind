@@ -61,6 +61,7 @@ _OPTIONS_SYMBOLS: frozenset[str] = frozenset(
         "OptionsSubmission",
         "build_occ_symbol",
         "submit_options_add",
+        "submit_options_capital_floor",
         "submit_options_close",
         "submit_options_open",
     }
@@ -208,6 +209,7 @@ def test_options_symbols_directly_importable() -> None:
         OptionsSubmission,
         build_occ_symbol,
         submit_options_add,
+        submit_options_capital_floor,
         submit_options_close,
         submit_options_open,
     )
@@ -216,6 +218,7 @@ def test_options_symbols_directly_importable() -> None:
         OptionsSubmission,
         build_occ_symbol,
         submit_options_add,
+        submit_options_capital_floor,
         submit_options_close,
         submit_options_open,
     )

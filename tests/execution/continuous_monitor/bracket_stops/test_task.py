@@ -696,6 +696,9 @@ class TestPreSubmitFailureRetries:
             ) -> CloseSubmissionResult:
                 raise NotImplementedError
 
+            async def cancel_floor(self, *, alpaca_order_id: str) -> None:
+                del alpaca_order_id
+
         submitter = _RaisingSubmitter()
         # Two cycles: the submit raises both times, but the leg stays fired after
         # the first attempt so the second cycle does NOT re-attempt the submit.

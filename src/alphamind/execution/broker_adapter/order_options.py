@@ -46,7 +46,6 @@ from alphamind.commands.command_models import (
     OptionInstrument,
 )
 from alphamind.config.models.execution import ExecutionConfig
-from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.broker_adapter.errors import (
     PermanentRejection,
     classify_alpaca_error,
@@ -58,6 +57,7 @@ from alphamind.execution.broker_adapter.retry import (
     bounded_broker_call,
     submit_with_retry,
 )
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.oms.command_ids import is_engine_originated, is_pm_originated
 from alphamind.portfolio_state.records.positions import OptionContractType
 

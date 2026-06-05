@@ -259,9 +259,7 @@ async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-ou
     return result
 
 
-async def _cancel_resting_floors(
-    bracket: BracketRecord, submitter: BracketCloseSubmitter
-) -> None:
+async def _cancel_resting_floors(bracket: BracketRecord, submitter: BracketCloseSubmitter) -> None:
     """Cancel each resting broker-enforced floor leg of *bracket* (ALP-856).
 
     A broker-enforced leg with a broker ``order_id`` is a real resting Alpaca

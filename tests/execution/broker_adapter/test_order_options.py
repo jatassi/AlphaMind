@@ -546,6 +546,7 @@ async def test_submit_options_capital_floor_long_sells_at_pnl_level() -> None:
     )
 
     [request] = captured
+    assert isinstance(request, StopLimitOrderRequest)
     assert request.side is OrderSide.SELL
     assert request.qty == 5.0
     assert request.stop_price == 16.0

@@ -144,6 +144,10 @@ class _LinkCapturingSubmitter:
         # Unused: this end-to-end test exercises the single-leg options path.
         raise NotImplementedError
 
+    async def cancel_floor(self, *, alpaca_order_id: str) -> None:
+        # Unused: these brackets carry no broker-enforced floor leg.
+        del alpaca_order_id
+
 
 @dataclass
 class _CollectingActivityLog:
