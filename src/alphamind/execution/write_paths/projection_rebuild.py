@@ -10,7 +10,7 @@ snapshot/projection mismatch triggers a rebuild rather than a per-delta
 comparison-and-correct. No ``RECONCILIATION_ALERT`` / ``RECONCILIATION_CORRECTION``
 row is ever written here.
 
-Three derivations run in the open Phase-1 write transaction (single writer =
+Two derivations run in the open Phase-1 write transaction (single writer =
 pipeline, ADR-0005):
 
 1. **Order-status projection** — fold every ``TERMINAL_ORDER_STATUS`` event in
@@ -25,9 +25,12 @@ pipeline, ADR-0005):
    projection state**, surfaced in the summary (attach/flag), never a reconcile
    alert. The "Alpaca wins" auto-materialize / alert doctrine is deleted.
 
-3. **Per-thesis PnL ledger derivation** — re-derive each thesis's realized PnL +
-   cost basis from its event log (story 03c's :func:`rederive_thesis_pnl_ledger`),
-   so the ``thesis_pnl_ledger`` table is populated each run rather than dark.
+The per-thesis PnL ledger is **not** re-derived here (CR1-cleanup): that is the
+sole responsibility of the orchestrator's post-poll
+:func:`alphamind.execution.write_paths.phase1.rederive_thesis_ledgers`, which runs
+after the account-activities poll so it folds the *complete* log. Re-deriving the
+ledgers in the rebuild too — before the poll — was a redundant double-write the
+post-poll pass overwrote.
 
 Functional core / imperative shell: the classification and event-fold are pure
 functions over plain records; :func:`rebuild_projection` is the thin shell that
@@ -45,9 +48,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from alphamind._kernel.ids import InvocationId, ThesisId
 from alphamind.execution.broker_adapter.queries import PositionSnapshot, TradeAccountSnapshot
-from alphamind.execution.write_paths.thesis_pnl_ledger import rederive_thesis_pnl_ledger
 from alphamind.portfolio_state.records.orders import OrderStatus
 from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
@@ -140,16 +141,20 @@ class ProjectionRebuildSummary:
     """Outcome of one :func:`rebuild_projection` call.
 
     ``order_statuses_projected`` counts ``orders`` rows whose cached status the
-    rebuild advanced from a TERMINAL_ORDER_STATUS event; ``theses_rederived``
-    counts thesis PnL-ledger rows re-derived from the log; ``broker_facts_without_intent``
+    rebuild advanced from a TERMINAL_ORDER_STATUS event; ``broker_facts_without_intent``
     carries the DVN/manual-trade positions surfaced as a projection state (never
     alerted); ``pending_with_broker_holding`` carries PENDING-local positions whose
     broker holding is nonzero (a dropped/un-integrated entry fill — RD1), surfaced
     as a projection signal, never mutated.
+
+    The rebuild does **not** re-derive the per-thesis PnL ledgers (CR1-cleanup):
+    that is the sole responsibility of the orchestrator's post-poll
+    :func:`alphamind.execution.write_paths.phase1.rederive_thesis_ledgers`, which
+    folds the *complete* log (after the account-activities poll). Re-deriving here
+    too would be a redundant pre-poll double-write the post-poll pass overwrites.
     """
 
     order_statuses_projected: int
-    theses_rederived: int
     broker_facts_without_intent: tuple[BrokerFactNoIntent, ...]
     # Defaulted so the empty-rebuild constructors (recovery / scheduler stubs in
     # phase1.py) that predate RD1 keep their shape; the production rebuild always
@@ -261,10 +266,12 @@ async def rebuild_projection(
     """Rebuild the positions/cash Projection from the event log + the live snapshot.
 
     Runs after Phase-1 fill integration has folded the event log into the
-    positions/cash projection. This step adds the three derivations the fill-fold
-    does not own: the order-status projection, the broker-fact-no-Intent
-    classification, and the per-thesis PnL-ledger derivation. Joins the open
-    ``handle.session`` transaction; the surrounding ``InvocationContext`` commits.
+    positions/cash projection. This step adds the two derivations the fill-fold
+    does not own: the order-status projection and the broker-fact-no-Intent
+    classification. The per-thesis PnL ledgers are re-derived separately by the
+    orchestrator's post-poll ``rederive_thesis_ledgers`` (CR1-cleanup), not here.
+    Joins the open ``handle.session`` transaction; the surrounding
+    ``InvocationContext`` commits.
 
     ``alpaca_account`` is accepted for symmetry with the deleted ``reconcile``
     signature (the cash projection rebuilds from the event log + snapshot via the
@@ -274,7 +281,6 @@ async def rebuild_projection(
     del alpaca_account  # No per-delta cash comparison — the rebuild has no adjudication.
 
     order_statuses_projected = await _project_terminal_order_statuses(handle.session)
-    theses_rederived = await _rederive_all_thesis_ledgers(handle.session, handle)
     symbols_by_status = await _live_position_symbols_by_status(handle.session)
     intent_backed_symbols = frozenset().union(*symbols_by_status.values())
     pending_symbols = symbols_by_status.get("PENDING", frozenset())
@@ -306,7 +312,6 @@ async def rebuild_projection(
 
     return ProjectionRebuildSummary(
         order_statuses_projected=order_statuses_projected,
-        theses_rederived=theses_rederived,
         broker_facts_without_intent=broker_facts,
         pending_with_broker_holding=pending_holdings,
     )
@@ -418,39 +423,6 @@ async def _resolve_non_terminal_order_rows(
             if row.client_order_id is not None:
                 by_client_id[row.client_order_id] = row
     return by_alpaca_id, by_client_id
-
-
-async def _rederive_all_thesis_ledgers(session: AsyncSession, handle: InvocationHandle) -> int:
-    """Re-derive the PnL ledger for every thesis carrying events in the log.
-
-    Story 03c's :func:`rederive_thesis_pnl_ledger` is the single writer of
-    ``thesis_pnl_ledger`` — but it had no production caller, so the table was dark.
-    The rebuild wires it: enumerate the distinct ``thesis_id`` values present on the
-    broker-event log (the only theses whose realized PnL the log can derive), and
-    re-derive each. The write is an idempotent replace, so a rebuild reproduces the
-    same ledger rows. Returns the count of ledgers re-derived.
-    """
-    thesis_ids = (
-        (
-            await session.execute(
-                select(BrokerEventLogRow.thesis_id)
-                .where(BrokerEventLogRow.thesis_id.is_not(None))
-                .distinct()
-            )
-        )
-        .scalars()
-        .all()
-    )
-    invocation_id = InvocationId(handle.invocation_id)
-    rederived = 0
-    for thesis_id in thesis_ids:
-        # The ``is_not(None)`` filter guarantees a non-NULL value at runtime; the
-        # mypy-visible ``str | None`` column type does not narrow, so guard it.
-        if thesis_id is None:
-            continue
-        await rederive_thesis_pnl_ledger(session, ThesisId(thesis_id), invocation_id)
-        rederived += 1
-    return rederived
 
 
 async def _live_position_symbols_by_status(session: AsyncSession) -> dict[str, frozenset[str]]:

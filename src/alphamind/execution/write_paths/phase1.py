@@ -215,8 +215,9 @@ class Phase1Summary:
     reconciliation-flagged-position read keep their shape.
 
     ``projection_rebuild`` carries the W2a rebuild outcome — the order-status
-    projections, per-thesis PnL-ledger re-derivations, and the
-    broker-fact-no-Intent projection states surfaced this run.
+    projections and the broker-fact-no-Intent projection states surfaced this run.
+    The per-thesis PnL ledgers are re-derived separately by the orchestrator's
+    post-poll :func:`rederive_thesis_ledgers` (CR1-cleanup), not by the rebuild.
     """
 
     fills_processed: int
@@ -230,7 +231,6 @@ class Phase1Summary:
     projection_rebuild: ProjectionRebuildSummary = field(
         default_factory=lambda: ProjectionRebuildSummary(
             order_statuses_projected=0,
-            theses_rederived=0,
             broker_facts_without_intent=(),
         )
     )
@@ -257,9 +257,11 @@ async def process_unprocessed_fills(
     determinism. After all events apply, the **projection rebuild** (ALP-854 /
     W2a) folds the broker-event log onto the live broker snapshot
     (``alpaca_positions`` / ``alpaca_account``): it projects ``orders.status``
-    from terminal-order-status events, re-derives each thesis's PnL ledger from
-    the log, and surfaces a broker position with no Intent as a first-class
-    projection state. There is no ``reconcile()`` adjudication and no
+    from terminal-order-status events and surfaces a broker position with no Intent
+    as a first-class projection state. The per-thesis PnL ledgers are re-derived
+    separately by the orchestrator's post-poll ``rederive_thesis_ledgers``
+    (CR1-cleanup), once the account-activities poll has completed the log — not by
+    the rebuild. There is no ``reconcile()`` adjudication and no
     ``RECONCILIATION_ALERT`` / ``RECONCILIATION_CORRECTION`` insert — a
     snapshot/projection mismatch triggers a rebuild, never an alert (ADR-0001).
 
@@ -341,8 +343,9 @@ async def process_unprocessed_fills(
     # ALP-854 / W2a — rebuild the positions/cash Projection from the now-updated
     # broker-event log + the live broker snapshot. Replaces ``reconcile()``'s
     # adjudication (deleted): projects ``orders.status`` from terminal-order-status
-    # events, re-derives the per-thesis PnL ledger from the log, and surfaces a
-    # broker-fact-no-Intent as a projection state — never an alert insert (ADR-0001).
+    # events and surfaces a broker-fact-no-Intent as a projection state — never an
+    # alert insert (ADR-0001). The per-thesis PnL ledgers are re-derived by the
+    # orchestrator's post-poll ``rederive_thesis_ledgers``, not here (CR1-cleanup).
     projection_rebuild = await rebuild_projection(
         handle,
         alpaca_positions=alpaca_positions,

@@ -559,16 +559,19 @@ async def test_pending_local_with_nonzero_alpaca_surfaces_in_summary(
 
 
 # ---------------------------------------------------------------------------
-# Critical #1 — the thesis PnL ledger is populated after the rebuild.
+# CR1-cleanup — the rebuild no longer rederives the thesis ledgers; the
+# post-poll ``rederive_thesis_ledgers`` is the SOLE rederive (no double-write).
 # ---------------------------------------------------------------------------
 
 
-async def test_rebuild_populates_thesis_pnl_ledger_from_the_log(
+async def test_rebuild_does_not_rederive_thesis_ledgers(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """Critical #1 — the rebuild wires ``rederive_thesis_pnl_ledger``: a thesis
-    carrying FILL events in the log gets a ``thesis_pnl_ledger`` row derived from
-    the log (previously dark — no production caller)."""
+    """CR1-cleanup — ``rebuild_projection`` no longer re-derives the thesis PnL
+    ledgers, so a thesis carrying FILL events stays DARK after the rebuild. The
+    sole rederive is the orchestrator's post-poll ``rederive_thesis_ledgers``,
+    which folds the *complete* log (post account-activities poll) — re-deriving in
+    the rebuild too would be a redundant pre-poll double-write."""
     _, factory = db
     await seed_invocation_substrate(factory)
     await seed_position_cluster(
@@ -590,15 +593,50 @@ async def test_rebuild_populates_thesis_pnl_ledger_from_the_log(
         ),
     )
 
-    async with factory() as sess:
-        before = (await sess.execute(select(ThesisPnlLedgerRow))).scalars().all()
-    assert before == []  # dark before the rebuild
-
     ctx, handle = await open_handle(factory)
-    summary = await rebuild_projection(handle, alpaca_positions=(), alpaca_account=None)
+    await rebuild_projection(handle, alpaca_positions=(), alpaca_account=None)
     await ctx.__aexit__(None, None, None)
 
-    assert summary.theses_rederived == 1
+    # The rebuild wrote NO ledger row — the thesis stays dark until the post-poll
+    # rederive runs (the rebuild's redundant rederive is removed).
+    async with factory() as sess:
+        after_rebuild = (await sess.execute(select(ThesisPnlLedgerRow))).scalars().all()
+    assert after_rebuild == []
+
+
+async def test_post_poll_rederive_produces_the_complete_ledger(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """CR1-cleanup — the post-poll ``rederive_thesis_ledgers`` (the sole rederive)
+    folds the complete log into the ledger. A thesis carrying FILL events gets a
+    ``thesis_pnl_ledger`` row derived from the log (the populating path moved out
+    of ``rebuild_projection`` into this single post-poll pass)."""
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_position_cluster(
+        factory,
+        make_open_equity_position(share_count=10.0),
+        make_pending_entry_order(),
+        make_active_thesis(),
+        make_active_bracket(),
+    )
+    # A single buy FILL opens a 10-share lot at $150 → cost_basis 1500, realized 0.
+    await _append_events(
+        factory,
+        _fill_event(
+            event_key="fevt-1",
+            alpaca_order_id="broker-uuid-1",
+            fill_price=150.0,
+            fill_quantity=10.0,
+            side="buy",
+        ),
+    )
+
+    ctx, handle = await open_handle(factory)
+    rederived = await rederive_thesis_ledgers(handle)
+    await ctx.__aexit__(None, None, None)
+
+    assert rederived == 1
     async with factory() as sess:
         ledger = (await sess.execute(select(ThesisPnlLedgerRow))).scalars().all()
         assert len(ledger) == 1
