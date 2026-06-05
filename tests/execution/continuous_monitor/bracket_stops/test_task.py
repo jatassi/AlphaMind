@@ -34,12 +34,12 @@ from alphamind.execution.continuous_monitor.bracket_stops.closer import (
 from alphamind.execution.continuous_monitor.bracket_stops.task import (
     _run_bracket_stop_cycle,
 )
-from alphamind.execution.write_paths.phase2.open import _wire_leg_to_bracket_leg
 from alphamind.execution.continuous_monitor.cascade_dispatch import TriggerIdGenerator
 from alphamind.execution.continuous_monitor.underlying_stream.cache import (
     UnderlyingPriceCache,
     UnderlyingQuote,
 )
+from alphamind.execution.write_paths.phase2.open import _wire_leg_to_bracket_leg
 from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventSource,
@@ -936,9 +936,7 @@ class TestNonDirectionalStopFiresThroughRealConstructor:
         route is taken. Before ALP-861 this never fired (no ``pl_anchor``).
         """
         position = _options_position(direction=Direction.LONG, premium_paid=35.24, iv=0.30)
-        bracket = _non_directional_option_stop_bracket_real(
-            trigger_price=25.0, comparator="<="
-        )
+        bracket = _non_directional_option_stop_bracket_real(trigger_price=25.0, comparator="<=")
         cache = await _seed_cache({"NVDA": 820.0})
         submitter = FakeSubmitter()
         log = FakeActivityLog()
@@ -967,9 +965,7 @@ class TestNonDirectionalStopFiresThroughRealConstructor:
         the mark → no fire.
         """
         position = _options_position(direction=Direction.LONG, premium_paid=35.24, iv=0.30)
-        bracket = _non_directional_option_stop_bracket_real(
-            trigger_price=15.0, comparator="<="
-        )
+        bracket = _non_directional_option_stop_bracket_real(trigger_price=15.0, comparator="<=")
         cache = await _seed_cache({"NVDA": 820.0})
         submitter = FakeSubmitter()
         log = FakeActivityLog()
@@ -1004,9 +1000,7 @@ class TestNonDirectionalStopFiresThroughRealConstructor:
         """
         net_premium = _credit_spread_net_premium_at(entry_spot=850.0)
         position = _credit_strategy_position(net_premium_usd=net_premium)
-        bracket = _non_directional_strategy_stop_bracket_real(
-            trigger_price=6.0, comparator=">="
-        )
+        bracket = _non_directional_strategy_stop_bracket_real(trigger_price=6.0, comparator=">=")
         cache = await _seed_cache({"NVDA": 780.0})
         submitter = FakeSubmitter()
         log = FakeActivityLog()
@@ -1025,6 +1019,48 @@ class TestNonDirectionalStopFiresThroughRealConstructor:
             fired_legs=set(),
         )
         assert len(submitter.strategy_calls) == 1
+        assert submitter.options_calls == []
+
+    async def test_prefill_strategy_skeleton_is_skipped_not_wedged(self) -> None:
+        """A NET_MARK stop on a pre-fill strategy skeleton skips, not wedges.
+
+        A skeleton strategy position carries zeroed greeks (``iv_used`` unset),
+        so the net-mark evaluator's Black-Scholes derivation raises ValueError.
+        The cycle must skip that leg and complete normally — never fire, never
+        raise — the same per-leg resilience the pct-of-PnL path has.
+        """
+        base = _credit_strategy_position(net_premium_usd=-100.0)
+        assert isinstance(base.details, StrategyPositionDetails)
+        skeleton_legs = tuple(
+            replace(
+                leg,
+                options=replace(
+                    leg.options,
+                    greeks=OptionGreeks(delta=0.0, gamma=0.0, theta=0.0, vega=0.0),
+                ),
+            )
+            for leg in base.details.legs
+        )
+        skeleton = replace(base, details=replace(base.details, legs=skeleton_legs))
+        bracket = _non_directional_strategy_stop_bracket_real(trigger_price=1.0, comparator=">=")
+        cache = await _seed_cache({"NVDA": 780.0})
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+        await _run_bracket_stop_cycle(
+            config=_config(),
+            position_repository=FakePositionRepository((skeleton,)),
+            bracket_repository=FakeBracketRepository((bracket,)),
+            cache=cache,
+            submitter=submitter,
+            activity_log=log.emit,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
+            now=_NOW,
+            risk_free_rate=0.045,
+            fired_legs=set(),
+        )
+        assert submitter.strategy_calls == []
         assert submitter.options_calls == []
 
 

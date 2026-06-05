@@ -345,13 +345,9 @@ def _leg_should_fire(
     """
     if leg.trigger_signal is TriggerSignal.UNDERLYING_PRICE:
         return evaluate_price_based_trigger(position=position, leg=leg, spot=spot)
-    if leg.trigger_signal is TriggerSignal.OPTION_PRICE:
-        return evaluate_option_mark_trigger(
-            position=position, leg=leg, spot=spot, risk_free_rate=risk_free_rate, as_of=now
-        )
-    if leg.trigger_signal is TriggerSignal.NET_MARK:
-        return evaluate_strategy_net_mark_trigger(
-            position=position, leg=leg, spot=spot, risk_free_rate=risk_free_rate, as_of=now
+    if leg.trigger_signal in (TriggerSignal.OPTION_PRICE, TriggerSignal.NET_MARK):
+        return _evaluate_non_directional_mark(
+            position=position, leg=leg, spot=spot, now=now, risk_free_rate=risk_free_rate
         )
     # No trigger_signal: TAKE_PROFIT (routed by pl_anchor) or a legacy PRICE_STOP.
     if leg.pl_anchor is not None:
@@ -359,6 +355,46 @@ def _leg_should_fire(
             position=position, leg=leg, spot=spot, now=now, risk_free_rate=risk_free_rate
         )
     return evaluate_price_based_trigger(position=position, leg=leg, spot=spot)
+
+
+def _evaluate_non_directional_mark(
+    *,
+    position: PositionRecord,
+    leg: BracketLeg,
+    spot: float,
+    now: datetime,
+    risk_free_rate: float,
+) -> bool:
+    """Evaluate a non-directional stop's absolute option-mark / net-mark trigger.
+
+    Selects the evaluator by the leg's ``trigger_signal`` (ALP-861 A-F5):
+    ``OPTION_PRICE`` → the single-option derived-mark evaluator; ``NET_MARK`` →
+    the strategy net-mark evaluator. Each fires when its mark crosses the leg's
+    ``threshold_usd`` (carried from ``condition.trigger_price``) per the
+    comparator — no ``pl_anchor`` involved.
+
+    A :class:`ValueError` (a pre-fill state — a skeleton position whose greeks
+    are not yet seeded, so ``iv_used`` is unset) is caught, logged, and treated
+    as not-fired so the loop keeps evaluating other legs — the same per-leg
+    resilience the pct-of-PnL path uses. A :class:`TypeError` (a genuine shape
+    mismatch — a ``NET_MARK`` stop on a single option or an ``OPTION_PRICE`` stop
+    on a strategy) is NOT caught: it surfaces the mis-route rather than masking it.
+    """
+    try:
+        if leg.trigger_signal is TriggerSignal.NET_MARK:
+            return evaluate_strategy_net_mark_trigger(
+                position=position, leg=leg, spot=spot, risk_free_rate=risk_free_rate, as_of=now
+            )
+        return evaluate_option_mark_trigger(
+            position=position, leg=leg, spot=spot, risk_free_rate=risk_free_rate, as_of=now
+        )
+    except ValueError:
+        log.exception(
+            "bracket_stops: non-directional mark evaluation skipped for leg %s on position %s",
+            leg.leg_id,
+            position.position_id,
+        )
+        return False
 
 
 def _evaluate_pl_target_trigger(
