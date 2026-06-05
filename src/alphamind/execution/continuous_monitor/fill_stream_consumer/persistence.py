@@ -55,7 +55,11 @@ from alphamind.execution.write_paths.unattributed_fill_persistence import (
     mark_unattributed_fill_alerted,
 )
 from alphamind.state.records import FillRecord, UnattributedFill
-from alphamind.state.records_broker_event_log import BrokerEventRecord, BrokerEventType
+from alphamind.state.records_broker_event_log import (
+    BrokerEventRecord,
+    BrokerEventType,
+    serialize_event_payload,
+)
 from alphamind.state.tables.invocations import InvocationRow
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.positions import PositionRow
@@ -265,7 +269,11 @@ def _fill_event_record(
         thesis_id=attribution.thesis_id,
         invocation_id=attribution.invocation_id,
         position_id=attribution.position_id,
-        raw_payload_json=report.model_dump_json(),
+        # F1 — encode like the other three event producers (account-activities,
+        # corporate-actions, terminal order status): the canonical sort_keys +
+        # default=str serializer, so FILL rows are byte-consistent with the rest
+        # of the log. No correctness change — event_key is tuple-derived.
+        raw_payload_json=serialize_event_payload(report.model_dump(mode="json")),
         broker_timestamp=report.fill_timestamp,
         captured_at=datetime.now(UTC),
     )
