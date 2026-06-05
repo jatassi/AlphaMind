@@ -270,10 +270,13 @@ async def handle_assignment_or_exercise(handle: InvocationHandle, event: Lifecyc
     )
     # The paired OPTRD is the second event-log row (the priced equity leg). It
     # carries the SAME resolved thesis/position link as the OPASN/OPEXC row, plus
-    # the opened-equity cost basis (qty x strike) AND the equity share count so
-    # the derivation opens the equity lot at the strike (avg cost = basis / qty)
-    # — a later equity sell then closes it and the basis releases — without
-    # double-counting the option PnL.
+    # the opened-equity cost basis (qty x strike), the equity share count, AND the
+    # equity delivery direction (``equity_side`` — the broker's buy/sell) so the
+    # derivation opens the equity lot at the strike on the SIGNED side: a long
+    # delivery (+N) a later sell closes, a short-call assignment (-N) a later
+    # buy-to-cover closes. Without the side the fold always opened +N and a short
+    # cover mis-classified as opening (no realized PnL). The option PnL is not
+    # double-counted (it rides the OPASN/OPEXC row as -premium).
     await _append_lifecycle_event(
         handle,
         event_key=event_key_for(event.paired_trade.activity_id),
@@ -285,6 +288,7 @@ async def handle_assignment_or_exercise(handle: InvocationHandle, event: Lifecyc
             "equity_symbol": event.paired_trade.equity_symbol,
             "cost_basis_delta_usd": str(_equity_cost_basis(result)),
             "equity_qty": event.paired_trade.qty,
+            "equity_side": event.paired_trade.side,
         },
         broker_timestamp=event.transaction_time,
     )

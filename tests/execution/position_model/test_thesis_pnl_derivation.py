@@ -34,6 +34,7 @@ def _lifecycle_event(
     cost_basis_delta_usd: str | None = None,
     closed_contract_qty: float | None = None,
     equity_qty: float | None = None,
+    equity_side: str | None = None,
     at_seconds: int = 0,
 ) -> BrokerEventRecord:
     payload: dict[str, object] = {"activity_id": event_key}
@@ -45,6 +46,8 @@ def _lifecycle_event(
         payload["closed_contract_qty"] = closed_contract_qty
     if equity_qty is not None:
         payload["equity_qty"] = equity_qty
+    if equity_side is not None:
+        payload["equity_side"] = equity_side
     return BrokerEventRecord(
         event_key=event_key,
         event_type=event_type,
@@ -457,6 +460,70 @@ def test_assigned_equity_fully_sold_clears_cost_basis() -> None:
     derivation = derive_thesis_pnl(_THESIS, events)
 
     assert derivation.realized_pnl_usd == signed_money("3750.00")  # -1250 + 5000
+    assert derivation.cost_basis_usd == money("0")
+
+
+def test_short_call_assignment_opens_short_lot_and_books_pnl_on_cover() -> None:
+    """P4: a short-call assignment opens a SHORT equity lot; a later cover realizes PnL.
+
+    On a short-call assignment the trader delivers shares short — the OPTRD prices
+    the equity leg with ``equity_side="sell"`` (a short delivery). The fold must
+    open a -500 lot at the strike, NOT a +500 long. A later buy-to-cover FILL is
+    then opposite-sign and closes the short, realizing PnL. With the wrong-sign
+    (long) lot the cover would be same-sign — mis-classified as opening — and book
+    NO realized PnL while phantom basis grew.
+    """
+    events = (
+        _lifecycle_event(
+            event_key="activity:asn-1",
+            event_type=BrokerEventType.OPASN,
+            realized_pnl_delta_usd="-1250.00",
+            closed_contract_qty=5.0,
+        ),
+        # Short delivery: 500 shares short at strike 150 → -500 lot, basis 75000.
+        _lifecycle_event(
+            event_key="activity:trd-1",
+            event_type=BrokerEventType.OPTRD,
+            cost_basis_delta_usd="75000.00",
+            equity_qty=500.0,
+            equity_side="sell",
+            at_seconds=1,
+        ),
+        # Buy-to-cover 500 @ 140 → short close realizes (150-140)*500 = +5000.
+        _fill_event(
+            event_key="eq-cover", side="buy", fill_price=140.0, fill_quantity=500.0, at_seconds=60
+        ),
+    )
+
+    derivation = derive_thesis_pnl(_THESIS, events)
+
+    assert derivation.realized_pnl_usd == signed_money("3750.00")  # -1250 + 5000
+    assert derivation.cost_basis_usd == money("0")
+
+
+def test_long_assignment_optrd_without_side_still_opens_long_lot() -> None:
+    """P4: an OPTRD with no ``equity_side`` (or a buy side) opens a LONG lot as before.
+
+    The long-assignment path (a long-call exercise delivering shares to hold long)
+    keeps the positive-qty behavior: a later equity sell closes it.
+    """
+    events = (
+        _lifecycle_event(
+            event_key="activity:trd-1",
+            event_type=BrokerEventType.OPTRD,
+            cost_basis_delta_usd="75000.00",
+            equity_qty=500.0,
+            equity_side="buy",
+        ),
+        _fill_event(
+            event_key="eq-sell", side="sell", fill_price=160.0, fill_quantity=500.0, at_seconds=60
+        ),
+    )
+
+    derivation = derive_thesis_pnl(_THESIS, events)
+
+    # Long close: (160-150)*500 = +5000.
+    assert derivation.realized_pnl_usd == signed_money("5000.00")
     assert derivation.cost_basis_usd == money("0")
 
 
