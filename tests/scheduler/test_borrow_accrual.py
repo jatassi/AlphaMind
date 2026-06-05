@@ -37,7 +37,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     PositionStatus,
 )
-from alphamind.scheduler.borrow_accrual import run_borrow_accrual
+from alphamind.scheduler.borrow_accrual import _already_accrued_today, run_borrow_accrual
 from alphamind.state.invocation_context.activity_log import activity_log_entry_from_row
 from alphamind.state.invocation_context.context import InvocationHandle
 from alphamind.state.invocation_context.records import (
@@ -349,3 +349,83 @@ class TestOncePerTradingDayGuard:
             d.accrual_date for d in details if isinstance(d, BorrowCostAccruedDetail)
         )
         assert accrual_dates == [date(2026, 5, 27), date(2026, 5, 28)]
+
+
+class TestAlreadyAccruedTodayGuardRobustness:
+    """BA2: verify the idempotency guard uses structured json_extract, not LIKE.
+
+    The integration tests above cover the normal (Pydantic-compact) path.  This
+    class tests the guard's raw SQL robustness: inserting a row with a
+    whitespace-varied ``detail_json`` (``"accrual_date": "…"`` with a space
+    after the colon) must still be detected.  This is impossible to exercise
+    through ``run_borrow_accrual`` because Pydantic always emits compact JSON;
+    we therefore call ``_already_accrued_today`` directly against a raw row.
+    """
+
+    async def test_guard_detects_standard_compact_serialization(
+        self, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """Guard returns True for a row whose detail_json uses compact JSON."""
+        await _seed_parents(async_factory)
+        async with async_factory() as sess:
+            sess.add(
+                ActivityLogRow(
+                    entry_id="entry-compact",
+                    invocation_id=_INVOCATION_ID,
+                    entry_at="2026-05-27T20:00:00Z",
+                    event_type=EventType.BORROW_COST_ACCRUED.value,
+                    event_group="CASH_AND_MARGIN",
+                    source="BORROW_ACCRUAL_MONITOR",
+                    detail_json='{"accrued_amount_usd":1.37,"cumulative_accrued_usd":1.37,"annual_fee_pct_used":10.0,"notional_usd_used":5000.0,"accrual_date":"2026-05-27"}',
+                )
+            )
+            await sess.commit()
+
+        async with async_factory() as sess:
+            result = await _already_accrued_today(sess, accrual_date_iso="2026-05-27")
+
+        assert result is True
+
+    async def test_guard_detects_spaced_serialization(
+        self, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """Guard returns True even when detail_json has a space after the colon.
+
+        A LIKE-based guard (``'%"accrual_date":"…"%'``) would miss this row —
+        the structural json_extract query must not.
+        """
+        await _seed_parents(async_factory)
+        async with async_factory() as sess:
+            sess.add(
+                ActivityLogRow(
+                    entry_id="entry-spaced",
+                    invocation_id=_INVOCATION_ID,
+                    entry_at="2026-05-27T20:00:00Z",
+                    event_type=EventType.BORROW_COST_ACCRUED.value,
+                    event_group="CASH_AND_MARGIN",
+                    source="BORROW_ACCRUAL_MONITOR",
+                    # Deliberately spaced: "accrual_date": "2026-05-27" (space after colon)
+                    detail_json=(
+                        '{"accrued_amount_usd": 1.37, "cumulative_accrued_usd": 1.37,'
+                        ' "annual_fee_pct_used": 10.0, "notional_usd_used": 5000.0,'
+                        ' "accrual_date": "2026-05-27"}'
+                    ),
+                )
+            )
+            await sess.commit()
+
+        async with async_factory() as sess:
+            result = await _already_accrued_today(sess, accrual_date_iso="2026-05-27")
+
+        assert result is True
+
+    async def test_guard_returns_false_when_no_matching_row(
+        self, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """Guard returns False when no BORROW_COST_ACCRUED row exists for the date."""
+        await _seed_parents(async_factory)
+
+        async with async_factory() as sess:
+            result = await _already_accrued_today(sess, accrual_date_iso="2026-05-27")
+
+        assert result is False
