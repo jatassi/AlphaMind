@@ -80,7 +80,11 @@ class FillReport(BaseModel):
     fill_timestamp: datetime
     fill_price: float | None
     fill_quantity: float | None
-    cumulative_filled_quantity: float
+    # ``None`` means the broker reported NO cumulative (``Order.filled_qty`` was
+    # null), which is unknown-not-zero — distinct from a reported ``0.0`` (FS3).
+    # The zero-fill terminal guard treats a ``None`` cumulative as unknown and
+    # declines to project a no-fill terminal over an order that may have partials.
+    cumulative_filled_quantity: float | None
     remaining_quantity: float
     execution_venue: str | None
     occ_symbol: OccSymbol | None
@@ -259,16 +263,43 @@ def _extract_fill_metrics(update: TradeUpdate) -> tuple[float | None, float | No
     return update.price, update.qty
 
 
-def _compute_quantities(order: Order) -> tuple[float, float]:
+def _compute_quantities(order: Order) -> tuple[float | None, float]:
     """Return ``(cumulative_filled, remaining)`` from *order*'s alpaca-py fields.
 
     ``Order.qty`` and ``Order.filled_qty`` may arrive as ``str`` or ``float``
-    per alpaca-py's loose schema; we coerce to ``float`` and treat missing
-    values as zero so the OMS-facing record always has finite numbers.
+    per alpaca-py's loose schema; we coerce ``qty`` to ``float`` (treating a
+    missing total as zero) so ``remaining`` is always finite.
+
+    ``filled_qty`` is carried as ``Optional`` (FS3): a ``None`` from the broker
+    means it reported NO cumulative — unknown, distinct from a reported ``0.0`` —
+    and is preserved as ``None`` so the zero-fill terminal guard does not mistake
+    an order that may have partials for a no-fill terminal. ``remaining`` falls
+    back to the full ``total`` when the cumulative is unknown.
     """
-    cumulative = _coerce_float(order.filled_qty)
+    cumulative = _coerce_optional_float(order.filled_qty)
     total = _coerce_float(order.qty)
-    return cumulative, max(total - cumulative, 0.0)
+    known_filled = cumulative if cumulative is not None else 0.0
+    return cumulative, max(total - known_filled, 0.0)
+
+
+def _coerce_optional_float(value: object) -> float | None:
+    """Coerce alpaca-py's loose ``str | float | None`` to ``float``, preserving ``None``.
+
+    Unlike :func:`_coerce_float`, a ``None`` input stays ``None`` (the broker
+    reported nothing) rather than collapsing to ``0.0`` — the unknown-not-zero
+    distinction FS3 relies on. An unparseable string is still ``None`` (a
+    malformed payload is unknown, not zero).
+    """
+    if value is None:
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
 
 
 def _coerce_float(value: object) -> float:

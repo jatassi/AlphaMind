@@ -438,16 +438,24 @@ async def _sync_terminal_status_if_any(
     the log by the single (pipeline) writer (04a). Own short-lived transaction,
     mirroring the per-fill write.
 
-    Scoped to **zero-fill** terminals (``cumulative_filled_quantity == 0``): a
-    partially-filled-then-terminal order is left to the fill path + Phase 1,
+    Scoped to **known zero-fill** terminals (``cumulative_filled_quantity == 0``):
+    a partially-filled-then-terminal order is left to the fill path + Phase 1,
     which own ``filled_quantity`` and integrate the partials. The no-fill case is
     the one the fill path does not cover, so it is the only one this path owns
     (the ALP-739 zero-fill scoping, preserved).
+
+    A ``None`` cumulative is unknown-not-zero (FS3): the broker reported no
+    ``filled_qty``, so this path cannot prove the order is no-fill — a
+    partially-filled-then-canceled order can arrive with a ``None`` cumulative,
+    and projecting a no-fill terminal over it would mis-fire ``entry_no_fill`` /
+    retire an order that had partials. So the append is skipped for an unknown
+    cumulative too; the fill path owns it.
     """
     terminal_status = terminal_order_status_for(report)
     if terminal_status is None:
         return
-    if report.cumulative_filled_quantity > 0:
+    cumulative = report.cumulative_filled_quantity
+    if cumulative is None or cumulative > 0:
         return
     async with session_factory() as db:
         attribution = await _resolve_terminal_attribution(db, report)

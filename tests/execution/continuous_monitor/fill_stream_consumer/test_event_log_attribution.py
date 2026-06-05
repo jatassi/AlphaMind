@@ -527,6 +527,48 @@ class TestTerminalStatusEvent:
 
         assert await _read_event_log(session_factory) == []
 
+    async def test_none_cumulative_terminal_is_not_treated_as_zero_fill(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A canceled event whose broker ``filled_qty`` is ``None`` (broker
+        reported nothing, not 0) must NOT append a zero-fill terminal event.
+
+        A partially-filled-then-canceled order can arrive with a ``None``
+        cumulative; defaulting that to ``0.0`` would let it pass the zero-fill
+        terminal guard and mis-project a no-fill terminal over an order that had
+        partials. ``None`` is unknown-not-zero, so the fill path + Phase 1 own
+        it and this path skips (FS3)."""
+        unknown_cumulative = TradeUpdate(
+            event="canceled",
+            order=Order(
+                id=uuid4(),
+                client_order_id=_PM_LINKED_COMMAND_ID,
+                created_at=_now_utc(),
+                updated_at=_now_utc(),
+                submitted_at=_now_utc(),
+                symbol="AAPL",
+                asset_class=AssetClass.US_EQUITY,
+                order_class=OrderClass.SIMPLE,
+                order_type=OrderType.LIMIT,
+                type=OrderType.LIMIT,
+                side=OrderSide.BUY,
+                time_in_force=TimeInForce.DAY,
+                status=AlpacaOrderStatus.CANCELED,
+                extended_hours=False,
+                qty="10",
+                filled_qty=None,
+            ),
+            timestamp=_now_utc(),
+            price=None,
+            qty=None,
+        )
+        (report,) = translate_trade_update(unknown_cumulative)
+        assert report.cumulative_filled_quantity is None
+
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
+
+        assert await _read_event_log(session_factory) == []
+
     async def test_redelivered_terminal_event_collapses_to_one_row(
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
