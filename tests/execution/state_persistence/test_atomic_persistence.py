@@ -569,6 +569,128 @@ async def test_abandon_missing_precommit_is_noop(
     assert await _read_order_by_client_order_id(factory, "inv-X.ENV-SA-8.0.0") is None
 
 
+# ---------------------------------------------------------------------------
+# FL9 — _precommit_capital_floor raises when floor OrderRow is missing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_precommit_capital_floor_raises_when_floor_row_missing(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """FL9 — _precommit_capital_floor must raise (not silently return) when the
+    floor OrderRow is absent at stamp time.
+
+    A missing floor row at precommit is a real bug (flush ordering or missing
+    _writeback_open step) — silently skipping it leaves the floor permanently
+    unstamped with no signal. The correct behaviour is to surface a RuntimeError
+    immediately so the anomaly is caught before the transaction commits.
+    """
+    from alphamind.execution.write_paths.phase2.atomic import _precommit_capital_floor
+
+    _, factory = db
+    await _seed_invocation_substrate(factory, invocation_id=_INV)
+    cmd = _options_open()
+    cid = _open_cid("ENV-SA-20")
+    # Open a session WITHOUT running _writeback_open — the floor OrderRow is absent.
+    async with factory() as session:
+        with pytest.raises(RuntimeError, match="floor OrderRow"):
+            await _precommit_capital_floor(session, cmd, command_id=cid)
+
+
+# ---------------------------------------------------------------------------
+# FL8 — precommit replay stamps floor when entry committed but floor not yet stamped
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_precommit_replay_stamps_floor_when_entry_committed_but_floor_unstamped(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """FL8 — on a replay where the entry row is already committed but the floor
+    was not yet stamped PENDING_SUBMIT, precommit_command must still stamp the
+    floor before returning True.
+
+    The idempotency short-circuit fires because the entry client_order_id row
+    exists; the fix is that it must still run _precommit_capital_floor (idempotent
+    if already stamped) before returning True so the floor is never skipped.
+    """
+    from alphamind.execution.write_paths.phase2.open import _capital_floor_order_id
+
+    _, factory = db
+    await _seed_invocation_substrate(factory, invocation_id=_INV)
+    await _seed_cash_ledger(factory)
+    cmd = _options_open()
+    cid = _open_cid("ENV-SA-21")
+    result = _options_open_result(cid)
+
+    # First call — full precommit including floor stamp.
+    assert await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
+
+    # Simulate the case where the floor stamp was lost: reset the floor row back
+    # to SUBMITTED (no PENDING_SUBMIT, no client_order_id) to represent a partial
+    # commit where only the entry row landed.
+    floor_order_id = _capital_floor_order_id(cid)
+    async with factory() as sess:
+        await sess.begin()
+        floor_row = await sess.get(OrderRow, floor_order_id)
+        assert floor_row is not None
+        floor_row.status = OrderStatus.PENDING.value  # reset: pretend floor stamp was lost
+        floor_row.client_order_id = None
+        await sess.commit()
+
+    # Replay — entry row exists so the idempotency guard fires.
+    # The floor must still be re-stamped PENDING_SUBMIT before returning True.
+    landed = await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
+    assert landed is True
+
+    floor_row_after = await _read_order_by_order_id(factory, floor_order_id)
+    assert floor_row_after is not None
+    assert floor_row_after.status == OrderStatus.PENDING_SUBMIT.value, (
+        "floor must be stamped PENDING_SUBMIT on replay even when entry row already exists"
+    )
+
+
+# ---------------------------------------------------------------------------
+# FL5 — backfill raises when options OPEN dispatch result omits capital_floor id
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_backfill_raises_when_options_open_result_missing_floor_id(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """FL5 — backfill_command_broker_ids must raise when the dispatch result for
+    an options OPEN omits the 'capital_floor' key from leg_alpaca_order_ids.
+
+    A malformed/empty dispatch result that omits 'capital_floor' while the floor
+    OrderRow exists would silently leave the floor in PENDING_SUBMIT with NULL
+    alpaca_order_id — live at broker but un-cancellable.  The fix asserts/raises
+    so the anomaly surfaces immediately rather than leaving a silent strand.
+    """
+    _, factory = db
+    await _seed_invocation_substrate(factory, invocation_id=_INV)
+    await _seed_cash_ledger(factory)
+    cmd = _options_open()
+    cid = _open_cid("ENV-SA-22")
+    result = _options_open_result(cid)
+    await precommit_command(factory, invocation_id=_INV, command=cmd, result=result)
+
+    # Dispatch result for an options OPEN but 'capital_floor' key is absent.
+    with pytest.raises(RuntimeError, match="capital_floor"):
+        await backfill_command_broker_ids(
+            factory,
+            command=cmd,
+            result=result,
+            dispatch_result=_dispatch_result(
+                "entry-uuid",
+                # 'capital_floor' key deliberately omitted — this is the malformed case.
+                leg_alpaca_order_ids={"take_profit": "tp-uuid"},
+                payload_kind="options",
+            ),
+        )
+
+
 def test_dispatched_order_id_is_none_for_cancel() -> None:
     from alphamind._kernel.ids import OrderId
     from alphamind.commands.command_models import CancelCommand
