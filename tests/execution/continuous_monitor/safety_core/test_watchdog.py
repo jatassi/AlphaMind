@@ -105,3 +105,69 @@ async def test_missing_heartbeat_is_startup_grace_not_restart() -> None:
     )
 
     assert controller.restart_calls == 0
+
+
+class _SteppingClock:
+    """Wall clock that advances a fixed step on each read (one read per tick)."""
+
+    def __init__(self, *, start: float, step: float) -> None:
+        self._t = start
+        self._step = step
+
+    def __call__(self) -> float:
+        now = self._t
+        self._t += self._step
+        return now
+
+
+@pytest.mark.asyncio
+async def test_restart_storm_suppressed_within_cooldown_window() -> None:
+    """A heartbeat that stays stale across several ticks fires EXACTLY ONE restart.
+
+    After a restart, NSSM must stop/relaunch the core and the core must write its
+    first fresh heartbeat. During that whole window the file still holds the OLD
+    stale timestamp, so a naive watchdog re-issues ``restart`` every tick — a
+    storm that can interrupt the in-progress restart. The cooldown suppresses
+    further restarts for ~``stall_bound`` seconds after one fires.
+    """
+    probe = _FakeProbe(ages=[120.0, 120.0, 120.0, 120.0])  # still stale every tick
+    controller = _FakeController()
+    # 5s between ticks; stall bound 60s → all four ticks fall inside the cooldown
+    # window that opens at the first restart.
+    clock = _SteppingClock(start=1000.0, step=5.0)
+
+    await run_watchdog(
+        probe=probe,
+        controller=controller,
+        stall_bound_seconds=60.0,
+        loop=_bounded_loop(4),
+        now=clock,
+    )
+
+    assert controller.restart_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_second_restart_allowed_after_cooldown_elapses() -> None:
+    """Still stale after the cooldown window → a second restart is allowed.
+
+    The cooldown is a grace window for the core to relaunch + beat, not a
+    permanent mute: if the heartbeat is still stale once ~``stall_bound`` seconds
+    have passed, the core failed to recover and the watchdog restarts again.
+    """
+    probe = _FakeProbe(ages=[120.0, 120.0, 120.0])
+    controller = _FakeController()
+    # 40s between ticks: tick0 restarts at t=1000 (cooldown until 1060); tick1 at
+    # t=1040 is suppressed (inside cooldown); tick2 at t=1080 is past the cooldown
+    # and still stale → a second restart.
+    clock = _SteppingClock(start=1000.0, step=40.0)
+
+    await run_watchdog(
+        probe=probe,
+        controller=controller,
+        stall_bound_seconds=60.0,
+        loop=_bounded_loop(3),
+        now=clock,
+    )
+
+    assert controller.restart_calls == 2

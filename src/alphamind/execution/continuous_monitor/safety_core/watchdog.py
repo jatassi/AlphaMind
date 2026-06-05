@@ -66,23 +66,40 @@ async def run_watchdog(
     than ``stall_bound_seconds`` means the core has wedged: log loudly and ask
     the controller to restart it.
 
+    A restart is **debounced** for ``stall_bound_seconds`` after it fires. After
+    a restart, NSSM must stop/relaunch the core and the core must write its first
+    fresh heartbeat; during that whole window the file still holds the OLD stale
+    timestamp, so without a cooldown the watchdog would re-issue ``restart`` every
+    tick — a storm that can interrupt the in-progress relaunch. The cooldown is a
+    grace window for the core to recover, not a permanent mute: if the heartbeat
+    is still stale once the window elapses, the relaunch failed and a fresh
+    restart is issued.
+
     ``now`` defaults to a wall-clock epoch (``datetime.now(UTC).timestamp()``) so
     it compares against the heartbeat's wall-clock timestamp across the process
     boundary; tests inject a deterministic source.
     """
     clock = now or (lambda: datetime.now(UTC).timestamp())
+    last_restart_at: float | None = None
     async for _ in loop():
-        age = probe.age(now=clock())
+        tick_at = clock()
+        age = probe.age(now=tick_at)
         if age is None:
             continue
-        if age > stall_bound_seconds:
-            log.critical(
-                "safety-core watchdog: heartbeat stale (%.0fs > bound %.0fs) — "
-                "restarting the safety-core process",
-                age,
-                stall_bound_seconds,
-            )
-            controller.restart()
+        if age <= stall_bound_seconds:
+            continue
+        if last_restart_at is not None and tick_at - last_restart_at <= stall_bound_seconds:
+            # Inside the cooldown window — the prior restart is still relaunching
+            # the core (which has not yet written a fresh beat); suppress.
+            continue
+        log.critical(
+            "safety-core watchdog: heartbeat stale (%.0fs > bound %.0fs) — "
+            "restarting the safety-core process",
+            age,
+            stall_bound_seconds,
+        )
+        controller.restart()
+        last_restart_at = tick_at
 
 
 def supervised_watchdog_loop(cadence_seconds: float) -> WatchdogLoop:
