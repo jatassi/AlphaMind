@@ -43,6 +43,7 @@ from alphamind.execution.write_paths.phase2._shared import (
     _position_quantity,
 )
 from alphamind.execution.write_paths.phase2.close import _close_order_id
+from alphamind.persistence.retry import run_with_sqlite_busy_retry
 from alphamind.persistence.session import begin_write_immediate
 from alphamind.portfolio_state.records.orders import (
     OrderClass,
@@ -77,17 +78,21 @@ async def precommit_monitor_close_order(
     pre-committed it, so this is a no-op.
     """
     order_id = _close_order_id(position.position_id, client_order_id)
-    async with session_factory() as session:
-        await begin_write_immediate(session)
-        existing = (
-            await session.execute(
-                select(OrderRow.order_id).where(OrderRow.client_order_id == client_order_id)
-            )
-        ).scalar_one_or_none()
-        if existing is not None:
-            return
-        session.add(_build_monitor_close_order_row(position, order_id, client_order_id))
-        await session.commit()
+
+    async def _write() -> None:
+        async with session_factory() as session:
+            await begin_write_immediate(session)
+            existing = (
+                await session.execute(
+                    select(OrderRow.order_id).where(OrderRow.client_order_id == client_order_id)
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                return
+            session.add(_build_monitor_close_order_row(position, order_id, client_order_id))
+            await session.commit()
+
+    await run_with_sqlite_busy_retry(_write)
     logger.debug(
         "bracket_stops: pre-committed durable close order %s (client_order_id=%s) for position %s",
         order_id,
@@ -106,10 +111,19 @@ def _build_monitor_close_order_row(
         if isinstance(position.details, StrategyPositionDetails)
         else OrderClass.SIMPLE
     )
+    if position.bracket_id is None:
+        msg = (
+            f"Cannot build monitor close order for position {position.position_id!r}: "
+            "bracket_id is None.  A monitor-fired close always fires because a "
+            "protective bracket leg fired, so every live monitor-close position must "
+            "carry a real bracket_id.  Inserting an empty string would cause a "
+            "deferred FK violation at commit (brackets.bracket_id='')."
+        )
+        raise ValueError(msg)
     record = _build_pending_order(
         order_id=order_id,
         position_id=position.position_id,
-        bracket_id=position.bracket_id or "",
+        bracket_id=position.bracket_id,
         role=OrderRole.CLOSE,
         order_class=order_class,
         direction=_close_order_direction_for_position(position),
