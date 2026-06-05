@@ -1,8 +1,13 @@
-"""Read-only Alpaca <-> local-state reconciliation (prod ops investigation).
+"""Read-only broker-vs-Projection diff (prod ops inspection tool).
 
-Compares the live Alpaca paper account (positions / orders / cash) against the
-local SQLite portfolio state, and prints a divergence report. Read-only: it
-never mutates Alpaca or the DB.
+Compares the live Alpaca paper account — the System of Record (positions /
+orders / cash) — against the local SQLite **Projection** of those Broker-Owned
+Facts, and prints a divergence report. **Read-only, an inspection tool, never an
+adjudicator** (ADR-0001, decision D): it never mutates Alpaca or the DB. A
+mismatch is resolved by the in-pipeline projection rebuild (W2a /
+``write_paths/projection_rebuild.py``), which folds the broker-event log onto the
+live snapshot — this script only surfaces the diff for an operator, it does not
+write Alpaca's value back.
 
 Run from the repo root:
     set -a && source <(tr -d '\r' < .env) && set +a && \

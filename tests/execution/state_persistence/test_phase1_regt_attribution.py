@@ -586,12 +586,14 @@ async def test_phase1_summary_unchanged(
     # ``reconciliation_alerts`` may be non-zero because no Alpaca snapshot was
     # passed; what matters here is the field still exists and is an int.
     assert isinstance(summary.reconciliation_alerts, int)
-    # No additional fields snuck in via the wedge.
+    # No additional fields snuck in via the Reg-T wedge. ``projection_rebuild``
+    # is the W2a projection-rebuild return surface (ALP-854), not the wedge.
     assert {f.name for f in summary.__dataclass_fields__.values()} == {
         "fills_processed",
         "fills_quarantined",
         "ca_activities_processed",
         "reconciliation_alerts",
+        "projection_rebuild",
     }
 
 

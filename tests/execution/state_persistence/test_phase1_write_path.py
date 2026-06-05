@@ -1949,11 +1949,14 @@ def _alpaca_equity_snapshot(*, symbol: str = "AAPL", qty: float = 10.0) -> Posit
     )
 
 
-async def test_summary_carries_reconciliation_alert_count(
+async def test_snapshot_mismatch_rebuilds_without_alert_or_correction(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """``Phase1Summary`` exposes ``reconciliation_alerts`` and the count reflects
-    one ``RECONCILIATION_ALERT`` per unexplained delta."""
+    """ALP-854 / W2a AC1 — a snapshot/projection quantity (and cash) mismatch
+    triggers a projection *rebuild*, never the deleted ``reconcile()``
+    adjudication: NO ``RECONCILIATION_ALERT`` / ``RECONCILIATION_CORRECTION`` row
+    is inserted, the local ``share_count`` is left as the event-log-derived value
+    (not auto-corrected to Alpaca's), and ``reconciliation_alerts`` stays 0."""
     from alphamind.execution.write_paths.phase1 import (
         process_unprocessed_fills,
     )
@@ -1974,8 +1977,9 @@ async def test_summary_carries_reconciliation_alert_count(
     summary = await process_unprocessed_fills(
         handle,
         ca_activities=(),
-        # 10 shares local vs 9 shares Alpaca produces one position-delta alert;
-        # cash mismatch produces a second.
+        # 10 shares local vs 9 shares Alpaca, plus a cash mismatch: the old
+        # adjudication would have emitted an alert + correction and zeroed the
+        # local share_count toward Alpaca. The rebuild does neither.
         alpaca_positions=(_alpaca_equity_snapshot(qty=9.0),),
         alpaca_account=_alpaca_account_snapshot(cash=50_000.0),
         market_inputs=_make_market_inputs(),
@@ -1983,7 +1987,35 @@ async def test_summary_carries_reconciliation_alert_count(
     )
     await ctx.__aexit__(None, None, None)
 
-    assert summary.reconciliation_alerts == 2
+    # No reconcile-adjudication alerts contributed to the count.
+    assert summary.reconciliation_alerts == 0
+
+    async with factory() as sess:
+        recon_rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type.in_(
+                            (
+                                EventType.RECONCILIATION_ALERT.value,
+                                EventType.RECONCILIATION_CORRECTION.value,
+                            )
+                        )
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert recon_rows == []
+        # The local projection is NOT auto-corrected toward Alpaca's 9 — the
+        # "Alpaca wins" writeback is deleted (ADR-0001).
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert isinstance(pos.details, EquityPositionDetails)
+        assert pos.details.share_count == pytest.approx(10.0)
 
 
 async def test_fill_before_ca_reflects_pre_action_quantity_at_fill(

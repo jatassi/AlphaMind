@@ -72,7 +72,7 @@ class LifecycleEvent(BaseModel):
 
     ``occ_symbol`` is the bare OCC contract symbol Alpaca keys the activity by
     (e.g. ``"AAPL250918C00150000"``) — the same form
-    :func:`alphamind.execution.corporate_actions.reconciliation._alpaca_occ_symbol`
+    :func:`alphamind.portfolio_state.records.positions.alpaca_occ_symbol`
     builds from a local options position, so the handler can match the event to
     the open option position. ``paired_trade`` is the ``OPTRD`` leg for an
     assignment / exercise; ``None`` for an expiry (and for an ``OPTRD`` that
