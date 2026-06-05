@@ -3,9 +3,21 @@
 Story 06 of the broker-boundary redesign. The genesis-cutover runbook §8 lists
 the assertions that must hold on a **fresh, flat account** after the very first
 pipeline invocation and a single canary trade. This module makes that checklist
-*runnable* so the cutover (story 08) is gated by code, not by a human reading a
-list — it is broker-boundary-redesign **invariant 6** ("genesis is clean") in
-executable form.
+*runnable* — a self-contained **wiring smoke test** for the redesign's
+broker-boundary machinery — so the cutover prep (story 08, operator-executed) is
+backed by code, not by a human reading a list. It is broker-boundary-redesign
+**invariant 6** ("genesis is clean") in executable form.
+
+**Scope — read before pointing it at a real DB.** Every assertion keys off the
+HARDCODED synthetic :data:`GENESIS_CANARY` identity (a fixed AAPL canary with
+fixed command-id / ``pos-genesis-canary``). The ephemeral mode (no ``--db-path``)
+seeds exactly that canary and asserts against it — that is the authoritative,
+self-contained smoke. The ``--db-path`` branch runs the SAME canary-keyed
+assertions with **no seeding**, so it only validates a DB that was itself seeded
+with this exact synthetic canary. It is NOT a real-DB cutover gate: a live
+post-genesis DB has different ids and would FAIL these synthetic-keyed assertions
+on a perfectly correct genesis. Validating an arbitrary real genesis is out of
+scope (story 08 is operator-executed).
 
 What it asserts (genesis-cutover runbook §8):
 
@@ -856,7 +868,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--db-path",
         type=str,
         default=None,
-        help="SQLite DB path; omit to run the assertions against an ephemeral in-memory genesis.",
+        help=(
+            "SQLite DB path that was seeded with the synthetic GENESIS_CANARY; omit to "
+            "run the authoritative self-contained smoke against an ephemeral genesis. "
+            "NOT a real-DB cutover gate — a live genesis has different ids and would "
+            "fail these synthetic-canary-keyed assertions."
+        ),
     )
     args = parser.parse_args(argv)
     import asyncio
@@ -870,9 +887,14 @@ async def run_genesis_verification(db_path: str | None = None) -> bool:
 
     With ``db_path`` omitted the verifier provisions an ephemeral genesis DB
     (flat bootstrap + the synthetic canary, both driven through the production
-    primitives) and asserts against it — the self-contained smoke the operator
-    runs to confirm the redesign's machinery is wired before cutover. With
-    ``db_path`` supplied it asserts against that DB as-is (no seeding).
+    primitives) and asserts against it — the authoritative self-contained smoke
+    the operator runs to confirm the redesign's machinery is wired before cutover.
+
+    With ``db_path`` supplied it runs the SAME synthetic-canary-keyed assertions
+    against that DB **without seeding** — so it only validates a DB that already
+    holds this exact :data:`GENESIS_CANARY` identity. It is NOT a real-DB cutover
+    gate: a live post-genesis DB carries different ids and would fail these
+    assertions on a correct genesis (a one-line notice is printed to that effect).
     """
     if db_path is None:
         import tempfile
@@ -892,6 +914,12 @@ async def run_genesis_verification(db_path: str | None = None) -> bool:
             finally:
                 await async_engine.dispose()
     else:
+        print(
+            f"NOTE: --db-path {db_path!r} runs the synthetic-canary-keyed assertions "
+            "with no seeding. This only validates a DB seeded with the GENESIS_CANARY "
+            "identity (the ephemeral smoke does this for you); it is NOT a real-DB "
+            "cutover gate — a live genesis has different ids and will fail these checks."
+        )
         async_engine = make_async_engine(db_path)
         factory = make_async_session_factory(async_engine)
         try:

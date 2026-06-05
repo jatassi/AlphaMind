@@ -1,9 +1,11 @@
 # Runbook — Genesis verify (`scripts/verify_genesis.py`)
 
-Asserts the [genesis-cutover runbook](../docs/runbooks/genesis-cutover.md) **§8
-first-run genesis checklist** in code, so the cutover (story 08) is gated by a
-green check rather than a human reading a list. This is broker-boundary-redesign
-**invariant 6** ("genesis is clean") made executable — see
+A self-contained **wiring smoke test** that asserts the
+[genesis-cutover runbook](../docs/runbooks/genesis-cutover.md) **§8 first-run
+genesis checklist** in code against a synthetic canary, so the cutover prep (story
+08, operator-executed) is backed by a green check rather than a human reading a
+list. This is broker-boundary-redesign **invariant 6** ("genesis is clean") made
+executable — see
 [the build spec §4 / §5 W5a / §9](../docs/design/05-execution-layer/broker-boundary-redesign.md)
 and [ADR-0001](../docs/adr/0001-broker-facts-are-a-projection-not-a-mirror.md)
 (genesis is clean by construction — nothing to reconcile).
@@ -65,13 +67,23 @@ check's code + message is printed above the result line).
 
 ### Against a specific DB
 
-Asserts against the supplied DB *as-is* (no seeding). Point it at a fresh-genesis
-DB to confirm the by-construction state (e.g. the zero-reconciliation-alert and
-no-synthetic-id assertions read true on the real cutover DB):
+Runs the **same synthetic-canary-keyed assertions** against the supplied DB *with
+no seeding*. Every assertion keys off the hardcoded `GENESIS_CANARY` identity
+(fixed AAPL / command-id / `pos-genesis-canary`), so this only validates a DB that
+was itself seeded with that exact synthetic canary:
 
 ```bash
-uv run python scripts/verify_genesis.py --db-path /path/to/alphamind.db
+uv run python scripts/verify_genesis.py --db-path /path/to/seeded-canary.db
 ```
+
+> ⚠️ **Not a real-DB cutover gate.** A live post-genesis `alphamind.db` carries
+> *real* ids (a different invocation/thesis/position), so the synthetic-canary
+> assertions will **FAIL on a perfectly correct genesis** — the FAIL means "the
+> canary this script keys off isn't in this DB", not "genesis is broken". The
+> script prints a one-line notice to that effect in `--db-path` mode. The
+> **authoritative** check is the ephemeral self-contained smoke above (no
+> `--db-path`); validating an arbitrary real genesis is out of scope (the cutover,
+> story 08, is operator-executed).
 
 > **On the prod box** (Windows): the DB is WAL-mode SQLite and `.env` is **not**
 > auto-sourced. Run scripts that hit vendor APIs only after `source .env` (this
