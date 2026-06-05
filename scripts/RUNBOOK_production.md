@@ -295,8 +295,9 @@ the broker-enforced orders are visible on the Alpaca side.
 - **Alpaca reports any open positions.** The error names the offending
   symbol(s). Reset the Alpaca account first.
 - **`cash_ledger` already has a row.** The error includes the existing
-  `current_cash_usd`. The auto-correct reconciliation path keeps drift on
-  the existing row aligned with Alpaca on every subsequent invocation; a
+  `current_cash_usd`. Positions/cash are a derived **Projection** rebuilt each
+  invocation from the broker-event log applied to the live broker snapshot
+  (ALP-854 / ADR-0001) — there is no auto-correct adjudication; a
   re-bootstrap is never the correct path once the singleton is populated.
 - **`drawdown_state` already has a row.** Same shape, same recovery.
 
@@ -780,8 +781,12 @@ Optional `--since <ISO8601Z>` widens/narrows the discovery window; `--tz-offset
 `ARCHROOT` env vars (prod defaults are baked in).
 
 It emits, as they happen: `PHASE1-COMPLETE` (ingestion + fill-collection summary);
-`ACT …` for every `activity_log` row of the run (ingestion `RECONCILIATION_*` **and**
-all Phase-2 actions — `ORDER_SUBMITTED` / `PM_DECISION` / `CAPITAL_RESERVED` / …);
+`ACT …` for every `activity_log` row of the run. A `RECONCILIATION_ALERT` row now
+means only an **orphan fill** that could not integrate (a poison-pill fill against a
+terminal/over-filled position, ALP-761) — the reconcile-adjudication path is deleted
+(ALP-854 / ADR-0001), so a positions/cash mismatch is silently rebuilt, never alerted.
+The watch also emits all Phase-2 actions (`ORDER_SUBMITTED` / `PM_DECISION` /
+`CAPITAL_RESERVED` / …);
 `DISTILLATION` when `composite_state` is written; `AGENT <layer>/<name> success=…
 wall=… stop=…` per agent (the strategist's line is prefixed `>>> STRATEGIST`);
 `FILLS` on each `unprocessed`→`processed`/`quarantined` transition; `FAULT(log|err)`
@@ -1072,12 +1077,15 @@ These two signals are consistent with the reconciliation-lag note below: if you
 see `"stale/missing underlying price"` after a monitor restart, it is almost
 certainly subscription lag from un-integrated fills, not a dead feed.
 
-#### After a monitor restart — expect a brief reconciliation lag
+#### After a monitor restart — expect a brief projection-rebuild lag
 
 - The startup replay + the 15-min `activities_backfill` re-capture missed
-  fills into `fill_records` as `unprocessed`; the **next Phase-1** integrates
-  them (PENDING→OPEN) and `_reconcile_cash` snaps local cash to Alpaca. Cash
-  drift and position divergence persist only until that Phase-1 runs.
+  fills into the broker-event log (and `fill_records` as `unprocessed`); the
+  **next Phase-1** integrates them (PENDING→OPEN) and the **projection rebuild**
+  (ALP-854) folds the event log onto the live broker snapshot, re-deriving
+  positions/cash. There is no `_reconcile_cash` writeback — the Projection is
+  rebuilt, not adjudicated (ADR-0001). Cash drift and position divergence
+  persist only until that Phase-1 runs.
 - A real open position whose fill hasn't integrated yet may emit the
   `"stale/missing underlying price"` health signal — this is subscription lag,
   **not** a dead price feed (see the two signals above). Confirm the

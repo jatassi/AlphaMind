@@ -746,7 +746,6 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
                 market_inputs=phase1_inputs.market_inputs,
                 config=state_persistence_config,
                 borrow_cost_resolver=borrow_cost_resolver,
-                alpaca_orders=phase1_inputs.alpaca_orders,
             )
             # ALP-846 / W1b — option-lifecycle account-activities poll. A
             # pipeline-cadence task (ADR-0004 evicts it from the always-on

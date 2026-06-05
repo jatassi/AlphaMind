@@ -11,10 +11,10 @@ adapter and writes the two singleton rows so the rest of the pipeline can
 run from cold start. The bootstrap is a one-shot operation gated behind
 ``--fresh-start`` on the scheduler CLI.
 
-The reconciliation auto-correct path (ALP-619) handles drift on *existing*
-``cash_ledger`` rows but explicitly short-circuits when the row is absent
-(``_reconcile_cash`` returns 0 on ``cash_row is None``); ALP-620 fills the
-cold-start gap that ALP-619 leaves open.
+The projection rebuild (ALP-854 / W2a) re-derives positions/cash on *existing*
+state from the broker-event log applied to the live broker snapshot, but a
+cold-start DB has no singleton rows to rebuild onto; ALP-620 fills that
+cold-start gap by writing the initial ``cash_ledger`` / ``drawdown_state`` rows.
 
 Hard-fail preconditions:
 
@@ -26,8 +26,8 @@ Hard-fail preconditions:
   the activity log.
 * ``cash_ledger`` already has a row — a populated row implies a prior
   invocation, and silently overwriting it would clobber the live cash
-  state. The reconciliation auto-correct path handles drift on populated
-  rows.
+  state. The projection rebuild keeps the populated row consistent with the
+  broker thereafter.
 * ``drawdown_state`` already has a row — same logic; an existing HWM row
   must not be silently reset. The two singletons share the same
   ``id='current'`` PK, so the asymmetric-state branch (one populated, the
@@ -194,8 +194,8 @@ async def bootstrap_singletons_from_alpaca(
             f"--fresh-start refuses to run: Alpaca reports {len(positions)} "
             f"open position(s) ({symbols}). The flag is for genuinely-empty "
             "accounts. Reset the Alpaca paper account first, or rely on the "
-            "reconciliation auto-correct path (ALP-619) once the cash_ledger "
-            "singleton is populated by hand."
+            "projection rebuild (ALP-854) once the cash_ledger singleton is "
+            "populated by hand."
         )
         raise FreshStartPreconditionError(msg)
 
@@ -205,8 +205,8 @@ async def bootstrap_singletons_from_alpaca(
             "--fresh-start refuses to run: cash_ledger already initialized "
             f"(current_cash_usd={existing_cash_row.current_cash_usd}). The "
             "flag is for first-run only; a populated cash_ledger row implies "
-            "a prior invocation. Use the reconciliation auto-correct path "
-            "(ALP-619) to reconcile drift instead."
+            "a prior invocation. The projection rebuild (ALP-854) keeps it "
+            "consistent with the broker instead."
         )
         raise FreshStartPreconditionError(msg)
 

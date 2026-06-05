@@ -18,7 +18,7 @@ import dataclasses
 import logging
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -27,15 +27,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind._kernel.money import money, signed_money
 from alphamind.execution.broker_adapter.queries import (
-    OrderSnapshot,
     PositionSnapshot,
     TradeAccountSnapshot,
 )
 from alphamind.execution.corporate_actions import integrate_ca_activity
-from alphamind.execution.corporate_actions.reconciliation import (
-    backfill_pending_submit_orders,
-    reconcile,
-)
 from alphamind.execution.corporate_actions.types import (
     AlpacaPositionLookup,
     CorporateActionActivity,
@@ -50,6 +45,10 @@ from alphamind.execution.regt_margin_attribution import (
     RegTMarginAttributionConfig,
     compute_attribution,
     load_regt_margin_attribution_config,
+)
+from alphamind.execution.write_paths.projection_rebuild import (
+    ProjectionRebuildSummary,
+    rebuild_projection,
 )
 from alphamind.portfolio_state.events.activity_log import (
     EVENT_TYPE_TO_GROUP,
@@ -186,9 +185,9 @@ class _FillIntegrationOutcome:
 class _SnapshotLookup:
     """``AlpacaPositionLookup`` backed by the ``alpaca_positions`` tuple.
 
-    The same positions feed reconciliation; constructing the lookup from them
-    avoids a second Alpaca fetch and keeps handler-side reads consistent with
-    the snapshot the reconciler will compare against.
+    The same positions feed the projection rebuild; constructing the lookup from
+    them avoids a second Alpaca fetch and keeps handler-side reads consistent
+    with the live snapshot the rebuild folds the event log onto.
     """
 
     def __init__(self, positions: tuple[PositionSnapshot, ...]) -> None:
@@ -202,26 +201,36 @@ class _SnapshotLookup:
 class Phase1Summary:
     """Outcome of one ``process_unprocessed_fills`` invocation.
 
-    ``reconciliation_alerts`` counts every ``RECONCILIATION_ALERT`` activity-log
-    entry this invocation emitted — the post-merge reconciliation step's
-    (ALP-415) plus the per-fill quarantine alerts raised when a fill cannot be
-    integrated (ALP-761). It is the total written to the activity log, so the
-    summary cannot under-report orphan-fill alerts.
+    ``reconciliation_alerts`` counts the per-fill orphan-quarantine alerts this
+    invocation emitted — a fill that cannot integrate against a terminal /
+    over-filled position routes through the ``RECONCILIATION_ALERT`` channel
+    (ALP-761) so operator tooling already watching it surfaces the orphan. The
+    deleted ``reconcile()`` adjudication path (ALP-854 / W2a) no longer
+    contributes: a snapshot/projection mismatch triggers a *rebuild*, never an
+    alert insert (ADR-0001). The field stays so the orchestrator's
+    ``fill_collection_summary_json`` and the strategist's
+    reconciliation-flagged-position read keep their shape.
 
-    ALP-619 — drift on an existing OPEN equity ``share_count`` and the
-    singleton ``cash_ledger.current_cash_usd`` is now auto-corrected in the
-    same Phase 1 transaction, with a paired ``RECONCILIATION_CORRECTION``
-    activity-log row capturing the prior/applied scalars. Options drift
-    and orphan positions still alert-only — see
-    ``corporate_actions/reconciliation.py`` for the per-domain gating.
-    Correction counts are not summarized here; the activity log is the
-    source of truth.
+    ``projection_rebuild`` carries the W2a rebuild outcome — the order-status
+    projections, per-thesis PnL-ledger re-derivations, and the
+    broker-fact-no-Intent projection states surfaced this run.
     """
 
     fills_processed: int
     fills_quarantined: int
     ca_activities_processed: int
     reconciliation_alerts: int
+    # Defaults to an empty rebuild so the recovery / scheduler-stub constructors
+    # that never run the rebuild (``integrate_recovered_fills``, test doubles)
+    # keep their shape; the production ``process_unprocessed_fills`` path always
+    # passes the real rebuild summary.
+    projection_rebuild: ProjectionRebuildSummary = field(
+        default_factory=lambda: ProjectionRebuildSummary(
+            order_statuses_projected=0,
+            theses_rederived=0,
+            broker_facts_without_intent=(),
+        )
+    )
 
 
 async def process_unprocessed_fills(
@@ -233,7 +242,6 @@ async def process_unprocessed_fills(
     market_inputs: MarketInputs,
     config: StatePersistenceConfig,
     borrow_cost_resolver: Callable[[str], float | None] | None = None,
-    alpaca_orders: tuple[OrderSnapshot, ...] = (),
 ) -> Phase1Summary:
     """Drain every unprocessed fill + CA activity and integrate them atomically.
 
@@ -243,14 +251,14 @@ async def process_unprocessed_fills(
     exact-timestamp ties, fills resolve before CAs — fills are intra-day
     precise datetimes; CA activities are EOD-posted with midnight-UTC anchors
     on the ex-date; the ordering matches market reality and yields
-    determinism. After all events apply, the reconciliation step compares
-    local state to ``alpaca_positions`` / ``alpaca_account`` and emits one
-    ``RECONCILIATION_ALERT`` per unexplained delta. ALP-619 — for OPEN
-    equity ``share_count`` drift and ``cash_ledger.current_cash_usd``
-    drift, the same step writes Alpaca's value back to local state and
-    emits a paired ``RECONCILIATION_CORRECTION`` row. Options drift,
-    orphans, direction-flips, and broker-degraded snapshots are alert-only
-    (see ``corporate_actions/reconciliation.py``).
+    determinism. After all events apply, the **projection rebuild** (ALP-854 /
+    W2a) folds the broker-event log onto the live broker snapshot
+    (``alpaca_positions`` / ``alpaca_account``): it projects ``orders.status``
+    from terminal-order-status events, re-derives each thesis's PnL ledger from
+    the log, and surfaces a broker position with no Intent as a first-class
+    projection state. There is no ``reconcile()`` adjudication and no
+    ``RECONCILIATION_ALERT`` / ``RECONCILIATION_CORRECTION`` insert — a
+    snapshot/projection mismatch triggers a rebuild, never an alert (ADR-0001).
 
     Per-fill Reg T margin attribution (story 06a / ALP-428) is wedged into
     the merged-events loop: for every ``FillRecord`` event, snapshot all
@@ -275,12 +283,13 @@ async def process_unprocessed_fills(
         ca_activities: Tuple of typed CA activities to interleave with fills.
             Defaults to empty so pre-04 unit tests keep working unchanged;
             production callers always pass the fetcher's output.
-        alpaca_positions: Tuple of typed Alpaca position snapshots for the
-            reconciliation step. Defaults to empty (no positional alerts
-            emitted); production callers pass ``AccountStateQueries.get_positions()``.
-        alpaca_account: Typed Alpaca account snapshot for the cash-reconciliation
-            step. Defaults to ``None`` (no cash alert emitted); production
-            callers pass ``AccountStateQueries.get_account()``.
+        alpaca_positions: Tuple of typed Alpaca position snapshots — the live
+            broker snapshot the projection rebuild folds the event log onto.
+            Defaults to empty (no broker-fact-no-Intent surfaced); production
+            callers pass ``AccountStateQueries.get_positions()``.
+        alpaca_account: Typed Alpaca account snapshot for the projection rebuild.
+            Defaults to ``None``; production callers pass
+            ``AccountStateQueries.get_account()``.
         market_inputs: Market data the per-fill attribution wedge reads —
             ``underlying_prices`` must cover every open-position underlying
             (``KeyError`` otherwise); ``iv_provider`` must serve every leg
@@ -302,16 +311,8 @@ async def process_unprocessed_fills(
     # Build a per-symbol lookup the handlers consult for post-adjustment Alpaca
     # state on the CA types that need it (STOCK_MERGER, SPIN_OFF, and the
     # options / strategy branches of REVERSE_SPLIT / STOCK_DIVIDEND). The same
-    # positions feed reconciliation below, so the lookup is free.
+    # positions feed the projection rebuild below, so the lookup is free.
     alpaca_lookup = _SnapshotLookup(alpaca_positions) if alpaca_positions else None
-
-    # ALP-836 — recover any order whose post-submit ``alpaca_order_id`` backfill
-    # was lost (durable PENDING_SUBMIT row + synthetic placeholder) by matching
-    # Alpaca's orders on ``client_order_id``. Runs BEFORE fill integration so the
-    # row is flipped PENDING_SUBMIT → PENDING + carries the real broker id before
-    # its attributed fill advances it to FILLED. ``alpaca_orders`` is empty (and
-    # this a no-op) unless the read-phase gatherer found local PENDING_SUBMIT rows.
-    await backfill_pending_submit_orders(handle, alpaca_orders=alpaca_orders)
 
     fills_processed = 0
     quarantine_alerts = 0
@@ -334,7 +335,12 @@ async def process_unprocessed_fills(
         else:
             await _integrate_one_ca_activity(handle, event, alpaca_lookup)
 
-    reconciliation_alerts = await reconcile(
+    # ALP-854 / W2a — rebuild the positions/cash Projection from the now-updated
+    # broker-event log + the live broker snapshot. Replaces ``reconcile()``'s
+    # adjudication (deleted): projects ``orders.status`` from terminal-order-status
+    # events, re-derives the per-thesis PnL ledger from the log, and surfaces a
+    # broker-fact-no-Intent as a projection state — never an alert insert (ADR-0001).
+    projection_rebuild = await rebuild_projection(
         handle,
         alpaca_positions=alpaca_positions,
         alpaca_account=alpaca_account,
@@ -346,11 +352,11 @@ async def process_unprocessed_fills(
         fills_processed=fills_processed,
         fills_quarantined=quarantined_count,
         ca_activities_processed=len(ca_activities),
-        # Count every RECONCILIATION_ALERT this invocation wrote — the post-merge
-        # reconciler's plus the per-fill quarantine alerts (ALP-761) — so the
-        # summary persisted into fill_collection_summary_json does not under-report
-        # the orphan alerts an operator needs to see.
-        reconciliation_alerts=reconciliation_alerts + quarantine_alerts,
+        # The per-fill orphan-quarantine alerts (ALP-761) are the only
+        # ``RECONCILIATION_ALERT`` rows this invocation writes — the reconcile
+        # adjudication path is deleted (W2a), so it contributes none.
+        reconciliation_alerts=quarantine_alerts,
+        projection_rebuild=projection_rebuild,
     )
 
 
@@ -2175,7 +2181,7 @@ async def _integrate_one_ca_activity(
     The ``corporate_actions`` package owns the full implementation; this shim
     preserves the existing call site in ``process_unprocessed_fills`` without
     change. ``alpaca_position_lookup`` is built from the same
-    ``alpaca_positions`` snapshot that feeds the reconciliation step (see
+    ``alpaca_positions`` snapshot that feeds the projection rebuild (see
     :class:`_SnapshotLookup`); it is ``None`` only when the caller supplied an
     empty ``alpaca_positions`` tuple.
     """
@@ -2241,9 +2247,9 @@ async def integrate_recovered_fills(
     run.
 
     Skips Reg T attribution (``regt_attribution_json`` stays NULL, the same
-    as quarantined fills), CA activities, and reconciliation — those remain
-    the scheduled pipeline's responsibility. The resulting invocation row is
-    tagged ``trigger_source="continuous_monitor"`` (same vocabulary as the
+    as quarantined fills), CA activities, and the projection rebuild — those
+    remain the scheduled pipeline's responsibility. The resulting invocation row
+    is tagged ``trigger_source="continuous_monitor"`` (same vocabulary as the
     borrow-accrual tick and other monitor-originated invocations).
 
     SHORT equity ENTRY fills are skipped when ``borrow_cost_resolver`` is
