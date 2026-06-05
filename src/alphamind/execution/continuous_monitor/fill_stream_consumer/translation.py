@@ -48,15 +48,18 @@ _FILL_EVENT_TO_ORDER_STATUS: Final[dict[str, OrderStatus]] = {
 # ``TERMINAL_ORDER_STATUS`` row on the append-only ``broker_event_log`` (ALP-849
 # / W1c), from which the single (pipeline) writer projects ``orders.status``.
 # Otherwise an accepted entry that expires/cancels unfilled stays ``PENDING``
-# (the ZS row in ALP-739) and the no-fill alert never fires. ``rejected`` is
-# deliberately absent: a rejected order was never accepted by the broker, a
-# distinct failure mode outside this no-fill path's scope. ``done_for_day`` is
-# also absent: it is non-terminal (a GTC order "done for the day" resumes the
-# next session), so mapping it to a terminal status would falsely retire a live
-# order.
+# (the ZS row in ALP-739) and the no-fill alert never fires. ``rejected`` is an
+# async post-acceptance broker rejection: the broker accepted the order, then
+# rejected it out-of-band, so it too must reach a terminal projection — without
+# it the order stays ``PENDING`` forever and its reserved capital never clears
+# (CR3). (The synchronous dispatch-time rejection is a separate failure mode the
+# abandon path already retires.) ``done_for_day`` is absent: it is non-terminal
+# (a GTC order "done for the day" resumes the next session), so mapping it to a
+# terminal status would falsely retire a live order.
 _TERMINAL_NON_FILL_EVENT_TO_STATUS: Final[dict[str, OrderStatus]] = {
     "canceled": OrderStatus.CANCELLED,
     "expired": OrderStatus.EXPIRED,
+    "rejected": OrderStatus.REJECTED,
 }
 
 
@@ -149,14 +152,15 @@ def fill_report_to_fill_record(
 def terminal_order_status_for(report: FillReport) -> OrderStatus | None:
     """Terminal disposition a zero-fill non-fill event records, else ``None``.
 
-    Returns :attr:`OrderStatus.CANCELLED` for ``canceled`` events and
-    :attr:`OrderStatus.EXPIRED` for ``expired`` events; ``None`` for every
-    other event type. The consumer carries this disposition onto the
-    ``TERMINAL_ORDER_STATUS`` event-log row (ALP-849 / W1c) rather than RMW-ing
-    ``orders.status``. Fill-bearing events are handled by
+    Returns :attr:`OrderStatus.CANCELLED` for ``canceled`` events,
+    :attr:`OrderStatus.EXPIRED` for ``expired`` events, and
+    :attr:`OrderStatus.REJECTED` for an async post-acceptance ``rejected`` event
+    (CR3); ``None`` for every other event type. The consumer carries this
+    disposition onto the ``TERMINAL_ORDER_STATUS`` event-log row (ALP-849 / W1c)
+    rather than RMW-ing ``orders.status``. Fill-bearing events are handled by
     :func:`fill_report_to_fill_record`; ``new`` / ``replaced`` /
-    ``replace_rejected`` / ``rejected`` / ``done_for_day`` carry no
-    terminal-unfilled disposition this path acts on.
+    ``replace_rejected`` / ``done_for_day`` carry no terminal-unfilled
+    disposition this path acts on.
     """
     return _TERMINAL_NON_FILL_EVENT_TO_STATUS.get(report.event_type)
 

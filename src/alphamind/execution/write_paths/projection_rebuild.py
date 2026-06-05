@@ -98,6 +98,28 @@ class BrokerFactNoIntent:
 
 
 @dataclass(frozen=True, slots=True)
+class PendingWithBrokerHolding:
+    """A PENDING-local position whose broker snapshot holds a nonzero quantity.
+
+    A PENDING local position carries quantity 0 by invariant (the entry has not
+    been integrated yet); a nonzero broker holding for its symbol means the entry
+    fill actually landed at the broker but was dropped / never integrated locally
+    — a filled-but-locally-pending divergence. This restores the safety detection
+    the deleted reconciler's ``pending_with_broker_holding`` escalation provided
+    (RD1): the rebuild only DETECTS it (surfaced here, never mutated), and the
+    honest recovery is the fill drain / periodic backfill writing the real fill
+    into ``fill_records`` so the next Phase-1 integrates it and flips the position
+    PENDING → OPEN with the true basis. ``qty`` is the unsigned magnitude (Alpaca
+    reports a signed qty for shorts; ``side`` carries the direction).
+    """
+
+    symbol: str
+    asset_class: str
+    qty: float
+    side: str
+
+
+@dataclass(frozen=True, slots=True)
 class OrderStatusProjection:
     """One ``TERMINAL_ORDER_STATUS`` event reduced to its order-cache projection.
 
@@ -121,12 +143,18 @@ class ProjectionRebuildSummary:
     rebuild advanced from a TERMINAL_ORDER_STATUS event; ``theses_rederived``
     counts thesis PnL-ledger rows re-derived from the log; ``broker_facts_without_intent``
     carries the DVN/manual-trade positions surfaced as a projection state (never
-    alerted).
+    alerted); ``pending_with_broker_holding`` carries PENDING-local positions whose
+    broker holding is nonzero (a dropped/un-integrated entry fill — RD1), surfaced
+    as a projection signal, never mutated.
     """
 
     order_statuses_projected: int
     theses_rederived: int
     broker_facts_without_intent: tuple[BrokerFactNoIntent, ...]
+    # Defaulted so the empty-rebuild constructors (recovery / scheduler stubs in
+    # phase1.py) that predate RD1 keep their shape; the production rebuild always
+    # populates it.
+    pending_with_broker_holding: tuple[PendingWithBrokerHolding, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +185,36 @@ def classify_broker_facts_without_intent(
         if snapshot.symbol not in intent_backed_symbols
     ]
     return tuple(sorted(facts, key=lambda fact: fact.symbol))
+
+
+_QTY_EPSILON = 1e-9
+
+
+def classify_pending_with_broker_holding(
+    *,
+    alpaca_positions: Iterable[PositionSnapshot],
+    pending_symbols: frozenset[str],
+) -> tuple[PendingWithBrokerHolding, ...]:
+    """Pure: PENDING-local positions whose broker snapshot quantity is nonzero.
+
+    A broker snapshot position whose ``symbol`` is in ``pending_symbols`` (the set
+    of PENDING local-position keys — equity ticker or options OCC symbol) and whose
+    ``qty`` magnitude is nonzero is a dropped/un-integrated entry fill (RD1): the
+    entry filled at the broker but the local position is still PENDING. Alpaca
+    reports a signed ``qty`` for shorts, so the magnitude is compared and surfaced.
+    ``sorted`` keeps the surfacing order deterministic.
+    """
+    holdings = [
+        PendingWithBrokerHolding(
+            symbol=snapshot.symbol,
+            asset_class=snapshot.asset_class,
+            qty=abs(snapshot.qty),
+            side=snapshot.side,
+        )
+        for snapshot in alpaca_positions
+        if snapshot.symbol in pending_symbols and abs(snapshot.qty) > _QTY_EPSILON
+    ]
+    return tuple(sorted(holdings, key=lambda holding: holding.symbol))
 
 
 def project_terminal_order_statuses(
@@ -217,10 +275,16 @@ async def rebuild_projection(
 
     order_statuses_projected = await _project_terminal_order_statuses(handle.session)
     theses_rederived = await _rederive_all_thesis_ledgers(handle.session, handle)
-    intent_backed_symbols = await _intent_backed_symbols(handle.session)
+    symbols_by_status = await _live_position_symbols_by_status(handle.session)
+    intent_backed_symbols = frozenset().union(*symbols_by_status.values())
+    pending_symbols = symbols_by_status.get("PENDING", frozenset())
     broker_facts = classify_broker_facts_without_intent(
         alpaca_positions=alpaca_positions,
         intent_backed_symbols=intent_backed_symbols,
+    )
+    pending_holdings = classify_pending_with_broker_holding(
+        alpaca_positions=alpaca_positions,
+        pending_symbols=pending_symbols,
     )
     for fact in broker_facts:
         log.info(
@@ -230,24 +294,39 @@ async def rebuild_projection(
             fact.qty,
             fact.side,
         )
+    for holding in pending_holdings:
+        log.warning(
+            "projection rebuild: PENDING-local position with nonzero broker holding "
+            "— %s qty=%s side=%s (likely a dropped/un-integrated entry fill; awaiting "
+            "fill-drain recovery, no state mutated)",
+            holding.symbol,
+            holding.qty,
+            holding.side,
+        )
 
     return ProjectionRebuildSummary(
         order_statuses_projected=order_statuses_projected,
         theses_rederived=theses_rederived,
         broker_facts_without_intent=broker_facts,
+        pending_with_broker_holding=pending_holdings,
     )
 
 
 async def _project_terminal_order_statuses(session: AsyncSession) -> int:
     """Project every ``TERMINAL_ORDER_STATUS`` event onto its ``orders`` cache row.
 
-    Reads the event payloads, folds them to typed projections (pure), then resolves
-    each to a local ``orders`` row — by the broker UUID, falling back to the durable
-    pre-commit ``client_order_id`` for an order whose UUID was never backfilled — and
-    advances its cached ``status`` + ``last_update_timestamp``. Returns the count of
-    rows advanced. A projection whose order row does not resolve (a genuinely
-    out-of-band order) is logged and skipped; the order cache is optional, so a
-    cache miss is not an error.
+    Reads the event payloads, folds them to typed projections (pure), then
+    batch-resolves them to local ``orders`` rows — by the broker UUID, falling back
+    to the durable pre-commit ``client_order_id`` for an order whose UUID was never
+    backfilled — and advances each row's cached ``status`` + ``last_update_timestamp``.
+    Returns the count of rows advanced.
+
+    The resolve is **bounded** (PR1): the candidate ``orders`` rows are loaded in two
+    ``IN``-clause batches restricted to **non-terminal** orders, so an order already
+    in a terminal status is never re-resolved or re-stamped (an already-projected
+    terminal disposition is final). A projection whose order row does not resolve
+    against a non-terminal row (already terminal, or a genuinely out-of-band order)
+    is skipped; the order cache is optional, so a miss is not an error.
     """
     payloads = (
         (
@@ -261,19 +340,19 @@ async def _project_terminal_order_statuses(session: AsyncSession) -> int:
         .all()
     )
     projections = project_terminal_order_statuses(payloads)
+    if not projections:
+        return 0
+    by_alpaca_id, by_client_id = await _resolve_non_terminal_order_rows(session, projections)
     now_iso = datetime.now(UTC).isoformat()
     projected = 0
     for projection in projections:
-        row = await _resolve_order_row(session, projection)
+        row = None
+        if projection.alpaca_order_id is not None:
+            row = by_alpaca_id.get(projection.alpaca_order_id)
+        if row is None and projection.client_order_id is not None:
+            row = by_client_id.get(projection.client_order_id)
         if row is None:
-            log.debug(
-                "projection rebuild: TERMINAL_ORDER_STATUS for unknown order "
-                "(alpaca_order_id=%s client_order_id=%s status=%s) — no local order "
-                "cache row; skipping",
-                projection.alpaca_order_id,
-                projection.client_order_id,
-                projection.terminal_status.value,
-            )
+            # Already terminal (filtered out of the batch) or genuinely out-of-band.
             continue
         if row.status == projection.terminal_status.value:
             continue
@@ -283,33 +362,62 @@ async def _project_terminal_order_statuses(session: AsyncSession) -> int:
     return projected
 
 
-async def _resolve_order_row(
-    session: AsyncSession, projection: OrderStatusProjection
-) -> OrderRow | None:
-    """Resolve the local ``orders`` row a terminal-status projection applies to.
+# Order statuses already terminal for the order-status projection — a row in one
+# of these is final, so the rebuild never re-resolves or re-stamps it (PR1).
+_TERMINAL_ORDER_STATUSES: frozenset[str] = frozenset(
+    status.value for status in _TERMINAL_STATUS_BY_NAME.values()
+)
 
-    Resolution mirrors the fill-path's order resolution (ADR-0002): the broker UUID
-    first (the captured-at-submission ``alpaca_order_id``), then the durable
-    pre-commit ``client_order_id`` for an order whose post-submit UUID backfill was
-    lost (``alpaca_order_id`` still NULL, ALP-836/847). Both columns are
-    unique-when-present, so ``one_or_none`` surfaces a duplicate as a loud invariant
-    breach rather than guessing.
+
+async def _resolve_non_terminal_order_rows(
+    session: AsyncSession, projections: tuple[OrderStatusProjection, ...]
+) -> tuple[dict[str, OrderRow], dict[str, OrderRow]]:
+    """Batch-resolve candidate ``orders`` rows by alpaca id / client id (PR1).
+
+    Two ``IN``-clause SELECTs — one keyed by ``alpaca_order_id``, one by
+    ``client_order_id`` — restricted to **non-terminal** rows, replacing the prior
+    two-SELECT-per-event resolve. Resolution priority (broker UUID first, the durable
+    pre-commit ``client_order_id`` as the pre-backfill fallback, ADR-0002) is applied
+    by the caller against the returned maps. Both columns are unique-when-present, so
+    each id maps to at most one row.
     """
-    if projection.alpaca_order_id is not None:
-        row = (
-            await session.execute(
-                select(OrderRow).where(OrderRow.alpaca_order_id == projection.alpaca_order_id)
+    alpaca_ids = {p.alpaca_order_id for p in projections if p.alpaca_order_id is not None}
+    client_ids = {p.client_order_id for p in projections if p.client_order_id is not None}
+    by_alpaca_id: dict[str, OrderRow] = {}
+    by_client_id: dict[str, OrderRow] = {}
+    if alpaca_ids:
+        rows = (
+            (
+                await session.execute(
+                    select(OrderRow).where(
+                        OrderRow.alpaca_order_id.in_(alpaca_ids),
+                        OrderRow.status.not_in(_TERMINAL_ORDER_STATUSES),
+                    )
+                )
             )
-        ).scalar_one_or_none()
-        if row is not None:
-            return row
-    if projection.client_order_id is not None:
-        return (
-            await session.execute(
-                select(OrderRow).where(OrderRow.client_order_id == projection.client_order_id)
+            .scalars()
+            .all()
+        )
+        for row in rows:
+            if row.alpaca_order_id is not None:
+                by_alpaca_id[row.alpaca_order_id] = row
+    if client_ids:
+        rows = (
+            (
+                await session.execute(
+                    select(OrderRow).where(
+                        OrderRow.client_order_id.in_(client_ids),
+                        OrderRow.status.not_in(_TERMINAL_ORDER_STATUSES),
+                    )
+                )
             )
-        ).scalar_one_or_none()
-    return None
+            .scalars()
+            .all()
+        )
+        for row in rows:
+            if row.client_order_id is not None:
+                by_client_id[row.client_order_id] = row
+    return by_alpaca_id, by_client_id
 
 
 async def _rederive_all_thesis_ledgers(session: AsyncSession, handle: InvocationHandle) -> int:
@@ -345,14 +453,17 @@ async def _rederive_all_thesis_ledgers(session: AsyncSession, handle: Invocation
     return rederived
 
 
-async def _intent_backed_symbols(session: AsyncSession) -> frozenset[str]:
-    """Broker-snapshot keys (equity ticker / options OCC) for every live local position.
+async def _live_position_symbols_by_status(session: AsyncSession) -> dict[str, frozenset[str]]:
+    """Broker-snapshot keys (equity ticker / options OCC) per live local-position status.
 
-    A broker snapshot position whose ``symbol`` is in this set has an Intent
-    overlay; one absent from it is "broker fact, no Intent". Strategy positions
-    carry no single broker key (Alpaca reports each leg as its own row), so they
-    contribute no key here — their legs surface as broker-fact-no-Intent until a
-    leg-level overlay exists, the same scope boundary the deleted reconciler drew.
+    One pass over the OPEN/PENDING local positions, grouping each position's broker
+    key by its status. The union over the values is the Intent-backed set (a broker
+    snapshot position whose ``symbol`` is in it has an Intent overlay; one absent
+    from it is "broker fact, no Intent"); the ``"PENDING"`` bucket alone is the
+    dropped-fill cross-check (RD1). Strategy positions carry no single broker key
+    (Alpaca reports each leg as its own row), so they contribute no key — their legs
+    surface as broker-fact-no-Intent until a leg-level overlay exists, the same scope
+    boundary the deleted reconciler drew.
     """
     rows = (
         (
@@ -363,21 +474,23 @@ async def _intent_backed_symbols(session: AsyncSession) -> frozenset[str]:
         .scalars()
         .all()
     )
-    symbols: set[str] = set()
+    symbols_by_status: dict[str, set[str]] = {status: set() for status in _LIVE_POSITION_STATUSES}
     for row in rows:
         details = position_row_to_record(row).details
         if isinstance(details, EquityPositionDetails):
-            symbols.add(details.ticker)
+            symbols_by_status[row.status].add(details.ticker)
         elif isinstance(details, OptionsPositionDetails):
-            symbols.add(alpaca_occ_symbol(details))
-    return frozenset(symbols)
+            symbols_by_status[row.status].add(alpaca_occ_symbol(details))
+    return {status: frozenset(symbols) for status, symbols in symbols_by_status.items()}
 
 
 __all__ = [
     "BrokerFactNoIntent",
     "OrderStatusProjection",
+    "PendingWithBrokerHolding",
     "ProjectionRebuildSummary",
     "classify_broker_facts_without_intent",
+    "classify_pending_with_broker_holding",
     "project_terminal_order_statuses",
     "rebuild_projection",
 ]

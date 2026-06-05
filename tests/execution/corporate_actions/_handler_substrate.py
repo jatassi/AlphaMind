@@ -191,6 +191,39 @@ def make_open_equity_position(
     )
 
 
+def make_pending_equity_position(
+    position_id: str = "pos-1",
+    *,
+    ticker: str = "AAPL",
+    thesis_id: str | None = "thesis-1",
+    bracket_id: str | None = "brk-1",
+) -> PositionRecord:
+    """A PENDING equity position: share_count 0, no fills, no entry timestamp.
+
+    The just-authored-not-yet-filled state. A nonzero Alpaca holding against
+    this row is a dropped/un-integrated entry fill (RD1).
+    """
+    details = EquityPositionDetails(
+        ticker=Symbol(ticker),
+        share_count=0.0,
+        average_cost_basis_per_share=0.0,
+    )
+    return PositionRecord(
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(thesis_id) if thesis_id else None,
+        bracket_id=BracketId(bracket_id) if bracket_id else None,
+        status=PositionStatus.PENDING,
+        direction=Direction.LONG,
+        entry_timestamp=None,
+        details=details,
+        execution_history=(),
+        realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+
+
 def _make_options_details(
     *,
     underlying_ticker: str = "AAPL",

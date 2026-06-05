@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import PositionId, ThesisId
@@ -29,7 +29,9 @@ from alphamind.execution.broker_adapter.queries import PositionSnapshot, TradeAc
 from alphamind.execution.write_paths.projection_rebuild import (
     BrokerFactNoIntent,
     OrderStatusProjection,
+    PendingWithBrokerHolding,
     classify_broker_facts_without_intent,
+    classify_pending_with_broker_holding,
     project_terminal_order_statuses,
     rebuild_projection,
 )
@@ -42,6 +44,7 @@ from alphamind.state.records_broker_event_log import (
 from alphamind.state.tables.broker_event_log_codec import record_to_row as event_record_to_row
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
+from tests.state._fk_substrate import stub_order_row
 
 from ._handler_substrate import (
     NOW,
@@ -49,6 +52,7 @@ from ._handler_substrate import (
     make_active_thesis,
     make_open_equity_position,
     make_pending_entry_order,
+    make_pending_equity_position,
     open_handle,
     seed_invocation_substrate,
     seed_position_cluster,
@@ -266,6 +270,37 @@ async def test_zero_fill_terminal_event_advances_order_status_to_cancelled(
         assert row.last_update_timestamp != seeded_ts
 
 
+async def test_async_rejected_event_advances_order_status_to_rejected(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """CR3 — an async post-acceptance ``rejected`` event lands a
+    TERMINAL_ORDER_STATUS row whose disposition the rebuild projects PENDING →
+    REJECTED, so the order reaches a terminal projection (the reservation no
+    longer reads against a live PENDING order) instead of stranding forever."""
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await _entry_order(factory, alpaca_order_id="broker-uuid-rej")
+    await _append_events(
+        factory,
+        _terminal_event(
+            event_key="tevt-rej",
+            alpaca_order_id="broker-uuid-rej",
+            client_order_id="inv-1.ENV-1.0.0",
+            terminal_status=OrderStatus.REJECTED,
+        ),
+    )
+
+    ctx, handle = await open_handle(factory)
+    summary = await rebuild_projection(handle, alpaca_positions=(), alpaca_account=None)
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.order_statuses_projected == 1
+    async with factory() as sess:
+        row = await sess.get(OrderRow, "ord-entry-1")
+        assert row is not None
+        assert row.status == OrderStatus.REJECTED.value
+
+
 async def test_terminal_event_resolves_order_by_client_order_id_when_uuid_null(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
@@ -310,6 +345,98 @@ async def test_terminal_event_resolves_order_by_client_order_id_when_uuid_null(
 
 
 # ---------------------------------------------------------------------------
+# PR1 — the terminal-status scan is bounded, not O(all-events).
+# ---------------------------------------------------------------------------
+
+
+async def test_terminal_status_projection_resolves_orders_in_batch(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """PR1 — the projection resolves order rows in a bounded number of SELECTs,
+    not two per event. With three pending orders each carrying a terminal event,
+    the orders-resolution must not scale with the event count: a per-event
+    2-SELECT resolve would issue ~6 reads against ``orders``; the batched resolve
+    issues a small constant regardless of event count."""
+    engine, factory = db
+    await seed_invocation_substrate(factory)
+    await _entry_order(factory, alpaca_order_id="broker-uuid-1")
+    # Two more pending orders on the same bracket, each by a distinct broker UUID.
+    async with factory() as sess:
+        for n in (2, 3):
+            sess.add(
+                stub_order_row(
+                    f"ord-extra-{n}",
+                    "brk-1",
+                    position_id="pos-1",
+                    status=OrderStatus.PENDING.value,
+                    alpaca_order_id=f"broker-uuid-{n}",
+                )
+            )
+        await sess.commit()
+    await _append_events(
+        factory,
+        *(
+            _terminal_event(
+                event_key=f"tevt-batch-{n}",
+                alpaca_order_id=f"broker-uuid-{n}",
+                client_order_id=f"cli-{n}",
+                terminal_status=OrderStatus.CANCELLED,
+            )
+            for n in (1, 2, 3)
+        ),
+    )
+
+    orders_selects: list[str] = []
+
+    @event.listens_for(engine.sync_engine, "before_cursor_execute")
+    def _capture(_conn: object, _cursor: object, statement: str, *_rest: object) -> None:
+        normalized = " ".join(statement.split()).lower()
+        if "from orders" in normalized and normalized.startswith("select"):
+            orders_selects.append(statement)
+
+    ctx, handle = await open_handle(factory)
+    summary = await rebuild_projection(handle, alpaca_positions=(), alpaca_account=None)
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.order_statuses_projected == 3
+    # Batched: a small constant (the batch resolve, not ~2 per event). A
+    # per-event 2-SELECT resolve over 3 events would issue 6+ reads.
+    assert len(orders_selects) <= 2, orders_selects
+
+
+async def test_terminal_status_projection_skips_already_terminal_orders(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """PR1 — a re-delivered terminal event whose order is already in the target
+    terminal status is bounded out (counts 0, no re-advance), so a rebuild does
+    not re-resolve / re-stamp already-projected orders run after run."""
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await _entry_order(factory, alpaca_order_id="broker-uuid-1")
+    # The order is ALREADY CANCELLED (a prior rebuild projected it).
+    async with factory() as sess:
+        row = await sess.get(OrderRow, "ord-entry-1")
+        assert row is not None
+        row.status = OrderStatus.CANCELLED.value
+        await sess.commit()
+    await _append_events(
+        factory,
+        _terminal_event(
+            event_key="tevt-dup",
+            alpaca_order_id="broker-uuid-1",
+            client_order_id="inv-1.ENV-1.0.0",
+            terminal_status=OrderStatus.CANCELLED,
+        ),
+    )
+
+    ctx, handle = await open_handle(factory)
+    summary = await rebuild_projection(handle, alpaca_positions=(), alpaca_account=None)
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.order_statuses_projected == 0
+
+
+# ---------------------------------------------------------------------------
 # AC1 — mismatch rebuilds, no alert/correction; AC3 — broker fact, no Intent.
 # ---------------------------------------------------------------------------
 
@@ -343,6 +470,91 @@ async def test_broker_position_without_intent_surfaces_as_projection_state(
     assert summary.broker_facts_without_intent == (
         BrokerFactNoIntent(symbol="DVN", asset_class="us_equity", qty=42.0, side="long"),
     )
+
+
+# ---------------------------------------------------------------------------
+# RD1 — a PENDING-local position with a nonzero broker holding (dropped fill).
+# ---------------------------------------------------------------------------
+
+
+def test_classify_pending_with_broker_holding_flags_only_nonzero_pending() -> None:
+    """Pure — a PENDING-local symbol whose broker snapshot qty is nonzero is
+    surfaced; a zero-qty broker holding (or a PENDING symbol absent from the
+    snapshot) is not."""
+    holdings = classify_pending_with_broker_holding(
+        alpaca_positions=(
+            _equity_snapshot(symbol="AAPL", qty=10.0),  # PENDING + nonzero → flag
+            _equity_snapshot(symbol="MSFT", qty=0.0),  # PENDING but zero → no flag
+        ),
+        pending_symbols=frozenset({"AAPL", "MSFT", "TSLA"}),  # TSLA absent from snapshot
+    )
+    assert holdings == (
+        PendingWithBrokerHolding(symbol="AAPL", asset_class="us_equity", qty=10.0, side="long"),
+    )
+
+
+def test_classify_pending_with_broker_holding_uses_abs_qty_for_shorts() -> None:
+    """Pure — a short broker holding (signed-negative qty) flags on magnitude."""
+    short = PositionSnapshot(
+        symbol="AAPL",
+        asset_class="us_equity",
+        qty=-10.0,
+        avg_entry_price=price(150.0),
+        market_value=money(1500.0),
+        cost_basis=money(1500.0),
+        unrealized_pl=money(0.0),
+        unrealized_plpc=0.0,
+        current_price=price(150.0),
+        side="short",
+    )
+    holdings = classify_pending_with_broker_holding(
+        alpaca_positions=(short,),
+        pending_symbols=frozenset({"AAPL"}),
+    )
+    assert holdings == (
+        PendingWithBrokerHolding(symbol="AAPL", asset_class="us_equity", qty=10.0, side="short"),
+    )
+
+
+async def test_pending_local_with_nonzero_alpaca_surfaces_in_summary(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """RD1 — a PENDING local equity position (share_count=0, no fills) whose
+    Alpaca holding is nonzero is a dropped/un-integrated entry fill; the rebuild
+    surfaces it as a ``PendingWithBrokerHolding`` projection signal (replacing
+    the deleted ``pending_with_broker_holding`` escalation) and mutates nothing
+    — no status flip, no share_count write, no synthesized fill."""
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_position_cluster(
+        factory,
+        make_pending_equity_position(),
+        make_pending_entry_order(),
+        make_active_thesis(),
+        make_active_bracket(),
+    )
+
+    ctx, handle = await open_handle(factory)
+    summary = await rebuild_projection(
+        handle,
+        # Alpaca holds 10 shares — the dropped entry fill.
+        alpaca_positions=(_equity_snapshot(symbol="AAPL", qty=10.0),),
+        alpaca_account=_trade_account(),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.pending_with_broker_holding == (
+        PendingWithBrokerHolding(symbol="AAPL", asset_class="us_equity", qty=10.0, side="long"),
+    )
+    # The PENDING symbol is Intent-backed, so it is NOT a broker-fact-no-Intent.
+    assert summary.broker_facts_without_intent == ()
+    # Row UNTOUCHED — still PENDING, still zero shares.
+    async with factory() as sess:
+        from alphamind.state.tables.positions import PositionRow
+
+        row = await sess.get(PositionRow, "pos-1")
+        assert row is not None
+        assert row.status == "PENDING"
 
 
 # ---------------------------------------------------------------------------
