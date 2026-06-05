@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from alphamind._kernel.money import price
 from alphamind.commands.command_models import (
     ComponentType,
@@ -34,6 +36,7 @@ from alphamind.execution.write_paths.phase2.open import (
     _build_active_thesis,
     _build_pending_bracket,
     _build_pending_position,
+    _capital_floor_bracket_leg,
     _direction_from_instrument,
 )
 from alphamind.portfolio_state.records.orders import (
@@ -485,6 +488,7 @@ def test_options_open_records_broker_enforced_capital_floor_leg() -> None:
         instrument=_option_instrument(),
         entry_window_deadline=None,
         capital_floor_order_id="ORD-FLOOR-abc123",
+        capital_floor_price=12.5,
     )
     floor_legs = [
         leg
@@ -496,6 +500,10 @@ def test_options_open_records_broker_enforced_capital_floor_leg() -> None:
     assert floor.leg_type is BracketLegType.PRICE_STOP
     # The leg points at the floor's OMS order_id (the FK target), not the broker id.
     assert floor.order_id == "ORD-FLOOR-abc123"
+    # The recorded resting threshold is the supplied floor price (FL10 — no 0.01
+    # structural fallback; the leg only builds when the real price is present).
+    assert isinstance(floor.trigger, PriceTrigger)
+    assert floor.trigger.threshold_usd == 12.5
     # The thesis-invalidation stop stays monitor-enforced (no native bracket on options).
     inv_legs = [
         leg
@@ -504,6 +512,40 @@ def test_options_open_records_broker_enforced_capital_floor_leg() -> None:
         and leg.enforcement_binding is EnforcementBinding.MONITOR_ENFORCED
     ]
     assert len(inv_legs) == 1
+
+
+def test_capital_floor_bracket_leg_none_for_no_floor() -> None:
+    """Both floor inputs absent → no floor leg (equity / strategy OPEN)."""
+    leg = _capital_floor_bracket_leg(
+        bracket_id="BRK-AAPL-abc123",
+        ticker="AAPL",
+        capital_floor_order_id=None,
+        capital_floor_price=None,
+        direction="long",
+    )
+    assert leg is None
+
+
+def test_capital_floor_bracket_leg_rejects_partial_none() -> None:
+    """A partial-None floor (exactly one of order_id / price set) is a programming
+    error — it would build an un-cancellable floor leg (order_id=None) resting on
+    a 0.01 threshold fallback (FL10). Require both-or-neither: reject either half."""
+    with pytest.raises(ValueError, match="both-or-neither"):
+        _capital_floor_bracket_leg(
+            bracket_id="BRK-NVDA-abc123",
+            ticker="NVDA",
+            capital_floor_order_id="ORD-FLOOR-abc123",
+            capital_floor_price=None,
+            direction="long",
+        )
+    with pytest.raises(ValueError, match="both-or-neither"):
+        _capital_floor_bracket_leg(
+            bracket_id="BRK-NVDA-abc123",
+            ticker="NVDA",
+            capital_floor_order_id=None,
+            capital_floor_price=12.5,
+            direction="long",
+        )
 
 
 def test_equity_open_records_no_capital_floor_leg() -> None:

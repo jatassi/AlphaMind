@@ -751,6 +751,34 @@ class TestCapitalProtectionFloor:
             )
         assert "capital_protection_floor" in str(exc_info.value)
 
+    def test_floor_below_dollar_value_constructs(self) -> None:
+        # A floor whose max_loss is strictly below the position's planned
+        # outlay derives a positive per-contract stop price — the only coherent
+        # floor (ALP-856 / FL2). ``_option_open_command`` uses dollar_value=1_000.
+        cmd = _option_open_command(
+            capital_protection_floor=_capital_protection_floor(loss_limit=999.0)
+        )
+        assert cmd.capital_protection_floor is not None
+        assert cmd.capital_protection_floor.max_loss == 999.0
+
+    def test_floor_equal_to_dollar_value_rejected(self) -> None:
+        # max_loss == dollar_value → floor stop price 0 → Alpaca 422 (FL2). The
+        # floor must keep some capital at stake, so equality is rejected at the
+        # command boundary rather than surfacing as a broker rejection.
+        with pytest.raises((ValueError, TypeError)) as exc_info:
+            _option_open_command(
+                capital_protection_floor=_capital_protection_floor(loss_limit=1_000.0)
+            )
+        assert "max_loss" in str(exc_info.value)
+
+    def test_floor_exceeding_dollar_value_rejected(self) -> None:
+        # max_loss > dollar_value → negative floor stop price → Alpaca 422 (FL2).
+        with pytest.raises((ValueError, TypeError)) as exc_info:
+            _option_open_command(
+                capital_protection_floor=_capital_protection_floor(loss_limit=1_500.0)
+            )
+        assert "max_loss" in str(exc_info.value)
+
 
 class TestCloseCommand:
     def test_constructs_happy_path(self) -> None:

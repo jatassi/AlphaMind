@@ -102,10 +102,14 @@ _CLIENT_ORDER_ID = (
 
 
 def _execution_config() -> ExecutionConfig:
+    return _execution_config_with_window(30)
+
+
+def _execution_config_with_window(window_seconds: int) -> ExecutionConfig:
     return ExecutionConfig(
         greeks_refresh=GreeksRefresh(scheduled_interval_minutes=5, move_trigger_pct=0.01),
         conservative_delta_buffer_pct=0.0,
-        submission_retry_window_seconds=30,
+        submission_retry_window_seconds=window_seconds,
         paper_harness=PaperHarness(
             spread_buffer_pct=0.0,
             impact_coefficients={
@@ -222,7 +226,9 @@ def _strategy_open_command(underlying: str = "SPY") -> OpenCommand:
             ),
         ),
         entry_order=EntryOrder(type="market"),
-        position_size=PositionSize(quantity=1.0, dollar_value=money(500.0)),
+        # dollar_value strictly above the floor's max_loss (500) so the derived
+        # broker floor stop price stays positive (FL2 cross-field validator).
+        position_size=PositionSize(quantity=1.0, dollar_value=money(1_000.0)),
         # A strategy take-profit must be pl_percentage (ALP-611).
         target=Target(
             target_type="pl_percentage", pl_percentage=80.0, price=price(10.0), order_type="limit"
@@ -526,15 +532,16 @@ async def test_dispatch_open_options_submits_entry_and_resting_capital_floor() -
 
 
 @pytest.mark.asyncio
-async def test_dispatch_open_options_floor_rejection_fails_the_open() -> None:
-    """A permanent floor rejection propagates — the OPEN does not silently succeed.
+async def test_dispatch_open_options_permanent_floor_rejection_cancels_entry() -> None:
+    """A permanent floor rejection cancels the live entry, then surfaces the failure.
 
     The capital floor is mandatory (invariant 4): an options OPEN must not be
-    left broker-unprotected. When the floor's broker submission is permanently
-    rejected (e.g. options level not approved) after the entry submitted,
-    ``_dispatch_open`` lets the :class:`PermanentRejectionError` propagate so the
-    caller tears the OPEN down rather than recording a position with no resting
-    floor.
+    left broker-unprotected. The entry submits FIRST and goes live; when the
+    floor's broker submission is permanently rejected (e.g. options level not
+    approved), leaving the entry resting would orphan an unprotected options
+    position (FL1). ``_dispatch_options_open`` first ``submit_cancel``s the live
+    entry by its real broker id, THEN re-raises the
+    :class:`PermanentRejectionError` so the caller also tears down local state.
     """
     from alphamind.execution.broker_adapter.order_options import PermanentRejectionError
 
@@ -549,6 +556,7 @@ async def test_dispatch_open_options_floor_rejection_fails_the_open() -> None:
 
     client = MagicMock()
     client.submit_order = MagicMock(side_effect=_submit)
+    client.cancel_order_by_id = MagicMock(return_value=None)
 
     with pytest.raises(PermanentRejectionError):
         await dispatch_command_to_broker(
@@ -558,6 +566,49 @@ async def test_dispatch_open_options_floor_rejection_fails_the_open() -> None:
             execution=_execution_config(),
             client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
         )
+
+    # The live entry was retracted at the broker before the failure surfaced.
+    client.cancel_order_by_id.assert_called_once_with(str(entry_order.id))
+
+
+@pytest.mark.asyncio
+async def test_dispatch_open_options_floor_gateway_failure_cancels_entry() -> None:
+    """A floor gateway-submission failure cancels the live entry, then surfaces it.
+
+    When the floor submission exhausts the retry window (transient failures →
+    ``GatewaySubmissionFailed``) after the entry went live, ``_dispatch_options_open``
+    first ``submit_cancel``s the live entry by its real broker id, THEN returns
+    the ``GatewaySubmissionFailed`` outcome — never leaving the entry resting
+    without its mandatory floor (FL1).
+    """
+    import httpx
+
+    entry_order = _make_fake_alpaca_order(order_class=OrderClass.SIMPLE)
+
+    # Entry submits cleanly; the floor (the only StopLimit request) keeps
+    # raising a transient-classified error → retry window exhausts.
+    def _submit(request: object) -> MagicMock:
+        if isinstance(request, StopLimitOrderRequest):
+            raise httpx.ConnectError("network down")
+        return entry_order
+
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=_submit)
+    client.cancel_order_by_id = MagicMock(return_value=None)
+    # Tight retry window so the floor exhausts in <1s.
+    cfg = _execution_config_with_window(1)
+
+    outcome = await dispatch_command_to_broker(
+        _option_open_command(),
+        client=client,
+        queries=MagicMock(),
+        execution=cfg,
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+    )
+
+    assert isinstance(outcome, GatewaySubmissionFailed)
+    # The live entry was retracted at the broker before the failure surfaced.
+    client.cancel_order_by_id.assert_called_once_with(str(entry_order.id))
 
 
 @pytest.mark.asyncio
@@ -964,27 +1015,7 @@ async def test_dispatch_returns_gateway_submission_failed_on_retry_exhaustion() 
     client.submit_order = MagicMock(side_effect=httpx.ConnectError("network down"))
     queries = MagicMock()
     # Tight retry window so the test runs in <1s.
-    cfg = ExecutionConfig(
-        greeks_refresh=GreeksRefresh(scheduled_interval_minutes=5, move_trigger_pct=0.01),
-        conservative_delta_buffer_pct=0.0,
-        submission_retry_window_seconds=1,
-        paper_harness=PaperHarness(
-            spread_buffer_pct=0.0,
-            impact_coefficients={
-                OrderType.market: 0.1,
-                OrderType.limit: 0.05,
-                OrderType.stop: 0.08,
-            },
-            fee_schedule=FeeSchedule(
-                cat_per_executed_share=0.0,
-                taf_per_share_sells=0.0,
-                sec_pct_of_notional_sells=0.0,
-                orf_per_options_contract=0.0,
-                occ_per_options_contract=0.0,
-            ),
-        ),
-        pl_target_margin_pct=0.0,
-    )
+    cfg = _execution_config_with_window(1)
 
     outcome = await dispatch_command_to_broker(
         _equity_open_command(),
