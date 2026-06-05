@@ -25,6 +25,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import InvocationId, ThesisId
 from alphamind._kernel.money import money, signed_money
 from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
@@ -50,6 +51,7 @@ from alphamind.execution.write_paths.projection_rebuild import (
     ProjectionRebuildSummary,
     rebuild_projection,
 )
+from alphamind.execution.write_paths.thesis_pnl_ledger import rederive_thesis_pnl_ledger
 from alphamind.portfolio_state.events.activity_log import (
     EVENT_TYPE_TO_GROUP,
     ActivityLogEntry,
@@ -110,6 +112,7 @@ from alphamind.state.records import (
 )
 from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.brackets import BracketRow
+from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.cash_ledger import (
     CASH_LEDGER_SINGLETON_ID,
     CashLedgerRow,
@@ -358,6 +361,49 @@ async def process_unprocessed_fills(
         reconciliation_alerts=quarantine_alerts,
         projection_rebuild=projection_rebuild,
     )
+
+
+async def rederive_thesis_ledgers(handle: InvocationHandle) -> int:
+    """Re-derive every thesis's PnL ledger from the full broker-event log.
+
+    Story 03c's :func:`rederive_thesis_pnl_ledger` is the single writer of
+    ``thesis_pnl_ledger`` (ADR-0005 invariant 3): enumerate the distinct
+    ``thesis_id`` values present on the broker-event log (the only theses whose
+    realized PnL the log can derive) and re-derive each. The write is an
+    idempotent replace, so re-deriving from the same event set reproduces the
+    same ledger rows.
+
+    CR1 — the orchestrator's Phase-1 write unit calls this **after**
+    ``run_account_activities_poll`` (ALP-846), so a thesis carrying a
+    same-invocation OPEXP / OPEXC / OPASN / OPTRD option-lifecycle event has that
+    event's realized-PnL delta folded into the ledger *this* invocation. The
+    activities poll appends those events to the log *after* the fill-fold's
+    projection rebuild ran, so the ledger must be re-derived once the log is
+    complete. Joins the open ``handle.session`` transaction; the surrounding
+    write unit commits. Returns the count of ledgers re-derived.
+    """
+    session = handle.session
+    thesis_ids = (
+        (
+            await session.execute(
+                select(BrokerEventLogRow.thesis_id)
+                .where(BrokerEventLogRow.thesis_id.is_not(None))
+                .distinct()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    invocation_id = InvocationId(handle.invocation_id)
+    rederived = 0
+    for thesis_id in thesis_ids:
+        # The ``is_not(None)`` filter guarantees a non-NULL value at runtime; the
+        # mypy-visible ``str | None`` column type does not narrow, so guard it.
+        if thesis_id is None:
+            continue
+        await rederive_thesis_pnl_ledger(session, ThesisId(thesis_id), invocation_id)
+        rederived += 1
+    return rederived
 
 
 def _iter_merged_events(
@@ -2316,4 +2362,5 @@ __all__ = [
     "StateInconsistencyError",
     "integrate_recovered_fills",
     "process_unprocessed_fills",
+    "rederive_thesis_ledgers",
 ]

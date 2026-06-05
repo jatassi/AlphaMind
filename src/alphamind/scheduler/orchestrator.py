@@ -89,6 +89,7 @@ from alphamind.distillation.regime import RegimeLabel as DistillationRegimeLabel
 from alphamind.execution.write_paths.phase1 import (
     Phase1Summary,
     process_unprocessed_fills,
+    rederive_thesis_ledgers,
 )
 from alphamind.execution.write_paths.phase2.atomic import (
     invocation_has_pending_submit_strand,
@@ -773,6 +774,15 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
                 borrow_cost_resolver=borrow_cost_resolver,
                 now=now,
             )
+            # CR1 — re-derive the per-thesis PnL ledgers AFTER the activities poll
+            # (and borrow accrual) have appended this invocation's
+            # OPEXP/OPEXC/OPASN/OPTRD option-lifecycle events to the broker-event
+            # log. ``process_unprocessed_fills`` projects order status + classifies
+            # broker facts from the *fill* log, but a thesis-ledger derived there
+            # would miss a same-invocation lifecycle event (it is not on the log
+            # until the poll runs). Re-deriving here, still inside the single
+            # Phase-1 write transaction, folds the complete log into the ledger.
+            await rederive_thesis_ledgers(write_handle)
             await _update_row_phase1(
                 write_handle,
                 phase1_summary=summary,

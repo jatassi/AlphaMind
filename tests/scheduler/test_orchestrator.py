@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import (
     InvocationId,
+    ThesisId,
 )
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER
 from alphamind.config.models.main import ExecutionMode
@@ -564,6 +565,100 @@ class TestRunInvocationHappyPath:
             "ca_activities_processed": 2,
             "reconciliation_alerts": 0,
         }
+
+    async def test_thesis_ledger_rederived_after_activities_poll(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """CR1 — the Phase-1 write unit re-derives the thesis PnL ledger AFTER the
+        activities poll, so a thesis with a same-invocation OPASN/OPTRD event has
+        its ledger reflect that event.
+
+        The poll stub appends a realized-PnL OPASN event for a pre-seeded thesis to
+        the write handle's session (what the real poll does to the broker-event
+        log). On the old ordering the only rederive ran inside
+        ``process_unprocessed_fills`` — before the poll — so the activity's
+        realized-PnL delta was lost that invocation; now the orchestrator re-derives
+        after the poll and the ledger reflects it.
+        """
+        from alphamind.scheduler import orchestrator as module
+        from alphamind.scheduler.orchestrator import run_invocation
+        from alphamind.state.records_broker_event_log import (
+            BrokerEventRecord,
+            BrokerEventType,
+            serialize_event_payload,
+        )
+        from alphamind.state.tables.broker_event_log_codec import (
+            record_to_row as event_record_to_row,
+        )
+        from alphamind.state.tables.positions_codec import (
+            record_to_row as position_record_to_row,
+        )
+        from alphamind.state.tables.theses_codec import record_to_rows as thesis_record_to_rows
+        from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
+        from tests.execution.corporate_actions._handler_substrate import (
+            make_active_thesis,
+            make_open_equity_position,
+        )
+
+        # Pre-seed the thesis (+ its position) the activity event attributes to —
+        # full records so the post-Phase-1 snapshot read decodes them cleanly. The
+        # position carries no forward bracket/thesis FK (none is seeded); the thesis
+        # FKs back to the position, which exists.
+        async with async_factory() as session:
+            session.add(
+                position_record_to_row(
+                    make_open_equity_position(share_count=10.0, thesis_id=None, bracket_id=None)
+                )
+            )
+            await session.flush()
+            thesis_row, component_rows = thesis_record_to_rows(make_active_thesis())
+            session.add(thesis_row)
+            for crow in component_rows:
+                session.add(crow)
+            await session.commit()
+
+        async def _poll_appends_activity(*args: Any, **kw: Any) -> Any:
+            from alphamind.execution.account_activities.poll import PollResult
+
+            handle = args[0]
+            event = BrokerEventRecord(
+                event_key="aevt-orch-cr1",
+                event_type=BrokerEventType.OPASN,
+                thesis_id=ThesisId("thesis-1"),
+                invocation_id=None,
+                position_id=None,
+                raw_payload_json=serialize_event_payload({"realized_pnl_delta_usd": 410.0}),
+                broker_timestamp=_NOW,
+                captured_at=_NOW,
+            )
+            handle.session.add(event_record_to_row(event))
+            return PollResult(activities_booked=1, cursor=None)
+
+        _patch_no_op_pipeline(monkeypatch)
+        monkeypatch.setattr(module, "run_account_activities_poll", _poll_appends_activity)
+
+        await run_invocation(
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        async with async_factory() as session:
+            ledger = (await session.execute(select(ThesisPnlLedgerRow))).scalars().all()
+        assert len(ledger) == 1
+        assert ledger[0].thesis_id == "thesis-1"
+        assert ledger[0].realized_pnl_usd == pytest.approx(410.0)
 
 
 class TestRunInvocationFailures:
