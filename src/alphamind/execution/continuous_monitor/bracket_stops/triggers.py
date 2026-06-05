@@ -72,10 +72,7 @@ def evaluate_price_based_trigger(
             f"got trigger_type={leg.trigger.trigger_type!r}"
         )
         raise TypeError(msg)
-    threshold = leg.trigger.threshold_usd
-    if leg.trigger.direction == "LTE":
-        return spot <= threshold
-    return spot >= threshold
+    return _crosses_level(spot, leg.trigger)
 
 
 def evaluate_option_mark_trigger(
