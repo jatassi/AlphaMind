@@ -45,6 +45,9 @@ from alphamind._kernel.ids import (
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.broker_adapter import FillReport
 from alphamind.execution.broker_adapter.fill_stream import translate_trade_update
+from alphamind.execution.continuous_monitor.bracket_stops.close_order_precommit import (
+    make_close_order_precommitter,
+)
 from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     CloseSubmissionResult,
     prepare_bracket_close,
@@ -85,6 +88,7 @@ from alphamind.portfolio_state.records.positions import (
     StrategyPositionDetails,
 )
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
+from alphamind.state.tables.fill_records import FillRecordRow
 from tests.state._fk_substrate import (
     seed_position_cluster,
     stub_invocation_row,
@@ -284,6 +288,13 @@ async def _read_event_log(
         return list((await session.execute(select(BrokerEventLogRow))).scalars().all())
 
 
+async def _read_fill_records(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> list[FillRecordRow]:
+    async with session_factory() as session:
+        return list((await session.execute(select(FillRecordRow))).scalars().all())
+
+
 class TestFiredLegCloseSelfAttributes:
     async def test_fired_close_fill_self_attributes_with_no_order_row(
         self, session_factory: async_sessionmaker[AsyncSession]
@@ -340,3 +351,62 @@ class TestFiredLegCloseSelfAttributes:
         # Invariant 2 — never reaches the out-of-band quarantine.
         async with session_factory() as session:
             assert await list_unattributed_fills(session) == []
+
+    async def test_fired_close_with_precommit_lands_in_fill_records(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """FS4 — a monitor-fired close that pre-commits a durable ``orders`` row
+        produces a ``fill_records`` row so Phase 1 closes the position.
+
+        With the FS4 fix wired, the closer's pre-submit step persists a durable
+        close ``orders`` row keyed by the engine ``client_order_id`` (ALP-836
+        atomic pattern). When the close fill returns echoing that id,
+        ``persist_fill_report`` resolves the row → ``oms_order_id`` non-None →
+        appends the ``fill_records`` row Phase 1 integrates to close the position.
+        Without the durable row (the pre-fix path) the fill lands ONLY in
+        ``broker_event_log`` and the position stays phantom-open.
+        """
+        precommitter = make_close_order_precommitter(session_factory)
+        submitter = _LinkCapturingSubmitter()
+        activity_log = _CollectingActivityLog()
+
+        # Pre-submit step (FS4): durable close orders row committed BEFORE submit.
+        prepared = await prepare_bracket_close(
+            position=_options_position(),
+            monitor_session_id=_MONITOR_SESSION_ID,
+            trigger_id=7,
+            invocation_id_provider=_const_str(f"inv-{_INVOCATION_BARE}"),
+            close_order_precommitter=precommitter,
+        )
+        await submit_options_bracket_close(
+            position=_options_position(),
+            bracket=_bracket(),
+            trigger_reason=PositionExitMethod.STOP_TRIGGERED,
+            submitter=submitter,
+            activity_log=activity_log.emit,
+            prepared=prepared,
+            now=_NOW,
+            estimated_exit_price=9.5,
+            realized_pnl_usd=-250.0,
+        )
+
+        close_client_order_id = submitter.captured_client_order_id
+        assert close_client_order_id is not None
+
+        # The broker fills the fresh close, echoing the client_order_id back.
+        report = _fill_report_for(close_client_order_id)
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
+
+        # FS4 — the close fill produced a fill_records row (Phase 1 will integrate
+        # it and close the position). The order_id resolves to the durable
+        # pre-committed close row (client_order_id-keyed), not a phantom id.
+        fills = await _read_fill_records(session_factory)
+        assert len(fills) == 1
+        (fill,) = fills
+        assert fill.order_id is not None
+        assert fill.processing_status == "unprocessed"
+        assert fill.fill_quantity == 1.0
+        # The event-log row still self-attributes via the broker-carried link.
+        event_rows = await _read_event_log(session_factory)
+        assert len(event_rows) == 1
+        assert event_rows[0].thesis_id == _THESIS_ID

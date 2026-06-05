@@ -36,6 +36,9 @@ from alphamind.execution.broker_adapter.order_options import (
     submit_options_close,
 )
 from alphamind.execution.broker_adapter.retry import GatewaySubmissionFailed, Submitted
+from alphamind.execution.continuous_monitor.bracket_stops.close_order_precommit import (
+    make_close_order_precommitter,
+)
 from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     BracketCloseSubmitter,
     CloseSubmissionResult,
@@ -434,6 +437,12 @@ def register_options_bracket_watcher_task(
     activity_log = make_activity_log_emitter(session_factory)
     invocation_id_provider = make_invocation_id_provider(session_factory)
     risk_free_rate_provider = make_risk_free_rate_provider(session_factory)
+    # FS4 / ALP-836 — a monitor-fired close pre-commits a durable ``orders`` row
+    # keyed by its engine client_order_id BEFORE the broker submit, so the
+    # returning fill resolves an oms_order_id and Phase 1 closes the position
+    # (rather than the fill stranding in broker_event_log and the position
+    # staying phantom-open).
+    close_order_precommitter = make_close_order_precommitter(session_factory)
 
     async def _coro(session: MonitorSession, config: ContinuousMonitorConfig) -> None:
         cadence = float(config.bracket_stop_evaluation_cadence_seconds)
@@ -446,6 +455,7 @@ def register_options_bracket_watcher_task(
             submitter=submitter,
             activity_log=activity_log,
             invocation_id_provider=invocation_id_provider,
+            close_order_precommitter=close_order_precommitter,
             risk_free_rate_provider=risk_free_rate_provider,
             trigger_ids=trigger_ids,
             # ALP-829 — drive the loop through supervised_loop so beats are
