@@ -72,10 +72,7 @@ def evaluate_price_based_trigger(
             f"got trigger_type={leg.trigger.trigger_type!r}"
         )
         raise TypeError(msg)
-    threshold = leg.trigger.threshold_usd
-    if leg.trigger.direction == "LTE":
-        return spot <= threshold
-    return spot >= threshold
+    return _crosses_level(spot, leg.trigger)
 
 
 def evaluate_option_mark_trigger(
@@ -319,6 +316,38 @@ def _crosses_level(mark: float, trigger: PriceTrigger) -> bool:
     return mark >= trigger.threshold_usd
 
 
+def _strategy_leg_signed_mark(
+    *,
+    leg: StrategyLeg,
+    spot: float,
+    risk_free_rate: float,
+    as_of: datetime,
+    scale: float = 1.0,
+) -> float:
+    """Signed Black-Scholes mark for a single strategy leg, optionally scaled.
+
+    Computes the leg's per-contract Black-Scholes mark at ``spot``, signs it
+    ``-1`` for a SHORT (written) leg and ``+1`` otherwise, then multiplies by
+    ``scale``. Both :func:`_strategy_leg_net_mark` and
+    :func:`_strategy_leg_market_value` share this body — the only difference
+    between them is whether the mark is scaled by
+    ``contract_count * contract_multiplier`` (market value) or left
+    per-contract (net mark). A future change to the BS-mark or sign convention
+    therefore touches one place.
+    """
+    opts = leg.options
+    derived_price = _bs_option_price(
+        spot=spot,
+        strike=opts.strike_price,
+        time_to_expiration_years=_time_to_expiration_years(opts, as_of),
+        risk_free_rate=risk_free_rate,
+        iv=_iv_for_pl(opts),
+        contract_type=opts.contract_type,
+    )
+    sign = -1.0 if leg.direction is Direction.SHORT else 1.0
+    return sign * scale * derived_price
+
+
 def _strategy_leg_net_mark(
     *,
     leg: StrategyLeg,
@@ -335,17 +364,7 @@ def _strategy_leg_net_mark(
     is comparable to the leg's ``threshold_usd`` (a per-contract level carried
     from ``condition.trigger_price``).
     """
-    opts = leg.options
-    derived_price = _bs_option_price(
-        spot=spot,
-        strike=opts.strike_price,
-        time_to_expiration_years=_time_to_expiration_years(opts, as_of),
-        risk_free_rate=risk_free_rate,
-        iv=_iv_for_pl(opts),
-        contract_type=opts.contract_type,
-    )
-    sign = -1.0 if leg.direction is Direction.SHORT else 1.0
-    return sign * derived_price
+    return _strategy_leg_signed_mark(leg=leg, spot=spot, risk_free_rate=risk_free_rate, as_of=as_of)
 
 
 def _strategy_leg_market_value(
@@ -364,17 +383,13 @@ def _strategy_leg_market_value(
     ``portfolio_state.computations.positions``.
     """
     opts = leg.options
-    derived_price = _bs_option_price(
+    return _strategy_leg_signed_mark(
+        leg=leg,
         spot=spot,
-        strike=opts.strike_price,
-        time_to_expiration_years=_time_to_expiration_years(opts, as_of),
         risk_free_rate=risk_free_rate,
-        iv=_iv_for_pl(opts),
-        contract_type=opts.contract_type,
+        as_of=as_of,
+        scale=opts.contract_count * opts.contract_multiplier,
     )
-    leg_value = opts.contract_count * opts.contract_multiplier * derived_price
-    sign = -1.0 if leg.direction is Direction.SHORT else 1.0
-    return sign * leg_value
 
 
 def _options_details_for_pl(position: PositionRecord) -> OptionsPositionDetails:
