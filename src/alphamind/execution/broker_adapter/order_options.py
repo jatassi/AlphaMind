@@ -400,9 +400,11 @@ def _floor_price_per_contract(*, dollar_value: float, max_loss: float, quantity:
 
     Both terms are PM-authored OPEN fields — no numeric threshold is introduced
     here. A floor whose ``max_loss`` meets-or-exceeds the planned outlay implies a
-    non-positive trigger price, which Alpaca would reject; the caller's schema
-    validation (02d) keeps ``max_loss`` below the capital at risk, so the
-    derived price stays positive.
+    non-positive trigger price, which Alpaca would reject; the
+    :class:`~alphamind.commands.command_models.OpenCommand`
+    ``_validate_floor_below_outlay`` cross-field validator (FL2) rejects
+    ``max_loss >= position_size.dollar_value`` at the command boundary, so the
+    derived price reaching this helper is always positive.
     """
     contracts = quantity * LISTED_OPTION_CONTRACT_MULTIPLIER
     return (dollar_value - max_loss) / contracts

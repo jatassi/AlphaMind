@@ -222,7 +222,9 @@ def _strategy_open_command(underlying: str = "SPY") -> OpenCommand:
             ),
         ),
         entry_order=EntryOrder(type="market"),
-        position_size=PositionSize(quantity=1.0, dollar_value=money(500.0)),
+        # dollar_value strictly above the floor's max_loss (500) so the derived
+        # broker floor stop price stays positive (FL2 cross-field validator).
+        position_size=PositionSize(quantity=1.0, dollar_value=money(1_000.0)),
         # A strategy take-profit must be pl_percentage (ALP-611).
         target=Target(
             target_type="pl_percentage", pl_percentage=80.0, price=price(10.0), order_type="limit"

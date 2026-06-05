@@ -573,6 +573,26 @@ class OpenCommand(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def _validate_floor_below_outlay(self) -> OpenCommand:
+        # The broker floor's per-contract stop price is
+        # ``(dollar_value - max_loss) / (quantity * multiplier)`` (ALP-856 /
+        # ``order_options._floor_price_per_contract``). A floor whose ``max_loss``
+        # meets-or-exceeds the planned outlay derives a non-positive stop price
+        # that Alpaca rejects (422); the rejection lands AFTER the entry is live,
+        # so the cross-field check is enforced at the command boundary instead —
+        # the floor must keep some capital at stake (FL2).
+        floor = self.capital_protection_floor
+        if floor is not None and float(floor.max_loss) >= float(self.position_size.dollar_value):
+            raise ValueError(
+                "OpenCommand capital_protection_floor.max_loss "
+                f"({float(floor.max_loss):g}) must be strictly less than "
+                f"position_size.dollar_value ({float(self.position_size.dollar_value):g}); "
+                "a max_loss meeting-or-exceeding the planned outlay derives a "
+                "non-positive broker floor stop price (Alpaca 422)"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_hard_backstop(self) -> OpenCommand:
         if not any(leg.is_hard for leg in self.invalidation_legs):
             raise ValueError(
