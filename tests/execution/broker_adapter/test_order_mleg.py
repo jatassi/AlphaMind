@@ -1071,7 +1071,9 @@ async def test_open_with_single_leg_option_instrument_raises_type_error() -> Non
             direction="long",
         ),
         entry_order=EntryOrder(type="market"),
-        position_size=PositionSize(quantity=1, dollar_value=money(200.0)),
+        # dollar_value strictly above the floor's max_loss (200) so the floor's
+        # derived broker stop price stays positive (FL2 cross-field validator).
+        position_size=PositionSize(quantity=1, dollar_value=money(500.0)),
         target=Target(target_type="absolute_price", price=price(820.0), order_type="limit"),
         invalidation_legs=(
             PriceLeg(
