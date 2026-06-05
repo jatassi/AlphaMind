@@ -7,7 +7,7 @@ This closes the gap the reconnect-driven recovery leaves: a fill dropped /
 quarantined before its ``orders`` row committed, which max(fill_timestamp)
 recovery permanently excludes once a later fill lands.
 
-Layout mirrors the sibling ``borrow_accrual/`` sub-package:
+Layout mirrors the sibling ``greeks_refresh/`` sub-package:
 
 * :mod:`task` — the run-forever asyncio task (imperative shell), reusing
   ``recover_missed_fills_since`` + the shared ``persist_fill_report`` +

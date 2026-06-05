@@ -766,7 +766,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
             # ALP-855 / W4a — daily SHORT-equity borrow accrual, relocated out of
             # the always-on monitor (ADR-0004) into this pipeline write unit
             # (single writer = pipeline, ADR-0005). The once-per-trading-day guard
-            # makes the ~3×/day pipeline cadence book the day's accrual exactly
+            # makes the few-times-per-day pipeline cadence book the accrual exactly
             # once; it reuses the invocation's session + the already-built
             # ``borrow_cost_resolver`` (no per-tick InvocationRow, no daily timer).
             await run_borrow_accrual(

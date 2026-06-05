@@ -200,7 +200,7 @@ _MAIN_CONFIG_PATH = _CONFIG_DIR / "main.yaml"
 _REALIZED_VOL_REFRESH_INTERVAL_SECONDS: float = 24 * 60 * 60
 
 # ALP-825 review — short heartbeat cadence for the realized-vol refresh loop.
-# Mirrors ``borrow_accrual._HEARTBEAT_CADENCE_SECONDS``: the refresh fires only
+# The refresh fires only
 # once per ``_REALIZED_VOL_REFRESH_INTERVAL_SECONDS`` (24h), but the supervised
 # loop must iterate far more often than that so the stall watchdog sees a steady
 # heartbeat — pacing the loop on the 24h functional interval would yield a stall
@@ -287,7 +287,7 @@ def _register_realized_vol_refresh_task(
 
     Watchdog liveness (ALP-825 review). The loop drives the supervisor's
     ``supervised_loop`` seam on a SHORT ``heartbeat_cadence_seconds`` cadence
-    (mirroring ``borrow_accrual``) rather than the 24h functional interval, so
+    rather than the 24h functional interval, so
     the stall bound is ``heartbeat_cadence_seconds * watchdog_cadence_multiplier``
     instead of ~240h — a mid-refresh wedge is detected within minutes, not ~10
     days. Each iteration beats the watchdog (via the seam) and checks whether the

@@ -11,7 +11,7 @@ timer machinery (``run_borrow_accrual_loop`` / ``_next_tick_utc`` / the per-tick
 ``InvocationRow`` mint) is gone — the pipeline already owns the invocation row and
 fires on its own cadence.
 
-Idempotency. The pipeline runs ~3× per trading day, but borrow accrual is a daily
+Idempotency. The pipeline runs a few times per trading day, but borrow accrual is daily
 quantity. :func:`run_borrow_accrual` is therefore guarded: it books the accrual at
 most once per US/Eastern trading day, keyed on the ``BORROW_COST_ACCRUED``
 activity-log rows already booked for that ``accrual_date``. A second same-day
@@ -30,16 +30,16 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from alphamind._kernel.ids import Symbol, make_symbol
-from alphamind.scheduler.borrow_accrual_kernel import (
-    AccrualTickResult,
-    compute_tick,
-)
 from alphamind.persistence.models import OhlcvBars
 from alphamind.portfolio_state.events.activity_log import EventType
 from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
     PositionRecord,
     is_open_short_equity,
+)
+from alphamind.scheduler.borrow_accrual_kernel import (
+    AccrualTickResult,
+    compute_tick,
 )
 from alphamind.state.invocation_context.activity_log import (
     activity_log_entry_to_row,
@@ -107,7 +107,9 @@ async def run_borrow_accrual(
     accrual_date_et = now.astimezone(_US_EASTERN).date().isoformat()
     if await _already_accrued_today(session, accrual_date_iso=accrual_date_et):
         log.info("borrow_accrual already booked for %s; skipping", accrual_date_et)
-        return AccrualTickResult(updated_positions=(), activity_log_entries=(), total_accrued_usd=0.0)
+        return AccrualTickResult(
+            updated_positions=(), activity_log_entries=(), total_accrued_usd=0.0
+        )
 
     positions = await _read_all_positions(session)
     in_scope = tuple(p for p in positions if is_open_short_equity(p))

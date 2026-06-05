@@ -280,10 +280,14 @@ class TestSqlGreeksWriterWritesSideTable:
         )
         async with async_factory() as sess:
             rows = (
-                await sess.execute(
-                    select(PositionGreeksRow).where(PositionGreeksRow.position_id == "pos-1")
+                (
+                    await sess.execute(
+                        select(PositionGreeksRow).where(PositionGreeksRow.position_id == "pos-1")
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         assert len(rows) == 1
         assert rows[0].delta == 0.7
         assert rows[0].updated_at == second_as_of.isoformat()
@@ -309,10 +313,20 @@ class TestSqlGreeksWriterStrategy:
         as_of = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
         per_leg = {
             "leg-1": OptionGreeks(
-                delta=0.55, gamma=0.011, theta=-0.021, vega=0.16, as_of_timestamp=as_of, iv_used=0.22
+                delta=0.55,
+                gamma=0.011,
+                theta=-0.021,
+                vega=0.16,
+                as_of_timestamp=as_of,
+                iv_used=0.22,
             ),
             "leg-2": OptionGreeks(
-                delta=0.32, gamma=0.011, theta=-0.016, vega=0.13, as_of_timestamp=as_of, iv_used=0.20
+                delta=0.32,
+                gamma=0.011,
+                theta=-0.016,
+                vega=0.13,
+                as_of_timestamp=as_of,
+                iv_used=0.20,
             ),
         }
         aggregated = OptionGreeks(
@@ -364,9 +378,7 @@ class TestSqlGreeksWriterNoPositionsOrOrdersRmw:
     contract is structural rather than incidental to the codec round-trip.
     """
 
-    async def test_options_refresh_emits_no_positions_or_orders_write(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_options_refresh_emits_no_positions_or_orders_write(self, tmp_path: Path) -> None:
         from alphamind.persistence.session import (
             make_async_engine,
             make_async_session_factory,
@@ -408,9 +420,7 @@ class TestSqlGreeksWriterNoPositionsOrOrdersRmw:
 
         write_kinds = ("INSERT", "UPDATE", "DELETE")
         mutations = [
-            s
-            for s in statements
-            if any(s.lstrip().upper().startswith(k) for k in write_kinds)
+            s for s in statements if any(s.lstrip().upper().startswith(k) for k in write_kinds)
         ]
         # The only mutation is on the side table.
         assert mutations, "expected at least one write to position_greeks"

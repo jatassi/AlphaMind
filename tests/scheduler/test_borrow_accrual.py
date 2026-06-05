@@ -191,12 +191,14 @@ async def _seed_parents(factory: async_sessionmaker[AsyncSession]) -> None:
     await _seed_universe(factory, ticker="ABCD")
 
 
-async def _seed_position(
-    factory: async_sessionmaker[AsyncSession], record: PositionRecord
-) -> None:
+async def _seed_position(factory: async_sessionmaker[AsyncSession], record: PositionRecord) -> None:
     async with factory() as sess:
         sess.add(position_record_to_row(record))
         await sess.commit()
+
+
+async def _seed_default_short(factory: async_sessionmaker[AsyncSession]) -> None:
+    await _seed_position(factory, _short_equity_record(position_id="pos-1", ticker="ABCD"))
 
 
 async def _seed_universe(factory: async_sessionmaker[AsyncSession], *, ticker: str) -> None:
@@ -250,7 +252,7 @@ class TestBorrowAccrualBooks:
         self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         await _seed_parents(async_factory)
-        await _seed_position(async_factory, _short_equity_record(position_id="pos-1", ticker="ABCD"))
+        await _seed_default_short(async_factory)
         await _seed_ohlcv(async_factory, ticker="ABCD", close=50.0)
 
         await _run_in_handle(async_factory, resolver=_resolver({"ABCD": 10.0}))
@@ -269,7 +271,7 @@ class TestBorrowAccrualBooks:
         self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         await _seed_parents(async_factory)
-        await _seed_position(async_factory, _short_equity_record(position_id="pos-1", ticker="ABCD"))
+        await _seed_default_short(async_factory)
         await _seed_ohlcv(async_factory, ticker="ABCD", close=50.0)
 
         await _run_in_handle(async_factory, resolver=_resolver({"ABCD": 10.0}))
@@ -287,7 +289,7 @@ class TestBorrowAccrualBooks:
         self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         await _seed_parents(async_factory)
-        await _seed_position(async_factory, _short_equity_record(position_id="pos-1", ticker="ABCD"))
+        await _seed_default_short(async_factory)
         await _seed_ohlcv(async_factory, ticker="ABCD", close=50.0)
 
         await _run_in_handle(async_factory, resolver=_resolver({"ABCD": 10.0}))
@@ -304,7 +306,7 @@ class TestOncePerTradingDayGuard:
         self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         await _seed_parents(async_factory)
-        await _seed_position(async_factory, _short_equity_record(position_id="pos-1", ticker="ABCD"))
+        await _seed_default_short(async_factory)
         await _seed_ohlcv(async_factory, ticker="ABCD", close=50.0)
 
         # Same trading day, two invocations 4h apart.
@@ -327,7 +329,7 @@ class TestOncePerTradingDayGuard:
         self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         await _seed_parents(async_factory)
-        await _seed_position(async_factory, _short_equity_record(position_id="pos-1", ticker="ABCD"))
+        await _seed_default_short(async_factory)
         await _seed_ohlcv(async_factory, ticker="ABCD", close=50.0)
         # A second day's bar so the kernel has a fresh close on day two.
         await _seed_ohlcv(
@@ -341,8 +343,9 @@ class TestOncePerTradingDayGuard:
         async with async_factory() as sess:
             rows = (await sess.execute(select(ActivityLogRow))).scalars().all()
         assert len(rows) == 2
+        details = [activity_log_entry_from_row(r).detail for r in rows]
+        assert all(isinstance(d, BorrowCostAccruedDetail) for d in details)
         accrual_dates = sorted(
-            activity_log_entry_from_row(r).detail.accrual_date  # type: ignore[union-attr]
-            for r in rows
+            d.accrual_date for d in details if isinstance(d, BorrowCostAccruedDetail)
         )
         assert accrual_dates == [date(2026, 5, 27), date(2026, 5, 28)]

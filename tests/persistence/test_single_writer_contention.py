@@ -26,7 +26,6 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import PositionId
 from alphamind.execution.continuous_monitor.greeks_refresh import SqlGreeksWriter
@@ -38,7 +37,6 @@ from alphamind.persistence.session import (
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
-    EquityPositionDetails,
     OptionContractType,
     OptionGreeks,
     OptionsPositionDetails,
@@ -55,8 +53,8 @@ _NOW = datetime(2026, 5, 27, 20, 0, tzinfo=UTC)
 def _options_position(position_id: str) -> PositionRecord:
     from datetime import date
 
-    from alphamind._kernel.money import money, price, signed_money
     from alphamind._kernel.ids import Symbol
+    from alphamind._kernel.money import money, price, signed_money
     from alphamind.portfolio_state.records.positions import PositionFill
 
     return PositionRecord(
@@ -130,9 +128,7 @@ async def test_monitor_append_and_pipeline_write_no_busy_snapshot(db_path: str) 
         async with pipeline_factory() as session:
             await begin_write_immediate(session)
             row = (
-                await session.execute(
-                    select(PositionRow).where(PositionRow.position_id == "pos-1")
-                )
+                await session.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
             ).scalar_one()
             row.realized_pnl_to_date_usd = 1.0
             order.append("pipeline_wrote")
@@ -208,9 +204,7 @@ async def test_concurrent_writes_never_raise_operational_error(db_path: str) -> 
         async with pipeline_factory() as session:
             await begin_write_immediate(session)
             row = (
-                await session.execute(
-                    select(PositionRow).where(PositionRow.position_id == "pos-1")
-                )
+                await session.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
             ).scalar_one()
             row.realized_pnl_to_date_usd = float(i)
             await session.commit()

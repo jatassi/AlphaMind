@@ -27,9 +27,6 @@ from alphamind.portfolio_state.events.activity_log import (
     EventSource,
     EventType,
 )
-from alphamind.scheduler.borrow_accrual_kernel import (
-    compute_tick,
-)
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -40,6 +37,9 @@ from alphamind.portfolio_state.records.positions import (
     PositionFill,
     PositionRecord,
     PositionStatus,
+)
+from alphamind.scheduler.borrow_accrual_kernel import (
+    compute_tick,
 )
 
 _NOW = datetime(2026, 5, 27, 20, 0, tzinfo=UTC)  # 16:00 ET in summer (UTC-4)
