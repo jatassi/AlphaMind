@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from alphamind._kernel.ids import PositionId, ThesisId
 from alphamind._kernel.money import money, price
 from alphamind.execution.broker_adapter.queries import PositionSnapshot, TradeAccountSnapshot
+from alphamind.execution.write_paths.phase1 import rederive_thesis_ledgers
 from alphamind.execution.write_paths.projection_rebuild import (
     BrokerFactNoIntent,
     OrderStatusProjection,
@@ -604,3 +605,93 @@ async def test_rebuild_populates_thesis_pnl_ledger_from_the_log(
         assert ledger[0].thesis_id == "thesis-1"
         assert ledger[0].cost_basis_usd == pytest.approx(1500.0)
         assert ledger[0].realized_pnl_usd == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# CR1 — the thesis-ledger rederive runs AFTER the option-lifecycle activities
+# poll, so a same-invocation OPASN/OPTRD activity is folded into the ledger.
+# ---------------------------------------------------------------------------
+
+
+def _activity_event(
+    *,
+    event_key: str,
+    event_type: BrokerEventType,
+    realized_pnl_delta_usd: float,
+    thesis_id: str = "thesis-1",
+    position_id: str = "pos-1",
+) -> BrokerEventRecord:
+    """An option-lifecycle activity event the poll appends, carrying realized PnL.
+
+    Mirrors the OPASN / OPTRD rows ``account_activities.handlers`` stamps with a
+    ``realized_pnl_delta_usd`` on the payload — the thesis-PnL fold aggregates the
+    delta into the ledger's realized PnL.
+    """
+    payload = {"realized_pnl_delta_usd": realized_pnl_delta_usd}
+    return BrokerEventRecord(
+        event_key=event_key,
+        event_type=event_type,
+        thesis_id=ThesisId(thesis_id),
+        invocation_id=None,
+        position_id=PositionId(position_id),
+        raw_payload_json=serialize_event_payload(payload),
+        broker_timestamp=NOW,
+        captured_at=NOW,
+    )
+
+
+async def test_rederive_after_activities_poll_folds_same_invocation_lifecycle_event(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """CR1 — ``rederive_thesis_ledgers`` runs in the orchestrator write unit AFTER
+    ``run_account_activities_poll`` appends an OPASN/OPTRD event, so a thesis with a
+    same-invocation option-lifecycle event has its PnL ledger reflect that event.
+
+    On the old ordering the rederive ran inside ``process_unprocessed_fills`` —
+    BEFORE the activities poll — so the activity's realized-PnL delta was missing
+    from the ledger that invocation. This drives the fixed sequence: fills folded,
+    then the poll appends the activity, then the rederive sees the complete log.
+    """
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_position_cluster(
+        factory,
+        make_open_equity_position(share_count=10.0),
+        make_pending_entry_order(),
+        make_active_thesis(),
+        make_active_bracket(),
+    )
+    # An opening buy FILL (the Phase-1 fill-fold leg) — cost_basis 1500, realized 0.
+    await _append_events(
+        factory,
+        _fill_event(
+            event_key="fevt-cr1",
+            alpaca_order_id="broker-uuid-cr1",
+            fill_price=150.0,
+            fill_quantity=10.0,
+            side="buy",
+        ),
+    )
+
+    # The activities poll appends a realized-PnL OPASN event SAME invocation.
+    await _append_events(
+        factory,
+        _activity_event(
+            event_key="aevt-cr1",
+            event_type=BrokerEventType.OPASN,
+            realized_pnl_delta_usd=275.0,
+        ),
+    )
+
+    ctx, handle = await open_handle(factory)
+    rederived = await rederive_thesis_ledgers(handle)
+    await ctx.__aexit__(None, None, None)
+
+    assert rederived == 1
+    async with factory() as sess:
+        ledger = (await sess.execute(select(ThesisPnlLedgerRow))).scalars().all()
+        assert len(ledger) == 1
+        assert ledger[0].thesis_id == "thesis-1"
+        # The post-poll rederive folded the activity's realized-PnL delta into the
+        # ledger — the same-invocation lifecycle event is NOT lost.
+        assert ledger[0].realized_pnl_usd == pytest.approx(275.0)
