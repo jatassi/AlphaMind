@@ -44,7 +44,6 @@ from alphamind.state.records_broker_event_log import (
 from alphamind.state.tables.broker_event_log_codec import record_to_row as event_record_to_row
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
-
 from tests.state._fk_substrate import stub_order_row
 
 from ._handler_substrate import (
@@ -390,9 +389,7 @@ async def test_terminal_status_projection_resolves_orders_in_batch(
     orders_selects: list[str] = []
 
     @event.listens_for(engine.sync_engine, "before_cursor_execute")
-    def _capture(
-        _conn: object, _cursor: object, statement: str, *_rest: object
-    ) -> None:
+    def _capture(_conn: object, _cursor: object, statement: str, *_rest: object) -> None:
         normalized = " ".join(statement.split()).lower()
         if "from orders" in normalized and normalized.startswith("select"):
             orders_selects.append(statement)
