@@ -51,6 +51,7 @@ from alphamind.execution.corporate_actions.handlers._shared import _persist_posi
 from alphamind.execution.write_paths.broker_event_persistence import append_broker_event
 from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
+    InstrumentType,
     OptionsPositionDetails,
     PositionRecord,
     PositionStatus,
@@ -114,9 +115,17 @@ async def _append_lifecycle_event(
 async def _find_open_option_position(
     handle: InvocationHandle, occ_symbol: str
 ) -> tuple[PositionRow, PositionRecord] | None:
-    """Find the OPEN option ``PositionRow`` whose OCC symbol equals *occ_symbol*."""
+    """Find the OPEN option ``PositionRow`` whose OCC symbol equals *occ_symbol*.
+
+    The ``instrument_type`` discriminator narrows the query to OPTIONS rows in
+    SQL, so the scan never loads (and decodes ``details_json`` for) every open
+    equity / strategy position just to skip it in Python (F5). The OCC match
+    still runs in Python — ``alpaca_occ_symbol`` is derived from the decoded
+    option details, not a stored column.
+    """
     stmt = select(PositionRow).where(
-        PositionRow.status.in_((PositionStatus.OPEN.value, PositionStatus.PENDING.value))
+        PositionRow.status.in_((PositionStatus.OPEN.value, PositionStatus.PENDING.value)),
+        PositionRow.instrument_type == InstrumentType.OPTIONS.value,
     )
     rows = (await handle.session.execute(stmt)).scalars().all()
     for row in rows:

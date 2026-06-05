@@ -238,9 +238,7 @@ async def test_repoll_after_clean_expiry_is_a_no_op(
         assert len(events) == 1
 
 
-def _assignment_event(
-    activity_type: LifecycleActivityType, *, side: str = "buy"
-) -> LifecycleEvent:
+def _assignment_event(activity_type: LifecycleActivityType, *, side: str = "buy") -> LifecycleEvent:
     return LifecycleEvent(
         activity_id="act-asn-1",
         activity_type=activity_type,
