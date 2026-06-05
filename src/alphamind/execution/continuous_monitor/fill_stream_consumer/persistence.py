@@ -56,6 +56,7 @@ from alphamind.execution.write_paths.unattributed_fill_persistence import (
 )
 from alphamind.state.records import FillRecord, UnattributedFill
 from alphamind.state.records_broker_event_log import BrokerEventRecord, BrokerEventType
+from alphamind.state.tables.invocations import InvocationRow
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.theses import ThesisRow
@@ -233,7 +234,7 @@ async def _resolve_attribution(db: AsyncSession, report: FillReport) -> _FillAtt
         position_id = await _resolve_position_id_for_thesis(db, link.thesis_id)
         return _FillAttribution(
             thesis_id=link.thesis_id,
-            invocation_id=link.invocation_id,
+            invocation_id=await _resolve_link_invocation_id(db, link.invocation_id),
             position_id=position_id,
             oms_order_id=await _resolve_oms_order_id(db, report),
         )
@@ -283,6 +284,27 @@ async def _thesis_row_exists(db: AsyncSession, thesis_id: ThesisId) -> bool:
     """
     stmt = select(ThesisRow.thesis_id).where(ThesisRow.thesis_id == thesis_id)
     return (await db.execute(stmt)).scalars().one_or_none() is not None
+
+
+async def _resolve_link_invocation_id(
+    db: AsyncSession, invocation_id: InvocationId
+) -> InvocationId | None:
+    """Return the linked ``invocation_id`` only when its ``invocations`` row exists.
+
+    CL3 — on a cold-start DB the monitor's invocation provider returns the
+    ``monitor-bootstrap`` sentinel, which the closer weaves into the engine
+    ``client_order_id`` and a returning fill parses back as
+    ``InvocationId("inv-monitor-bootstrap")``. ``broker_event_log.invocation_id``
+    is a DEFERRABLE INITIALLY DEFERRED FK to ``invocations``, so storing a value
+    with no matching row violates at ``db.commit()`` and strands the fill. The
+    column is nullable and the thesis link still attributes the fill, so a link
+    invocation with no committed ``invocations`` row is stored as ``NULL`` rather
+    than as a non-existent FK. This special-cases the bootstrap sentinel without
+    hard-coding it: any not-yet-committed invocation nulls the same way.
+    """
+    stmt = select(InvocationRow.invocation_id).where(InvocationRow.invocation_id == invocation_id)
+    exists = (await db.execute(stmt)).scalars().one_or_none() is not None
+    return invocation_id if exists else None
 
 
 async def _resolve_position_id_for_thesis(
@@ -483,7 +505,7 @@ async def _resolve_terminal_attribution(
     if link is not None:
         return _FillAttribution(
             thesis_id=link.thesis_id,
-            invocation_id=link.invocation_id,
+            invocation_id=await _resolve_link_invocation_id(db, link.invocation_id),
             position_id=await _resolve_position_id_for_thesis(db, link.thesis_id),
             oms_order_id=None,
         )

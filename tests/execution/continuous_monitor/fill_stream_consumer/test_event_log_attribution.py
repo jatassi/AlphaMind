@@ -331,6 +331,42 @@ class TestUncommittedThesisStrandHole:
         assert len(queued) == 1
 
 
+class TestBootstrapSentinelInvocation:
+    async def test_close_fill_with_bootstrap_sentinel_invocation_persists_null_invocation(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A self-attributing close fill whose engine link carries the cold-start
+        ``monitor-bootstrap`` sentinel invocation persists with ``invocation_id``
+        NULL — not the non-existent ``inv-monitor-bootstrap`` FK that would
+        violate the deferred ``invocations`` FK at commit and strand the fill.
+
+        On a fresh DB with no invocations the monitor's provider returns the
+        ``monitor-bootstrap`` sentinel; the closer weaves it into the engine
+        ``client_order_id`` and the returning fill parses it back as
+        ``InvocationId("inv-monitor-bootstrap")``. The column is nullable and the
+        thesis link still attributes the fill, so the sentinel (no matching
+        ``invocations`` row) is stored as NULL (CL3)."""
+        bootstrap_command_id = derive_engine_command_id(
+            monitor_session_id="mon-20260511T120000Z-deadbeef",
+            trigger_id=2,
+            thesis_id=_THESIS_ID,
+            invocation_id="monitor-bootstrap",
+        )
+        report = _fill_report(client_order_id=bootstrap_command_id, order_id=uuid4())
+
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
+
+        rows = await _read_event_log(session_factory)
+        assert len(rows) == 1
+        (row,) = rows
+        assert row.event_type == "FILL"
+        assert row.thesis_id == _THESIS_ID
+        # The bootstrap sentinel invocation has no ``invocations`` row -> stored NULL,
+        # not the non-existent FK that would have raised at commit.
+        assert row.invocation_id is None
+        assert row.position_id == "pos-1"
+
+
 class TestEventLogIdempotency:
     async def test_same_fill_delivered_twice_collapses_to_one_row(
         self, session_factory: async_sessionmaker[AsyncSession]
