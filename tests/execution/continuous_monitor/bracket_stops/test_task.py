@@ -262,6 +262,56 @@ def _broker_enforced_floor_bracket(
     )
 
 
+def _monitor_stop_plus_floor_bracket(
+    *,
+    bracket_id: str = "brk-1",
+    position_id: str = "pos-1",
+    stop_threshold: float = 865.0,
+    floor_order_id: str = "alpaca-floor-uuid",
+) -> BracketRecord:
+    """A bracket with a MONITOR_ENFORCED stop AND a BROKER_ENFORCED resting floor.
+
+    The monitor stop fires the close; the resting broker floor must then be
+    cancelled (cancel-on-monitor-fire) so no orphaned floor lingers against a
+    now-closing position (ALP-856).
+    """
+    monitor_stop = BracketLeg(
+        leg_id="leg-monitor-stop",
+        leg_type=BracketLegType.PRICE_STOP,
+        order_id=None,
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"),
+            threshold_usd=stop_threshold,
+            direction="LTE",
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.ACTIVE,
+        enforcement_binding=EnforcementBinding.MONITOR_ENFORCED,
+    )
+    floor_leg = BracketLeg(
+        leg_id="leg-floor",
+        leg_type=BracketLegType.PRICE_STOP,
+        order_id=OrderId(floor_order_id),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"),
+            threshold_usd=stop_threshold - 1.0,  # deeper than the monitor stop
+            direction="LTE",
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.ACTIVE,
+        enforcement_binding=EnforcementBinding.BROKER_ENFORCED,
+    )
+    return BracketRecord(
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
+        status=BracketStatus.ACTIVE,
+        entry_order_id=OrderId("ord-entry-1"),
+        protective_legs=(monitor_stop, floor_leg),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
+    )
+
+
 class FakePositionRepository:
     def __init__(self, positions: tuple[PositionRecord, ...]) -> None:
         self._positions = positions
@@ -286,6 +336,7 @@ class FakeBracketRepository:
 class FakeSubmitter:
     options_calls: list[tuple[str, str]] = field(default_factory=list)
     strategy_calls: list[str] = field(default_factory=list)
+    cancelled_floors: list[str] = field(default_factory=list)
 
     async def submit_options_close(
         self,
@@ -310,6 +361,9 @@ class FakeSubmitter:
         del details, trigger_reason
         self.strategy_calls.append(position.position_id)
         return CloseSubmissionResult(order_ids=(client_order_id_base,), mode="strategy_combined")
+
+    async def cancel_floor(self, *, alpaca_order_id: str) -> None:
+        self.cancelled_floors.append(alpaca_order_id)
 
 
 @dataclass
@@ -473,6 +527,70 @@ class TestBrokerEnforcedFloorAbsorb:
         # The broker owns the floor's close — the monitor submits nothing.
         assert submitter.options_calls == []
         assert log.entries == []
+
+
+class TestCancelOnMonitorFire:
+    """ALP-856 cancel-on-monitor-fire — a fired monitor stop cancels the floor.
+
+    When a MONITOR_ENFORCED stop fires and closes the position, the resting
+    BROKER_ENFORCED floor (a GTC ``stop_limit``) must be cancelled — the position
+    no longer exists, so an uncancelled floor would orphan against it. The cancel
+    targets the floor leg's broker ``order_id``.
+    """
+
+    async def test_monitor_fire_cancels_the_resting_broker_floor(self) -> None:
+        position = _options_position(direction=Direction.LONG)
+        bracket = _monitor_stop_plus_floor_bracket(
+            stop_threshold=865.0, floor_order_id="alpaca-floor-uuid"
+        )
+        cache = await _seed_cache({"NVDA": 860.0})  # below the stop → fires
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+
+        await _run_bracket_stop_cycle(
+            config=_config(),
+            position_repository=FakePositionRepository((position,)),
+            bracket_repository=FakeBracketRepository((bracket,)),
+            cache=cache,
+            submitter=submitter,
+            activity_log=log.emit,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
+            now=_NOW,
+            risk_free_rate=0.045,
+            fired_legs=set(),
+        )
+
+        # The monitor stop fired its close ...
+        assert len(submitter.options_calls) == 1
+        # ... and the resting broker floor was cancelled — no orphan remains.
+        assert submitter.cancelled_floors == ["alpaca-floor-uuid"]
+
+    async def test_no_floor_cancel_when_no_broker_floor_present(self) -> None:
+        position = _options_position(direction=Direction.LONG)
+        bracket = _price_stop_bracket(threshold=865.0, direction="LTE")  # monitor-only
+        cache = await _seed_cache({"NVDA": 860.0})
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+
+        await _run_bracket_stop_cycle(
+            config=_config(),
+            position_repository=FakePositionRepository((position,)),
+            bracket_repository=FakeBracketRepository((bracket,)),
+            cache=cache,
+            submitter=submitter,
+            activity_log=log.emit,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
+            now=_NOW,
+            risk_free_rate=0.045,
+            fired_legs=set(),
+        )
+
+        assert len(submitter.options_calls) == 1
+        assert submitter.cancelled_floors == []
 
 
 class TestPreSubmitFailureRetries:

@@ -20,6 +20,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import AlpacaOrderId
 from alphamind.commands.command_models import (
     CloseCommand,
     StrategyType,
@@ -30,6 +31,7 @@ from alphamind.execution.broker_adapter.order_mleg import (
     strategy_legs_to_close_acks,
     submit_mleg_close,
 )
+from alphamind.execution.broker_adapter.order_modify import submit_cancel
 from alphamind.execution.broker_adapter.order_options import (
     PermanentRejectionError,
     build_occ_symbol,
@@ -270,6 +272,30 @@ class AlpacaBracketCloseSubmitter:
             order_ids=(payload.alpaca_order_id,),
             mode="strategy_combined",
         )
+
+    async def cancel_floor(self, *, alpaca_order_id: str) -> None:
+        """Cancel the resting broker-enforced capital floor by its broker id (ALP-856).
+
+        Wraps :func:`submit_cancel`. Best-effort cancel-on-monitor-fire: a
+        gateway failure or a permanent rejection (the floor already filled /
+        cancelled, a 404/422) is logged and swallowed — the monitor close has
+        already gone to the broker, and a lingering floor is at worst a stale
+        resting order the reconcile sweep surfaces. The closer wraps this call in
+        its own best-effort guard too; this layer keeps the broker-call
+        translation (gateway-failure / permanent-rejection mapping) co-located
+        with the other submitter broker calls.
+        """
+        outcome = await submit_cancel(
+            client=self._trading_client,  # type: ignore[arg-type]
+            execution=self._execution_config,
+            target_alpaca_order_id=AlpacaOrderId(alpaca_order_id),
+        )
+        if isinstance(outcome, GatewaySubmissionFailed):
+            log.warning(
+                "bracket_stops: floor cancel exhausted retries for %s: reason=%r",
+                alpaca_order_id,
+                outcome.reason,
+            )
 
     async def _per_leg_fallback(
         self,

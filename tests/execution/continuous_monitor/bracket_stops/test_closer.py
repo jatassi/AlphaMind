@@ -217,6 +217,7 @@ class FakeSubmitter:
     strategy_calls: list[tuple[str, str]] = field(default_factory=list)
     strategy_returns: CloseSubmissionResult | None = None
     trigger_reasons: list[PositionExitMethod] = field(default_factory=list)
+    cancelled_floors: list[str] = field(default_factory=list)
 
     async def submit_options_close(
         self,
@@ -251,6 +252,9 @@ class FakeSubmitter:
             order_ids=(client_order_id_base,),
             mode="strategy_combined",
         )
+
+    async def cancel_floor(self, *, alpaca_order_id: str) -> None:
+        self.cancelled_floors.append(alpaca_order_id)
 
 
 @dataclass

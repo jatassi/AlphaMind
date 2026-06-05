@@ -38,7 +38,7 @@ from alphamind.portfolio_state.events.activity_log import (
     PositionClosedDetail,
     PositionExitMethod,
 )
-from alphamind.portfolio_state.records.orders import BracketRecord
+from alphamind.portfolio_state.records.orders import BracketRecord, EnforcementBinding
 from alphamind.portfolio_state.records.positions import (
     OptionsPositionDetails,
     PositionRecord,
@@ -139,6 +139,15 @@ class BracketCloseSubmitter(Protocol):
         ``trigger_reason`` frames the fresh close as a Monitor-enforced
         thesis-shaped exit (see :meth:`submit_options_close`)."""
 
+    async def cancel_floor(self, *, alpaca_order_id: str) -> None:
+        """Cancel the resting broker-enforced capital floor by its broker id.
+
+        Called after a monitor-enforced stop fires its close (ALP-856
+        cancel-on-monitor-fire): the position is closing, so the always-on GTC
+        ``stop_limit`` floor must be cancelled or it orphans against a
+        no-longer-open position. Best-effort — a failed cancel is logged but does
+        not undo the close (which already reached the broker)."""
+
 
 async def prepare_bracket_close(
     *,
@@ -208,7 +217,6 @@ async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-ou
     reached the broker, so the caller keeps the leg marked fired to avoid a
     double-close (CL1).
     """
-    del bracket  # bracket_id flows through trigger_id; leg_id is in the rationale
     client_order_id_base = prepared.client_order_id_base
     details = position.details
     if isinstance(details, OptionsPositionDetails):
@@ -242,7 +250,41 @@ async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-ou
             realized_pnl_usd=realized_pnl_usd,
         )
     )
+    # cancel-on-monitor-fire (ALP-856): the monitor stop just closed the position,
+    # so its always-on broker-enforced capital floor must be cancelled or it
+    # orphans against a no-longer-open position. The two never double-close: a
+    # monitor fire cancels the floor here; a broker-floor fill instead drops the
+    # position from eligibility (absorb-on-broker-fire, _is_active_eligible_leg).
+    await _cancel_resting_floors(bracket, submitter)
     return result
+
+
+async def _cancel_resting_floors(
+    bracket: BracketRecord, submitter: BracketCloseSubmitter
+) -> None:
+    """Cancel each resting broker-enforced floor leg of *bracket* (ALP-856).
+
+    A broker-enforced leg with a broker ``order_id`` is a real resting Alpaca
+    order (the options capital floor's GTC ``stop_limit``); cancel it so a fired
+    monitor close leaves no orphaned floor. Best-effort: a cancel failure is
+    logged and swallowed (the close already reached the broker — the floor is at
+    worst a stale resting order the reconcile sweep surfaces), never propagated
+    so it cannot mask the close. ``CancelledError`` propagates for shutdown.
+    """
+    for leg in bracket.protective_legs:
+        if (
+            leg.enforcement_binding is EnforcementBinding.BROKER_ENFORCED
+            and leg.order_id is not None
+        ):
+            try:
+                await submitter.cancel_floor(alpaca_order_id=leg.order_id)
+            except Exception:
+                log.exception(
+                    "bracket_stops: failed to cancel resting broker floor %s for bracket %s "
+                    "after a monitor-fired close; the floor may linger until reconcile",
+                    leg.order_id,
+                    bracket.bracket_id,
+                )
 
 
 def _build_engine_client_order_id(
