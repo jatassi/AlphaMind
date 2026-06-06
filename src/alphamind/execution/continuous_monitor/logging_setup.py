@@ -1,11 +1,12 @@
-"""``monitor.log`` rotation setup for the continuous monitor (story 01).
+"""Rotating-file logging setup for the continuous monitor and safety core (story 01).
 
 Mirrors ``alphamind.collector.scheduler._configure_logging`` and
 ``alphamind.scheduler.logging_setup.configure_pipeline_logging`` — same
 ``TimedRotatingFileHandler`` shape, same 30-day retention, same shared root
 logger name ``alphamind`` so collector / scheduler / monitor share a
-configurable level. Writes to ``%USERPROFILE%\\AlphaMind\\logs\\monitor.log`` on
-Windows and ``~/AlphaMind/logs/monitor.log`` on POSIX.
+configurable level. Writes to ``%USERPROFILE%\\AlphaMind\\logs\\<filename>`` on
+Windows and ``~/AlphaMind/logs/<filename>`` on POSIX, where ``filename`` defaults
+to ``monitor.log`` (the safety core passes its own — ALP-868).
 """
 
 from __future__ import annotations

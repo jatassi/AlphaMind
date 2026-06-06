@@ -80,8 +80,9 @@ _SAFETY_CORE_SERVICE_NAME = "alphamind-safety-core"
 # Per-process rotating-log filenames (ALP-868). The safety core, its watchdog,
 # and the continuous monitor are three separate processes; on Windows
 # ``TimedRotatingFileHandler`` cannot rotate a file held open by another process
-# (``WinError 32``), so each gets its own file. These mirror the NSSM
-# stdout/stderr targets in ``install_safety_core_service.ps1``.
+# (``WinError 32``), so each gets its own file. These parallel the per-service
+# NSSM stdout/stderr naming in ``install_safety_core_service.ps1`` (which targets
+# ``safety_core.out.log`` / ``safety_core.err.log``) — distinct files, same prefix.
 _SAFETY_CORE_LOG_FILENAME = "safety_core.log"
 _WATCHDOG_LOG_FILENAME = "safety_core_watchdog.log"
 
