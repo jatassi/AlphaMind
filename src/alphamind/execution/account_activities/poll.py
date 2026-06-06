@@ -18,7 +18,7 @@ seam.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -68,6 +68,7 @@ async def poll_account_activities(
     handle: InvocationHandle,
     *,
     queries: AccountActivitiesSource,
+    borrow_cost_resolver: Callable[[str], float | None],
     after: str | None = None,
     until: dt.datetime | None = None,
 ) -> PollResult:
@@ -75,8 +76,10 @@ async def poll_account_activities(
 
     Fetches the four option-lifecycle activity types from *after* (the resume
     cursor), classifies them into typed, paired events, and dispatches each
-    through its per-type handler. Returns the count booked and the advanced
-    cursor. All writes join *handle*'s open transaction.
+    through its per-type handler. ``borrow_cost_resolver`` (the
+    invocation-scoped resolver) is forwarded to dispatch so a SHORT
+    equity-delivery assignment can stamp its short-only fields. Returns the count
+    booked and the advanced cursor. All writes join *handle*'s open transaction.
     """
     snapshots: list[ActivitySnapshot] = []
     async for snap in queries.get_account_activities(
@@ -89,7 +92,7 @@ async def poll_account_activities(
     cursor = snapshots[-1].id if snapshots else after
     events = classify_lifecycle_activities(tuple(snapshots))
     for event in events:
-        await integrate_lifecycle_event(handle, event)
+        await integrate_lifecycle_event(handle, event, borrow_cost_resolver=borrow_cost_resolver)
 
     return PollResult(activities_booked=len(events), cursor=cursor)
 

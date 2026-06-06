@@ -15,7 +15,12 @@ from alphamind.config.models.main import ExecutionMode
 from alphamind.execution.broker_adapter.queries import ActivitySnapshot
 from alphamind.scheduler.account_activities_poll import run_account_activities_poll
 from alphamind.state.tables.positions import PositionRow
-from tests.execution.account_activities.test_handlers import _OCC, _TXN, _seed_open_option
+from tests.execution.account_activities.test_handlers import (
+    _OCC,
+    _TXN,
+    _borrow_resolver,
+    _seed_open_option,
+)
 from tests.execution.account_activities.test_poll import (
     FakeAccountActivitiesQueries,
     _open_handle_with_id,
@@ -53,6 +58,7 @@ async def test_scheduler_poll_runs_against_factory_source(
             handle,
             venue_config=None,
             execution_mode=ExecutionMode.paper,
+            borrow_cost_resolver=_borrow_resolver,
             activities_source_factory=lambda _venue, _mode: source,
         )
     finally:
@@ -90,6 +96,7 @@ async def test_scheduler_poll_advances_cursor_across_runs(
             handle,
             venue_config=None,
             execution_mode=ExecutionMode.paper,
+            borrow_cost_resolver=_borrow_resolver,
             activities_source_factory=lambda _venue, _mode: source,
         )
     finally:
@@ -103,6 +110,7 @@ async def test_scheduler_poll_advances_cursor_across_runs(
             handle2,
             venue_config=None,
             execution_mode=ExecutionMode.paper,
+            borrow_cost_resolver=_borrow_resolver,
             activities_source_factory=lambda _venue, _mode: source,
         )
     finally:

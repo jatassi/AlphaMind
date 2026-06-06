@@ -31,6 +31,7 @@ pipeline, ADR-0005).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -218,8 +219,19 @@ async def handle_expiry(handle: InvocationHandle, event: LifecycleEvent) -> None
     await _persist_booking(handle, option_row=option_row, result=result)
 
 
-async def handle_assignment_or_exercise(handle: InvocationHandle, event: LifecycleEvent) -> None:
-    """Book an assignment / exercise: -premium on the option + open the equity leg."""
+async def handle_assignment_or_exercise(
+    handle: InvocationHandle,
+    event: LifecycleEvent,
+    *,
+    borrow_cost_resolver: Callable[[str], float | None],
+) -> None:
+    """Book an assignment / exercise: -premium on the option + open the equity leg.
+
+    ``borrow_cost_resolver`` (the single invocation-scoped resolver the
+    orchestrator builds for the Phase-1 write unit) stamps the four short-only
+    fields when the delivery opens a SHORT equity leg — see
+    :func:`alphamind.execution.account_activities.booking._opened_equity_from_trade`.
+    """
     # Surface BEFORE any write: a missing paired OPTRD leaves the equity leg
     # underspecified (parent ALP-842 surfacing condition). Raising here, before
     # appending the event row, keeps a surfaced case from committing partial state.
@@ -258,7 +270,10 @@ async def handle_assignment_or_exercise(handle: InvocationHandle, event: Lifecyc
     # 03c derivation reproduces both from the log alone (invariant 3).
     equity_position_id = PositionId(f"pos-eq-{event.activity_id}")
     result = book_assignment_or_exercise(
-        option_record, event, equity_position_id=equity_position_id
+        option_record,
+        event,
+        equity_position_id=equity_position_id,
+        borrow_cost_resolver=borrow_cost_resolver,
     )
 
     event_type = (
