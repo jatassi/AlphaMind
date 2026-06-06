@@ -180,7 +180,10 @@ def _option_open_command(underlying: str = "NVDA") -> OpenCommand:
             contract_type="call",
             direction="long",
         ),
-        entry_order=EntryOrder(type="market"),
+        # ALP-866: an options OPEN entry must rest (limit / stop_limit) so the
+        # broker-enforced floor can land before it fills. A limit entry (not
+        # stop_limit) keeps it distinct from the floor's StopLimitOrderRequest.
+        entry_order=EntryOrder(type="limit", limit_price=price(7.5)),
         position_size=PositionSize(quantity=2.0, dollar_value=money(1500.0)),
         target=Target(target_type="absolute_price", price=price(950.0), order_type="limit"),
         invalidation_legs=(
@@ -225,7 +228,10 @@ def _strategy_open_command(underlying: str = "SPY") -> OpenCommand:
                 ),
             ),
         ),
-        entry_order=EntryOrder(type="market"),
+        # ALP-866: a strategy is an options position — its OPEN entry must rest
+        # (limit / stop_limit). A net-debit limit keeps it distinct from the
+        # floor's StopLimitOrderRequest.
+        entry_order=EntryOrder(type="limit", limit_price=price(5.0)),
         # dollar_value strictly above the floor's max_loss (500) so the derived
         # broker floor stop price stays positive (FL2 cross-field validator).
         position_size=PositionSize(quantity=1.0, dollar_value=money(1_000.0)),

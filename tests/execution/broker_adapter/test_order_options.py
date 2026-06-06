@@ -176,11 +176,15 @@ def _hard_event_legs() -> tuple[Any, ...]:
 def _open_options_command(
     *,
     instrument: OptionInstrument | None = None,
-    entry_type: str = "market",
-    limit_price: float | None = None,
+    entry_type: str = "limit",
+    limit_price: float | None = 12.50,
     stop_price: float | None = None,
     quantity: float = 5.0,
 ) -> OpenCommand:
+    # ALP-866: an options OPEN entry must rest (limit / stop_limit) — a market
+    # entry is rejected at the command boundary. The default is a valid limit
+    # entry so every caller that doesn't care about entry type gets a
+    # constructible options OPEN.
     return OpenCommand(
         command_type="open",
         instrument=instrument or _option_instrument(),
@@ -365,11 +369,19 @@ def test_build_occ_symbol_root_padding(ticker: str, expected_root: str) -> None:
 
 @pytest.mark.asyncio
 async def test_submit_options_open_market_constructs_request_with_occ_symbol() -> None:
-    """A market OPEN on an OptionInstrument produces a MarketOrderRequest with
-    the OCC-21 symbol, qty=position_size.quantity, side=BUY (long), DAY TIF,
-    SIMPLE class, and the supplied client_order_id.
+    """A market entry produces a MarketOrderRequest with the OCC-21 symbol,
+    qty=position_size.quantity, side=BUY (long), DAY TIF, SIMPLE class, and the
+    supplied client_order_id.
+
+    ALP-866 rejects a *market* options OPEN at the command boundary, but
+    ``order_options.py`` retains its ``market → MarketOrderRequest`` mapping
+    unchanged (the branch is simply unreachable via a validated ``OpenCommand``).
+    This test bypasses the command-boundary validator with ``model_construct`` so
+    that retained broker-adapter branch stays under test.
     """
-    command = _open_options_command()
+    command = OpenCommand.model_construct(
+        **{**_open_options_command().__dict__, "entry_order": EntryOrder(type="market")}
+    )
     client, captured = _capturing_client()
 
     outcome = await submit_options_open(
@@ -466,7 +478,9 @@ async def test_submit_options_open_always_simple_regardless_of_bracket_shape() -
     command = OpenCommand(
         command_type="open",
         instrument=_option_instrument(),
-        entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+        # ALP-866: an options OPEN entry must rest (limit / stop_limit). Entry
+        # type is incidental here — this test asserts the SIMPLE order class.
+        entry_order=EntryOrder(type="limit", limit_price=price(12.50), stop_price=None),
         position_size=PositionSize(quantity=5.0, dollar_value=money(10_000.0)),
         target=Target(
             target_type="absolute_price",

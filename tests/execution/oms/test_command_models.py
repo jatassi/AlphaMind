@@ -104,6 +104,14 @@ def _entry_order_market() -> EntryOrder:
     return EntryOrder(type="market")
 
 
+def _entry_order_limit() -> EntryOrder:
+    return EntryOrder(type="limit", limit_price=price(5.0))
+
+
+def _entry_order_stop_limit() -> EntryOrder:
+    return EntryOrder(type="stop_limit", limit_price=price(5.0), stop_price=price(4.5))
+
+
 def _position_size() -> PositionSize:
     return PositionSize(quantity=100.0, dollar_value=money(15_000.0), premium_at_risk=None)
 
@@ -180,6 +188,7 @@ def _option_open_command(
     capital_protection_floor: CapitalProtectionFloor | None | object = _FLOOR_DEFAULT,
     nature: str = "directional",
     invalidation_legs: tuple[PriceLeg, ...] | None = None,
+    entry_order: EntryOrder | None = None,
 ) -> OpenCommand:
     floor = (
         _capital_protection_floor()
@@ -189,7 +198,7 @@ def _option_open_command(
     return OpenCommand(
         command_type="open",
         instrument=_option_instrument(),
-        entry_order=_entry_order_market(),
+        entry_order=entry_order or _entry_order_limit(),
         position_size=PositionSize(
             quantity=10.0, dollar_value=money(1_000.0), premium_at_risk=money(1_000.0)
         ),
@@ -478,7 +487,7 @@ class TestOpenCommand:
         strategy_kwargs = {
             "command_type": "open",
             "instrument": _strategy_instrument(),
-            "entry_order": _entry_order_market(),
+            "entry_order": _entry_order_limit(),
             "position_size": _position_size(),
             "invalidation_legs": (_price_leg(),),
             "thesis": _thesis(),
@@ -519,13 +528,15 @@ class TestOpenCommand:
         # An option OPEN additionally carries the mandatory capital-protection
         # floor; an equity OPEN does not (native-bracket protection).
         for instrument in (_equity_instrument(), _option_instrument()):
-            floor = (
-                None if isinstance(instrument, EquityInstrument) else _capital_protection_floor()
-            )
+            is_equity = isinstance(instrument, EquityInstrument)
+            floor = None if is_equity else _capital_protection_floor()
+            # Equity may use a market entry (native bracket protects it); an
+            # options OPEN must rest (ALP-866), so use a limit entry there.
+            entry_order = _entry_order_market() if is_equity else _entry_order_limit()
             OpenCommand(
                 command_type="open",
                 instrument=instrument,
-                entry_order=_entry_order_market(),
+                entry_order=entry_order,
                 position_size=_position_size(),
                 target=Target(
                     target_type="pl_dollar",
@@ -572,7 +583,7 @@ class TestOpenCommand:
         OpenCommand(
             command_type="open",
             instrument=short_option,
-            entry_order=_entry_order_market(),
+            entry_order=_entry_order_limit(),
             position_size=_position_size(),
             target=_target_absolute(),
             invalidation_legs=(_price_leg(),),
@@ -778,6 +789,58 @@ class TestCapitalProtectionFloor:
                 capital_protection_floor=_capital_protection_floor(loss_limit=1_500.0)
             )
         assert "max_loss" in str(exc_info.value)
+
+
+class TestOptionsEntryResting:
+    """ALP-866: an options OPEN entry must rest (limit / stop_limit), never market.
+
+    A market options entry can fill at the broker before/while the broker-enforced
+    capital floor (ALP-856) submits; if the floor then fails, the FL1 cancel is a
+    no-op on the already-filled entry, leaving a live, floorless options position
+    (the husk class the broker-boundary redesign targets). The command boundary
+    forbids a market options entry so the entry always rests and ``_cancel_live_entry``
+    can retract it. Equity OPENs are unaffected — the native bracket protects them.
+    """
+
+    def test_option_open_market_entry_rejected(self) -> None:
+        with pytest.raises(ValueError, match="rest"):
+            _option_open_command(entry_order=_entry_order_market())
+
+    def test_strategy_open_market_entry_rejected(self) -> None:
+        # A multi-leg strategy is an options position too — a market entry on a
+        # strategy OPEN is rejected for the same fill-before-floor reason.
+        with pytest.raises(ValueError, match="rest"):
+            OpenCommand(
+                command_type="open",
+                instrument=_strategy_instrument(),
+                entry_order=_entry_order_market(),
+                position_size=_position_size(),
+                target=Target(
+                    target_type="pl_percentage",
+                    pl_percentage=80.0,
+                    price=price(170.0),
+                    order_type="limit",
+                ),
+                invalidation_legs=(_price_leg(),),
+                thesis=_thesis(),
+                capital_protection_floor=_capital_protection_floor(),
+            )
+
+    def test_option_open_limit_entry_constructs(self) -> None:
+        cmd = _option_open_command(entry_order=_entry_order_limit())
+        assert cmd.entry_order.type == "limit"
+
+    def test_option_open_stop_limit_entry_constructs(self) -> None:
+        cmd = _option_open_command(entry_order=_entry_order_stop_limit())
+        assert cmd.entry_order.type == "stop_limit"
+
+    def test_equity_open_market_entry_constructs(self) -> None:
+        # The resting constraint is options-scoped: an equity OPEN keeps its
+        # market entry (the native bracket protects it). Guards against the
+        # validator being mis-scoped to equity.
+        cmd = _open_command()
+        assert isinstance(cmd.instrument, EquityInstrument)
+        assert cmd.entry_order.type == "market"
 
 
 class TestCloseCommand:

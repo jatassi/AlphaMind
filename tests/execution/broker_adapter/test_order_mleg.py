@@ -103,8 +103,10 @@ def _strategy_open_command(
     underlying: str = "NVDA",
     legs: tuple[StrategyLeg, ...] | None = None,
     quantity: float = 1.0,
-    entry_type: str = "market",
-    limit_price: float | None = None,
+    # ALP-866: a strategy is an options position — its OPEN entry must rest
+    # (limit / stop_limit), never market. Default to a net-debit limit entry.
+    entry_type: str = "limit",
+    limit_price: float | None = 5.0,
     command_id: str = "inv-test.ENV-SA-1.1.1~the-THE-SPY-0123456789abcdef0123456789abcdef",
 ) -> OpenCommand:
     """Build an OpenCommand carrying a StrategyInstrument."""
@@ -131,7 +133,10 @@ def _strategy_open_command(
         underlying=underlying,
         legs=legs,
     )
-    entry = EntryOrder(type=entry_type, limit_price=limit_price)  # type: ignore[arg-type]
+    entry = EntryOrder(
+        type=entry_type,  # type: ignore[arg-type]
+        limit_price=None if limit_price is None else price(limit_price),
+    )
     # A strategy take-profit must be pl_percentage (ALP-611).
     target = Target(
         target_type="pl_percentage", pl_percentage=80.0, price=price(850.0), order_type="limit"
@@ -1070,7 +1075,8 @@ async def test_open_with_single_leg_option_instrument_raises_type_error() -> Non
             contract_type="call",
             direction="long",
         ),
-        entry_order=EntryOrder(type="market"),
+        # ALP-866: an options OPEN entry must rest (limit / stop_limit).
+        entry_order=EntryOrder(type="limit", limit_price=price(7.5)),
         # dollar_value strictly above the floor's max_loss (200) so the floor's
         # derived broker stop price stays positive (FL2 cross-field validator).
         position_size=PositionSize(quantity=1, dollar_value=money(500.0)),
