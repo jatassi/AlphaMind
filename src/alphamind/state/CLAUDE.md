@@ -15,4 +15,4 @@ Append gotchas here as you hit them — non-obvious traps not evident from one f
 each to a line or two; delete any that no longer hold.
 
 - `tests/conftest.py` imports `alphamind.state.tables` so FK targets register before scoped runs; without it, scoped pytest used to fail on a `briefs`→`invocations` FK error.
-- `BrokerEventLogRow.event_seq` is the SQLite implicit `rowid` mapped via `column_property(literal_column("broker_event_log.rowid"))` (ALP-865) — emits no DDL, but a query referencing **only** `event_seq` has no `FROM` anchor (`select(func.max(event_seq))` fails "no such column"). Always co-select/co-filter a real column, or take the max of scanned rows in Python.
+- `BrokerEventLogRow.event_seq` (ALP-865) and `ActivityLogRow.event_seq` (ALP-870) are both the SQLite implicit `rowid` mapped via `column_property(literal_column("<table>.rowid"))` — emits no DDL, but a query referencing **only** `event_seq` has no `FROM` anchor (`select(func.max(event_seq))` fails "no such column"). Always co-select/co-filter a real column (the emergency receiver's `func.max(event_seq)` is anchored by its `event_type` WHERE), or take the max of scanned rows in Python.

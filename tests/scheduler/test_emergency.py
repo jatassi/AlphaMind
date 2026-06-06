@@ -110,7 +110,11 @@ def _make_emergency_activity_log_row(
         cooldown_remaining_seconds=cooldown_remaining_seconds,
     )
     return ActivityLogRow(
-        entry_id=entry_id or f"em-{entry_at.strftime('%Y%m%dT%H%M%S%fZ')}-{uuid.uuid4().hex[:8]}",
+        entry_id=(
+            entry_id
+            if entry_id is not None
+            else f"em-{entry_at.strftime('%Y%m%dT%H%M%S%fZ')}-{uuid.uuid4().hex[:8]}"
+        ),
         invocation_id=invocation_id,
         entry_at=entry_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
         event_type=EventType.EMERGENCY_INVOCATION_REQUESTED.value,
