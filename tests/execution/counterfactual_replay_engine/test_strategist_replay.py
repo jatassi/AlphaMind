@@ -33,6 +33,7 @@ from alphamind.execution.counterfactual_replay_engine.repos import OhlcvBar
 from alphamind.execution.counterfactual_replay_engine.strategist_replay import (
     PendingOrderReplayResult,
     StrategistActionResult,
+    reconstruct_pending_order_entry,
     replay_pending_order_proposal,
     replay_strategist_proposal,
 )
@@ -46,7 +47,16 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
+    OrderDirection,
+    OrderDuration,
+    OrderRecord,
+    OrderRole,
+    OrderStatus,
+    PriceParameters,
     PriceTrigger,
+)
+from alphamind.portfolio_state.records.orders import (
+    OrderType as OrderTypeRecord,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -1080,3 +1090,148 @@ class TestPendingOrderModify:
         assert (
             result.unevaluable_reason is UnevaluableReason.STRATEGIST_POSITION_ACTION_NOT_SUPPORTED
         )
+
+
+# ---------------------------------------------------------------------------
+# reconstruct_pending_order_entry — order record + as-of state → entry Recommendation
+# ---------------------------------------------------------------------------
+
+
+def _entry_order_record(
+    *,
+    order_type: OrderTypeRecord,
+    limit_price: str | None = None,
+    stop_trigger_price: str | None = None,
+    quantity: float = 10.0,
+) -> OrderRecord:
+    from alphamind.portfolio_state.records.orders import EquityInstrumentSpec
+
+    return OrderRecord(
+        order_id=OrderId("ORD-1"),
+        position_id=PositionId("POS-1"),
+        bracket_id=BracketId("BRK-1"),
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
+        direction=OrderDirection.BUY,
+        order_type=order_type,
+        price_parameters=PriceParameters(
+            limit_price=price(limit_price) if limit_price is not None else None,
+            stop_trigger_price=price(stop_trigger_price)
+            if stop_trigger_price is not None
+            else None,
+        ),
+        quantity=quantity,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id=None,
+        alpaca_order_id_chain=(),
+        submission_timestamp=_OPENED_AT,
+        last_update_timestamp=_OPENED_AT,
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=quantity,
+        modification_count=0,
+        originating_thesis_id=None,
+        originating_pm_command_id=None,
+        age_hours=4.0,
+    )
+
+
+def _snapshot_with_brackets(target: float, stop: float) -> PositionStateSnapshot:
+    bracket = BracketRecord(
+        bracket_id=BracketId("BRK-1"),
+        position_id=PositionId("POS-1"),
+        status=BracketStatus.ACTIVE,
+        entry_order_id=OrderId("ORD-1"),
+        protective_legs=(
+            BracketLeg(
+                leg_id="L-TP",
+                leg_type=BracketLegType.TAKE_PROFIT,
+                order_id=None,
+                trigger=PriceTrigger(
+                    underlying_ticker=Symbol("AAPL"), threshold_usd=target, direction="GTE"
+                ),
+                enforcement=BracketLegEnforcement.MECHANICAL,
+                status=BracketLegStatus.ACTIVE,
+            ),
+            BracketLeg(
+                leg_id="L-SL",
+                leg_type=BracketLegType.PRICE_STOP,
+                order_id=None,
+                trigger=PriceTrigger(
+                    underlying_ticker=Symbol("AAPL"), threshold_usd=stop, direction="LTE"
+                ),
+                enforcement=BracketLegEnforcement.MECHANICAL,
+                status=BracketLegStatus.ACTIVE,
+            ),
+        ),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
+    )
+    return PositionStateSnapshot(
+        position_id=PositionId("POS-1"),
+        details=EquityPositionDetails(
+            ticker=Symbol("AAPL"),
+            share_count=10.0,
+            average_cost_basis_per_share=100.0,
+        ),
+        direction=Direction.LONG,
+        net_quantity_as_of=10.0,
+        average_cost_basis=price("100.00"),
+        open_brackets=(bracket,),
+        opened_at=_OPENED_AT,
+    )
+
+
+class TestReconstructPendingOrderEntry:
+    def test_limit_order_maps_entry_order_and_bracket_levels(self) -> None:
+        order = _entry_order_record(
+            order_type=OrderTypeRecord.LIMIT, limit_price="100.00", quantity=10.0
+        )
+        state = _snapshot_with_brackets(target=120.0, stop=90.0)
+
+        entry = reconstruct_pending_order_entry(order, state)
+
+        assert isinstance(entry, Recommendation)
+        assert entry.entry_order.type == "limit"
+        assert entry.entry_order.limit_price == price("100.00")
+        assert entry.position_size.quantity == 10.0
+        # The bracket's target/stop become the entry's target + price-stop leg.
+        assert entry.target.price == price("120.00")
+        assert any(leg.type == "price" for leg in entry.invalidation_legs)
+
+    def test_reconstructed_entry_replays_through_cancel_path(self) -> None:
+        # A reconstructed entry is exactly what replay_pending_order_proposal expects.
+        order = _entry_order_record(
+            order_type=OrderTypeRecord.LIMIT, limit_price="100.00", quantity=10.0
+        )
+        state = _snapshot_with_brackets(target=120.0, stop=90.0)
+        entry = reconstruct_pending_order_entry(order, state)
+
+        proposal = _pending_assessment(action="cancel")
+        bars = _bars_hitting_high(base=100.0, spike_high=121.0)
+        result = replay_pending_order_proposal(
+            proposal,
+            entry,
+            bars,
+            iv_repo=_FakeIVRepo(),
+            paper_harness_config=_CONFIG,
+            risk_free_rate=_RFR,
+            adv=_ADV,
+            realized_volatility=_RVOL,
+        )
+        assert result.action_result is not None
+        assert result.action_result.entered is True
+        assert result.action_result.exit_leg is ExitLeg.TARGET_HIT
+
+    def test_stop_limit_order_maps_stop_and_limit(self) -> None:
+        order = _entry_order_record(
+            order_type=OrderTypeRecord.STOP_LIMIT,
+            limit_price="101.00",
+            stop_trigger_price="100.50",
+        )
+        state = _snapshot_with_brackets(target=120.0, stop=90.0)
+        entry = reconstruct_pending_order_entry(order, state)
+        assert entry.entry_order.type == "stop_limit"
+        assert entry.entry_order.limit_price == price("101.00")
+        assert entry.entry_order.stop_price == price("100.50")

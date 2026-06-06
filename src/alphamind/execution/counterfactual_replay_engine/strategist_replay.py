@@ -92,8 +92,12 @@ from alphamind.execution.paper_evaluation_harness.harness import (
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegType,
+    OrderRecord,
     PriceTrigger,
     TimeTrigger,
+)
+from alphamind.portfolio_state.records.orders import (
+    OrderType as RecordOrderType,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -114,9 +118,63 @@ if TYPE_CHECKING:
 __all__ = [
     "PendingOrderReplayResult",
     "StrategistActionResult",
+    "reconstruct_pending_order_entry",
     "replay_pending_order_proposal",
     "replay_strategist_proposal",
 ]
+
+# Pending order's record OrderType → the analyst EntryOrder.type the entry
+# simulators read. A bare STOP (no limit) is treated as stop_limit with the
+# limit equal to the stop trigger — the entry simulators model stops as
+# stop-limits (the only stop-like fill they walk).
+_RECORD_ORDER_TYPE_TO_ENTRY: dict[RecordOrderType, Literal["market", "limit", "stop_limit"]] = {
+    RecordOrderType.MARKET: "market",
+    RecordOrderType.LIMIT: "limit",
+    RecordOrderType.STOP: "stop_limit",
+    RecordOrderType.STOP_LIMIT: "stop_limit",
+}
+
+
+def reconstruct_pending_order_entry(
+    order: OrderRecord,
+    state: PositionStateSnapshot,
+) -> Recommendation:
+    """Reconstruct a pending order's originating entry as an analyst Recommendation.
+
+    The pending-order CANCEL replay (story 07 §4) asks "would the cancelled
+    order have filled, and what would it have earned?" — it needs the order's own
+    entry expressed as the analyst :class:`Recommendation` the entry + bracket
+    simulators consume. The engine driver (story 08) owns the order-record read;
+    this helper turns the record + the position's as-of state into that
+    Recommendation, reusing :func:`_synthesize_recommendation` so the synthetic
+    shape matches the ADD path exactly.
+
+    The entry order (type + limit / stop prices) comes from the order record; the
+    target / stop / time legs come from the position's existing open brackets (a
+    pending entry's brackets are the position's). A bare ``STOP`` maps to
+    ``stop_limit`` with the limit pinned to the stop trigger, matching the entry
+    simulators' stop-as-stop-limit model.
+    """
+    entry_type = _RECORD_ORDER_TYPE_TO_ENTRY[order.order_type]
+    limit_price = order.price_parameters.limit_price
+    stop_price = order.price_parameters.stop_trigger_price
+    if order.order_type is RecordOrderType.STOP and limit_price is None:
+        # A bare stop fills at the trigger; model it as a stop-limit at the stop.
+        limit_price = stop_price
+    entry_order = EntryOrder(
+        type=entry_type,
+        limit_price=limit_price,
+        stop_price=stop_price,
+    )
+    return _synthesize_recommendation(
+        state,
+        quantity=order.quantity,
+        target_price=_existing_level(state, BracketLegType.TAKE_PROFIT),
+        stop_price=_existing_level(state, BracketLegType.PRICE_STOP),
+        time_deadline=_existing_time(state),
+        entry_order=entry_order,
+    )
+
 
 # A one-shot close fills at the open of the bar *following* the proposal bar
 # (market close at proposal time): bars[0] contains the proposal, bars[1] is the
