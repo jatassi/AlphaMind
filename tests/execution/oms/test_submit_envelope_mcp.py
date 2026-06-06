@@ -2452,7 +2452,8 @@ def test_strategy_open_validation_request_carries_per_leg_directions() -> None:
     command = OpenCommand(
         command_type="open",
         instrument=strategy,
-        entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+        # ALP-866: a strategy OPEN entry must rest (limit / stop_limit).
+        entry_order=EntryOrder(type="limit", limit_price=price(5.0), stop_price=None),
         position_size=PositionSize(quantity=1.0, dollar_value=money(1_000.0), premium_at_risk=None),
         # A strategy take-profit must be pl_percentage (ALP-611).
         target=Target(

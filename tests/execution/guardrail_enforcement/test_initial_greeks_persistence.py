@@ -381,7 +381,8 @@ def _open_options_command() -> OpenCommand:
             contract_type="call",
             direction="long",
         ),
-        entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+        # ALP-866: an options OPEN entry must rest (limit / stop_limit).
+        entry_order=EntryOrder(type="limit", limit_price=price(5.0), stop_price=None),
         position_size=PositionSize(quantity=1.0, dollar_value=money(1_000.0)),
         target=Target(
             target_type="absolute_price",
