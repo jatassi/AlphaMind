@@ -1,6 +1,6 @@
 ---
 name: audit-user-stories
-description: Use to audit and repair an existing AlphaMind feature's Linear work tree when the stories were drafted before some upstream layer landed (or otherwise drifted from current ground truth). Triggers on `/audit-user-stories <Feature>` and operator phrases like "audit the Domain researchers stories", "review existing user stories for the Synthesizer", "the Breach behavior stories were drafted before regime-adaptation completed — verify they still match", "check the X work tree's assumptions against current code", "the X stories may be stale", "reconcile the X stories with what landed". The skill resolves the Linear parent + sub-issues, captures a starting SHA for mid-flight commit detection, gathers current ground truth (design docs + the actual src/ code that landed since drafting + optional `python-architecture` audit-mode sweep), audits each story body for stale paths, contract drift, type-collision, schema mismatch, and duplicates/copy-paste body errors, then surfaces a severity-tagged findings report and — after operator confirms scope — runs a Linear cap pre-flight (only if repairs create new sub-issues) and applies targeted repairs (canceling moot stories, rewriting bodies to the User Story template with the fresh-agent/atomicity/editorial-discipline quality bars, wiring missing `blockedBy`, optionally rewriting the parent body with the breach-behavior pattern's renderer-safe structure), spot-checks the result, diffs mid-flight commits against the rewritten stories, and commits any repo edits — so the work tree is dispatch-ready via `/orchestrate`. Companion to the `draft-user-stories` skill — that one drafts a fresh work tree; this one repairs an existing one. Do NOT use for one-off bug fixes or work outside AlphaMind.
+description: Use to audit and repair an existing AlphaMind feature's Linear work tree when the stories were drafted before some upstream layer landed (or otherwise drifted from current ground truth). Triggers on `/audit-user-stories <Feature>` and operator phrases like "audit the Domain researchers stories", "review existing user stories for the Synthesizer", "the Breach behavior stories were drafted before regime-adaptation completed — verify they still match", "check the X work tree's assumptions against current code", "the X stories may be stale", "reconcile the X stories with what landed". The skill resolves the Linear parent + sub-issues, captures a starting SHA for mid-flight commit detection, gathers current ground truth (design docs + the actual src/ code that landed since drafting + optional `python-architecture` audit-mode sweep), audits each story body for stale paths, contract drift, type-collision, schema mismatch, and duplicates/copy-paste body errors, then surfaces a severity-tagged findings report and — after operator confirms scope — runs a Linear cap pre-flight (only if repairs create new sub-issues) and applies targeted repairs (canceling moot stories, rewriting bodies to the implementation-ready standard, wiring missing `blockedBy`, optionally rewriting the parent body with the breach-behavior pattern's renderer-safe structure), runs a tree-level readiness pass, spot-checks the result, diffs mid-flight commits against the rewritten stories, and commits any repo edits — so the work tree is dispatch-ready via `/orchestrate`. Companion to the `draft-user-stories` skill — that one drafts a fresh work tree; this one repairs an existing one. Do NOT use for one-off bug fixes or work outside AlphaMind.
 ---
 
 # Audit user stories for an AlphaMind feature
@@ -15,20 +15,18 @@ You — the conversation thread the operator is in — must do the gathering, au
 
 **Why:** Auditing a work tree requires holding the whole feature's design + the up/downstream contracts + the current state of the src/ tree + every sub-issue's body simultaneously. Drift findings emerge from cross-referencing — "story 08 names a `RegimeLabel` Pydantic class but `alphamind.distillation.regime.RegimeLabel` already exists as a StrEnum" is a synthesis only the thread that read both can produce. Fragmenting across subagents collapses that synthesis: each one re-reads partial context, finds isolated drift signals without seeing the full collision pattern, and produces a sprawl of unrelated nits instead of the coherent severity-grouped report the operator can act on.
 
-**How to apply:** When the work feels heavy and you reach for `Agent`, instead read the next file yourself. If you genuinely run out of context, surface that to the operator and pause — do not paper over it with delegation.
-
-The Explore agent for *finding* a file you can't locate by name is fine — that's a lookup, not delegation of judgment. The line is: you may delegate searches; you must not delegate reading, synthesis, drafting, or the severity grouping.
+When the work feels heavy and you reach for `Agent`, read the next file yourself instead; if you genuinely run out of context, surface it to the operator and pause — don't paper over it with delegation. The Explore agent for *finding* a file you can't locate by name is fine — a lookup, not delegation of judgment: you may delegate searches; never reading, synthesis, drafting, or the severity grouping.
 
 ## Inputs
 
-One required argument: the exact feature name as written in `docs/project-tracker.md` (e.g., `Domain researchers`, `Synthesizer`, `Breach behavior`). Match is case-insensitive but otherwise verbatim.
+One required argument: the feature name (e.g., `Domain researchers`, `Synthesizer`, `Breach behavior`).
 
 Optional context the operator may volunteer (capture and act on it):
 
 - **Why now** — "the X stories were drafted before Y completed" tells you which sibling work tree to weight in Phase 2's gathering.
 - **Adapt the procedure** — "no need to follow the procedure to the letter" or "focus on schema drift" tells you which phases to compress and which to deepen. Honor it; surface the adaptation in your Phase 4 report so the operator can confirm the audit scope was right.
 
-If the feature name doesn't resolve to a single bullet under "Ready for implementation" or higher status, surface the candidates and ask which one. If the feature's status is `_requirements pending_` (no stories drafted yet), redirect to `draft-user-stories` — there is nothing to audit.
+If the argument doesn't resolve to a single feature with design docs, surface the candidates and ask which one. If no Linear parent Issue with sub-issues exists for the feature yet, there is nothing to audit — redirect to `draft-user-stories`.
 
 ## Procedure
 
@@ -36,7 +34,7 @@ Six phases. Work through them in order. After each phase, briefly tell the opera
 
 ### Phase 1 — Resolve the work tree
 
-Read `docs/project-tracker.md` and locate the bullet matching the argument. Confirm status is `_stories drafted_`, `_in progress_`, or `_done_` (anything but `_requirements pending_`). Capture the section it lives under (the Linear Project name) and the design/architecture doc paths the bullet links.
+Locate the feature's design/architecture docs (search `docs/design/` and `docs/architecture/` by the feature name; use the Explore agent if you can't find them by name). Capture the section it lives under (the Linear Project name — usually evident from the `docs/design/<section>/` path) and every design/architecture doc path for the feature.
 
 **Capture the starting SHA.** Run `git rev-parse HEAD` and stash the value in working notes — Phase 5's spot-check wave uses it to diff mid-flight commits that landed while the audit ran. Audits routinely take 30-60+ minutes and the codebase moves; catching a sibling work tree's commit that overlaps audited paths is much cheaper here than after dispatch.
 
@@ -54,7 +52,7 @@ Capture:
 - The **full sub-issue inventory** — for each sub-issue, the ID, title, current status, and `blockedBy` set. Note canceled sub-issues separately (status `Canceled` or `Duplicate`); they are part of the audit trail but not part of the active dispatch graph.
 - The **local archive** — if `docs/_archive/implementation/<section>/<feature>/` exists, the archived files are a snapshot of the work tree as drafted. Useful for diffing intent vs. current Linear state, but the archive is **not authoritative** — Linear is.
 
-Surface a short inventory to the operator before moving on (parent ID, count of active sub-issues, count of canceled, any obvious red flags you noticed during enumeration like duplicate numbering).
+If the parent Issue has no active sub-issues (the work tree was never drafted), there is nothing to audit — redirect to `draft-user-stories`. Otherwise surface a short inventory to the operator before moving on (parent ID, count of active sub-issues, count of canceled, any obvious red flags you noticed during enumeration like duplicate numbering).
 
 ### Phase 2 — Gather current ground truth
 
@@ -125,7 +123,7 @@ These catch the cheap-but-catastrophic errors. Run first:
 
 - **Body matches title.** A title says "11 — Parallel orchestrator" and the body opens with "06 — Sector qualitative input loader" — that's a copy-paste corruption. Surface immediately as P0; the orchestrator dispatching from this body would build the wrong thing.
 - **Pure duplicates.** Two sub-issues with the same number prefix and near-identical bodies are duplicates that should be marked Duplicate-of one another. Note them; the cleanup is in Phase 6.
-- **Bodies that match an archived story's stale framing** rather than the current Linear-only workflow (references to `docs/implementation/<feature>/...` files that should now be Linear sub-issues). Note for Phase 4.
+- **Bodies that match an archived story's stale framing** rather than the current Linear-only workflow (references to `docs/implementation/<feature>/...` files the Linear work tree now replaces). Note for Phase 4.
 
 #### Reading-list path resolution
 
@@ -226,26 +224,16 @@ Execute the operator's chosen scope in this wave order. Each wave can run in par
 
 #### Pre-flight: Linear free-tier cap check
 
-If the operator's chosen scope creates any new sub-issues (e.g., a shared-types consolidation story, a verification-conversion that splits one story into two), run the cap check before any writes. Linear's free tier caps the workspace at roughly 250 active (non-archived) issues; hitting it mid-repair leaves the work tree half-fixed and forces an out-of-band consolidation rollup before you can resume.
-
-Compute the count and run the check:
+If the operator's chosen scope creates any new sub-issues (e.g., a shared-types consolidation story, a verification-conversion that splits one story into two), run the cap check before any writes — the same pre-flight `draft-user-stories` runs. Hitting the cap mid-repair leaves the work tree half-fixed and forces an out-of-band consolidation rollup before you can resume.
 
 - `needed` = number of new sub-issues the repair will create. If the repair only rewrites + cancels existing issues (the common case), `needed = 0` and you can skip — `save_issue(id=...)` updates don't consume cap.
-- For `needed > 0`:
-
-```
-uv run python scripts/check_linear_cap.py --needed <needed> --json
-```
-
-The script paginates the workspace via Linear's GraphQL API and prints one JSON line with `active`, `cap`, `buffer`, `needed`, `margin`, `required`, and `ok`. It applies a 2-issue safety margin internally. Exit code mirrors `ok`: `0` = clear, `1` = cap risk, `2` = error.
+- For `needed > 0`, run `uv run python scripts/check_linear_cap.py --needed <needed> --json` (one JSON line: `active`, `cap`, `buffer`, `needed`, `margin`, `required`, `ok`; 2-issue safety margin applied internally; exit code mirrors `ok`: `0` clear, `1` cap risk, `2` error).
 
 Decision:
 
 - **`ok == true`** — proceed to Wave 1.
-- **`ok == false`** — surface to the operator *before any writes*. Report the numbers from the JSON. Recommend running `/linear-consolidate` (per the `project_linear_consolidation` memory) or `scripts/linear_consolidation_candidates.py` to free slots. Ask whether to (a) pause for rollup, (b) proceed accepting cap-risk and inline the un-created stories in the hand-off, or (c) trim repair scope to drop the new creations.
+- **`ok == false`** — surface to the operator *before any writes*. Report the numbers from the JSON. Recommend `/linear-consolidate` (per the `project_linear_consolidation` memory) or `scripts/linear_consolidation_candidates.py` to free slots. Ask whether to (a) pause for rollup, (b) proceed accepting cap-risk and inline the un-created stories in the hand-off, or (c) trim repair scope to drop the new creations.
 - **exit 2** — script failure (missing `LINEAR_API_KEY` in `.env`, network/API error). Surface and resolve before proceeding; don't fall back to manual MCP counting.
-
-Skip this pre-flight entirely if the repair scope is pure-update (no `save_issue` calls without an `id`).
 
 #### Wave 1 — Duplicate cleanup
 
@@ -263,53 +251,23 @@ Do **not** delete sub-issues. Keep the audit trail visible to future reviewers.
 
 #### Wave 2 — Parent rewrite (if scope includes it)
 
-Compose the new parent body in the breach-behavior pattern. Use the existing parent body's purpose sentence verbatim if it's accurate; rewrite if not.
+Repair the parent body to the parent Issue template in `draft-user-stories` (Phase 7a — purpose sentence, `## Design and architecture`, `## Cross-feature dependencies`, optional `## Pre-resolved configuration decisions`, `## Dependency graph`, `## Notes for the orchestrator`) and its ASCII-graph rendering constraints. Audit-specific deltas:
 
-Sections to cover (drop a section only if it genuinely doesn't apply):
-
-- One-sentence purpose.
-- `## Design and architecture` — bullet list of design docs + cross-cutting policy refs.
-- `## Cross-feature dependencies` with two subsections: hard contract dependencies (upstream features by ALP ID, with the named types/functions this feature consumes) and sequencing context (recently-landed work that doesn't gate dispatch but is worth naming).
-- `## Pre-resolved configuration decisions` — only if any drafting-time decisions were resolved during the audit (rare; usually audit findings either land as story-body rewrites or surface as operator follow-ups). When present, use bold-text paragraphs not bullet lists.
-- `## Dependency graph` — ASCII showing wave structure (see rendering constraints below).
-- `## Notes for the orchestrator` — type-reuse hard rule, model-selection nuances, architectural invariants, surfacing conditions.
-
-**ASCII-graph rendering constraints (Linear).** Linear renders ASCII graphs as plain code blocks, but the container wraps on narrower viewports. Keep the graph readable:
-
-- Cap line width at ~60 characters before any trailing arrow / box-drawing character. Pad short lines with spaces so column-anchored arrows stay aligned.
-- Avoid right-edge box-drawing characters (`│`, `┐`, `┘`) past column 60 — they wrap and the visual mapping breaks.
-- For wide work trees (5+ parallel stories at one position), prefer multi-line stanzas with `(parallel: ...)` annotations on a separate line below rather than a single horizontal fan-out.
-- Re-fetch the parent after saving and skim the rendered graph; narrow and re-save if any line wrapped.
-
-**Inline-code-in-bold-prefix gotcha.** A bold prefix containing inline code — `**(A) `code` rest of label.**` — is truncated by Linear's renderer at the first backtick; the closing `**` lands inside the inline-code span and bold ends prematurely. Keep the bold prefix free of inline code (move backticks into the following prose) or rephrase the label without the code reference.
-
-**Bullet-list-after-colon-or-heading collapse.** The Linear renderer drops bullet lists that immediately follow a colon-ending paragraph or a heading-then-prose stanza, keeping only the first bullet. Use inline prose, insert a heading break, or use bold-text paragraphs (`**Label.** Body sentence.`) instead.
-
-**Auto-converted `ALP-XXX` references.** When you re-fetch a body you just wrote, the renderer will have auto-converted naked issue references (`ALP-227`) into `<issue id="...">ALP-227</issue>` tags. This is cosmetic — the rendered display is unchanged — but the round-tripped body is not byte-identical to what you sent. Don't chase the diff.
-
-Apply via `save_issue(id=<parent>, description=<new body>)`. If the original body had operator-authored content (a custom "additional context" section etc.), preserve it — diff and merge mentally before saving. After saving, re-fetch with `get_issue(id, includeRelations=true)` and verify the dependency graph, bold-paragraph stanzas, and section headers rendered as intended; if any section collapsed (the bullet-list-after-colon trap is the most common), reshape and re-save.
+- Reuse the existing purpose sentence verbatim if accurate; rewrite only if not. Preserve any operator-authored content (a custom "additional context" section etc.) — diff and merge mentally before saving.
+- Pre-resolved decisions are rare in an audit; findings usually land as story rewrites or operator follow-ups, not parent-body decisions.
+- After `save_issue(id=<parent>, description=<new body>)`, re-fetch with `get_issue(id, includeRelations=true)` and verify the dependency graph, bold-paragraph stanzas, and section headers rendered as intended; reshape and re-save if a section collapsed.
 
 #### Wave 3 — Sub-issue body rewrites
 
 For each story flagged P0 or P1 with body-rewrite repairs, apply via `save_issue(id=<id>, title=<new if changed>, description=<new body>)`.
 
-Order matters within this wave: rewrite stories that **define types** before stories that **import them**. Story 02's repurposing as the shared-types module owner needs to land before story 03's "import from `_shared`" rewrite, because story 03's rewrite references `_shared.py`. In practice the rewrites are all save calls (no actual code lands at this stage), so ordering matters only for cross-references in prose — but readers (including the operator skimming the diff) benefit from reading them in dependency order.
+Rewrite stories that **define** a type before stories that **import** it (e.g. a consolidated shared-types story before its consumers). No code lands here, so ordering matters only for prose cross-references and for a diff that reads in dependency order.
 
 For verification-conversion stories (the 09a/b/c pattern — convert "draft the prompt" to "round-trip the existing prompt through parser+validator"), use the original story's structural sections as the template; rewrite the Goal, Scope, and Acceptance criteria; preserve the Reading list and Out-of-scope sections where still applicable.
 
-**User Story body shape (mirror this for every rewritten story).** Each story has `## Goal`, `## Reading`, `## Depends on`, `## Scope` (with numbered named-deliverable subsections + `### Out of scope`), `## Acceptance criteria`, and `## Verification` — the same template `draft-user-stories` Phase 7 uses. When rewriting, keep the rewritten body within this skeleton; don't invent new top-level sections or drop required ones. If a section genuinely doesn't apply (rare), state that inline rather than removing the heading.
+**User Story body shape.** Each rewritten story keeps the User Story skeleton — `## Goal`, `## Reading`, `## Depends on`, `## Scope` (numbered named-deliverable subsections + `### Out of scope`), `## Acceptance criteria`, `## Verification` — that `draft-user-stories`'s User Story template wraps around the common sections of `docs/agents/implementation-ready-issue.md`. Don't invent new top-level sections or drop required ones; if a section genuinely doesn't apply, state that inline rather than removing the heading.
 
-**Quality bars every rewrite must clear:**
-
-- **Fresh-agent test.** A competent engineer who has read no design docs and only the rewritten story can implement it. They must follow the Reading list, but they should not have to ask clarifying questions. If the rewrite leaves an agent guessing about an interface contract, scope boundary, or dependency mechanic, it's underspecified — fix before saving.
-- **Atomicity test.** Each acceptance criterion asserts one observable outcome, mark-able pass/fail by running one command or reading one file. Umbrella criteria like "the module works" or "tests pass" are not atomic — split into specific named-function-with-named-input behaviors.
-- **Editorial discipline.** Write the final shape, not your drafting process. Phrases like "Wait, this is a third method. Let me include it", "Actually, on second thought…", or "Let me consider…" are thinking-out-loud residue. They survive Linear's render and clutter the body for the agent picking it up. Edit them out before `save_issue`. Same applies to internal contradictions ("X is NOT in the API. … Implement X as a third method.") — converge to one positive statement. Don't write decision-trail prose ("this story used to say X but now says Y") — the audit trail lives in Linear's revision history, not the body.
-
-**No-numeric-anchor reminder.** Per `feedback_avoid_numeric_anchors`, don't bake numeric thresholds (`70/85/95`, `60%`, `30 minutes`) into acceptance criteria. Reference the config source (`config/<feature>.yaml`, the relevant `Config` class) and let the verification test load the value.
-
-**No-invented-names reminder.** Per `feedback_no_inventing_component_names`, every typed value object the rewritten Scope section names either mirrors an existing upstream record or is named by the design doc. If the rewrite introduces a new name without a design-doc precedent, stop — re-read or surface to the operator before saving.
-
-The Linear renderer caveats in Wave 2 (bullet-list-after-colon collapse, inline-code-in-bold-prefix, ASCII-graph constraints, ALP-XXX auto-conversion) apply to sub-issue bodies too — apply the same defensive choices.
+Every rewrite must clear the bar in `docs/agents/implementation-ready-issue.md`, applied against the grain to each body — the fresh-agent test, atomic acceptance criteria, the writing rules (structural-over-numeric criteria, positive contracts, no invented names, editorial discipline), and the Linear render mechanics all live there. A rewrite from "draft X" to "verify X" describes only the verification work — no decision-trail preamble narrating what the story used to say. Re-fetch after every `save_issue` to confirm the render.
 
 #### Wave 4 — Relations cleanup
 
@@ -321,7 +279,19 @@ Compute the desired `blockedBy` set for each sub-issue from the new parent's dep
 
 Also check `blocks` relations (the inverse direction). Linear typically maintains both directions automatically when you set `blockedBy`, so an explicit `blocks` adjustment is rarely needed — but if Phase 3 found `blocks` relations pointing at canceled issues, clean them up here.
 
-#### Wave 5 — Spot-check verification
+#### Wave 5 — Tree-level readiness pass
+
+After the rewrites land, take one adversarial read across the whole repaired tree — the parent and every touched sub-issue — before the spot-check. Read against the grain: hunt for the latitude the rewrites left, not the intent you remember. Three checks the per-issue bar doesn't cover, because this pass sees the whole tree at once:
+
+1. **One writer per file across the tree.** State which files each story owns and hold one writer per file. Two stories editing the same `task.py` / `wiring.py` for different concerns is an integration conflict — resolve by ownership (one story owns the file) or a `blockedBy` edge that serialises them. A rewrite that re-scoped a story's deliverables can silently introduce a second writer.
+
+2. **Tree-wide vocabulary coherence.** A type, seam, module, config key, or error name pinned in its defining story is referenced by that exact name in every consuming story, and each consumer's Reading list points at the defining story. When a rewrite changed a pinned name, propagate it to every sibling that references it — an inconsistent name across two stories is a scope ambiguity wearing a self-contained costume. This is the most common defect a body rewrite introduces: a consolidated shared-types story renames a record but a downstream consumer's body still names the old one.
+
+3. **Sibling-rippling decisions are drafting-time.** A type's representation, a module's location, a public name, or an API shape that ripples into sibling stories must be pinned now, not left to the implementer (the standard's drafting-time-vs-dispatch-time cut). If this pass surfaces a defect that changes a *decision* rather than its wording, treat it as a late repair: fix the defining story and every consumer in the same pass, then note it in the done-report.
+
+Do this in-thread — the no-delegation rule holds, because coherence across the whole tree is exactly what the pass checks. Fixes here are description-only `save_issue` calls; re-fetch each to confirm the render.
+
+#### Wave 6 — Spot-check verification
 
 After all waves apply, spot-check 2–3 critical issues with `get_issue(id, includeRelations=true)`:
 
@@ -335,18 +305,9 @@ If anything's off, surface immediately and re-issue the corrective `save_issue` 
 
 ### Phase 6 — Close out
 
-If the audit edited any tracked files in the repo (e.g., touched `docs/project-tracker.md` to fix a stale link, repaired a renamed design-doc path the stories reference), stage and commit those edits before reporting. Stage only the audit-edited files, commit with a short imperative subject mirroring the in-tree style (`chore(project-tracker): fix stale Reading-list paths for <feature>` or `docs(<area>): repair link drift surfaced by <feature> audit`), and push to the default remote. Linear-only repairs don't touch the repo, so the common case is no commit — but when the audit does change files, leaving them uncommitted creates a hand-off mismatch between the work tree's stated truth (post-audit) and what `git status` shows. Skip the commit only if the audit did not complete cleanly (a surfacing condition fired, the cap blocked late stories, etc.) — in that case leave the edits uncommitted and let the operator decide.
+If the audit edited any tracked files in the repo (e.g., repaired a renamed design-doc path the stories reference, or fixed a stale cross-reference surfaced during the audit), stage and commit those edits before reporting. Stage only the audit-edited files, commit with a short imperative subject mirroring the in-tree style (`docs(<area>): repair link drift surfaced by <feature> audit`), and push to the default remote. Linear-only repairs don't touch the repo, so the common case is no commit — but when the audit does change files, leaving them uncommitted creates a hand-off mismatch between the work tree's stated truth (post-audit) and what `git status` shows. Skip the commit only if the audit did not complete cleanly (a surfacing condition fired, the cap blocked late stories, etc.) — in that case leave the edits uncommitted and let the operator decide.
 
-Report back to the operator in this shape (one short paragraph plus a structured summary):
-
-- The total number of sub-issues touched (rewritten / canceled / relations updated).
-- The final dependency-graph shape in one line.
-- Any unresolved gaps the operator should know about (e.g., the `output_token_budget` divergence in `agents.yaml` that story 02 surfaces but does not unilaterally resolve).
-- Confirmation that `/orchestrate <Feature>` is now a viable next step.
-- The commit hash from any tracker/docs edits that landed, or "no repo edits" if the audit was Linear-only.
-- A one-line offer to schedule a follow-up if the work tree has natural verification windows ("schedule an agent to verify the first dispatch wave goes cleanly?").
-
-Then stop. The operator drives next steps from there.
+Then report back per the **When you're done** section below, and stop. The operator drives next steps from there.
 
 ## Linear specifics
 
@@ -354,7 +315,7 @@ Then stop. The operator drives next steps from there.
 
 Same table as `draft-user-stories`:
 
-| `docs/project-tracker.md` section | Linear Project          |
+| Section                           | Linear Project          |
 | --------------------------------- | ----------------------- |
 | Foundation                        | Foundation              |
 | Data layer                        | Data layer              |
@@ -369,17 +330,18 @@ Same table as `draft-user-stories`:
 
 `Canceled` is for stories that are moot (preserve why in the body). `Duplicate` is for true duplicates of another active story. `Todo` is the default for sub-issues post-rewrite. **Leave `In Progress` stories untouched** — if the audit finds one that needs body changes, surface to the operator before applying; an audit doesn't reach into in-flight work.
 
-For Linear MCP mechanics — append-only relations, status case-sensitivity, the renderer's sub-bullet collapse, `list_issues` truncation, `get_issue` omitting relations, the duplicate-marking dance — see `CLAUDE.md`'s "Linear MCP gotchas" section.
+For Linear MCP mechanics — append-only relations, status case-sensitivity, the renderer's content drops, `list_issues` truncation, `get_issue` omitting relations, the duplicate-marking dance — see `docs/agents/linear.md`.
 
 ## Anti-patterns to avoid
 
 - **Auditing the parent body and the sub-issues separately, in different threads.** The sub-issue findings often only make sense in the context of the parent's intended structure (e.g., "this story is duplicating types because the parent's type-reuse rule isn't documented"). Audit them together; structure the report so a parent finding can reference sub-issue findings and vice versa.
 - **Treating the local archive as authoritative.** The archived `docs/_archive/implementation/<feature>/` directory is a snapshot of intent at drafting time. It is not what should be built today; the design docs and src code are. Use the archive only to recover orchestrator notes worth migrating to the parent.
 - **Applying repairs before the operator confirms scope.** Phase 4's pause-and-ask is load-bearing. The operator may have context the audit didn't surface — a deferred design decision, an in-flight refactor, a story that's intentionally aspirational. Don't unilaterally repair past where you've been authorized.
-- **Restating the story's original intent in the new body.** When rewriting a story from "draft this thing" to "verify this thing," the new body should describe the verification work — don't include a long preamble narrating "this story used to say X but now says Y." The audit trail lives in Linear's revision history, not in the description body.
 - **Leaving relations unwired because the prose says it.** `## Depends on` prose is descriptive; `blockedBy` relations are authoritative for orchestration. If they disagree, fix the relations even when the prose looks fine.
 - **Bundling a draft-from-scratch story into the audit's repair scope.** If the audit finds the work tree is missing a story (e.g., no shared-types story to consolidate the type collisions), surface to the operator. They may want to add it via `draft-user-stories` or have you do it inline — but inline-creating a new sub-issue without explicit scope from the operator is overreach.
-- **Counting "saved successfully" responses from `save_issue` as proof the body is right.** The Linear renderer can subtly mangle a saved body (e.g., the sub-bullet collapse). Spot-check critical issues in Wave 5 by re-fetching with `get_issue` and reading the actual saved description.
+- **Counting "saved successfully" responses from `save_issue` as proof the body is right.** Spot-check critical issues in Wave 6 by re-fetching with `get_issue` and reading the actual saved description.
+
+The per-issue writing-rule anti-patterns — invented names, numeric anchors, decision trails, "the system works" criteria, and drafting-time "Surface to operator" gates — are the standard's (`docs/agents/implementation-ready-issue.md`).
 
 ## When you're done
 
@@ -388,20 +350,14 @@ Report back to the operator in this shape (concise):
 - **Issues touched** — count and ID range, broken down by repair type (canceled / rewritten / relations-only).
 - **Dependency-graph shape** — one line summarizing the wave structure of the post-repair tree.
 - **Cross-feature `blockedBy` count** — how many edges cross to sibling work trees.
+- **Tree-level readiness result** — a one-line tally of what the Wave 5 pass fixed (vocabulary names propagated, one-writer conflicts resolved, late decisions pinned), or "clean" if nothing needed changing.
 - **Unresolved gaps surfaced for follow-up** — specific items the operator needs to decide on (e.g., a config-value divergence, a schema migration scope question). These become the operator's next inputs.
 - **Operator's path-of-action choice** — restate which scope they confirmed (so the conversation log captures it).
-- **Suggested next step** — typically "dispatch via `/orchestrate <Feature>`" once the operator confirms.
+- **Repo edits** — the commit hash from any docs edits that landed, or "no repo edits" if the audit was Linear-only.
+- **Suggested next step** — typically "dispatch via `/orchestrate <Feature>`" once the operator confirms; optionally offer to schedule a follow-up agent to verify the first dispatch wave goes cleanly, if the work tree has natural verification windows.
 
 Then stop.
 
 ## Self-improvement
 
-While executing, note moments where this skill let you down: a step that was ambiguous, an edge case the procedure didn't anticipate, a Linear/MCP gotcha you hit and worked around, guidance that turned out wrong, a kind of drift the dimensions in Phase 3 didn't catch.
-
-Don't fix the skill mid-flight — interrupting the audit costs more than it saves. Keep working notes mentally, and at the end — *after* reporting the work tree to the operator — propose specific edits in this shape:
-
-- **Where:** the section/heading in this SKILL.md to change.
-- **What:** the concrete edit (added bullet, replaced sentence, new subsection).
-- **Why:** what went wrong without it.
-
-Skip silently if nothing came up. The bar is "would have saved a step" or "would have prevented a mistake," not "could be marginally smoother." The operator decides what to apply.
+Note where the skill let you down — an ambiguous step, an edge case the procedure didn't anticipate, a Linear/MCP gotcha you worked around, guidance that turned out wrong, a kind of drift Phase 3's dimensions didn't catch. Don't fix it mid-flight; after reporting the work tree, propose edits as **Where** / **What** / **Why** (what went wrong without it). Bar: "would have saved a step" or "prevented a mistake"; skip silently otherwise.
