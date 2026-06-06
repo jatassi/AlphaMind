@@ -32,11 +32,11 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from alphamind.portfolio_state.events import (
+    ActivityLogEntry,
     EmergencyInvocationRequestedDetail,
     EventGroup,
     EventSource,
     EventType,
-    encode_detail,
 )
 from alphamind.scheduler.control.verbs import (
     CooldownInfo,
@@ -44,8 +44,8 @@ from alphamind.scheduler.control.verbs import (
     UniverseValidationFailedError,
     UniverseValidationReportRecord,
 )
+from alphamind.state.invocation_context.activity_log import activity_log_entry_to_row
 from alphamind.state.invocation_id import mint_invocation_id
-from alphamind.state.tables.activity_log import ActivityLogRow
 from alphamind.state.tables.invocations import InvocationRow
 
 if TYPE_CHECKING:
@@ -168,33 +168,61 @@ class ActivityLogEmergencyTrigger:
         from autonomous monitor-triggered ones in the activity log.
         """
         annotated_reason = f"{source}:{reason}"
-        # The receiver maps ``EmergencyInvocationRequestedDetail.trigger_type``
-        # against ``_TRIGGER_TYPE_BY_PRIMITIVE`` to enforce the cooldown.
-        # Operator-console emergencies route through ``multi_rule_breach``
-        # which respects the cooldown like any other non-margin trigger.
-        # The cooldown_remaining_seconds field is the writer-side observation
-        # (informational); the receiver re-checks against the live DB.
-        cooldown_remaining = await self._compute_cooldown_remaining_seconds(now=now)
-        detail = EmergencyInvocationRequestedDetail(
-            trigger_type="multi_rule_breach",
-            trigger_reason=annotated_reason,
-            cooldown_remaining_seconds=cooldown_remaining,
-        )
         entry_id = _build_operator_console_entry_id(now=now)
+        # One session for both reads and the write: resolve invocation_id first
+        # so a cold-start trigger fails fast without the informational cooldown
+        # query, and so the cooldown read and the invocation binding share a
+        # single consistent snapshot.
         async with self._session_factory() as session:
-            row = ActivityLogRow(
+            # The activity_log row is a context/correlation row: the receiver
+            # mints the requested invocation independently when it picks the
+            # row up. ``invocation_id`` is NOT-NULL with an FK to invocations,
+            # so bind it to the most-recently-started invocation — mirroring
+            # the monitor's emergency emit (wiring.make_invocation_id_provider).
+            # Cold-start (no invocation row yet) deliberately DIVERGES from the
+            # monitor: we raise below rather than fall back to its
+            # ``"monitor-bootstrap"`` sentinel, which is not a real invocations
+            # row and would itself violate this FK. Do not "align" the two by
+            # returning a sentinel — that re-introduces the crash this fixes.
+            invocation_id = (
+                await session.execute(
+                    select(InvocationRow.invocation_id)
+                    .order_by(InvocationRow.start_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if invocation_id is None:
+                msg = (
+                    "cannot queue an operator-console emergency request: no "
+                    "invocations row exists yet to satisfy the activity_log "
+                    "NOT-NULL invocation_id FK (the daemon has not run an "
+                    "invocation since boot)"
+                )
+                raise RuntimeError(msg)
+            # The receiver maps ``EmergencyInvocationRequestedDetail.trigger_type``
+            # against ``_TRIGGER_TYPE_BY_PRIMITIVE`` to enforce the cooldown.
+            # Operator-console emergencies route through ``multi_rule_breach``
+            # which respects the cooldown like any other non-margin trigger.
+            # The cooldown_remaining_seconds field is the writer-side observation
+            # (informational); the receiver re-checks against the live DB.
+            cooldown_remaining = await self._compute_cooldown_remaining_seconds(session, now=now)
+            entry = ActivityLogEntry(
                 entry_id=entry_id,
-                invocation_id=None,  # not bound to an invocation row yet
-                timestamp=now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                event_type=EventType.EMERGENCY_INVOCATION_REQUESTED.value,
-                event_group=EventGroup.RISK_AND_GUARDRAIL.value,
+                invocation_id=invocation_id,
+                timestamp=now,
+                event_type=EventType.EMERGENCY_INVOCATION_REQUESTED,
+                event_group=EventGroup.RISK_AND_GUARDRAIL,
                 position_id=None,
                 order_id=None,
                 thesis_id=None,
-                source=EventSource.GUARDRAIL_LAYER.value,
-                detail_json=encode_detail(detail),
+                source=EventSource.GUARDRAIL_LAYER,
+                detail=EmergencyInvocationRequestedDetail(
+                    trigger_type="multi_rule_breach",
+                    trigger_reason=annotated_reason,
+                    cooldown_remaining_seconds=cooldown_remaining,
+                ),
             )
-            session.add(row)
+            session.add(activity_log_entry_to_row(entry))
             await session.commit()
         log.info(
             "operator-console emergency request queued entry_id=%s reason=%r",
@@ -229,19 +257,24 @@ class ActivityLogEmergencyTrigger:
         """
         return None
 
-    async def _compute_cooldown_remaining_seconds(self, *, now: datetime) -> int:
-        """Inspect the most-recent completed emergency for an informational read."""
-        async with self._session_factory() as session:
-            stmt = (
-                select(InvocationRow.phase2_completed_at)
-                .where(
-                    InvocationRow.trigger_type == "emergency",
-                    InvocationRow.phase2_completed_at.is_not(None),
-                )
-                .order_by(InvocationRow.phase2_completed_at.desc())
-                .limit(1)
+    async def _compute_cooldown_remaining_seconds(
+        self, session: AsyncSession, *, now: datetime
+    ) -> int:
+        """Inspect the most-recent completed emergency for an informational read.
+
+        Runs on the caller's session so the cooldown read shares one snapshot
+        with the invocation-id binding.
+        """
+        stmt = (
+            select(InvocationRow.phase2_completed_at)
+            .where(
+                InvocationRow.trigger_type == "emergency",
+                InvocationRow.phase2_completed_at.is_not(None),
             )
-            text = (await session.execute(stmt)).scalar_one_or_none()
+            .order_by(InvocationRow.phase2_completed_at.desc())
+            .limit(1)
+        )
+        text = (await session.execute(stmt)).scalar_one_or_none()
         if text is None:
             return 0
         last_completed = datetime.fromisoformat(text)
