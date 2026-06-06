@@ -141,7 +141,8 @@ def _drag(
     )
     if est is None:
         return Money(Decimal(0)), Money(Decimal(0))
-    return Money(est.estimated_spread_usd + est.estimated_impact_usd), est.estimated_regulatory_fees_usd
+    slippage = Money(est.estimated_spread_usd + est.estimated_impact_usd)
+    return slippage, est.estimated_regulatory_fees_usd
 
 
 def test_long_profit_applies_multiplier_100() -> None:

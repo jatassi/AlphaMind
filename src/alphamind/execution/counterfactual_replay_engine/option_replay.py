@@ -430,3 +430,152 @@ def _side_drag(
         return money(DECIMAL_ZERO), money(DECIMAL_ZERO)
     slippage = money(estimate.estimated_spread_usd + estimate.estimated_impact_usd)
     return slippage, estimate.estimated_regulatory_fees_usd
+
+
+# ---------------------------------------------------------------------------
+# Step 5 — Public driver
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class OptionReplayResult:
+    """The flat per-proposal option replay outcome the engine driver folds into
+    a ``CounterfactualReplayRecord`` (story 08).
+
+    The field set mirrors :class:`CounterfactualReplayRecord` (and
+    :class:`~.equity_replay.EquityReplayResult`) so the story-08 driver maps
+    straight through, plus the two option-only IV-lag fields the confidence
+    classifier (story 05b) reads.
+
+    Option entries always fire (Step 2), so ``entered`` is always ``True`` and
+    there is no equity-style window-expired branch. ``realized_pl is None`` is
+    the data-missing sentinel: the per-contract IV snapshot was unavailable at
+    the entry or exit timestamp, so the BS fill estimate could not be derived.
+    The engine driver maps that to ``DATA_MISSING``. On the sentinel,
+    ``exit_price``, ``exit_slippage``, ``exit_fees``, and ``exit_iv_lag_minutes``
+    are also ``None``; ``entry_iv_lag_minutes`` is ``None`` only when the entry
+    snapshot itself was missing.
+    """
+
+    entered: bool
+    entry_price: Price | None
+    entry_timestamp: datetime | None
+    entry_slippage: Money | None
+    entry_fees: Money | None
+    entry_iv_lag_minutes: float | None
+    exit_leg: ExitLeg
+    exit_underlying_price: float | None
+    exit_price: Price | None
+    exit_timestamp: datetime | None
+    exit_slippage: Money | None
+    exit_fees: Money | None
+    exit_iv_lag_minutes: float | None
+    realized_pl: Money | None
+    same_bar_ambiguity: bool
+
+
+def replay_option_proposal(
+    proposal: Recommendation,
+    bars: tuple[OhlcvBar, ...],
+    *,
+    iv_repo: OptionsSnapshotRepository,
+    paper_harness_config: PaperHarness,
+    risk_free_rate: float,
+    adv_contracts: float | None,
+    realized_volatility: float | None,
+) -> OptionReplayResult:
+    """Replay one single-leg option proposal end-to-end (design Steps 2-4).
+
+    Composes :func:`simulate_option_entry`, :func:`simulate_option_brackets`,
+    and :func:`compute_option_pl` into one :class:`OptionReplayResult`. When the
+    per-contract IV snapshot is missing at the entry or exit timestamp, returns
+    the data-missing sentinel (``realized_pl=None``) for the driver to map to
+    ``DATA_MISSING`` — no fabricated IV, no crash.
+    """
+    instrument = proposal.instrument
+    assert isinstance(instrument, InstrumentOption)
+    if len(bars) < _MIN_BARS_FOR_ENTRY:
+        msg = "option replay requires the proposal bar plus the following fill bar"
+        raise ValueError(msg)
+
+    # Gate on entry-IV availability before simulating: simulate_option_entry
+    # expects a non-None lookup, so an entry-side miss is the data-missing
+    # sentinel (the same DATA_MISSING the exit-side miss yields).
+    entry_timestamp = bars[1].period_start
+    if _lookup_iv(iv_repo, instrument, entry_timestamp) is None:
+        return _data_missing_sentinel(entry_iv_lag_minutes=None)
+
+    entry = simulate_option_entry(proposal, bars, iv_repo=iv_repo, risk_free_rate=risk_free_rate)
+    brackets = simulate_option_brackets(
+        proposal, entry, bars, iv_repo=iv_repo, risk_free_rate=risk_free_rate
+    )
+    if brackets.exit_price is None:
+        # Exit-side IV miss: the underlying trigger is known but the exit premium
+        # cannot be derived. DATA_MISSING; entry IV lag is still meaningful.
+        return _data_missing_sentinel(
+            entry_iv_lag_minutes=entry.entry_iv_lag_minutes,
+            exit_leg=brackets.exit_leg,
+            exit_underlying_price=brackets.exit_underlying_price,
+            exit_timestamp=brackets.exit_timestamp,
+            same_bar_ambiguity=brackets.same_bar_ambiguity,
+        )
+
+    pl = compute_option_pl(
+        proposal,
+        entry,
+        brackets,
+        paper_harness_config=paper_harness_config,
+        adv_contracts=adv_contracts,
+        realized_volatility=realized_volatility,
+    )
+    return OptionReplayResult(
+        entered=entry.entered,
+        entry_price=entry.entry_price,
+        entry_timestamp=entry.entry_timestamp,
+        entry_slippage=pl.entry_slippage,
+        entry_fees=pl.entry_fees,
+        entry_iv_lag_minutes=entry.entry_iv_lag_minutes,
+        exit_leg=brackets.exit_leg,
+        exit_underlying_price=brackets.exit_underlying_price,
+        exit_price=brackets.exit_price,
+        exit_timestamp=brackets.exit_timestamp,
+        exit_slippage=pl.exit_slippage,
+        exit_fees=pl.exit_fees,
+        exit_iv_lag_minutes=brackets.exit_iv_lag_minutes,
+        realized_pl=pl.realized_pl,
+        same_bar_ambiguity=brackets.same_bar_ambiguity,
+    )
+
+
+def _data_missing_sentinel(
+    *,
+    entry_iv_lag_minutes: float | None,
+    exit_leg: ExitLeg = ExitLeg.TARGET_HIT,
+    exit_underlying_price: float | None = None,
+    exit_timestamp: datetime | None = None,
+    same_bar_ambiguity: bool = False,
+) -> OptionReplayResult:
+    """Build the data-missing sentinel ``OptionReplayResult`` (``realized_pl=None``).
+
+    The engine driver (story 08) reads ``realized_pl is None`` as the
+    ``DATA_MISSING`` signal and discards the partial entry/exit fields; the
+    surviving ``entry_iv_lag_minutes`` (when the entry snapshot was present) and
+    the underlying-trigger fields are diagnostic only.
+    """
+    return OptionReplayResult(
+        entered=True,
+        entry_price=None,
+        entry_timestamp=None,
+        entry_slippage=None,
+        entry_fees=None,
+        entry_iv_lag_minutes=entry_iv_lag_minutes,
+        exit_leg=exit_leg,
+        exit_underlying_price=exit_underlying_price,
+        exit_price=None,
+        exit_timestamp=exit_timestamp,
+        exit_slippage=None,
+        exit_fees=None,
+        exit_iv_lag_minutes=None,
+        realized_pl=None,
+        same_bar_ambiguity=same_bar_ambiguity,
+    )

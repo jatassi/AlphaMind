@@ -40,6 +40,9 @@ class _FakeIvRepo:
         self._lag_minutes = lag_minutes
         self._miss = miss
 
+    def has_snapshot_at_or_before(self, contract_ticker: str, when: datetime) -> bool:
+        return not self._miss
+
     def resolve_contract_ticker(
         self, *, underlying: str, strike: Decimal, expiration: date, contract_type: Any
     ) -> str:

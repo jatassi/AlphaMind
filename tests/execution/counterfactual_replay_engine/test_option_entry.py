@@ -17,7 +17,6 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from alphamind._kernel.money import price
 from alphamind.execution.counterfactual_replay_engine.iv_lookup import (
     IVSnapshotLookupResult,
     resolve_contract_ticker,
@@ -40,6 +39,9 @@ class _FakeIvRepo:
         self._iv = iv
         self._lag_minutes = lag_minutes
         self.calls: list[tuple[str, datetime]] = []
+
+    def has_snapshot_at_or_before(self, contract_ticker: str, when: datetime) -> bool:
+        return True
 
     def resolve_contract_ticker(
         self,
