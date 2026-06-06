@@ -34,9 +34,6 @@ from alphamind.execution.counterfactual_replay_engine.enums import UnevaluableRe
 from alphamind.execution.counterfactual_replay_engine.queue import iter_pending_replay_proposals
 from alphamind.execution.counterfactual_replay_engine.records import CounterfactualReplayRecord
 from alphamind.scripts import verify_counterfactual_replay_engine as verify
-from alphamind.state.repository.counterfactual_replays import (
-    load_counterfactual_replays_for_envelope,
-)
 from alphamind.scripts.verify_counterfactual_replay_engine import (
     ReplaySeed,
     assert_batch_counts,
@@ -50,6 +47,9 @@ from alphamind.scripts.verify_counterfactual_replay_engine import (
     assert_strategist_close,
     assert_target_hit_pl,
     build_test_seed,
+)
+from alphamind.state.repository.counterfactual_replays import (
+    load_counterfactual_replays_for_envelope,
 )
 
 
