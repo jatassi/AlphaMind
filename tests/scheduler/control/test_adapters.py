@@ -11,7 +11,7 @@ file is the only coverage of the live activity-log write path (ALP-869).
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
@@ -21,9 +21,15 @@ from alphamind.portfolio_state.events.activity_log import (
     EmergencyInvocationRequestedDetail,
     decode_detail,
 )
-from alphamind.scheduler.control.adapters import ActivityLogEmergencyTrigger
+from alphamind.scheduler.control.adapters import (
+    ActivityLogEmergencyTrigger,
+    AsyncIOSchedulerControl,
+    DeferredUniverseValidator,
+)
+from alphamind.scheduler.control.verbs import UniverseValidationFailedError
 from alphamind.state.invocation_context.records import (
     InvocationRecord,
+    TriggerType,
     invocation_record_to_row,
 )
 from alphamind.state.tables.activity_log import ActivityLogRow
@@ -31,15 +37,26 @@ from alphamind.state.tables.activity_log import ActivityLogRow
 _PROCESS_LIFETIME_ID = "proc-driver-1"
 
 
-def _make_invocation_record(*, invocation_id: str, start_at: str) -> InvocationRecord:
-    """Build a minimal scheduled-invocation record (FK target for activity_log)."""
+def _make_invocation_record(
+    *,
+    invocation_id: str,
+    start_at: str,
+    trigger_type: TriggerType = "scheduled",
+    phase2_completed_at: str | None = None,
+) -> InvocationRecord:
+    """Build a minimal invocation record (FK target for activity_log).
+
+    Defaults to a not-yet-completed ``scheduled`` invocation; callers seeding a
+    completed-emergency for the cooldown read override ``trigger_type`` and
+    ``phase2_completed_at``.
+    """
     return InvocationRecord(
         invocation_id=invocation_id,
         process_lifetime_id=_PROCESS_LIFETIME_ID,
         start_at=start_at,
         phase1_completed_at=None,
-        phase2_completed_at=None,
-        trigger_type="scheduled",
+        phase2_completed_at=phase2_completed_at,
+        trigger_type=trigger_type,
         trigger_source="test",
         trigger_reason="seed",
         git_sha_at_invocation="a" * 40,
@@ -132,3 +149,198 @@ class TestTriggerPersistsRow:
         async with async_factory() as session:
             rows = (await session.execute(select(ActivityLogRow))).scalars().all()
         assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# AsyncIOSchedulerControl over a fake APScheduler (sanctioned infra seam).
+# ---------------------------------------------------------------------------
+
+
+class _FakeJob:
+    """Minimal stand-in for an APScheduler ``Job`` (id + next_run_time only)."""
+
+    def __init__(self, *, job_id: str, next_run_time: datetime | None) -> None:
+        self.id = job_id
+        self.next_run_time = next_run_time
+
+
+class _FakeScheduler:
+    """Fake ``AsyncIOScheduler`` recording pause/resume calls + canned jobs."""
+
+    def __init__(self, *, jobs: list[_FakeJob] | None = None) -> None:
+        self._jobs = jobs or []
+        self.pause_calls = 0
+        self.resume_calls = 0
+
+    def pause(self) -> None:
+        self.pause_calls += 1
+
+    def resume(self) -> None:
+        self.resume_calls += 1
+
+    def get_jobs(self) -> list[_FakeJob]:
+        return list(self._jobs)
+
+
+class TestAsyncIOSchedulerControlPauseResume:
+    def test_pause_is_idempotent(self) -> None:
+        scheduler = _FakeScheduler()
+        control = AsyncIOSchedulerControl(scheduler)
+        first = datetime(2026, 5, 7, 14, 0, 0, tzinfo=UTC)
+        second = datetime(2026, 5, 7, 14, 5, 0, tzinfo=UTC)
+
+        applied = control.pause(reason="operator pause", now=first)
+
+        assert applied == first
+        assert control.is_paused() is True
+        assert scheduler.pause_calls == 1
+
+        # Second pause while paused returns the ORIGINAL applied time, no re-pause.
+        applied_again = control.pause(reason="operator pause again", now=second)
+
+        assert applied_again == first
+        assert scheduler.pause_calls == 1
+
+    def test_resume_clears_flag_and_is_idempotent(self) -> None:
+        scheduler = _FakeScheduler()
+        control = AsyncIOSchedulerControl(scheduler)
+        paused_at = datetime(2026, 5, 7, 14, 0, 0, tzinfo=UTC)
+        resumed_at = datetime(2026, 5, 7, 15, 0, 0, tzinfo=UTC)
+        control.pause(reason="operator pause", now=paused_at)
+
+        applied = control.resume(now=resumed_at)
+
+        assert applied == resumed_at
+        assert control.is_paused() is False
+        assert scheduler.resume_calls == 1
+
+        # Resume while already running returns ``now`` without calling resume again.
+        later = datetime(2026, 5, 7, 16, 0, 0, tzinfo=UTC)
+        applied_again = control.resume(now=later)
+
+        assert applied_again == later
+        assert scheduler.resume_calls == 1
+
+
+class TestAsyncIOSchedulerControlNextRunPreview:
+    def test_returns_soonest_in_utc_and_skips_none(self) -> None:
+        # job_b's wall-clock (15:00) is LATER than job_a's (14:00) but its
+        # +02:00 zone makes it 13:00Z — soonest only after UTC conversion.
+        plus_two = timezone(timedelta(hours=2))
+        scheduler = _FakeScheduler(
+            jobs=[
+                _FakeJob(
+                    job_id="market_open", next_run_time=datetime(2026, 5, 7, 14, 0, tzinfo=UTC)
+                ),
+                _FakeJob(
+                    job_id="midday", next_run_time=datetime(2026, 5, 7, 15, 0, tzinfo=plus_two)
+                ),
+                _FakeJob(job_id="paused_job", next_run_time=None),
+            ]
+        )
+        control = AsyncIOSchedulerControl(scheduler)
+
+        preview = control.next_run_preview()
+
+        assert preview == (datetime(2026, 5, 7, 13, 0, tzinfo=UTC), "midday")
+        assert preview is not None
+        assert preview[0].tzinfo == UTC
+
+    def test_returns_none_when_no_jobs(self) -> None:
+        control = AsyncIOSchedulerControl(_FakeScheduler(jobs=[]))
+        assert control.next_run_preview() is None
+
+    def test_returns_none_when_every_job_next_run_is_none(self) -> None:
+        scheduler = _FakeScheduler(
+            jobs=[
+                _FakeJob(job_id="a", next_run_time=None),
+                _FakeJob(job_id="b", next_run_time=None),
+            ]
+        )
+        control = AsyncIOSchedulerControl(scheduler)
+        assert control.next_run_preview() is None
+
+
+# ---------------------------------------------------------------------------
+# Cooldown informational read (the value the receiver later re-checks), driven
+# through the real trigger() path and decoded off the written row.
+# ---------------------------------------------------------------------------
+
+
+async def _trigger_and_read_detail(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    cooldown_minutes: int,
+    now: datetime,
+) -> EmergencyInvocationRequestedDetail:
+    trigger = ActivityLogEmergencyTrigger(
+        session_factory=factory, cooldown_minutes=cooldown_minutes
+    )
+    await trigger.trigger(reason="manual escalation", source="operator_console", now=now)
+    async with factory() as session:
+        row = (await session.execute(select(ActivityLogRow))).scalars().one()
+    return decode_detail(row.detail_json, EmergencyInvocationRequestedDetail)
+
+
+class TestCooldownRemainingSeconds:
+    _NOW = datetime(2026, 5, 7, 15, 0, 0, tzinfo=UTC)
+
+    async def test_zero_when_no_prior_completed_emergency(
+        self, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        # A scheduled invocation satisfies the FK bind; no completed emergency exists.
+        await _seed_invocations(
+            async_factory,
+            records=[
+                _make_invocation_record(invocation_id="inv-1", start_at="2026-05-07T14:00:00Z")
+            ],
+        )
+        detail = await _trigger_and_read_detail(async_factory, cooldown_minutes=30, now=self._NOW)
+        assert detail.cooldown_remaining_seconds == 0
+
+    async def test_positive_when_inside_window(
+        self, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        # Completed emergency 10 min ago; 30-min cooldown → 1800 - 600 = 1200 remaining.
+        await _seed_invocations(
+            async_factory,
+            records=[
+                _make_invocation_record(
+                    invocation_id="inv-emerg",
+                    start_at="2026-05-07T14:45:00Z",
+                    trigger_type="emergency",
+                    phase2_completed_at="2026-05-07T14:50:00Z",
+                )
+            ],
+        )
+        detail = await _trigger_and_read_detail(async_factory, cooldown_minutes=30, now=self._NOW)
+        assert detail.cooldown_remaining_seconds == 1200
+
+    async def test_zero_when_outside_window(
+        self, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        # Completed emergency 40 min ago; 30-min cooldown elapsed → clamped to 0.
+        await _seed_invocations(
+            async_factory,
+            records=[
+                _make_invocation_record(
+                    invocation_id="inv-emerg",
+                    start_at="2026-05-07T14:15:00Z",
+                    trigger_type="emergency",
+                    phase2_completed_at="2026-05-07T14:20:00Z",
+                )
+            ],
+        )
+        detail = await _trigger_and_read_detail(async_factory, cooldown_minutes=30, now=self._NOW)
+        assert detail.cooldown_remaining_seconds == 0
+
+
+# ---------------------------------------------------------------------------
+# DeferredUniverseValidator — placeholder always raises.
+# ---------------------------------------------------------------------------
+
+
+class TestDeferredUniverseValidator:
+    def test_validate_raises_universe_validation_failed(self) -> None:
+        with pytest.raises(UniverseValidationFailedError):
+            DeferredUniverseValidator().validate(as_of=date(2026, 5, 7))
