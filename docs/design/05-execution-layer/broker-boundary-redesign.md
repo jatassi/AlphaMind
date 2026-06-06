@@ -57,6 +57,8 @@ floor under every exit, and gives every fact one writer.
 5. **No synthetic broker ids.** No `alp-…` placeholder exists anywhere; a leg with no broker order has no broker id.
 6. **Genesis is clean.** First invocation on a fresh account emits zero reconciliation alerts.
 
+**Per-position vs per-thesis realized PnL (boundary for invariant 3, ALP-864).** Invariant 3's log-derived ledger (`thesis_pnl_ledger.realized_pnl_usd`, single-writer in `write_paths/thesis_pnl_ledger.py`) is the per-**thesis** attribution surface. It is *not* the portfolio-cumulative source. That rollup is the per-**position** `positions.realized_pnl_to_date_usd`, summed over CLOSED positions by `get_portfolio_pnl_inputs` (`state/repository/sql_repository.py`), because the per-thesis ledger structurally cannot cover positions with no thesis link (DVN / manual-trade / broker-fact-with-no-Intent), and the per-position field also backs the CLOSED invariant in `PositionRecord._check_status_rules`. The two fold the same economic events and agree for a thesis-linked position — they are **distinct grains, not a duplicated path**. Keep both; do not "deduplicate" one away. A future unification of the rollup onto the ledger must first solve non-thesis-position coverage and the CLOSED invariant.
+
 ---
 
 ## 5. Work decomposition (story candidates)

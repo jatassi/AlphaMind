@@ -303,6 +303,19 @@ class PositionRecord:
     details: PositionDetailsPayload
 
     execution_history: tuple[PositionFill, ...]
+    # Per-**position** cumulative realized P&L. Written by the fill-integration
+    # write path on exit (``write_paths/phase1._apply_exit_fill`` /
+    # ``_apply_options_exit_fill``, ``account_activities/booking._closed_option``)
+    # and summed over CLOSED positions by ``get_portfolio_pnl_inputs`` to produce
+    # the portfolio-aggregate cumulative realized P&L — so it deliberately covers
+    # non-thesis positions (DVN / manual-trade / broker-fact-with-no-Intent) that
+    # carry no ``thesis_id``. It also backs the CLOSED invariant in
+    # ``_check_status_rules`` (non-``None`` when status is CLOSED). This is a
+    # different grain from the per-**thesis** ``thesis_pnl_ledger.realized_pnl_usd``
+    # (log-derived attribution, ADR-0005 invariant 3): the two fold the same
+    # economic events and agree for a thesis-linked position, but neither is a
+    # substitute for the other — do not conflate or "deduplicate" them. See
+    # ``docs/design/05-execution-layer/broker-boundary-redesign.md`` § 4 invariant 3.
     realized_pnl_to_date_usd: float | None
 
     corporate_action_adjustment_needed: bool
