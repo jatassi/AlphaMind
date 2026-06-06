@@ -97,15 +97,24 @@ def _make_emergency_activity_log_row(
     trigger_type: str,
     trigger_reason: str = "Regime jump: normal -> crisis",
     cooldown_remaining_seconds: int = 0,
+    entry_id: str | None = None,
 ) -> ActivityLogRow:
-    """Build an ``EMERGENCY_INVOCATION_REQUESTED`` row for direct SQL insert."""
+    """Build an ``EMERGENCY_INVOCATION_REQUESTED`` row for direct SQL insert.
+
+    ``entry_id`` defaults to a time-sortable ``em-…`` id; pass it explicitly to
+    exercise producer-prefix collisions (e.g. ``opcon-…`` vs ``mon-emt-…``).
+    """
     detail = EmergencyInvocationRequestedDetail(
         trigger_type=trigger_type,  # type: ignore[arg-type]
         trigger_reason=trigger_reason,
         cooldown_remaining_seconds=cooldown_remaining_seconds,
     )
     return ActivityLogRow(
-        entry_id=f"em-{entry_at.strftime('%Y%m%dT%H%M%S%fZ')}-{uuid.uuid4().hex[:8]}",
+        entry_id=(
+            entry_id
+            if entry_id is not None
+            else f"em-{entry_at.strftime('%Y%m%dT%H%M%S%fZ')}-{uuid.uuid4().hex[:8]}"
+        ),
         invocation_id=invocation_id,
         entry_at=entry_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
         event_type=EventType.EMERGENCY_INVOCATION_REQUESTED.value,
@@ -176,17 +185,20 @@ async def _seed_emergency_entry(
     entry_at: datetime,
     trigger_type: str = "regime_jump",
     trigger_reason: str = "Regime jump: normal -> crisis",
+    entry_id: str | None = None,
 ) -> None:
     """Seed the bootstrap invocation (FK target) + an EMERGENCY entry.
 
     The bootstrap inv + process row (driver ID) are now supplied by the
     hoisted async_factory; we still ensure the inv row here for tests that
-    call this helper directly on a factory.
+    call this helper directly on a factory. ``merge`` keeps the bootstrap
+    invocation idempotent so a test may seed several entries in sequence.
     """
     async with factory() as session:
         # Ensure bootstrap invocation row (target for activity_log FK).
-        # (process_lifetime row is pre-seeded by async_factory.)
-        session.add(
+        # (process_lifetime row is pre-seeded by async_factory.) ``merge`` is
+        # idempotent, so repeated calls in one test do not collide on the PK.
+        await session.merge(
             invocation_record_to_row(
                 _make_invocation_record(
                     invocation_id=_BOOTSTRAP_INV_ID,
@@ -203,6 +215,7 @@ async def _seed_emergency_entry(
                 invocation_id=_BOOTSTRAP_INV_ID,
                 trigger_type=trigger_type,
                 trigger_reason=trigger_reason,
+                entry_id=entry_id,
             )
         )
         await session.commit()
@@ -392,6 +405,59 @@ class TestDispatchAfterStartup:
         assert call["trigger_source"] == "continuous_monitor"
         assert call["trigger_reason"] == "Regime jump: normal -> crisis"
         assert call["context"].process_lifetime_id == pipeline_session.process_lifetime_id
+
+
+class TestProducerIndependentCursor:
+    async def test_later_row_with_lower_sorting_entry_id_is_still_dispatched(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        pipeline_session: PipelineSession,
+        venue_config: VenueConfig,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Regression for ALP-870 — the dispatch cursor must key on the table's
+        producer-independent insertion order, not the producer-formatted
+        ``entry_id``.
+
+        Row X (``opcon-…``) is dispatched first, advancing the cursor. Row Y is
+        inserted *after* X but its ``entry_id`` (``mon-emt-…``) sorts
+        lexicographically *below* X. With the pre-fix ``entry_id`` cursor Y is
+        silently filtered out (``mon-emt-…`` < ``opcon-…``); with the
+        ``event_seq`` cursor Y has the higher rowid and dispatches. Both rows
+        must dispatch exactly once.
+        """
+        recorder = _RunInvocationRecorder()
+        async with _running_receiver(
+            pipeline_session=pipeline_session,
+            factory=async_factory,
+            venue_config=venue_config,
+            tmp_path=tmp_path,
+            recorder=recorder,
+            monkeypatch=monkeypatch,
+        ):
+            # Row X — high-sorting producer prefix; processed first so the
+            # cursor advances past it before Y is written.
+            await _seed_emergency_entry(
+                async_factory,
+                entry_at=datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC),
+                trigger_type="regime_jump",
+                entry_id="opcon-inv-20260507T143000Z-aaaaaaaa",
+            )
+            await _wait_until_dispatched(recorder, expected=1)
+
+            # Row Y — inserted after X (higher rowid) but its entry_id sorts
+            # below X's. This is the cross-producer inversion the receiver must
+            # tolerate.
+            await _seed_emergency_entry(
+                async_factory,
+                entry_at=datetime(2026, 5, 7, 14, 31, 0, tzinfo=UTC),
+                trigger_type="regime_jump",
+                entry_id="mon-emt-sess1-000000000001-bbbbbbbb",
+            )
+            await _wait_until_dispatched(recorder, expected=2)
+
+        assert len(recorder.calls) == 2
 
 
 class TestCooldown:
