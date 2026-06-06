@@ -20,7 +20,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import InvocationId, PositionId, ThesisId
@@ -39,6 +39,7 @@ from alphamind.persistence.session import (
     make_engine,
 )
 from alphamind.state.records_broker_event_log import BrokerEventRecord, BrokerEventType
+from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
 from alphamind.state.tables.thesis_pnl_ledger_codec import row_to_record
 from tests.state._fk_substrate import (
@@ -231,6 +232,51 @@ async def test_rederive_is_idempotent_under_checkpoint(
     assert first.cost_basis_usd == second.cost_basis_usd == money("0")
 
 
+async def test_rederive_stamps_last_derived_event_seq_to_max_folded(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-865: a re-derivation stamps ``last_derived_event_seq`` to the max
+    ``event_seq`` (rowid) it folded, and the value round-trips through the codec.
+
+    This is the per-thesis watermark the dirty-set selector reads to skip a clean
+    thesis: it must equal the latest log position the thesis's figures reflect.
+    """
+    _engine, factory = db
+    await _seed(factory)
+    await _append(
+        factory,
+        _fill_event(event_key="fevt-open", side="buy", fill_price=100.0, fill_quantity=10.0),
+        _fill_event(
+            event_key="fevt-add", side="buy", fill_price=120.0, fill_quantity=10.0, at_seconds=60
+        ),
+    )
+
+    # The max event_seq (SQLite rowid) among the thesis's two events.
+    async with factory() as sess:
+        rows = (
+            (
+                await sess.execute(
+                    select(BrokerEventLogRow).where(BrokerEventLogRow.thesis_id == _THESIS)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        expected_max_seq = max(row.event_seq for row in rows)
+
+    async with factory() as sess:
+        records = await rederive_thesis_pnl_ledgers(sess, (ThesisId(_THESIS),), InvocationId(_INV))
+        await sess.commit()
+
+    assert records[0].last_derived_event_seq == expected_max_seq
+    async with factory() as sess:
+        row = await sess.get(ThesisPnlLedgerRow, _THESIS)
+        assert row is not None
+        assert row.last_derived_event_seq == expected_max_seq
+        # The codec round-trips the cursor.
+        assert row_to_record(row).last_derived_event_seq == expected_max_seq
+
+
 async def test_derived_cost_basis_and_provenance_round_trip_through_codec(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
@@ -362,7 +408,7 @@ def test_provenance_serialization_tolerates_non_str_values() -> None:
     )
 
     # Must not raise TypeError despite non-str values in provenance_event_keys.
-    record = _to_ledger_record(ThesisId(_THESIS), derivation, None)
+    record = _to_ledger_record(ThesisId(_THESIS), derivation, None, None)
 
     parsed = json.loads(record.provenance_json)
     assert parsed["event_keys"] == [str(decimal_key), str(datetime_key)]

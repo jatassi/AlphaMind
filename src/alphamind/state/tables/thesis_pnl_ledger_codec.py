@@ -25,6 +25,7 @@ def record_to_row(record: ThesisPnlLedgerRecord) -> ThesisPnlLedgerRow:
         provenance_json=record.provenance_json,
         derived_from_invocation_id=record.derived_from_invocation_id,
         updated_at=record.updated_at.isoformat(),
+        last_derived_event_seq=record.last_derived_event_seq,
     )
 
 
@@ -41,6 +42,7 @@ def row_to_record(row: ThesisPnlLedgerRow) -> ThesisPnlLedgerRecord:
             else None
         ),
         updated_at=datetime.fromisoformat(row.updated_at),
+        last_derived_event_seq=row.last_derived_event_seq,
     )
 
 

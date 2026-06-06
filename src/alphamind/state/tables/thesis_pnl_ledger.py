@@ -9,13 +9,20 @@ Keyed by ``thesis_id`` (one ledger entry per thesis), which FKs to ``theses``
 with ``ON DELETE RESTRICT`` DEFERRABLE INITIALLY DEFERRED — matching the cyclic
 writeback convention. ``realized_pnl_usd`` / ``cost_basis_usd`` use
 ``DecimalText`` for exact ``Money`` round-trips (realized PnL may be negative).
+
+``last_derived_event_seq`` (ALP-865) is the per-thesis re-derivation watermark —
+the max ``broker_event_log.event_seq`` (rowid) folded into this row's figures.
+``NULL`` means the thesis was never derived (so it is always dirty); the dirty
+set the post-poll rederive recomputes is the theses carrying an event newer than
+their watermark, so a long-closed thesis with no new events is skipped and its
+ledger left exactly as the prior derivation wrote it.
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
 
-from sqlalchemy import ForeignKey, Text
+from sqlalchemy import ForeignKey, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from alphamind.persistence.models import Base
@@ -53,3 +60,6 @@ class ThesisPnlLedgerRow(Base):
         nullable=True,
     )
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+    # Per-thesis re-derivation watermark (ALP-865): max event_seq folded into the
+    # figures above. NULL = never derived → always dirty.
+    last_derived_event_seq: Mapped[int | None] = mapped_column(Integer, nullable=True)
