@@ -22,7 +22,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.config.models.run_types import RunType
@@ -45,20 +45,27 @@ log = logging.getLogger(__name__)
 
 async def _read_initial_high_water_mark(
     session_factory: async_sessionmaker[AsyncSession],
-) -> str | None:
-    """Return the max ``entry_id`` of any ``EMERGENCY_INVOCATION_REQUESTED`` row.
+) -> int | None:
+    """Return the max ``event_seq`` of any ``EMERGENCY_INVOCATION_REQUESTED`` row.
+
+    The cursor keys on ``event_seq`` (the table's producer-independent insertion
+    order, SQLite ``rowid``) rather than the producer-formatted ``entry_id`` —
+    ``entry_id`` formats differ per producer (``opcon-…``, ``mon-emt-…``) and do
+    not sort across producers, so a lexicographic ``entry_id`` cursor silently
+    drops a later row whose prefix sorts below an already-processed one (ALP-870).
 
     The receiver initializes its high-water mark to this value at startup so
     pre-existing emergency requests written before the process came up are
     NOT replayed (per parent decision (G) — at-most-once semantics for
     requests already past the cooldown of any prior emergency dispatch).
+
+    The ``event_type`` WHERE references a real column, anchoring the ``FROM`` for
+    ``func.max(event_seq)`` (``event_seq`` is a ``literal_column`` over ``rowid``
+    with no table of its own — see ``BrokerEventLogRow.event_seq``).
     """
     async with session_factory() as session:
-        stmt = (
-            select(ActivityLogRow.entry_id)
-            .where(ActivityLogRow.event_type == EventType.EMERGENCY_INVOCATION_REQUESTED.value)
-            .order_by(ActivityLogRow.entry_id.desc())
-            .limit(1)
+        stmt = select(func.max(ActivityLogRow.event_seq)).where(
+            ActivityLogRow.event_type == EventType.EMERGENCY_INVOCATION_REQUESTED.value
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
@@ -66,16 +73,16 @@ async def _read_initial_high_water_mark(
 async def _read_new_emergency_entries(
     session_factory: async_sessionmaker[AsyncSession],
     *,
-    last_seen_entry_id: str | None,
+    last_seen_seq: int | None,
 ) -> list[ActivityLogRow]:
-    """Return new ``EMERGENCY_INVOCATION_REQUESTED`` rows with entry_id > last_seen."""
+    """Return new ``EMERGENCY_INVOCATION_REQUESTED`` rows with event_seq > last_seen."""
     async with session_factory() as session:
         stmt = select(ActivityLogRow).where(
             ActivityLogRow.event_type == EventType.EMERGENCY_INVOCATION_REQUESTED.value
         )
-        if last_seen_entry_id is not None:
-            stmt = stmt.where(ActivityLogRow.entry_id > last_seen_entry_id)
-        stmt = stmt.order_by(ActivityLogRow.entry_id.asc())
+        if last_seen_seq is not None:
+            stmt = stmt.where(ActivityLogRow.event_seq > last_seen_seq)
+        stmt = stmt.order_by(ActivityLogRow.event_seq.asc())
         result = await session.execute(stmt)
         return list(result.scalars())
 
@@ -127,7 +134,7 @@ async def run_emergency_receiver_task(
     Loops until cancellation:
 
     1. Sleep ``poll_interval_seconds``.
-    2. Query new ``EMERGENCY_INVOCATION_REQUESTED`` rows (entry_id > last-seen).
+    2. Query new ``EMERGENCY_INVOCATION_REQUESTED`` rows (event_seq > last-seen).
     3. For each new row:
        a. Parse :class:`EmergencyInvocationRequestedDetail` from ``detail_json``.
        b. **Cooldown check** — bypass for ``trigger_type='margin_call'``; otherwise
@@ -136,16 +143,16 @@ async def run_emergency_receiver_task(
           cooldown window.
        c. **Dispatch** ``run_invocation(...)``; log + swallow any exception so
           the receiver continues polling.
-       d. Advance ``last_seen_entry_id``.
+       d. Advance ``last_seen_seq``.
 
     Tests monkey-patch the module-level :func:`run_invocation` import to
     observe dispatch kwargs without running the full orchestrator.
     """
-    last_seen_entry_id = await _read_initial_high_water_mark(context.session_factory)
+    last_seen_seq = await _read_initial_high_water_mark(context.session_factory)
     log.info(
-        "emergency receiver task start: process_lifetime_id=%s last_seen_entry_id=%s",
+        "emergency receiver task start: process_lifetime_id=%s last_seen_seq=%s",
         session.process_lifetime_id,
-        last_seen_entry_id,
+        last_seen_seq,
     )
 
     while True:
@@ -156,10 +163,10 @@ async def run_emergency_receiver_task(
             raise
 
         new_rows = await _read_new_emergency_entries(
-            context.session_factory, last_seen_entry_id=last_seen_entry_id
+            context.session_factory, last_seen_seq=last_seen_seq
         )
         for row in new_rows:
-            last_seen_entry_id = row.entry_id
+            last_seen_seq = row.event_seq
             await _process_one_entry(
                 row,
                 cooldown_minutes=cooldown_minutes,

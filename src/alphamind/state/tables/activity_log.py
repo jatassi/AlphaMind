@@ -19,8 +19,8 @@ thesis + bracket + orders cluster.
 
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, Text, literal_column
+from sqlalchemy.orm import Mapped, column_property, mapped_column
 
 from alphamind.persistence.models import Base
 from alphamind.portfolio_state.events.activity_log import (
@@ -98,6 +98,19 @@ class ActivityLogRow(Base):
     )
     source: Mapped[str] = mapped_column(Text, nullable=False)
     detail_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Read-only monotonic insertion cursor — SQLite's implicit ``rowid``,
+    # surfaced as a mapped column so a poller (the emergency receiver, ALP-870)
+    # can high-water-mark on the table's producer-independent insertion order
+    # rather than the producer-formatted ``entry_id`` PK. Mirrors
+    # ``BrokerEventLogRow.event_seq``: ``column_property`` over a
+    # ``literal_column`` (not ``mapped_column``) so it emits **no DDL** — the
+    # rowid already exists on this non-``WITHOUT ROWID`` table whose PK is the
+    # TEXT ``entry_id``. The same two traps apply: a query referencing **only**
+    # ``event_seq`` has no ``FROM`` anchor (co-select/co-filter a real column or
+    # take the max in Python), and ``VACUUM`` would renumber rowids (this DB is
+    # WAL-mode, append-only, never VACUUMed).
+    event_seq: Mapped[int] = column_property(literal_column(f"{__tablename__}.rowid", Integer))
 
     __table_args__ = (
         CheckConstraint(
