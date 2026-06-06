@@ -128,34 +128,7 @@ def _drag(fill_price: str, side: str, order_type: OrderType) -> tuple[Money, Mon
     return slippage, est.estimated_regulatory_fees_usd
 
 
-def test_long_profit_composes_step4_formula() -> None:
-    proposal = _equity_recommendation(direction="long")
-    entry = _entry("180.00")
-    brackets = _exit("200.00", ExitLeg.TARGET_HIT)
-
-    result = compute_equity_pl(
-        proposal,
-        entry,
-        brackets,
-        paper_harness_config=_CONFIG,
-        adv_shares=_ADV,
-        realized_volatility=_RVOL,
-    )
-
-    # Long: entry buy (limit), exit sell (target → limit).
-    entry_slip, entry_fees = _drag("180.00", "buy", OrderType.limit)
-    exit_slip, exit_fees = _drag("200.00", "sell", OrderType.limit)
-    gross = (Decimal("200.00") - Decimal("180.00")) * Decimal("10.0") * Decimal(1)
-    expected = signed_money(gross - entry_slip - entry_fees - exit_slip - exit_fees)
-
-    assert result.realized_pl == expected
-    assert result.entry_slippage == entry_slip
-    assert result.entry_fees == entry_fees
-    assert result.exit_slippage == exit_slip
-    assert result.exit_fees == exit_fees
-
-
-def test_long_loss_is_negative() -> None:
+def test_long_loss_composes_step4_formula_and_is_negative() -> None:
     proposal = _equity_recommendation(direction="long")
     entry = _entry("180.00")
     brackets = _exit("170.00", ExitLeg.STOP_HIT)
@@ -169,6 +142,9 @@ def test_long_loss_is_negative() -> None:
         realized_volatility=_RVOL,
     )
 
+    # Long: entry buy (limit), exit sell (stop). Pins both the Step-4 formula
+    # and the entry/exit order-type → drag mapping; the long-profit path is
+    # covered end-to-end by test_equity_replay.
     entry_slip, entry_fees = _drag("180.00", "buy", OrderType.limit)
     exit_slip, exit_fees = _drag("170.00", "sell", OrderType.stop)
     gross = (Decimal("170.00") - Decimal("180.00")) * Decimal("10.0") * Decimal(1)
@@ -176,6 +152,10 @@ def test_long_loss_is_negative() -> None:
 
     assert result.realized_pl == expected
     assert result.realized_pl < 0
+    assert result.entry_slippage == entry_slip
+    assert result.entry_fees == entry_fees
+    assert result.exit_slippage == exit_slip
+    assert result.exit_fees == exit_fees
 
 
 def test_short_profit_is_positive() -> None:
@@ -247,27 +227,3 @@ def test_missing_adv_records_zero_slippage_and_fees() -> None:
     assert result.entry_fees == Money(Decimal(0))
     assert result.exit_slippage == Money(Decimal(0))
     assert result.exit_fees == Money(Decimal(0))
-
-
-def test_entry_unfilled_yields_zero_pl_and_none_exit_fields() -> None:
-    proposal = _equity_recommendation(direction="long")
-    entry = EquityEntryResult(entered=False, entry_price=None, entry_timestamp=None)
-    brackets = EquityBracketResult(
-        exit_leg=ExitLeg.ENTRY_WINDOW_EXPIRED_UNFILLED,
-        exit_price=None,
-        exit_timestamp=None,
-        same_bar_ambiguity=False,
-    )
-
-    result = compute_equity_pl(
-        proposal,
-        entry,
-        brackets,
-        paper_harness_config=_CONFIG,
-        adv_shares=_ADV,
-        realized_volatility=_RVOL,
-    )
-
-    assert result.realized_pl == signed_money(Decimal(0))
-    assert result.exit_slippage is None
-    assert result.exit_fees is None

@@ -153,9 +153,7 @@ def test_price_stop_hit_long_records_at_stop_trigger() -> None:
 
 
 def test_price_stop_hit_short_records_at_stop_trigger() -> None:
-    proposal = _equity_recommendation(
-        direction="short", target_price="160.00", price_stop="190.00"
-    )
+    proposal = _equity_recommendation(direction="short", target_price="160.00", price_stop="190.00")
     entry = _entered_at(0)
     bars = (
         _bar(minute_offset=0, open_=180.0, high=182.0, low=179.0, close=181.0),
@@ -191,9 +189,7 @@ def test_time_stop_fired_records_at_bar_open() -> None:
 
 
 def test_same_bar_target_and_stop_flags_ambiguity_as_stop() -> None:
-    proposal = _equity_recommendation(
-        direction="long", target_price="200.00", price_stop="170.00"
-    )
+    proposal = _equity_recommendation(direction="long", target_price="200.00", price_stop="170.00")
     entry = _entered_at(0)
     bars = (
         _bar(minute_offset=0, open_=180.0, high=182.0, low=179.0, close=181.0),
@@ -225,9 +221,7 @@ def test_entry_unfilled_short_circuits_to_window_expired() -> None:
 def test_window_exhausted_without_price_exit_resolves_as_time_stop_at_last_bar() -> None:
     # Only a hard price leg, no time leg; price never crosses target or stop, so
     # the bar walk exhausts at the thesis-horizon-bounded window end.
-    proposal = _equity_recommendation(
-        direction="long", target_price="300.00", price_stop="100.00"
-    )
+    proposal = _equity_recommendation(direction="long", target_price="300.00", price_stop="100.00")
     entry = _entered_at(0)
     bars = (
         _bar(minute_offset=0, open_=180.0, high=182.0, low=179.0, close=181.0),

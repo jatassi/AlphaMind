@@ -1,4 +1,4 @@
-"""Per-proposal equity replay primitives (ALP-559, design Steps 2–4).
+"""Per-proposal equity replay primitives (ALP-559, design Steps 2-4).
 
 Pure simulation over a hydrated analyst :class:`Recommendation` with an equity
 instrument: entry against the underlying bar stream, bracket-trigger walking,
@@ -39,7 +39,9 @@ __all__ = [
     "EquityBracketResult",
     "EquityEntryResult",
     "EquityPLResult",
+    "EquityReplayResult",
     "compute_equity_pl",
+    "replay_equity_proposal",
     "simulate_equity_brackets",
     "simulate_equity_entry",
 ]
@@ -212,9 +214,8 @@ def simulate_equity_brackets(
             continue
         last_walked = bar
         target_hit = bar.high >= target if direction == "long" else bar.low <= target
-        stop_hit = (
-            price_stop is not None
-            and (bar.low <= price_stop if direction == "long" else bar.high >= price_stop)
+        stop_hit = price_stop is not None and (
+            bar.low <= price_stop if direction == "long" else bar.high >= price_stop
         )
         if stop_hit:
             assert price_stop is not None
@@ -379,9 +380,7 @@ def compute_equity_pl(
         * _EQUITY_MULTIPLIER
         * direction_sign
     )
-    realized = (
-        gross - entry_slippage - entry_fees - exit_slippage - exit_fees
-    )
+    realized = gross - entry_slippage - entry_fees - exit_slippage - exit_fees
     return EquityPLResult(
         realized_pl=signed_money(realized),
         entry_slippage=entry_slippage,
@@ -421,3 +420,73 @@ def _side_drag(
         return money(DECIMAL_ZERO), money(DECIMAL_ZERO)
     slippage = money(estimate.estimated_spread_usd + estimate.estimated_impact_usd)
     return slippage, estimate.estimated_regulatory_fees_usd
+
+
+# ---------------------------------------------------------------------------
+# Step 5 — Public driver
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class EquityReplayResult:
+    """The flat per-proposal equity replay outcome the engine driver folds into
+    a ``CounterfactualReplayRecord`` (story 08).
+
+    Composes the entry, bracket, and P/L primitives. ``same_bar_ambiguity`` is
+    surfaced for the confidence classifier (story 05b). When the entry never
+    filled, ``entered`` is ``False``, ``exit_leg`` is
+    ``ENTRY_WINDOW_EXPIRED_UNFILLED``, ``realized_pl`` is zero, and the
+    exit-side fields are ``None``.
+    """
+
+    entered: bool
+    entry_price: Price | None
+    entry_timestamp: datetime | None
+    entry_slippage: Money
+    entry_fees: Money
+    exit_leg: ExitLeg
+    exit_price: Price | None
+    exit_timestamp: datetime | None
+    exit_slippage: Money | None
+    exit_fees: Money | None
+    realized_pl: Money
+    same_bar_ambiguity: bool
+
+
+def replay_equity_proposal(
+    proposal: Recommendation,
+    bars: tuple[OhlcvBar, ...],
+    *,
+    paper_harness_config: PaperHarness,
+    adv_shares: float | None,
+    realized_volatility: float | None,
+) -> EquityReplayResult:
+    """Replay one equity proposal end-to-end (design Steps 2-4).
+
+    Composes :func:`simulate_equity_entry`, :func:`simulate_equity_brackets`,
+    and :func:`compute_equity_pl` into one :class:`EquityReplayResult`.
+    """
+    entry = simulate_equity_entry(proposal, bars)
+    brackets = simulate_equity_brackets(proposal, entry, bars)
+    pl = compute_equity_pl(
+        proposal,
+        entry,
+        brackets,
+        paper_harness_config=paper_harness_config,
+        adv_shares=adv_shares,
+        realized_volatility=realized_volatility,
+    )
+    return EquityReplayResult(
+        entered=entry.entered,
+        entry_price=entry.entry_price,
+        entry_timestamp=entry.entry_timestamp,
+        entry_slippage=pl.entry_slippage,
+        entry_fees=pl.entry_fees,
+        exit_leg=brackets.exit_leg,
+        exit_price=brackets.exit_price,
+        exit_timestamp=brackets.exit_timestamp,
+        exit_slippage=pl.exit_slippage,
+        exit_fees=pl.exit_fees,
+        realized_pl=pl.realized_pl,
+        same_bar_ambiguity=brackets.same_bar_ambiguity,
+    )
