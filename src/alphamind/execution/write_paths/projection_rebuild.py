@@ -10,7 +10,7 @@ snapshot/projection mismatch triggers a rebuild rather than a per-delta
 comparison-and-correct. No ``RECONCILIATION_ALERT`` / ``RECONCILIATION_CORRECTION``
 row is ever written here.
 
-Three derivations run in the open Phase-1 write transaction (single writer =
+Four derivations run in the open Phase-1 write transaction (single writer =
 pipeline, ADR-0005):
 
 1. **Order-status projection** — fold every ``TERMINAL_ORDER_STATUS`` event in
@@ -29,7 +29,19 @@ pipeline, ADR-0005):
    cross-process RMW reachable by the ``SQLITE_BUSY_SNAPSHOT`` race) onto the single
    pipeline writer; the monitor keeps only the real-time broker cancel.
 
-3. **Broker-fact-no-Intent classification** — a broker position with no matching
+3. **Entry-window reprice projection** (ALP-867) — for every still-resting
+   ``PENDING_ENTRY`` entry the monitor cancel-and-replaced toward the market, fold
+   its ``ENTRY_REPRICED`` events (in ``event_seq`` order) onto the order cache via
+   ``persist_entry_window_reprice``: the new ``limit_price`` / ``alpaca_order_id`` /
+   ``modification_count`` and the reservation adjustment. This relocates the
+   monitor's old reprice writeback (the residual half of the RMW the cancel cascade
+   left behind) onto the single pipeline writer. Idempotent: an event whose new
+   broker id is already in the order's ``alpaca_order_id_chain`` has been projected,
+   so re-projecting reproduces the same row. Sequenced **after** the cancel cascade
+   and gated on ``PENDING_ENTRY`` + non-terminal + no-fills so a terminal (cancelled)
+   order's dissolve wins over any stale reprice event.
+
+4. **Broker-fact-no-Intent classification** — a broker position with no matching
    local Intent overlay (the DVN / manual-trade case) is a **first-class
    projection state**, surfaced in the summary (attach/flag), never a reconcile
    alert. The "Alpaca wins" auto-materialize / alert doctrine is deleted.
@@ -57,8 +69,12 @@ from datetime import UTC, datetime
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from alphamind._kernel.money import price
 from alphamind.execution.broker_adapter.queries import PositionSnapshot, TradeAccountSnapshot
-from alphamind.execution.write_paths.phase2 import persist_entry_window_cancel
+from alphamind.execution.write_paths.phase2 import (
+    persist_entry_window_cancel,
+    persist_entry_window_reprice,
+)
 from alphamind.portfolio_state.records.orders import BracketStatus, OrderStatus
 from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
@@ -71,6 +87,7 @@ from alphamind.state.tables.brackets import BracketRow
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.fill_records import FillRecordRow
 from alphamind.state.tables.orders import OrderRow
+from alphamind.state.tables.orders_codec import row_to_record as order_row_to_record
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.positions_codec import row_to_record as position_row_to_record
 from alphamind.state.tables.projection_rebuild_watermark import (
@@ -181,6 +198,10 @@ class ProjectionRebuildSummary:
     # Defaulted for the same predate-this-field constructors; the production rebuild
     # always populates it (ALP-863).
     entry_window_cancels_cascaded: int = 0
+    # Count of ``orders`` rows whose limit / broker id / modification_count the
+    # entry-window reprice projection advanced from ``ENTRY_REPRICED`` events this
+    # rebuild (ALP-867); defaulted for the predate-this-field constructors.
+    entry_window_reprices_projected: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +328,12 @@ async def rebuild_projection(
     # whose terminal status just landed: dissolve the bracket, release capital,
     # resolve the thesis, cancel the position. Reuses the Phase-2 CANCEL cascade.
     entry_window_cancels_cascaded = await _dissolve_terminal_pending_entry_brackets(handle)
+    # ALP-867 — relocate the monitor's reprice writeback here too: project the
+    # ``ENTRY_REPRICED`` events onto every still-resting ``PENDING_ENTRY`` entry.
+    # Sequenced AFTER the cancel cascade so a terminal (cancelled) entry is already
+    # dissolved and excluded by the reprice gate — the cancel wins over a stale
+    # reprice event.
+    entry_window_reprices_projected = await _project_entry_window_reprices(handle)
     symbols_by_status = await _live_position_symbols_by_status(handle.session)
     intent_backed_symbols = frozenset().union(*symbols_by_status.values())
     pending_symbols = symbols_by_status.get("PENDING", frozenset())
@@ -341,6 +368,7 @@ async def rebuild_projection(
         broker_facts_without_intent=broker_facts,
         pending_with_broker_holding=pending_holdings,
         entry_window_cancels_cascaded=entry_window_cancels_cascaded,
+        entry_window_reprices_projected=entry_window_reprices_projected,
     )
 
 
@@ -576,6 +604,112 @@ async def _dissolve_terminal_pending_entry_brackets(handle: InvocationHandle) ->
             entry_order_id,
         )
     return len(entry_order_ids)
+
+
+async def _project_entry_window_reprices(handle: InvocationHandle) -> int:
+    """Project ``ENTRY_REPRICED`` events onto every still-resting entry (ALP-867).
+
+    The continuous monitor escalates a patient ``PENDING_ENTRY`` entry toward the
+    market by cancel-and-replacing it at the broker, but now writes nothing — it
+    appends an ``ENTRY_REPRICED`` event instead of RMW'ing the order row (the
+    residual half of the single-writer leak the cancel cascade above already
+    closed). The pipeline — the single writer — folds those events onto the order
+    cache, reusing :func:`persist_entry_window_reprice` unchanged (only its caller
+    moved monitor→pipeline): the new ``limit_price`` / ``alpaca_order_id`` /
+    ``modification_count`` and the reservation adjustment.
+
+    Events are scanned in ``event_seq`` order (ALP-865's monotonic append cursor)
+    and grouped per entry, so each order's reprices fold in append order and the
+    last one wins the final limit / broker id. Only genuinely-resting entries are
+    projected — ``PENDING_ENTRY`` bracket, non-terminal order, no recorded fills,
+    the same liveness the monitor's repricer required. This gate, run **after** the
+    cancel cascade, is what makes a terminal (cancelled) entry's dissolve win over a
+    stale reprice: a cancelled order is excluded (terminal status / no longer
+    ``PENDING_ENTRY``), and a filled entry is integrated by its FILL event rather
+    than repriced (which would corrupt the reservation).
+
+    **Idempotent.** A reprice event whose new broker id is already in the order's
+    ``alpaca_order_id_chain`` has been projected, so only the un-projected suffix is
+    replayed; re-running over the same log reproduces the same row (each
+    ``persist_entry_window_reprice`` call extends the chain, bumps
+    ``modification_count``, and telescopes the reservation by the limit delta). The
+    scan is over all ``ENTRY_REPRICED`` events (not watermark-bounded like the
+    terminal-status scan) — reprice events are rare (only patient entries past their
+    deadline), so the chain-gated re-fold is cheap. Returns the count of reprices
+    projected this rebuild.
+    """
+    session = handle.session
+    # Co-select a real column so the FROM is anchored: ``event_seq`` is a
+    # ``literal_column`` over the implicit rowid (ALP-865) and selecting it alone has
+    # no FROM clause to resolve against.
+    scanned = (
+        await session.execute(
+            select(BrokerEventLogRow.event_seq, BrokerEventLogRow.raw_payload_json)
+            .where(BrokerEventLogRow.event_type == BrokerEventType.ENTRY_REPRICED.value)
+            .order_by(BrokerEventLogRow.event_seq)
+        )
+    ).all()
+    if not scanned:
+        return 0
+    events_by_entry: dict[str, list[dict[str, str]]] = {}
+    for row in scanned:
+        payload = json.loads(row.raw_payload_json)
+        events_by_entry.setdefault(payload["entry_order_id"], []).append(payload)
+
+    live_entry_ids = set(
+        (
+            await session.execute(
+                select(BracketRow.entry_order_id)
+                .join(OrderRow, OrderRow.order_id == BracketRow.entry_order_id)
+                .where(
+                    BracketRow.entry_order_id.in_(list(events_by_entry)),
+                    BracketRow.status == BracketStatus.PENDING_ENTRY.value,
+                    OrderRow.status.not_in(_TERMINAL_ORDER_STATUSES),
+                    # No recorded fill: a filled entry is integrated by its FILL
+                    # event, never repriced (which would adjust an already-released
+                    # reservation).
+                    ~exists().where(FillRecordRow.order_id == OrderRow.order_id),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    projected = 0
+    for entry_order_id, events in events_by_entry.items():
+        if entry_order_id not in live_entry_ids:
+            continue
+        order_row = await session.get(OrderRow, entry_order_id)
+        if order_row is None:
+            continue
+        # The broker-id chain is the idempotency ledger: any reprice already folded
+        # appended its new id here, so skip those and replay only the un-projected
+        # suffix (kept in step with each in-place ``persist_entry_window_reprice``).
+        projected_ids: set[str] = {
+            str(chain_id) for chain_id in order_row_to_record(order_row).alpaca_order_id_chain
+        }
+        for payload in events:
+            new_alpaca_order_id = payload["new_alpaca_order_id"]
+            if new_alpaca_order_id in projected_ids:
+                continue
+            await persist_entry_window_reprice(
+                handle,
+                entry_order_id=entry_order_id,
+                new_limit_price=price(payload["new_limit"]),
+                new_alpaca_order_id=new_alpaca_order_id,
+                reprice_reason=payload["reason"],
+            )
+            projected_ids.add(new_alpaca_order_id)
+            projected += 1
+            log.info(
+                "projection rebuild: projected ENTRY_REPRICED for entry %s → limit %s "
+                "broker id %s (reprice writeback relocated off the monitor, ALP-867)",
+                entry_order_id,
+                payload["new_limit"],
+                new_alpaca_order_id,
+            )
+    return projected
 
 
 async def _live_position_symbols_by_status(session: AsyncSession) -> dict[str, frozenset[str]]:

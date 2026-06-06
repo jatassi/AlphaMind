@@ -1,11 +1,16 @@
-"""Tests for ``BrokerEntryWindowRepricer`` (ALP-740).
+"""Tests for ``BrokerEntryWindowRepricer`` (ALP-740 / ALP-867).
 
 The repricer decides reprice-vs-cancel from the entry's fill state, whether it
 is a repriceable equity limit, and how many times it has already been repriced
-(``modification_count`` vs the budget). These tests drive each branch with
+(the per-session count vs the budget). These tests drive each branch with
 fakes — recorded fills, an un-routed entry (no broker id — None), a spent
 budget, a non-equity entry, a missing quote, and the three broker-replace
 classifications — asserting the returned outcome and which seams fired.
+
+ALP-867: a confirmed reprice no longer RMWs the order row — it records the new id
++ bumped count in :class:`EntryWindowSessionMemory` and appends an
+``ENTRY_REPRICED`` event (the ``append_event`` seam). The loop bound is the
+in-session count seeded from the row's durable ``modification_count``.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from alphamind.execution.broker_adapter.entry_pricing import (
 )
 from alphamind.execution.continuous_monitor.entry_window.canceller import (
     EntryWindowDeadlineOutcome,
+    EntryWindowSessionMemory,
 )
 from alphamind.execution.continuous_monitor.entry_window.repricer import (
     BrokerEntryWindowRepricer,
@@ -85,7 +91,7 @@ class _Recorder:
     cancel_outcome: EntryWindowDeadlineOutcome = EntryWindowDeadlineOutcome.CANCELLED
     resolved: list[str] = field(default_factory=list)
     replaced: list[tuple[str, Price]] = field(default_factory=list)
-    written_back: list[tuple[str, Price, str, str]] = field(default_factory=list)
+    appended: list[tuple[str, Price, str, str]] = field(default_factory=list)
     cancelled: list[str] = field(default_factory=list)
     quoted: list[str] = field(default_factory=list)
 
@@ -103,13 +109,15 @@ class _Recorder:
         self.replaced.append((alpaca_order_id, new_limit))
         return self.replace_return
 
-    async def reprice_writeback(
+    async def append_event(
         self, entry_order_id: str, new_limit: Price, new_alpaca_order_id: str, reason: str
     ) -> None:
-        self.written_back.append((entry_order_id, new_limit, new_alpaca_order_id, reason))
+        self.appended.append((entry_order_id, new_limit, new_alpaca_order_id, reason))
 
-    async def cancel(self, *, bracket: BracketRecord, now: datetime) -> EntryWindowDeadlineOutcome:
-        del now
+    async def cancel(
+        self, *, bracket: BracketRecord, now: datetime, reprice_memory: EntryWindowSessionMemory
+    ) -> EntryWindowDeadlineOutcome:
+        del now, reprice_memory
         self.cancelled.append(bracket.bracket_id)
         return self.cancel_outcome
 
@@ -119,7 +127,7 @@ def _repricer(rec: _Recorder, *, max_reprice_count: int = 2) -> BrokerEntryWindo
         resolve_target=rec.resolve_target,
         quote_source=rec,
         broker_replace=rec.broker_replace,
-        reprice_writeback=rec.reprice_writeback,
+        append_event=rec.append_event,
         canceller=rec,
         max_reprice_count=max_reprice_count,
         bps_through_touch=_BPS,
@@ -177,27 +185,35 @@ def _bracket_with_take_profit(target_threshold: float) -> BracketRecord:
     )
 
 
-async def test_successful_reprice_writes_back_and_returns_repriced() -> None:
+async def test_successful_reprice_appends_event_and_returns_repriced() -> None:
     """A repriceable equity limit under budget is escalated to a marketable
-    limit through the touch, the new broker id is handed to the writeback, and
-    the outcome is the non-terminal REPRICED — no cancel."""
+    limit through the touch, the new broker id is handed to the event append, and
+    the outcome is the non-terminal REPRICED — no cancel, no order-row writeback."""
     rec = _Recorder(target=_target(direction="short", modification_count=0))
-    outcome = await _repricer(rec).handle(bracket=_bracket(), now=_NOW)
+    memory = EntryWindowSessionMemory()
+    outcome = await _repricer(rec).handle(bracket=_bracket(), now=_NOW, reprice_memory=memory)
 
     assert outcome is EntryWindowDeadlineOutcome.REPRICED
     # A short (SELL) entry is priced off the bid (marketable_limit_price short).
     expected_limit = marketable_limit_price(direction="short", quote=_QUOTE, bps_through_touch=_BPS)
     assert rec.replaced == [(AlpacaOrderId("alpaca-uuid-xyz"), expected_limit)]
-    assert rec.written_back == [
+    assert rec.appended == [
         ("ORD-entry-1", expected_limit, "alpaca-new-uuid", "entry_window_reprice")
     ]
     assert rec.cancelled == []
+    # The new broker id + bumped count are recorded in session memory.
+    assert memory.reprice_count("BRK-1") == 1
+    assert memory.current_alpaca_order_id("BRK-1") == AlpacaOrderId("alpaca-new-uuid")
 
 
 async def test_long_entry_prices_through_the_ask() -> None:
     """A long (BUY) entry is escalated above the ask, not the bid."""
     rec = _Recorder(target=_target(direction="long", modification_count=0))
-    await _repricer(rec).handle(bracket=_bracket(stop_threshold=90.0, stop_above=False), now=_NOW)
+    await _repricer(rec).handle(
+        bracket=_bracket(stop_threshold=90.0, stop_above=False),
+        now=_NOW,
+        reprice_memory=EntryWindowSessionMemory(),
+    )
 
     expected_limit = marketable_limit_price(direction="long", quote=_QUOTE, bps_through_touch=_BPS)
     assert rec.replaced == [(AlpacaOrderId("alpaca-uuid-xyz"), expected_limit)]
@@ -205,11 +221,13 @@ async def test_long_entry_prices_through_the_ask() -> None:
 
 async def test_recorded_fill_skips_reprice_and_cancel() -> None:
     rec = _Recorder(target=_target(has_recorded_fills=True))
-    outcome = await _repricer(rec).handle(bracket=_bracket(), now=_NOW)
+    outcome = await _repricer(rec).handle(
+        bracket=_bracket(), now=_NOW, reprice_memory=EntryWindowSessionMemory()
+    )
 
     assert outcome is EntryWindowDeadlineOutcome.SKIPPED_FILLED
     assert rec.replaced == []
-    assert rec.written_back == []
+    assert rec.appended == []
     assert rec.cancelled == []
 
 
@@ -218,7 +236,9 @@ async def test_unrouted_entry_is_retried() -> None:
     'alp-' placeholder is deleted); the repricer retries rather than acting on a
     missing id."""
     rec = _Recorder(target=_target(alpaca_order_id=None))
-    outcome = await _repricer(rec).handle(bracket=_bracket(), now=_NOW)
+    outcome = await _repricer(rec).handle(
+        bracket=_bracket(), now=_NOW, reprice_memory=EntryWindowSessionMemory()
+    )
 
     assert outcome is EntryWindowDeadlineOutcome.FAILED
     assert rec.replaced == []
@@ -227,7 +247,9 @@ async def test_unrouted_entry_is_retried() -> None:
 
 async def test_missing_target_returns_failed() -> None:
     rec = _Recorder(target=None)
-    outcome = await _repricer(rec).handle(bracket=_bracket(), now=_NOW)
+    outcome = await _repricer(rec).handle(
+        bracket=_bracket(), now=_NOW, reprice_memory=EntryWindowSessionMemory()
+    )
 
     assert outcome is EntryWindowDeadlineOutcome.FAILED
     assert rec.replaced == []
@@ -238,19 +260,24 @@ async def test_non_equity_limit_delegates_to_cancel() -> None:
     """A market / stop_limit / non-equity entry is not repriced — the terminal
     cancel handles it (ALP-738 equity-limit-only scope)."""
     rec = _Recorder(target=_target(is_equity_limit=False))
-    outcome = await _repricer(rec).handle(bracket=_bracket(), now=_NOW)
+    outcome = await _repricer(rec).handle(
+        bracket=_bracket(), now=_NOW, reprice_memory=EntryWindowSessionMemory()
+    )
 
     assert outcome is EntryWindowDeadlineOutcome.CANCELLED
     assert rec.cancelled == ["BRK-1"]
     assert rec.replaced == []
-    assert rec.written_back == []
+    assert rec.appended == []
 
 
 async def test_budget_exhausted_delegates_to_cancel() -> None:
-    """Once modification_count reaches the reprice budget the loop stops chasing
-    and cancels (with the ALP-739 no-fill alert)."""
+    """Once the session reprice count reaches the budget the loop stops chasing
+    and cancels (with the ALP-739 no-fill alert). The count is seeded from the
+    row's durable ``modification_count``."""
     rec = _Recorder(target=_target(modification_count=2))
-    outcome = await _repricer(rec, max_reprice_count=2).handle(bracket=_bracket(), now=_NOW)
+    outcome = await _repricer(rec, max_reprice_count=2).handle(
+        bracket=_bracket(), now=_NOW, reprice_memory=EntryWindowSessionMemory()
+    )
 
     assert outcome is EntryWindowDeadlineOutcome.CANCELLED
     assert rec.cancelled == ["BRK-1"]
@@ -258,19 +285,23 @@ async def test_budget_exhausted_delegates_to_cancel() -> None:
 
 
 async def test_under_budget_still_reprices() -> None:
-    """modification_count strictly below the budget still escalates."""
+    """A seeded count strictly below the budget still escalates."""
     rec = _Recorder(target=_target(modification_count=1))
-    outcome = await _repricer(rec, max_reprice_count=2).handle(bracket=_bracket(), now=_NOW)
+    outcome = await _repricer(rec, max_reprice_count=2).handle(
+        bracket=_bracket(), now=_NOW, reprice_memory=EntryWindowSessionMemory()
+    )
 
     assert outcome is EntryWindowDeadlineOutcome.REPRICED
     assert rec.cancelled == []
-    assert len(rec.written_back) == 1
+    assert len(rec.appended) == 1
 
 
 async def test_zero_budget_never_reprices() -> None:
     """max_reprice_count=0 disables repricing — restores ALP-737 cancel."""
     rec = _Recorder(target=_target(modification_count=0))
-    outcome = await _repricer(rec, max_reprice_count=0).handle(bracket=_bracket(), now=_NOW)
+    outcome = await _repricer(rec, max_reprice_count=0).handle(
+        bracket=_bracket(), now=_NOW, reprice_memory=EntryWindowSessionMemory()
+    )
 
     assert outcome is EntryWindowDeadlineOutcome.CANCELLED
     assert rec.cancelled == ["BRK-1"]
@@ -279,23 +310,38 @@ async def test_zero_budget_never_reprices() -> None:
 
 async def test_missing_quote_retries_without_cancelling() -> None:
     rec = _Recorder(target=_target(), quote=None)
-    outcome = await _repricer(rec).handle(bracket=_bracket(), now=_NOW)
+    outcome = await _repricer(rec).handle(
+        bracket=_bracket(), now=_NOW, reprice_memory=EntryWindowSessionMemory()
+    )
 
     assert outcome is EntryWindowDeadlineOutcome.FAILED
     assert rec.replaced == []
-    assert rec.written_back == []
+    assert rec.appended == []
     assert rec.cancelled == []
 
 
 async def test_broker_replace_retryable_is_retried() -> None:
     rec = _Recorder(target=_target(), replace_return=None)
-    outcome = await _repricer(rec).handle(bracket=_bracket(), now=_NOW)
+    outcome = await _repricer(rec).handle(
+        bracket=_bracket(), now=_NOW, reprice_memory=EntryWindowSessionMemory()
+    )
 
     assert outcome is EntryWindowDeadlineOutcome.FAILED
-    assert rec.written_back == []
+    assert rec.appended == []
     # Never cancel off a broker error — a 404/422 most likely means a fresh fill,
     # which the next cycle's fill check resolves rather than dissolving the bracket.
     assert rec.cancelled == []
+
+
+async def test_broker_replace_failure_does_not_record_a_reprice() -> None:
+    """A non-confirmed replace records nothing in session memory: the budget is
+    not consumed and the cancel target stays the row id (no in-session reprice)."""
+    rec = _Recorder(target=_target(), replace_return=None)
+    memory = EntryWindowSessionMemory()
+    await _repricer(rec).handle(bracket=_bracket(), now=_NOW, reprice_memory=memory)
+
+    assert memory.reprice_count("BRK-1") == 0
+    assert memory.current_alpaca_order_id("BRK-1") is None
 
 
 async def test_geometry_inverting_marketable_falls_back_to_cancel() -> None:
@@ -306,28 +352,34 @@ async def test_geometry_inverting_marketable_falls_back_to_cancel() -> None:
     # new_limit <= target → inversion → cancel.
     rec = _Recorder(target=_target(direction="short"))
     outcome = await _repricer(rec).handle(
-        bracket=_bracket_with_take_profit(target_threshold=100.0), now=_NOW
+        bracket=_bracket_with_take_profit(target_threshold=100.0),
+        now=_NOW,
+        reprice_memory=EntryWindowSessionMemory(),
     )
 
     assert outcome is EntryWindowDeadlineOutcome.CANCELLED
     assert rec.cancelled == ["BRK-1"]
     assert rec.replaced == []  # never reached the broker
-    assert rec.written_back == []
+    assert rec.appended == []
 
 
 @dataclass
 class _SequentialRecorder:
-    """Simulates the watcher loop across cycles: each successful reprice bumps
-    ``modification_count`` (as the real writeback does); ``filled`` can flip to
-    model the marketable limit filling between cycles."""
+    """Simulates the watcher loop across cycles. The order row's
+    ``modification_count`` stays fixed (the monitor no longer writes it — ALP-867);
+    the per-session count in ``EntryWindowSessionMemory`` is what climbs. ``filled``
+    can flip to model the marketable limit filling between cycles."""
 
-    modification_count: int = 0
     filled: bool = False
-    outcomes: list[EntryWindowDeadlineOutcome] = field(default_factory=list)
+    appends: int = 0
+    replace_targets: list[str] = field(default_factory=list)
 
     async def resolve_target(self, entry_order_id: str) -> RepriceTarget:
         del entry_order_id
-        return _target(has_recorded_fills=self.filled, modification_count=self.modification_count)
+        # The durable row never changes between cycles (no pipeline run): the same
+        # broker id ("alpaca-uuid-xyz") and modification_count=0. The session memory
+        # drives both the loop bound and the live broker id across cycles.
+        return _target(has_recorded_fills=self.filled, modification_count=0)
 
     async def latest_quote(self, symbol: str) -> TouchQuote:
         del symbol
@@ -336,17 +388,20 @@ class _SequentialRecorder:
     async def broker_replace(
         self, alpaca_order_id: AlpacaOrderId, new_limit: Price
     ) -> AlpacaOrderId | None:
-        del alpaca_order_id, new_limit
-        return AlpacaOrderId("alpaca-new-uuid")
+        del new_limit
+        self.replace_targets.append(alpaca_order_id)
+        return AlpacaOrderId(f"alpaca-new-uuid-{self.appends}")
 
-    async def reprice_writeback(
+    async def append_event(
         self, entry_order_id: str, new_limit: Price, new_alpaca_order_id: str, reason: str
     ) -> None:
         del entry_order_id, new_limit, new_alpaca_order_id, reason
-        self.modification_count += 1
+        self.appends += 1
 
-    async def cancel(self, *, bracket: BracketRecord, now: datetime) -> EntryWindowDeadlineOutcome:
-        del bracket, now
+    async def cancel(
+        self, *, bracket: BracketRecord, now: datetime, reprice_memory: EntryWindowSessionMemory
+    ) -> EntryWindowDeadlineOutcome:
+        del bracket, now, reprice_memory
         return EntryWindowDeadlineOutcome.CANCELLED
 
 
@@ -355,7 +410,7 @@ def _sequential_repricer(rec: _SequentialRecorder) -> BrokerEntryWindowRepricer:
         resolve_target=rec.resolve_target,
         quote_source=rec,
         broker_replace=rec.broker_replace,
-        reprice_writeback=rec.reprice_writeback,
+        append_event=rec.append_event,
         canceller=rec,
         max_reprice_count=2,
         bps_through_touch=_BPS,
@@ -363,20 +418,44 @@ def _sequential_repricer(rec: _SequentialRecorder) -> BrokerEntryWindowRepricer:
 
 
 async def test_bounded_loop_reprices_then_cancels_when_budget_spent() -> None:
-    """ALP-740 AC3: a patient limit past its deadline is repriced toward the
-    market on each cycle, then — after the bounded retries — cancels (the
+    """ALP-740 AC3 / ALP-867: a patient limit past its deadline is repriced toward
+    the market on each cycle — the per-session count climbs even though the row's
+    ``modification_count`` does not — then, after the bounded retries, cancels (the
     no-fill alert fires off that terminal cancel)."""
     rec = _SequentialRecorder()
     repricer = _sequential_repricer(rec)
     bracket = _bracket()
+    memory = EntryWindowSessionMemory()  # one memory shared across the cycles
 
-    first = await repricer.handle(bracket=bracket, now=_NOW)  # mods 0 -> 1
-    second = await repricer.handle(bracket=bracket, now=_NOW)  # mods 1 -> 2
-    third = await repricer.handle(bracket=bracket, now=_NOW)  # mods 2 == budget -> cancel
+    first = await repricer.handle(bracket=bracket, now=_NOW, reprice_memory=memory)  # count 0 -> 1
+    second = await repricer.handle(bracket=bracket, now=_NOW, reprice_memory=memory)  # count 1 -> 2
+    third = await repricer.handle(bracket=bracket, now=_NOW, reprice_memory=memory)  # 2 == budget
 
     assert first is EntryWindowDeadlineOutcome.REPRICED
     assert second is EntryWindowDeadlineOutcome.REPRICED
     assert third is EntryWindowDeadlineOutcome.CANCELLED
+    assert rec.appends == 2
+    assert memory.reprice_count("BRK-1") == 2
+
+
+async def test_in_session_reprice_targets_the_previous_replace_id() -> None:
+    """ALP-867 — the order row's broker id is NOT written back on a reprice, so a
+    second in-session reprice must replace the CURRENT broker order (the previous
+    replace's new id from session memory), not the now-cancelled stale row id. The
+    repricer reads the session id for its replace target exactly as the canceller
+    does for its cancel target."""
+    rec = _SequentialRecorder()
+    repricer = _sequential_repricer(rec)
+    bracket = _bracket()
+    memory = EntryWindowSessionMemory()
+
+    await repricer.handle(bracket=bracket, now=_NOW, reprice_memory=memory)  # cycle 1
+    await repricer.handle(bracket=bracket, now=_NOW, reprice_memory=memory)  # cycle 2
+
+    # Cycle 1 replaces the row id; cycle 2 replaces cycle 1's NEW id (the live order),
+    # not the stale row id "alpaca-uuid-xyz".
+    assert rec.replace_targets == ["alpaca-uuid-xyz", "alpaca-new-uuid-0"]
+    assert memory.current_alpaca_order_id("BRK-1") == AlpacaOrderId("alpaca-new-uuid-1")
 
 
 async def test_bounded_loop_stops_when_marketable_limit_fills() -> None:
@@ -386,10 +465,11 @@ async def test_bounded_loop_stops_when_marketable_limit_fills() -> None:
     rec = _SequentialRecorder()
     repricer = _sequential_repricer(rec)
     bracket = _bracket()
+    memory = EntryWindowSessionMemory()
 
-    first = await repricer.handle(bracket=bracket, now=_NOW)  # reprices to marketable
+    first = await repricer.handle(bracket=bracket, now=_NOW, reprice_memory=memory)  # reprices
     rec.filled = True  # the marketable limit fills before the next cycle
-    second = await repricer.handle(bracket=bracket, now=_NOW)
+    second = await repricer.handle(bracket=bracket, now=_NOW, reprice_memory=memory)
 
     assert first is EntryWindowDeadlineOutcome.REPRICED
     assert second is EntryWindowDeadlineOutcome.SKIPPED_FILLED

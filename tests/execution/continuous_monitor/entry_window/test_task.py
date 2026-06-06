@@ -16,6 +16,7 @@ from alphamind._kernel.ids import BracketId, OrderId, PositionId, Symbol
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.continuous_monitor.entry_window.canceller import (
     EntryWindowDeadlineOutcome,
+    EntryWindowSessionMemory,
 )
 from alphamind.execution.continuous_monitor.entry_window.task import (
     _run_entry_window_cycle,
@@ -72,8 +73,10 @@ class _FakeHandler:
     outcome: EntryWindowDeadlineOutcome = EntryWindowDeadlineOutcome.CANCELLED
     calls: list[str] = field(default_factory=list)
 
-    async def handle(self, *, bracket: BracketRecord, now: datetime) -> EntryWindowDeadlineOutcome:
-        del now
+    async def handle(
+        self, *, bracket: BracketRecord, now: datetime, reprice_memory: EntryWindowSessionMemory
+    ) -> EntryWindowDeadlineOutcome:
+        del now, reprice_memory
         self.calls.append(bracket.bracket_id)
         return self.outcome
 
@@ -103,6 +106,7 @@ async def test_cycle_cancels_only_expired_brackets() -> None:
         handler=handler,
         now=_NOW,
         fired=fired,
+        reprice_memory=EntryWindowSessionMemory(),
     )
 
     assert handler.calls == ["BRK-EXPIRED"]
@@ -122,6 +126,7 @@ async def test_cycle_does_not_fire_at_exact_deadline() -> None:
         handler=handler,
         now=_NOW,
         fired=fired,
+        reprice_memory=EntryWindowSessionMemory(),
     )
 
     assert handler.calls == []
@@ -141,6 +146,7 @@ async def test_cycle_skips_already_fired_brackets() -> None:
         handler=handler,
         now=_NOW,
         fired=fired,
+        reprice_memory=EntryWindowSessionMemory(),
     )
 
     assert handler.calls == []
@@ -159,6 +165,7 @@ async def test_cycle_failed_outcome_is_retried_next_cycle() -> None:
         handler=handler,
         now=_NOW,
         fired=fired,
+        reprice_memory=EntryWindowSessionMemory(),
     )
 
     assert handler.calls == ["BRK-1"]
@@ -178,6 +185,7 @@ async def test_cycle_already_filled_outcome_is_not_retried() -> None:
         handler=handler,
         now=_NOW,
         fired=fired,
+        reprice_memory=EntryWindowSessionMemory(),
     )
 
     assert fired == {"BRK-1"}
@@ -192,9 +200,13 @@ async def test_cycle_swallows_per_bracket_handler_error() -> None:
         calls: list[str] = field(default_factory=list)
 
         async def handle(
-            self, *, bracket: BracketRecord, now: datetime
+            self,
+            *,
+            bracket: BracketRecord,
+            now: datetime,
+            reprice_memory: EntryWindowSessionMemory,
         ) -> EntryWindowDeadlineOutcome:
-            del now
+            del now, reprice_memory
             self.calls.append(bracket.bracket_id)
             if bracket.bracket_id == "BRK-BAD":
                 raise RuntimeError("broker exploded")
@@ -211,6 +223,7 @@ async def test_cycle_swallows_per_bracket_handler_error() -> None:
         handler=handler,
         now=_NOW,
         fired=fired,
+        reprice_memory=EntryWindowSessionMemory(),
     )
 
     assert handler.calls == ["BRK-BAD", "BRK-GOOD"]
@@ -231,6 +244,7 @@ async def test_cycle_repriced_outcome_is_not_latched() -> None:
         handler=handler,
         now=_NOW,
         fired=fired,
+        reprice_memory=EntryWindowSessionMemory(),
     )
 
     assert handler.calls == ["BRK-1"]

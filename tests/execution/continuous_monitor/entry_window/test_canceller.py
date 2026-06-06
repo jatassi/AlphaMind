@@ -22,6 +22,7 @@ from alphamind.execution.continuous_monitor.entry_window.canceller import (
     BrokerEntryWindowCanceller,
     EntryCancelTarget,
     EntryWindowDeadlineOutcome,
+    EntryWindowSessionMemory,
 )
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
@@ -96,7 +97,9 @@ async def test_confirmed_cancel_with_no_fills_returns_cancelled_and_writes_nothi
         ),
         classification=BrokerCancelClassification.CANCEL_CONFIRMED,
     )
-    outcome = await _canceller(rec).cancel(bracket=_bracket(), now=_NOW)
+    outcome = await _canceller(rec).cancel(
+        bracket=_bracket(), now=_NOW, reprice_memory=EntryWindowSessionMemory()
+    )
 
     assert outcome is EntryWindowDeadlineOutcome.CANCELLED
     assert rec.cancelled == ["alpaca-uuid-xyz"]
@@ -110,7 +113,9 @@ async def test_recorded_fill_skips_cancel() -> None:
             alpaca_order_id=AlpacaOrderId("alpaca-uuid-xyz"), has_recorded_fills=True
         ),
     )
-    outcome = await _canceller(rec).cancel(bracket=_bracket(), now=_NOW)
+    outcome = await _canceller(rec).cancel(
+        bracket=_bracket(), now=_NOW, reprice_memory=EntryWindowSessionMemory()
+    )
 
     assert outcome is EntryWindowDeadlineOutcome.SKIPPED_FILLED
     assert rec.cancelled == []  # never asked the broker to cancel a filled entry
@@ -123,7 +128,9 @@ async def test_unrouted_entry_is_retried_not_cancelled() -> None:
     rec = _Recorder(
         target=EntryCancelTarget(alpaca_order_id=None, has_recorded_fills=False),
     )
-    outcome = await _canceller(rec).cancel(bracket=_bracket(), now=_NOW)
+    outcome = await _canceller(rec).cancel(
+        bracket=_bracket(), now=_NOW, reprice_memory=EntryWindowSessionMemory()
+    )
 
     assert outcome is EntryWindowDeadlineOutcome.FAILED
     assert rec.cancelled == []
@@ -138,14 +145,40 @@ async def test_retryable_broker_answer_does_not_latch() -> None:
         ),
         classification=BrokerCancelClassification.RETRYABLE,
     )
-    outcome = await _canceller(rec).cancel(bracket=_bracket(), now=_NOW)
+    outcome = await _canceller(rec).cancel(
+        bracket=_bracket(), now=_NOW, reprice_memory=EntryWindowSessionMemory()
+    )
 
     assert outcome is EntryWindowDeadlineOutcome.FAILED
 
 
 async def test_missing_order_returns_failed_without_cancelling() -> None:
     rec = _Recorder(target=None)
-    outcome = await _canceller(rec).cancel(bracket=_bracket(), now=_NOW)
+    outcome = await _canceller(rec).cancel(
+        bracket=_bracket(), now=_NOW, reprice_memory=EntryWindowSessionMemory()
+    )
 
     assert outcome is EntryWindowDeadlineOutcome.FAILED
     assert rec.cancelled == []
+
+
+async def test_in_session_reprice_cancels_the_current_broker_id_not_the_stale_row() -> None:
+    """ALP-867 — after an in-session reprice the order row's ``alpaca_order_id`` is
+    stale (the cancel-and-replace produced a new id the pipeline has not projected
+    yet), so the terminal cancel must target the session-tracked **current** id."""
+    rec = _Recorder(
+        # The order row still carries the pre-reprice broker id.
+        target=EntryCancelTarget(
+            alpaca_order_id=AlpacaOrderId("alpaca-stale-row-id"), has_recorded_fills=False
+        ),
+        classification=BrokerCancelClassification.CANCEL_CONFIRMED,
+    )
+    memory = EntryWindowSessionMemory()
+    memory.seed_if_absent("BRK-1", durable_reprice_count=0)
+    memory.record_reprice("BRK-1", new_alpaca_order_id=AlpacaOrderId("alpaca-new-replace-id"))
+
+    outcome = await _canceller(rec).cancel(bracket=_bracket(), now=_NOW, reprice_memory=memory)
+
+    assert outcome is EntryWindowDeadlineOutcome.CANCELLED
+    # The session's current id wins over the stale row id.
+    assert rec.cancelled == ["alpaca-new-replace-id"]

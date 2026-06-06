@@ -12,9 +12,12 @@ forget cancel returns "accepted" even for an order that races to FILLED):
    of reconciliation).
 2. If a fill is already recorded → ``SKIPPED_FILLED``: the entry filled, so never
    cancel/dissolve — reconciliation will flip the bracket to ``ACTIVE``.
-3. If the entry has no broker id yet (``alpaca_order_id is None`` — not yet
-   routed; ALP-847 deleted the synthetic ``alp-…`` placeholder) → ``FAILED``
-   (retry once it is acked); there is nothing to cancel.
+3. Pick the broker id to cancel: the **current** id from session memory
+   (``EntryWindowSessionMemory``) when an in-session reprice has happened — the
+   order row's ``alpaca_order_id`` is stale until the pipeline projects the
+   ``ENTRY_REPRICED`` events (ALP-867) — else the order row's id. If neither
+   exists (not yet routed; ALP-847 deleted the synthetic ``alp-…`` placeholder) →
+   ``FAILED`` (retry once it is acked); there is nothing to cancel.
 4. Otherwise ask the broker to cancel. A transient gateway failure or a non-
    terminal 4xx (auth / rate-limit / malformed) → ``FAILED`` (retry, do NOT latch
    the bracket as handled). A confirmed cancel or an already-terminal 404/422,
@@ -45,7 +48,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Protocol, runtime_checkable
@@ -54,6 +57,78 @@ from alphamind._kernel.ids import AlpacaOrderId
 from alphamind.portfolio_state.records.orders import BracketRecord
 
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Per-session reprice memory (ALP-867)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class _BracketRepriceState:
+    """One bracket's in-session reprice memory: the loop bound + the live id."""
+
+    # The reprice count this session, seeded once from the order row's durable
+    # ``modification_count`` and incremented in-session per confirmed replace.
+    reprice_count: int
+    # The current broker order id after the latest in-session replace, or ``None``
+    # until the first reprice — the canceller then falls back to the order row's id.
+    current_alpaca_order_id: AlpacaOrderId | None = None
+
+
+@dataclass(slots=True)
+class EntryWindowSessionMemory:
+    """Per-session, per-bracket reprice memory the watcher keeps beside ``fired``.
+
+    Once the reprice writeback moved off the monitor to the pipeline (ALP-867),
+    the order row's ``modification_count`` / ``alpaca_order_id`` lag until the next
+    pipeline projection folds the ``ENTRY_REPRICED`` events. This memory holds the
+    two facts the monitor can no longer read back from the row each cycle:
+
+    * the **reprice count** — the repricer's loop bound. Seeded once from the row's
+      durable ``modification_count`` on first encounter (so a process restart
+      respects the budget already spent and projected), then incremented in-session
+      per confirmed replace.
+    * the **current broker order id** — the canceller's terminal-cancel target.
+      After an in-session reprice the row's ``alpaca_order_id`` is stale (the
+      cancel-and-replace produced a new id the pipeline has not projected yet), so
+      the canceller cancels the id tracked here; before any reprice it is ``None``
+      and the canceller falls back to the row.
+
+    Private to one ``run_entry_window_watcher`` task-session, like ``fired``.
+    """
+
+    _by_bracket: dict[str, _BracketRepriceState] = field(default_factory=dict)
+
+    def seed_if_absent(self, bracket_id: str, *, durable_reprice_count: int) -> None:
+        """Record the durable reprice count on first encounter of *bracket_id*.
+
+        A no-op once seeded — the in-session count is authoritative thereafter and
+        must not be re-seeded from the row, which lags until the next projection.
+        """
+        if bracket_id not in self._by_bracket:
+            self._by_bracket[bracket_id] = _BracketRepriceState(reprice_count=durable_reprice_count)
+
+    def reprice_count(self, bracket_id: str) -> int:
+        """The in-session reprice count for *bracket_id* (0 if never seeded)."""
+        state = self._by_bracket.get(bracket_id)
+        return state.reprice_count if state is not None else 0
+
+    def record_reprice(self, bracket_id: str, *, new_alpaca_order_id: AlpacaOrderId) -> int:
+        """Bump the count + set the current broker id after a confirmed replace.
+
+        Requires *bracket_id* already seeded (the repricer seeds before its budget
+        gate). Returns the new count for the log line.
+        """
+        state = self._by_bracket[bracket_id]
+        state.reprice_count += 1
+        state.current_alpaca_order_id = new_alpaca_order_id
+        return state.reprice_count
+
+    def current_alpaca_order_id(self, bracket_id: str) -> AlpacaOrderId | None:
+        """The current broker id after an in-session reprice, else ``None``."""
+        state = self._by_bracket.get(bracket_id)
+        return state.current_alpaca_order_id if state is not None else None
 
 
 class BrokerCancelClassification(Enum):
@@ -111,7 +186,7 @@ class EntryWindowCanceller(Protocol):
     """
 
     async def cancel(
-        self, *, bracket: BracketRecord, now: datetime
+        self, *, bracket: BracketRecord, now: datetime, reprice_memory: EntryWindowSessionMemory
     ) -> EntryWindowDeadlineOutcome: ...
 
 
@@ -138,7 +213,9 @@ class BrokerEntryWindowCanceller:
     resolve_target: EntryCancelTargetResolver
     broker_cancel: BrokerCancel
 
-    async def cancel(self, *, bracket: BracketRecord, now: datetime) -> EntryWindowDeadlineOutcome:
+    async def cancel(
+        self, *, bracket: BracketRecord, now: datetime, reprice_memory: EntryWindowSessionMemory
+    ) -> EntryWindowDeadlineOutcome:
         del now  # the deadline check already fired; provenance lives in the reason
         target = await self.resolve_target(bracket.entry_order_id)
         if target is None:
@@ -156,7 +233,15 @@ class BrokerEntryWindowCanceller:
                 bracket.bracket_id,
             )
             return EntryWindowDeadlineOutcome.SKIPPED_FILLED
-        if target.alpaca_order_id is None:
+        # Cancel the CURRENT broker order: after an in-session reprice the order
+        # row's id is stale (the cancel-and-replace produced a new id the pipeline
+        # has not projected yet, ALP-867), so the session-tracked id wins; before
+        # any reprice it is ``None`` and we fall back to the row's id. ``is not None``
+        # rather than ``or`` so an empty-string id (a str NewType) never silently
+        # falls back to the stale row.
+        session_id = reprice_memory.current_alpaca_order_id(bracket.bracket_id)
+        alpaca_order_id = session_id if session_id is not None else target.alpaca_order_id
+        if alpaca_order_id is None:
             # Not yet routed to the broker (no broker id) — nothing to cancel yet;
             # retry once it is acked rather than misreading a missing id as terminal.
             log.warning(
@@ -164,7 +249,7 @@ class BrokerEntryWindowCanceller:
                 bracket.bracket_id,
             )
             return EntryWindowDeadlineOutcome.FAILED
-        classification = await self.broker_cancel(target.alpaca_order_id)
+        classification = await self.broker_cancel(alpaca_order_id)
         if classification is BrokerCancelClassification.RETRYABLE:
             log.warning(
                 "entry_window: broker cancel not confirmed for bracket %s; retrying next cycle",
@@ -191,4 +276,5 @@ __all__ = [
     "EntryCancelTarget",
     "EntryWindowCanceller",
     "EntryWindowDeadlineOutcome",
+    "EntryWindowSessionMemory",
 ]

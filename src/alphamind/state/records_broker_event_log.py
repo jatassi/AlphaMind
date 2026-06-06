@@ -52,6 +52,11 @@ class BrokerEventType(StrEnum):
     * ``TERMINAL_ORDER_STATUS`` — a zero-fill terminal order-status event
       (canceled / rejected / expired) routed through the log instead of an
       in-place RMW on ``orders.status``.
+    * ``ENTRY_REPRICED`` — a confirmed entry-window cancel-and-replace
+      (ALP-867): the monitor escalates a resting equity-limit entry toward the
+      market and appends this instead of RMW'ing ``orders.limit_price`` /
+      ``alpaca_order_id`` / ``modification_count``; the pipeline projects the
+      latest per order onto the order cache + reservation.
     """
 
     FILL = "FILL"
@@ -74,6 +79,8 @@ class BrokerEventType(StrEnum):
     CA_REDEMPTION = "CA_REDEMPTION"
     # Zero-fill terminal order-status event.
     TERMINAL_ORDER_STATUS = "TERMINAL_ORDER_STATUS"
+    # Entry-window cancel-and-replace (reprice toward the market).
+    ENTRY_REPRICED = "ENTRY_REPRICED"
 
 
 class BrokerEventRecord(BaseModel):
