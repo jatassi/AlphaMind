@@ -16,18 +16,14 @@ and lifts to its dedicated module per the ALP-484 split.
 from __future__ import annotations
 
 import statistics
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from alphamind.distillation.q3.atm_iv_baseline_loaders import _select_atm_iv_history
-from alphamind.persistence.models import (
-    OptionsContracts,
-    OptionsContractSnapshots,
-    SectorClassification,
-)
+from alphamind.distillation.q3.atm_iv_baseline_loaders import _select_atm_iv_by_ts
+from alphamind.persistence.models import SectorClassification
 
 # Minimum sample count for a defined ``pstdev``. Mirrors the q12-pattern
 # definitional-base sum used elsewhere in q3 to avoid the no-magic-numbers
@@ -45,38 +41,38 @@ def _select_atm_iv_at(
 ) -> float | None:
     """Return the ATM-call IV at exactly ``as_of`` for ``underlying``.
 
-    "ATM" is the call whose strike is closest to the snapshot's
-    ``underlying_price``. Mirrors :func:`_select_atm_iv_history` for a
-    single point.
+    A single-instant view over the canonical :func:`_select_atm_iv_by_ts`
+    selector — "ATM" is the call whose strike is closest to the snapshot's
+    ``underlying_price``. Sharing the selector keeps the divergence numerator's
+    ETF IV and the baseline's ETF IV definitionally identical.
     """
-    stmt = (
-        select(
-            OptionsContractSnapshots.implied_volatility,
-            OptionsContractSnapshots.underlying_price,
-            OptionsContracts.strike_price,
-        )
-        .join(
-            OptionsContracts,
-            OptionsContracts.contract_ticker == OptionsContractSnapshots.contract_ticker,
-        )
-        .where(
-            OptionsContractSnapshots.underlying_ticker == underlying,
-            OptionsContracts.contract_type == "call",
-            OptionsContractSnapshots.snapshot_ts == as_of,
-            OptionsContractSnapshots.implied_volatility.isnot(None),
-        )
-    )
-    rows = session.execute(stmt).all()
-    best_iv: float | None = None
-    best_gap: float | None = None
-    for iv, underlying_price, strike in rows:
-        if iv is None or underlying_price is None or strike is None:
-            continue
-        gap = abs(float(strike) - float(underlying_price))
-        if best_gap is None or gap < best_gap:
-            best_iv = float(iv)
-            best_gap = gap
-    return best_iv
+    observation = _select_atm_iv_by_ts(
+        session,
+        ticker=underlying,
+        range_start=as_of,
+        range_end=as_of,
+    ).get(as_of)
+    return observation[0] if observation is not None else None
+
+
+def _volume_weighted_iv(observations: Iterable[tuple[float, float | None]]) -> float | None:
+    """Reduce ``(atm_iv, volume_today)`` observations to a volume-weighted IV.
+
+    Each observation's weight is its ``volume_today`` when present and ``> 0``,
+    else ``1.0``. Returns ``None`` when no observation contributes
+    (``weight_sum <= 0``). Both the point estimate (the divergence numerator's
+    single-name term) and the trailing baseline's per-date single-name term
+    reduce through this one function, so the two cannot drift.
+    """
+    weighted_sum = 0.0
+    weight_sum = 0.0
+    for atm_iv, volume_today in observations:
+        weight = float(volume_today) if volume_today is not None and volume_today > 0 else 1.0
+        weighted_sum += atm_iv * weight
+        weight_sum += weight
+    if weight_sum <= 0:
+        return None
+    return weighted_sum / weight_sum
 
 
 def _select_aggregate_single_name_iv(
@@ -89,48 +85,22 @@ def _select_aggregate_single_name_iv(
 
     The weight is ``volume_today`` of the ATM call on each constituent.
     Tickers without a same-day snapshot are skipped. Returns ``None`` when
-    no constituent contributes — the divergence is undefined.
+    no constituent contributes — the divergence is undefined. Selects each
+    constituent's ATM observation through the same :func:`_select_atm_iv_by_ts`
+    selector and the same :func:`_volume_weighted_iv` reduction the trailing
+    baseline uses, so the numerator and its baseline cannot drift.
     """
-    weighted_sum = 0.0
-    weight_sum = 0.0
+    observations: list[tuple[float, float | None]] = []
     for ticker in tickers:
-        stmt = (
-            select(
-                OptionsContractSnapshots.implied_volatility,
-                OptionsContractSnapshots.underlying_price,
-                OptionsContractSnapshots.volume_today,
-                OptionsContracts.strike_price,
-            )
-            .join(
-                OptionsContracts,
-                OptionsContracts.contract_ticker == OptionsContractSnapshots.contract_ticker,
-            )
-            .where(
-                OptionsContractSnapshots.underlying_ticker == ticker,
-                OptionsContracts.contract_type == "call",
-                OptionsContractSnapshots.snapshot_ts == as_of,
-                OptionsContractSnapshots.implied_volatility.isnot(None),
-            )
-        )
-        best_iv: float | None = None
-        best_gap: float | None = None
-        best_weight: float = 0.0
-        for iv, underlying_price, volume, strike in session.execute(stmt).all():
-            if iv is None or underlying_price is None or strike is None:
-                continue
-            gap = abs(float(strike) - float(underlying_price))
-            if best_gap is None or gap < best_gap:
-                best_iv = float(iv)
-                best_gap = gap
-                best_weight = float(volume) if volume is not None else 0.0
-        if best_iv is None:
-            continue
-        weight = best_weight if best_weight > 0 else 1.0
-        weighted_sum += best_iv * weight
-        weight_sum += weight
-    if weight_sum <= 0:
-        return None
-    return weighted_sum / weight_sum
+        observation = _select_atm_iv_by_ts(
+            session,
+            ticker=ticker,
+            range_start=as_of,
+            range_end=as_of,
+        ).get(as_of)
+        if observation is not None:
+            observations.append(observation)
+    return _volume_weighted_iv(observations)
 
 
 def _select_etf_iv_spread_baseline(
@@ -147,30 +117,40 @@ def _select_etf_iv_spread_baseline(
     end_dt = datetime.fromisoformat(range_end).astimezone(UTC)
     start_dt = end_dt - timedelta(days=baseline_days)
     range_start = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-    etf_history = _select_atm_iv_history(
+    etf_by_ts = _select_atm_iv_by_ts(
         session,
         ticker=etf_ticker,
         range_start=range_start,
         range_end=range_end,
     )
-    if not etf_history:
+    if not etf_by_ts:
         return 0.0, 0.0
-    constituent_history: list[float] = []
-    for ticker in constituents:
-        constituent_history.extend(
-            _select_atm_iv_history(
-                session,
-                ticker=ticker,
-                range_start=range_start,
-                range_end=range_end,
-            )
+    constituent_by_ts = [
+        _select_atm_iv_by_ts(
+            session,
+            ticker=ticker,
+            range_start=range_start,
+            range_end=range_end,
         )
-    if not constituent_history:
+        for ticker in constituents
+    ]
+    # Pair the ETF IV against the per-date cross-sectional single-name aggregate
+    # by matching ``snapshot_ts``. A constituent observation on a date absent
+    # from the ETF series never enters a spread; an ETF date with no constituent
+    # snapshot contributes none. The per-date aggregate reduces through the same
+    # ``_volume_weighted_iv`` helper as the point estimate, so the baseline and
+    # the numerator cannot drift.
+    spreads: list[float] = []
+    for snapshot_ts in sorted(etf_by_ts):
+        etf_iv, _ = etf_by_ts[snapshot_ts]
+        single_name_iv = _volume_weighted_iv(
+            by_ts[snapshot_ts] for by_ts in constituent_by_ts if snapshot_ts in by_ts
+        )
+        if single_name_iv is None:
+            continue
+        spreads.append(etf_iv - single_name_iv)
+    if len(spreads) < _MIN_VARIANCE_SAMPLES:
         return 0.0, 0.0
-    paired_length = min(len(etf_history), len(constituent_history))
-    if paired_length < _MIN_VARIANCE_SAMPLES:
-        return 0.0, 0.0
-    spreads = [etf_history[i] - constituent_history[i] for i in range(paired_length)]
     return statistics.fmean(spreads), statistics.pstdev(spreads)
 
 

@@ -41,24 +41,30 @@ from alphamind.persistence.models import (
 )
 
 
-def _select_atm_iv_history(
+def _select_atm_iv_by_ts(
     session: Session,
     *,
     ticker: str,
     range_start: str,
     range_end: str,
-) -> list[float]:
-    """Return ATM-call IV observations for ``ticker`` ascending in time.
+) -> dict[str, tuple[float, float | None]]:
+    """Return ``{snapshot_ts: (atm_iv, volume_today)}`` for ``ticker``.
 
-    The "ATM" contract is selected per snapshot as the call whose strike is
-    closest to the snapshot's ``underlying_price``. Snapshots without an
-    ``implied_volatility`` are skipped — they carry no observation.
+    The "ATM" contract is selected per ``snapshot_ts`` as the call whose
+    strike is closest to the snapshot's ``underlying_price``. The chosen
+    contract's ``volume_today`` rides along verbatim (``None`` when the
+    snapshot carries no volume); the volume-weighting decision itself is the
+    consumer's, not this selector's. Routing every ATM-IV read through this one
+    selector keeps the bare IV series (:func:`_select_atm_iv_history`) and the
+    volume-carrying series definitionally identical. Snapshots without an
+    ``implied_volatility`` are skipped.
     """
     stmt = (
         select(
             OptionsContractSnapshots.snapshot_ts,
             OptionsContractSnapshots.implied_volatility,
             OptionsContractSnapshots.underlying_price,
+            OptionsContractSnapshots.volume_today,
             OptionsContracts.strike_price,
         )
         .join(
@@ -77,16 +83,42 @@ def _select_atm_iv_history(
     rows = session.execute(stmt).all()
     # Group by snapshot_ts; pick the strike closest to underlying_price per
     # snapshot. The grouping is small (one snapshot per day per ticker) so
-    # a Python pass is cheaper than a self-join.
-    by_ts: dict[str, tuple[float, float]] = {}
-    for snapshot_ts, iv, underlying_price, strike in rows:
+    # a Python pass is cheaper than a self-join. ``best_gap_by_ts`` holds the
+    # winning strike's gap purely as a comparator and never escapes.
+    by_ts: dict[str, tuple[float, float | None]] = {}
+    best_gap_by_ts: dict[str, float] = {}
+    for snapshot_ts, iv, underlying_price, volume, strike in rows:
         if iv is None or underlying_price is None:
             continue
         gap = abs(float(strike) - float(underlying_price))
-        existing = by_ts.get(snapshot_ts)
-        if existing is None or gap < existing[1]:
-            by_ts[snapshot_ts] = (float(iv), gap)
-    return [by_ts[ts][0] for ts in sorted(by_ts)]
+        best_gap = best_gap_by_ts.get(snapshot_ts)
+        if best_gap is None or gap < best_gap:
+            best_gap_by_ts[snapshot_ts] = gap
+            volume_today = float(volume) if volume is not None else None
+            by_ts[snapshot_ts] = (float(iv), volume_today)
+    return by_ts
+
+
+def _select_atm_iv_history(
+    session: Session,
+    *,
+    ticker: str,
+    range_start: str,
+    range_end: str,
+) -> list[float]:
+    """Return ATM-call IV observations for ``ticker`` ascending in time.
+
+    Delegates to :func:`_select_atm_iv_by_ts` and drops the timestamp/volume,
+    so the IV series and the timestamp-keyed series stay definitionally
+    identical. Snapshots without an ``implied_volatility`` are skipped.
+    """
+    by_ts = _select_atm_iv_by_ts(
+        session,
+        ticker=ticker,
+        range_start=range_start,
+        range_end=range_end,
+    )
+    return [iv for _, (iv, _) in sorted(by_ts.items())]
 
 
 def load_atm_iv_history_by_ticker(
