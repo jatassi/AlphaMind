@@ -116,8 +116,9 @@ nssm stop alphamind-collector
 Get-Service alphamind-collector, alphamind-scheduler, alphamind-monitor, alphamind-safety-core, alphamind-safety-core-watchdog, AlphaMindCommandCenter
 ```
 
-All six should report `Stopped`. NSSM's stop budget is 30 s per service; if
-one hangs in `StopPending`, see § 8.3.
+All six should report `Stopped`. The install scripts leave NSSM's default
+stop-method timeouts in place; if one hangs in `StopPending` past ~30 s, see
+§ 8.3.
 
 ### 1.5 Apply migrations
 
@@ -239,8 +240,12 @@ a pipeline run. For any manual CLI invocation, source via:
 set -a && source <(tr -d '\r' < .env) && set +a
 ```
 
-NSSM-managed services bypass this — they read the env from
-`AppEnvironmentExtra` directly, no shell sourcing involved.
+NSSM-managed services bypass this — each entrypoint calls `load_dotenv()`,
+which parses the repo-root `.env` from the service's working directory (NSSM
+`AppDirectory`) and strips line endings, so the `\r` never survives. No shell
+`source` step is involved. (The install scripts do **not** inject the vendor
+keys via NSSM's `AppEnvironmentExtra`; the only env value set that way is the
+command-center session secret in § 2.5.)
 
 ### 2.2 Bring the DB to alembic head
 
@@ -341,6 +346,9 @@ the broker-enforced orders are visible on the Alpaca side.
 
 - **Alpaca reports any open positions.** The error names the offending
   symbol(s). Reset the Alpaca account first.
+- **Alpaca reports any open orders.** `--fresh-start` requires a flat account —
+  positions empty **and** the broker order book empty. The error names the
+  offending order symbol(s). Cancel them (reset the account) first.
 - **`cash_ledger` already has a row.** The error includes the existing
   `current_cash_usd`. Positions/cash are a derived **Projection** rebuilt each
   invocation from the broker-event log applied to the live broker snapshot
@@ -439,9 +447,12 @@ Get-Content "$env:USERPROFILE\AlphaMind\logs\command_center.out.log" -Tail 50 |
     Select-String "command_center setup token"
 ```
 
-Open `http://127.0.0.1:8090/` in a browser on the Windows machine (RDP in if
+Open `http://localhost:8090/` in a browser on the Windows machine (RDP in if
 remote), paste the token, choose a username, and complete WebAuthn
-registration with Windows Hello or a hardware key. See
+registration with Windows Hello or a hardware key. **Use the `localhost`
+hostname, not `127.0.0.1`** — the WebAuthn relying-party id is `localhost`
+(`config/security.yaml`), so a passkey ceremony loaded from the `127.0.0.1`
+origin is rejected by the browser. See
 `RUNBOOK_command_center.md` § Register the first passkey for details and §
 Adding a passkey for enrolling a backup authenticator.
 
@@ -534,15 +545,17 @@ passes on the `distillation_ticker_baseline` UNIQUE constraint).
 | `weekend_sunday`       | `0 18 * * sun`             | 18:00 Sunday                              | Unconditional                                |
 | `off_hours_rolling`    | (unscheduled)              | Manual / emergency only                   | Valid run type; overlay retained, not on cron |
 | `weekend_saturday`     | (unscheduled)              | Manual / emergency only                   | Valid run type; overlay retained, not on cron |
-| `emergency`            | (not scheduled)            | On-demand, breach-cascade-triggered       | Cooldown-gated per `config/breach_behavior.yaml` |
+| `emergency`            | (not scheduled)            | On-demand, operator-triggered (command-center control → scheduler `trigger_emergency_invocation`) | Cooldown-gated per `config/breach_behavior.yaml`; auto breach-cascade is **not** wired in this build (§ 5.7) |
 
 ~3 scheduled invocations per trading weekday (`market_open` + `market_hours_rolling`
 + `pre_close`), ~16 per full trading week including the Sunday run. There is no
 longer any same-minute collision for the dedup window to "collapse" — every slot
 is distinct by construction. **Typical steady-state wall-clock per invocation is
-~60–180 seconds** (longer when the adaptive researcher consumes its full budget;
-shorter — ~25–35 s — for `emergency` invocations that bypass the analysis
-layer).
+~60–180 seconds** (longer when the adaptive researcher consumes its full budget).
+An `emergency` invocation is **not** a fast path: it runs the full agent roster —
+the same roster as `market_open`, with the heaviest adaptive-researcher budget
+(`config/run_types/emergency.yaml`) — so it lands comparable to or slower than a
+scheduled run.
 
 The cadence and time windows live in `config/scheduler.yaml`. Per-trigger
 agent budgets live in `config/run_types/*.yaml`. Edits to either take effect
@@ -639,30 +652,39 @@ Cross-field invariants worth knowing:
 
 ### 5.2 Real-time: the monitor's `/events` SSE stream
 
-The continuous monitor publishes its own SSE stream covering
-between-invocation activity — websocket health, fills, breaches, emergency
-triggers, greeks refreshes.
+The continuous monitor publishes its own SSE stream on `127.0.0.1:8766`. In the
+**current build** it emits fills plus an idle keep-alive:
 
 ```bash
 curl -N http://127.0.0.1:8766/events
 ```
 
-| Event                            | When                                                       |
-|----------------------------------|------------------------------------------------------------|
-| `websocket_connected`            | Alpaca trade-updates / underlying-stream websocket opens   |
-| `websocket_disconnected`         | The websocket drops (with reason)                          |
-| `fill_received`                  | A fill arrived from the trade-updates stream               |
-| `breach_detected`                | A guardrail rule fired; classified `immediate` or `deferred` |
-| `emergency_invocation_triggered` | A `breach_detected` classified `immediate` cascaded to an emergency invocation |
-| `greeks_refreshed`               | A scheduled or move-triggered options-Greeks refresh ran   |
+| Event           | When                                          |
+|-----------------|-----------------------------------------------|
+| `fill_received` | A fill arrived from the trade-updates stream  |
+| `heartbeat`     | 15 s idle keep-alive                          |
 
-Watch this stream when you want to see what's happening *between*
-invocations — fills landing, breaches firing, the bracket-stops watcher
-closing options positions.
+Watch this stream to see fills landing between invocations.
+
+**What is *not* on this stream (and why).** The monitor's SSE emitter still
+*defines* `websocket_connected` / `websocket_disconnected` / `breach_detected` /
+`emergency_invocation_triggered` / `greeks_refreshed`, but their producers are
+not composed into the running monitor, so none of them are emitted:
+
+- **`breach_detected` / `emergency_invocation_triggered`** — breach detection +
+  price-staleness moved out of the monitor into the isolated, **log-only safety
+  core** (ADR-0004 / ALP-857). The safety core has no SSE surface and writes
+  nothing; it logs to `safety_core.log` (§ 8.9). The monitor proper no longer
+  runs a breach loop.
+- **`greeks_refreshed`** — the greeks-refresh task runs, but its SSE emit adapter
+  is not wired; confirm greeks via `monitor.log` / the per-position diagnostics.
+- **`websocket_connected` / `websocket_disconnected`** — defined but never
+  emitted anywhere in the current tree; track websocket health via
+  `monitor.log` / `monitor.err.log` instead.
 
 ### 5.3 Real-time: the command center Live Run dashboard
 
-`http://127.0.0.1:8090/` → log in → Live Run. The dashboard merges both
+`http://localhost:8090/` → log in → Live Run. The dashboard merges both
 daemons' SSE streams + decorates them with activity-log rows and per-agent
 status. Best surface when an operator is sitting at the console.
 
@@ -706,9 +728,9 @@ succeeded through Phase 2; a row with `start_at` set but
 `trigger_type` (how the invocation was launched — `scheduled`, `manual`,
 or `emergency`), `trigger_source` (the run-type / origin label — for
 scheduled fires `market_open`, `market_hours_rolling`, `pre_close`,
-`weekend_sunday`, `off_hours_rolling`, or `borrow_accrual`; `cli` for a
+`weekend_sunday`, or `off_hours_rolling`; `cli` for a
 manual `--once` run; `operator_console` for a command-center action;
-`emergency_trigger` for a breach cascade),
+`continuous_monitor` for an emergency invocation),
 `trigger_reason` (free-form), `phase1_completed_at` / `phase2_completed_at`
 (lifecycle), `git_sha_at_invocation` (the repo HEAD when the invocation
 ran — useful for confirming which code version a run executed under),
@@ -737,7 +759,7 @@ brief.
 
 **Stalled agent.** An `agent_started` event with no matching
 `agent_succeeded` / `agent_failed` after that agent's configured
-`latency_budget_s` (in `config/run_types/<trigger>.yaml`). The orchestrator
+`latency_budget_seconds` (in `config/run_types/<trigger>.yaml`). The orchestrator
 will eventually time out and emit `agent_failed`, but if you're watching
 live and the budget is generous, the stall is visible first as
 unexplained silence in the SSE stream.
@@ -763,20 +785,37 @@ no `invocation_started` event arrived:
   `next_trigger_changed` events on the SSE stream show what APScheduler
   thinks comes next.
 
-**Emergency invocation cascade.** The expected sequence:
+**Emergency invocations.** In the current build these are **operator-initiated**,
+not auto-cascaded from a breach. The expected sequence:
 
-1. Monitor: `breach_detected` with `response_classification: immediate`.
-2. Monitor: `emergency_invocation_triggered` with the breach's `reason`.
-3. Scheduler: `invocation_started` with `run_type: emergency` and
-   `trigger_source: emergency_trigger`.
+1. Operator: command center → Controls → Trigger emergency invocation (or
+   `POST` the scheduler's `trigger_emergency_invocation` verb). This writes an
+   `EMERGENCY_INVOCATION_REQUESTED` row to `activity_log`.
+2. Scheduler: the `emergency_receiver` task polls `activity_log`, picks up the
+   request, and — unless the 30-minute cooldown
+   (`config/breach_behavior.yaml` § `emergency_invocation_cooldown_minutes`;
+   a `margin_call` request bypasses it) suppresses it — dispatches one emergency
+   invocation.
+3. Scheduler `/events`: `invocation_started` with `run_type: emergency`, then the
+   usual phase + agent events through `invocation_ended`. The `invocations` row
+   records `trigger_type: emergency` / `trigger_source: continuous_monitor`.
 
-If you see (1) and (2) but not (3) within a few seconds, the cooldown gate
-suppressed the cascade — check `config/breach_behavior.yaml`'s cooldown
-window and the recent `activity_log` rows for the prior emergency.
+If you requested an emergency and no `invocation_started` follows within a few
+seconds, the cooldown gate suppressed it — check the cooldown window and the
+recent `activity_log` rows for the prior emergency.
+
+> **Auto breach→emergency cascade is not wired in this build.** The monitor no
+> longer runs a breach loop, and the isolated safety core only logs + heartbeats
+> and writes nothing (ADR-0004 / ALP-857), so nothing currently enqueues an
+> `EMERGENCY_INVOCATION_REQUESTED` row on a breach. The auto-trigger evaluator
+> still exists in the tree but is not composed into the running monitor — so a
+> breach surfaces in `safety_core.log` (§ 8.9) and via the broker-enforced
+> bracket floor, not as an automatic emergency invocation.
 
 **Cost / token regression.** The `metadata.json` files under each agent's
-diagnostic subdir record `input_tokens` / `cache_read_tokens` /
-`cache_write_tokens` / `output_tokens`. A healthy production run has the
+diagnostic subdir record token counts under a `tokens_used` object
+(`input_tokens` / `cache_read_tokens` / `cache_write_tokens` /
+`output_tokens`). A healthy production run has the
 bulk of input volume landing in `cache_read_tokens` (the prompt cache is
 hit). If `input_tokens` is large and `cache_read_tokens` is near zero,
 something invalidated the cache — investigate before the next invocation
@@ -858,7 +897,7 @@ routine "still waiting" ticks — except a one-shot `WARN scheduler port 8765 DO
 § 5.5). A hard crash writes **no** `metadata.json`, so the fault/abort legs catch
 what the per-agent leg can't: fresh `Traceback`/`CRITICAL`/`ERROR` in
 `pipeline.log` + `pipeline.err.log` (with the benign Windows asyncio-teardown noise
-— `_ProactorBasePipeTransport`, `WinError 121`, `no close frame`, `ResourceWarning`
+— `ProactorBasePipeTransport`, `WinError 121`, `no close frame`, `ResourceWarning`
 — filtered out), plus the driver's `scheduled trigger=<rt> failed` /
 `scheduler exited with error`. And the **at-attach terminal check** handles a run
 that already finished or aborted before the watch started: it checks
@@ -885,16 +924,19 @@ Gotchas baked into the script (worth knowing when reading its output):
 
 ## 6. Accessing the command center
 
-`http://127.0.0.1:8090/` from a browser on the Windows trading machine
-(loopback only in v1). Log in with your registered passkey.
+`http://localhost:8090/` from a browser on the Windows trading machine
+(loopback only in v1; the daemon binds `127.0.0.1` but browse via the
+`localhost` hostname — the WebAuthn relying-party id is `localhost`). Log in
+with your registered passkey.
 
 To reach the UI from a remote workstation, RDP into the Windows machine and
-open the browser there. Do **not** SSH-port-forward 8090 — the CSRF
-double-submit check pins the cookie to the loopback origin and fails through
-a forwarder. Do **not** bind the daemon to `0.0.0.0` — WebAuthn's relying
-party ID is pinned to `127.0.0.1`; binding wider just exposes the API to the
-LAN without auth working. Remote-access via VPS Caddy + WireGuard is
-deferred (see `RUNBOOK_command_center.md` § Operator handover note).
+open the browser there. Do **not** SSH-port-forward 8090 — the session cookie is
+`SameSite=Strict` and WebAuthn's `expected_origin` / relying-party id are pinned
+to `localhost`, so auth fails from any other origin (including a forwarder or
+`127.0.0.1`). Do **not** bind the daemon to `0.0.0.0` — the relying-party id is
+pinned to `localhost`; binding wider just exposes the API to the LAN without auth
+working. Remote-access via VPS Caddy + WireGuard is deferred (see
+`RUNBOOK_command_center.md` § Operator handover note).
 
 The dashboard surfaces, in order of operator priority:
 
@@ -930,11 +972,16 @@ The valid service names are:
 - `alphamind-safety-core-watchdog`
 - `AlphaMindCommandCenter` (note: mixed case, no hyphen)
 
-NSSM's `restart` is `stop` + `start` with a 30 s budget per phase. If a stop
-hangs in `StopPending` past that budget, the SCM force-terminates the
-process. The supervisor's `TaskGroup` shutdown is co-operative — every
-in-flight task gets a `CancelledError` and 10 s to wind down before the
-SIGTERM fallback fires.
+NSSM's `restart` is `stop` + `start`. The install scripts leave NSSM's default
+stop-method timeouts in place (no explicit `AppStopMethod*` is set); in practice
+a stop that sits in `StopPending` past ~30 s is wedged — see § 8.3. On stop,
+SIGINT/SIGTERM **triggers** a co-operative shutdown: each in-flight task gets a
+`CancelledError` and a bounded grace window to wind down — scheduler **10 s**,
+monitor **5 s**, command center **30 s** (`supervisor_shutdown_timeout_seconds`
+per daemon; the scheduler supervisor uses a manually-bounded wait rather than
+`TaskGroup.__aexit__` so the timeout actually bounds exit). Tasks that don't exit
+in the window are abandoned and NSSM/the SCM force-terminates the process; there
+is no separate SIGTERM "fallback" the supervisor itself fires.
 
 **Two restart gotchas that cost real diagnosis time (2026-06-02 monitor wedge):**
 
@@ -978,7 +1025,7 @@ others:**
 
 | Restart this        | When                                                          | Side effects                                                                      |
 |---------------------|---------------------------------------------------------------|-----------------------------------------------------------------------------------|
-| collector           | After a `config/collectors.yaml` edit                         | Up to one cadence-cycle of dropped vendor reads                                   |
+| collector           | After a `config/collector_schedule.yaml` or `config/data_sources.yaml` edit | Up to one cadence-cycle of dropped vendor reads                                   |
 | scheduler           | After a `config/scheduler.yaml`, `config/run_types/*.yaml`, or `config/main.yaml` edit | Pause flag cleared; an in-flight invocation is cancelled mid-pipeline             |
 | monitor             | After a `config/continuous_monitor.yaml` edit affecting precision/data tasks | Halt-mode flag persists; in-flight fill-stream reconnects from the recovery path |
 | safety-core         | After a `config/continuous_monitor.yaml` cadence/threshold or a `config/guardrails.yaml` / profile `gross_exposure_pct` / `position_max_size_pct` edit | Brief gap in breach/staleness detection only; positions stay broker-protected. Its watchdog tolerates a restart within the stall bound; for a longer outage stop the watchdog first (else it `nssm restart`s the core mid-restart) |
@@ -1010,8 +1057,8 @@ the new `dist/` on the next request.
 
 ### 8.3 NSSM stop hangs in `StopPending` past 30 s
 
-The supervisor's `TaskGroup` is blocked on a task that won't cancel
-gracefully. Force the issue:
+The supervisor is blocked on a task that won't cancel gracefully within its
+shutdown grace window (§ 7). Force the issue:
 
 ```powershell
 nssm kill <ServiceName>            # SIGKILL equivalent
@@ -1091,14 +1138,15 @@ Both the fill (trade-updates) stream and the underlying-price stream now have
    $p = (Get-CimInstance Win32_Service -Filter "Name='alphamind-monitor'").ProcessId
    (Get-Process -Id $p).StartTime
    ```
-2. Confirm a behavioral signal — an `8766` heartbeat within ~18 s of connecting:
+2. Confirm a behavioral signal — an `8766` heartbeat within ~18 s of connecting
+   (the SSE keep-alive cadence is 15 s):
    ```bash
    curl -N 127.0.0.1:8766/events
    ```
 3. If the process PID/StartTime is fresh and the heartbeat is live, **auto-recovery
    succeeded** — no manual restart is needed. Confirm fills are flowing again
-   (check `fill_records` for rows dated today; check `monitor.log` for
-   `websocket_connected` lines).
+   (check `fill_records` for rows dated today; check `monitor.log` for fresh
+   trade-stream connect lines).
 
 **Manual § 7 restart is the fallback** when auto-recovery is itself suspect (e.g.
 the StartTime is stale, no `8766` heartbeat is appearing, or `monitor.err.log`
@@ -1128,29 +1176,31 @@ above should already be firing):
   local order rows stay `PENDING` with `filled_quantity = 0`.
 - `curl -N 127.0.0.1:8766/events` emits no `heartbeat` within ~18 s.
 
-#### Two distinct health signals from the breach loop
+#### Breach + price-staleness signals (safety core)
 
-The breach loop emits two distinct `last_error` labels through the
-`/events` health channel — interpret them differently:
+Breach detection + the price-staleness guard now live in the isolated **safety
+core** (ADR-0004 / ALP-857), which surfaces them by being **loud in its log** —
+it has no SSE / `/events` channel (§ 5.2) and writes nothing to the DB. Watch
+`safety_core.log` for two distinct lines, and interpret them differently:
 
-- **`"stale/missing underlying price"`** — one or more open-position tickers have a
-  price that is older than `underlying_price_max_age_seconds` (900 s) or has not
-  yet been received at all. This is **subscription lag**: the underlying-price
-  stream only subscribes to *known* open positions, and a fill that hasn't
-  integrated through Phase-1 yet is not a known position. Affected positions are
-  excluded from stop enforcement for that tick; broker-side bracket legs still
-  protect them. **This clears at the next Phase-1 run** — not a dead feed.
+- **Breach** — `safety_core BREACH: broker snapshot breaches <rules> at <ts>`
+  (logged `CRITICAL`). A gross-exposure or single-name-concentration limit is
+  breached on the **broker snapshot**. Positions stay protected by the
+  broker-enforced bracket floor; the safety core does **not** submit or trigger
+  an emergency (§ 5.7) — it detects and stays alive.
 
-- **`"underlying price feed globally stale — writer wedged"`** — every
-  open-position ticker is simultaneously stale or missing. This is the
-  **price stream dead** signal: the whole feed has gone cold. The
-  budget-neutral reconnect path (layer 1 above) should already be firing; if it
-  isn't, confirm via `monitor.err.log` and fall back to the manual restart if
-  needed.
-
-These two signals are consistent with the reconciliation-lag note below: if you
-see `"stale/missing underlying price"` after a monitor restart, it is almost
-certainly subscription lag from un-integrated fills, not a dead feed.
+- **Price feed globally stale** — `safety_core: underlying price feed globally
+  stale — writer appears wedged; stale=… missing=…` (logged `ERROR`). Every
+  open-position ticker is simultaneously stale (older than
+  `underlying_price_max_age_seconds`, 900 s) or never received — the safety
+  core's price feed (subscribed to the **broker snapshot's** equity symbols) has
+  gone cold. The safety core keeps beating its heartbeat and re-logs this each
+  tick; if the feed task has *crashed*, the process exits and NSSM restarts it,
+  but a connected-but-silent feed is logged, **not** auto-recovered (the safety
+  core has no in-stream reconnect) — restart `alphamind-safety-core` (§ 7) if it
+  persists. A *single* stale ticker (e.g. a just-opened position whose quote
+  stream hasn't warmed up) is excluded from that tick silently — broker bracket
+  legs still protect it — and is not logged as the global-stale condition.
 
 #### After a monitor restart — expect a brief projection-rebuild lag
 
@@ -1161,12 +1211,12 @@ certainly subscription lag from un-integrated fills, not a dead feed.
   positions/cash. There is no `_reconcile_cash` writeback — the Projection is
   rebuilt, not adjudicated (ADR-0001). Cash drift and position divergence
   persist only until that Phase-1 runs.
-- A real open position whose fill hasn't integrated yet may emit the
-  `"stale/missing underlying price"` health signal — this is subscription lag,
-  **not** a dead price feed (see the two signals above). Confirm the
-  stale-ticker list names only the un-integrated tickers (established positions
-  are still priced), and note the position's broker-side bracket legs still
-  protect it. It clears at the next Phase-1.
+- The monitor's underlying-price stream (used by the greeks + options-stop
+  tasks) subscribes to *known* open positions from the DB projection, so a fill
+  that hasn't integrated through Phase-1 yet isn't priced for options-stop
+  enforcement until the next Phase-1. This is subscription lag, **not** a dead
+  price feed. The position's broker-side bracket legs still protect it meanwhile;
+  it clears at the next Phase-1.
 
 ---
 
@@ -1176,7 +1226,7 @@ certainly subscription lag from un-integrated fills, not a dead feed.
 |------------------------------|------------------------------------------------------------------|
 | Scheduler `/control` + `/events` | `127.0.0.1:8765` (loopback only)                              |
 | Monitor `/control` + `/events`   | `127.0.0.1:8766` (loopback only)                              |
-| Command center API + UI          | `127.0.0.1:8090` (loopback only)                              |
+| Command center API + UI          | binds `127.0.0.1:8090` (loopback only); **browse via `http://localhost:8090`** — WebAuthn relying-party id is `localhost` |
 | Safety core heartbeat (no port)  | `%USERPROFILE%\AlphaMind\logs\safety_core.heartbeat` (file; the out-of-process watchdog probes it — the safety core has no control port and writes nothing to the DB) |
 | Production DB                    | `%USERPROFILE%\AlphaMind\data\alphamind.db`                   |
 | Daemon logs                      | `%USERPROFILE%\AlphaMind\logs\<daemon>.{out,err,log}.log` (`safety_core.*`, `safety_core_watchdog.*` for the safety-core services) |
