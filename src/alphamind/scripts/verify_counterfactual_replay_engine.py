@@ -1372,13 +1372,16 @@ def _run_batch(session: Session, seed: ReplaySeed) -> ReplayBatchResult:
 def run_verification(db_path: str | None = None) -> bool:
     """Seed, run the engine twice, assert each outcome, print the report.
 
-    When *db_path* is ``None`` an ephemeral in-memory SQLite DB is created and
-    the full ORM schema is materialised; otherwise the given DB is opened (it
-    must already be at schema head). Returns ``True`` iff every assertion passes.
+    When *db_path* is ``None`` an ephemeral in-memory SQLite DB is used; an
+    explicit *db_path* is a throwaway scratch location the script provisions
+    itself. Either way the full ORM schema is materialised before seeding (the
+    verify DB holds only controlled fixture rows), so a fresh ``--db-path`` works
+    without a separate migration step. Returns ``True`` iff every assertion passes.
     """
     engine = make_engine(db_path) if db_path is not None else make_engine(":memory:")
-    if db_path is None:
-        Base.metadata.create_all(engine)
+    # Materialise the schema unconditionally — the verify DB is a controlled
+    # throwaway; create_all is a no-op when the tables already exist.
+    Base.metadata.create_all(engine)
     factory = make_session_factory(engine)
 
     print("=" * 70)

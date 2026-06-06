@@ -75,9 +75,9 @@ check prints `FAIL | <assertion>: <detail>` above the result line).
 
 ### Against a specific DB
 
-Seeds and asserts against the supplied DB (which must already be **at schema
-head** — run migrations first). The seed inserts its own controlled fixture
-rows, so the DB should be otherwise empty of the seeded envelope ids:
+Provisions the schema at the supplied **throwaway** path (no separate migration
+step needed), seeds its own controlled fixture rows, and asserts. Point it at a
+fresh scratch path; the DB should be otherwise empty of the seeded envelope ids:
 
 ```bash
 uv run python scripts/verify_counterfactual_replay_engine.py --db-path /path/to/test.db
