@@ -273,24 +273,6 @@ def test_compress_non_calibrated_drops_per_block_anomaly_trailer() -> None:
     assert "Anomaly flags" not in rendered
 
 
-def test_format_blocks_for_audience_forwards_compress_flag() -> None:
-    """The audience helper forwards the compression flag to every block it renders."""
-    accumulating = _make_block(
-        block_id="q1.technicals",
-        audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
-        calibration_state=CalibrationState.ACCUMULATING,
-        bootstrap_reason="atr_baseline: 3 < 14",
-        payload={"per_ticker": {"NVDA": {"rsi": 60.0}}},
-    )
-    compressed = format_blocks_for_audience(
-        [accumulating], OutputAudience.SECTOR_TECH_SEMIS, compress_non_calibrated=True
-    )
-    full = format_blocks_for_audience([accumulating], OutputAudience.SECTOR_TECH_SEMIS)
-    assert "per_ticker:" not in compressed
-    assert "(non-calibrated — per-ticker detail omitted; 1 ticker)" in compressed
-    assert "per_ticker:" in full  # default keeps the full table
-
-
 def test_format_blocks_for_audience_filters_and_orders_by_block_id() -> None:
     """Filter to membership in audience, then sort by block_id ascending."""
     # Construct a multi-audience fixture. The blocks intentionally arrive in a

@@ -122,8 +122,9 @@ agents:
     # already land at 750–888s against the 900s budget (~2% headroom), so any
     # perturbation tips it over. Paired with the structural cure — distillation
     # now compresses non-calibrated sector-indicator blocks (~95% of the
-    # bootstrap-period bundle) to one summary line each — so this is the LAST
-    # bump, not another treadmill step. Scope to tech_semis only: financials
+    # bootstrap-period bundle) to one summary line each — which removes the
+    # underlying bundle-size driver, so this bump aims to retire the treadmill
+    # rather than extend it. Scope to tech_semis only: financials
     # peaks ~760s and energy ~420s, both clear of 900. Supersedes the
     # market_hours_rolling.yaml top-N-anomaly-cap follow-up (wrong lever).
     latency_budget_seconds: 1200
