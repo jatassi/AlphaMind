@@ -83,17 +83,20 @@ def _select_atm_iv_by_ts(
     rows = session.execute(stmt).all()
     # Group by snapshot_ts; pick the strike closest to underlying_price per
     # snapshot. The grouping is small (one snapshot per day per ticker) so
-    # a Python pass is cheaper than a self-join.
-    by_ts: dict[str, tuple[float, float | None, float]] = {}  # ts -> (iv, volume, gap)
+    # a Python pass is cheaper than a self-join. ``best_gap_by_ts`` holds the
+    # winning strike's gap purely as a comparator and never escapes.
+    by_ts: dict[str, tuple[float, float | None]] = {}
+    best_gap_by_ts: dict[str, float] = {}
     for snapshot_ts, iv, underlying_price, volume, strike in rows:
         if iv is None or underlying_price is None:
             continue
         gap = abs(float(strike) - float(underlying_price))
-        existing = by_ts.get(snapshot_ts)
-        if existing is None or gap < existing[2]:
+        best_gap = best_gap_by_ts.get(snapshot_ts)
+        if best_gap is None or gap < best_gap:
+            best_gap_by_ts[snapshot_ts] = gap
             volume_today = float(volume) if volume is not None else None
-            by_ts[snapshot_ts] = (float(iv), volume_today, gap)
-    return {ts: (iv, volume) for ts, (iv, volume, _gap) in by_ts.items()}
+            by_ts[snapshot_ts] = (float(iv), volume_today)
+    return by_ts
 
 
 def _select_atm_iv_history(
