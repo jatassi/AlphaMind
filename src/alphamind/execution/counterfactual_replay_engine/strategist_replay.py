@@ -58,20 +58,25 @@ from alphamind.decision.strategist.models import (
     AddParameters,
     AdjustBracketParameters,
     CloseParameters,
+    PendingOrderAssessment,
     PositionAssessment,
     ReduceParameters,
 )
-from alphamind.execution.counterfactual_replay_engine.enums import ExitLeg
+from alphamind.execution.counterfactual_replay_engine.enums import ExitLeg, UnevaluableReason
 from alphamind.execution.counterfactual_replay_engine.equity_replay import (
     EquityBracketResult,
     EquityEntryResult,
+    EquityReplayResult,
+    replay_equity_proposal,
     simulate_equity_brackets,
     simulate_equity_entry,
 )
 from alphamind.execution.counterfactual_replay_engine.option_replay import (
     OptionBracketResult,
     OptionEntryResult,
+    OptionReplayResult,
     price_option_at_underlying_bar,
+    replay_option_proposal,
     simulate_option_brackets,
     simulate_option_entry,
 )
@@ -105,7 +110,9 @@ if TYPE_CHECKING:
     from alphamind.state.repository.position_state import PositionStateSnapshot
 
 __all__ = [
+    "PendingOrderReplayResult",
     "StrategistActionResult",
+    "replay_pending_order_proposal",
     "replay_strategist_proposal",
 ]
 
@@ -983,3 +990,146 @@ def _underlying_symbol(state: PositionStateSnapshot) -> Symbol:
         return details.underlying_ticker
     assert isinstance(details, EquityPositionDetails)
     return details.ticker
+
+
+# ---------------------------------------------------------------------------
+# PendingOrderAssessment — CANCEL / MODIFY (story 07 §4)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class PendingOrderReplayResult:
+    """Outcome of a pending-order CANCEL / MODIFY replay (story 07 §4).
+
+    CANCEL produces an evaluated ``action_result`` (the would-have-filled entry
+    + bracket walk); ``unevaluable_reason`` is then ``None``. MODIFY is a v2
+    simplification: a faithful re-simulation of an arbitrary modification is
+    unbounded, so it is written ``UNEVALUABLE`` with
+    ``unevaluable_reason = STRATEGIST_POSITION_ACTION_NOT_SUPPORTED`` and
+    ``action_result = None``, mirroring the engine's other unevaluable paths.
+    """
+
+    action_result: StrategistActionResult | None
+    unevaluable_reason: UnevaluableReason | None
+
+
+def replay_pending_order_proposal(
+    proposal: PendingOrderAssessment,
+    entry_proposal: Recommendation,
+    bars: tuple[OhlcvBar, ...],
+    *,
+    iv_repo: OptionsSnapshotRepository,
+    paper_harness_config: PaperHarness,
+    risk_free_rate: float,
+    adv: float | None,
+    realized_volatility: float | None,
+) -> PendingOrderReplayResult:
+    """Replay a pending-order CANCEL / MODIFY proposal (story 07 §4).
+
+    *entry_proposal* is the pending order's own entry reconstructed as an analyst
+    :class:`Recommendation` (the order was born from one), supplied by the engine
+    driver (story 08) which owns the order-record read.
+
+    CANCEL — "would the cancelled order have filled, and what would it have
+    earned?" — is a thin wrapper around the analyst entry + bracket replay
+    drivers (:func:`replay_equity_proposal` / :func:`replay_option_proposal`).
+
+    MODIFY is a v2 simplification: a faithful simulation of an arbitrary
+    modification is unbounded, so it is written ``UNEVALUABLE`` rather than
+    half-implemented (``maintain`` is filtered upstream by story 04).
+    """
+    action = proposal.recommended_action
+    if action == "cancel":
+        return PendingOrderReplayResult(
+            action_result=_replay_pending_entry(
+                entry_proposal,
+                bars,
+                iv_repo=iv_repo,
+                paper_harness_config=paper_harness_config,
+                risk_free_rate=risk_free_rate,
+                adv=adv,
+                realized_volatility=realized_volatility,
+            ),
+            unevaluable_reason=None,
+        )
+    # MODIFY (and any non-cancel that reaches here): v2 declines a faithful
+    # simulation — an arbitrary modification (new limit / trigger / deadline /
+    # order type) reshapes the fill geometry in ways the entry + bracket
+    # primitives cannot bound without re-deriving the order's full lifecycle.
+    return PendingOrderReplayResult(
+        action_result=None,
+        unevaluable_reason=UnevaluableReason.STRATEGIST_POSITION_ACTION_NOT_SUPPORTED,
+    )
+
+
+def _replay_pending_entry(
+    entry_proposal: Recommendation,
+    bars: tuple[OhlcvBar, ...],
+    *,
+    iv_repo: OptionsSnapshotRepository,
+    paper_harness_config: PaperHarness,
+    risk_free_rate: float,
+    adv: float | None,
+    realized_volatility: float | None,
+) -> StrategistActionResult:
+    """Run the pending order's entry + bracket replay and fold it to the result.
+
+    Delegates to the analyst replay drivers — an equity instrument to
+    :func:`replay_equity_proposal`, an option instrument to
+    :func:`replay_option_proposal` — then maps the flat analyst result into the
+    unified :class:`StrategistActionResult`.
+    """
+    if isinstance(entry_proposal.instrument, InstrumentOption):
+        option_result = replay_option_proposal(
+            entry_proposal,
+            bars,
+            iv_repo=iv_repo,
+            paper_harness_config=paper_harness_config,
+            risk_free_rate=risk_free_rate,
+            adv_contracts=adv,
+            realized_volatility=realized_volatility,
+        )
+        return _from_option_replay_result(option_result)
+
+    equity_result = replay_equity_proposal(
+        entry_proposal,
+        bars,
+        paper_harness_config=paper_harness_config,
+        adv_shares=adv,
+        realized_volatility=realized_volatility,
+    )
+    return _from_equity_replay_result(equity_result)
+
+
+def _from_equity_replay_result(result: EquityReplayResult) -> StrategistActionResult:
+    return StrategistActionResult(
+        entered=result.entered,
+        entry_price=result.entry_price,
+        entry_timestamp=result.entry_timestamp,
+        entry_slippage=result.entry_slippage,
+        entry_fees=result.entry_fees,
+        exit_leg=result.exit_leg,
+        exit_price=result.exit_price,
+        exit_timestamp=result.exit_timestamp,
+        exit_slippage=result.exit_slippage,
+        exit_fees=result.exit_fees,
+        realized_pl=result.realized_pl,
+        same_bar_ambiguity=result.same_bar_ambiguity,
+    )
+
+
+def _from_option_replay_result(result: OptionReplayResult) -> StrategistActionResult:
+    return StrategistActionResult(
+        entered=result.entered,
+        entry_price=result.entry_price,
+        entry_timestamp=result.entry_timestamp,
+        entry_slippage=result.entry_slippage,
+        entry_fees=result.entry_fees,
+        exit_leg=result.exit_leg,
+        exit_price=result.exit_price,
+        exit_timestamp=result.exit_timestamp,
+        exit_slippage=result.exit_slippage,
+        exit_fees=result.exit_fees,
+        realized_pl=result.realized_pl,
+        same_bar_ambiguity=result.same_bar_ambiguity,
+    )

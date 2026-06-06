@@ -16,19 +16,24 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Literal
 
+import pytest
+
 import alphamind.state.invocation_context  # noqa: F401 — break state.repository circular import
 from alphamind._kernel.ids import PositionId, Symbol
 from alphamind._kernel.money import Money, Price, money, price
 from alphamind.config.models.execution import FeeSchedule, OrderType, PaperHarness
-from alphamind.decision.strategist.models import PositionAssessment
-from alphamind.execution.counterfactual_replay_engine.enums import ExitLeg
+from alphamind.decision.analyst.models import Recommendation
+from alphamind.decision.strategist.models import PendingOrderAssessment, PositionAssessment
+from alphamind.execution.counterfactual_replay_engine.enums import ExitLeg, UnevaluableReason
 from alphamind.execution.counterfactual_replay_engine.iv_lookup import IVSnapshotLookupResult
 from alphamind.execution.counterfactual_replay_engine.option_replay import (
     price_option_at_underlying_bar,
 )
 from alphamind.execution.counterfactual_replay_engine.repos import OhlcvBar
 from alphamind.execution.counterfactual_replay_engine.strategist_replay import (
+    PendingOrderReplayResult,
     StrategistActionResult,
+    replay_pending_order_proposal,
     replay_strategist_proposal,
 )
 from alphamind.execution.paper_evaluation_harness.harness import (
@@ -722,3 +727,169 @@ class TestAddOption:
         # Both entry and exit premium are BS-derived on the added 2 contracts.
         assert result.entry_price == _bs_premium(underlying=105.0, ts=_NEXT_BAR_TS)
         assert result.realized_pl is not None
+
+
+class TestDispatcher:
+    def test_hold_action_raises(self) -> None:
+        # A hold proposal carries no action_parameters and is eligibility-filtered
+        # upstream; reaching the dispatcher is an internal contract violation.
+        snap = _equity_snapshot()
+        bars = _flat_bars(100.0)
+        proposal = PositionAssessment.model_validate(
+            {
+                "assessment_id": "SA-9",
+                "position_id": "POS-1",
+                "thesis_id": "THS-1",
+                "underlying": "AAPL",
+                "sector": "tech",
+                "thesis_status": "on-track",
+                "recommended_action": "hold",
+                "status_rationale": "Hold.",
+                "action_rationale": "Hold.",
+            }
+        )
+
+        with pytest.raises(ValueError, match=r"unsupported recommended_action"):
+            replay_strategist_proposal(
+                proposal,
+                snap,
+                bars,
+                iv_repo=_FakeIVRepo(),
+                paper_harness_config=_CONFIG,
+                risk_free_rate=_RFR,
+                adv=_ADV,
+                realized_volatility=_RVOL,
+            )
+
+
+def _pending_assessment(*, action: str) -> PendingOrderAssessment:
+    body: dict[str, Any] = {
+        "pending_order_assessment_id": "SA-ORD-1",
+        "order_id": "ORD-1",
+        "position_id": "POS-1",
+        "order_type": "entry_limit",
+        "order_age_hours": 3.0,
+        "fill_probability_assessment": "plausible",
+        "recommended_action": action,
+        "drift_rationale": "Drift.",
+        "action_rationale": "Action.",
+    }
+    if action == "modify":
+        body["modification_parameters"] = {"new_limit_price": "99.00"}
+    return PendingOrderAssessment.model_validate(body)
+
+
+def _entry_recommendation(*, limit_price: str, quantity: float = 10.0) -> Recommendation:
+    return Recommendation.model_validate(
+        {
+            "recommendation_id": "REC-7",
+            "instrument": {"asset_type": "equity", "ticker": "AAPL", "direction": "long"},
+            "underlying": "AAPL",
+            "sector": "tech",
+            "conviction_level": 3,
+            "entry_order": {"type": "limit", "limit_price": limit_price},
+            "position_size": {
+                "quantity": quantity,
+                "dollar_value": "1000.00",
+                "pct_of_portfolio": 0.05,
+            },
+            "target": {
+                "target_type": "absolute_price",
+                "price": "120.00",
+                "dollar_pl_target": "200.00",
+            },
+            "invalidation_legs": [
+                {
+                    "leg_id": "INV-1",
+                    "type": "price",
+                    "is_hard": True,
+                    "condition": {
+                        "underlying_trigger": "AAPL",
+                        "comparator": "<=",
+                        "trigger_price": "80.00",
+                    },
+                    "order_parameters": {"order_type": "stop"},
+                }
+            ],
+            "time_expectation_hours": 8.0,
+            "guardrail_validation_result": {
+                "overall": "PASS",
+                "per_rule": [],
+                "checked_at": "2026-06-01T14:00:00+00:00",
+            },
+            "thesis_narrative": "Test.",
+            "target_rationale": "Test.",
+            "invalidation_rationale": [{"leg_id": "INV-1", "rationale": "Support."}],
+            "position_size_rationale": "Standard.",
+            "counterarguments_acknowledged": "Acknowledged.",
+        }
+    )
+
+
+class TestPendingOrderCancel:
+    def test_cancel_replays_entry_and_brackets_when_it_would_fill(self) -> None:
+        # Limit entry at 100; bars trade down to fill, then target 120 is hit.
+        proposal = _pending_assessment(action="cancel")
+        entry = _entry_recommendation(limit_price="100.00", quantity=10.0)
+        bars = _bars_hitting_high(base=100.0, spike_high=121.0)
+
+        result = replay_pending_order_proposal(
+            proposal,
+            entry,
+            bars,
+            iv_repo=_FakeIVRepo(),
+            paper_harness_config=_CONFIG,
+            risk_free_rate=_RFR,
+            adv=_ADV,
+            realized_volatility=_RVOL,
+        )
+
+        assert isinstance(result, PendingOrderReplayResult)
+        assert result.unevaluable_reason is None
+        assert result.action_result is not None
+        assert result.action_result.entered is True
+        assert result.action_result.exit_leg is ExitLeg.TARGET_HIT
+
+    def test_cancel_entry_never_fills(self) -> None:
+        proposal = _pending_assessment(action="cancel")
+        entry = _entry_recommendation(limit_price="80.00", quantity=10.0)
+        bars = _flat_bars(110.0)
+
+        result = replay_pending_order_proposal(
+            proposal,
+            entry,
+            bars,
+            iv_repo=_FakeIVRepo(),
+            paper_harness_config=_CONFIG,
+            risk_free_rate=_RFR,
+            adv=_ADV,
+            realized_volatility=_RVOL,
+        )
+
+        assert result.unevaluable_reason is None
+        assert result.action_result is not None
+        assert result.action_result.entered is False
+        assert result.action_result.exit_leg is ExitLeg.ENTRY_WINDOW_EXPIRED_UNFILLED
+
+
+class TestPendingOrderModify:
+    def test_modify_is_unevaluable(self) -> None:
+        proposal = _pending_assessment(action="modify")
+        entry = _entry_recommendation(limit_price="100.00")
+        bars = _flat_bars(110.0)
+
+        result = replay_pending_order_proposal(
+            proposal,
+            entry,
+            bars,
+            iv_repo=_FakeIVRepo(),
+            paper_harness_config=_CONFIG,
+            risk_free_rate=_RFR,
+            adv=_ADV,
+            realized_volatility=_RVOL,
+        )
+
+        assert result.action_result is None
+        assert (
+            result.unevaluable_reason is UnevaluableReason.STRATEGIST_POSITION_ACTION_NOT_SUPPORTED
+        )
