@@ -501,10 +501,9 @@ async def test_entry_window_cancel_is_read_only_and_cannot_race_pipeline(
 
     assert order[0] == "pipeline_wrote"
     assert outcomes == [EntryWindowDeadlineOutcome.CANCELLED]
-    # The monitor wrote NOTHING — the entry order keeps its seeded status (the
-    # ``stub_order_row`` default), NOT the CANCELLED the old writeback would set.
+    # The monitor wrote NOTHING — the entry order keeps its seeded ``stub_order_row``
+    # status (FILLED), NOT the CANCELLED the deleted writeback would have RMW'd.
     assert entry_row is not None
     assert entry_row.status == OrderStatus.FILLED.value
-    assert entry_row.status != OrderStatus.CANCELLED.value
     # The pipeline write landed; the monitor read-only path did not block it.
     assert pos_row.realized_pnl_to_date_usd == 7.0
