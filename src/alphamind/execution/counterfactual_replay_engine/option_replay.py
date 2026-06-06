@@ -31,6 +31,7 @@ from alphamind.config.models.execution import OrderType, PaperHarness
 from alphamind.decision.analyst.models import InstrumentOption, Recommendation
 from alphamind.execution.counterfactual_replay_engine.enums import ExitLeg
 from alphamind.execution.counterfactual_replay_engine.equity_replay import (
+    EquityBracketResult,
     EquityEntryResult,
     simulate_equity_brackets,
 )
@@ -190,3 +191,103 @@ def _lookup_iv(
         contract_type=instrument.contract_type,
     )
     return iv_repo.lookup_iv(contract_ticker=contract_ticker, target_ts=target_ts)
+
+
+# ---------------------------------------------------------------------------
+# Step 3 — Option bracket simulation
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class OptionBracketResult:
+    """Outcome of the option bracket walk (design Step 3 — option exit).
+
+    The underlying-bar trigger is found by reusing story 05a's equity walker
+    (the trigger fires on the underlying for both asset types per
+    orders-and-brackets.md § Options price-based stops). The trigger's
+    underlying level is then translated into the option's BS-derived premium at
+    the exit-timestamp IV snapshot.
+
+    ``exit_price`` and ``exit_iv_lag_minutes`` are ``None`` on the exit-IV-miss
+    sentinel: the underlying trigger was identified but no per-contract IV
+    snapshot exists at or before the exit timestamp, so the exit premium cannot
+    be derived. The engine driver (story 08) maps that sentinel to
+    ``DATA_MISSING``. ``same_bar_ambiguity`` is propagated from the underlying
+    walk. There is no P/L-bracket-leg flag: analyst option proposals carry no
+    P/L-on-the-option's-own-price leg to omit.
+    """
+
+    exit_leg: ExitLeg
+    exit_underlying_price: float
+    exit_price: Price | None
+    exit_timestamp: datetime
+    same_bar_ambiguity: bool
+    exit_iv_lag_minutes: float | None
+
+
+def simulate_option_brackets(
+    proposal: Recommendation,
+    entry: OptionEntryResult,
+    bars: tuple[OhlcvBar, ...],
+    *,
+    iv_repo: OptionsSnapshotRepository,
+    risk_free_rate: float,
+) -> OptionBracketResult:
+    """Walk the underlying bracket trigger, then BS-price the exit premium.
+
+    Reuses :func:`simulate_equity_brackets` to identify the underlying-bar
+    trigger (target / price-stop / time-stop) and its
+    ``same_bar_ambiguity``. The equity walker records ``exit_price`` as the
+    underlying exit level (target price, stop trigger, or bar open at the
+    time-stop), which is exactly the ``exit_underlying_price`` the option
+    premium is derived from. The exit premium is BS-derived from that
+    underlying level, the per-contract IV snapshot at the exit timestamp, the
+    bar's time-to-expiration, and the risk-free rate. When the exit IV lookup is
+    ``None``, the exit-IV-miss sentinel is returned (``exit_price`` and
+    ``exit_iv_lag_minutes`` ``None``) for the driver to map to ``DATA_MISSING``.
+    """
+    instrument = proposal.instrument
+    assert isinstance(instrument, InstrumentOption)
+
+    equity_entry = EquityEntryResult(
+        entered=entry.entered,
+        entry_price=entry.entry_price,
+        entry_timestamp=entry.entry_timestamp,
+    )
+    walk: EquityBracketResult = simulate_equity_brackets(proposal, equity_entry, bars)
+    # Option entries always fire (Step 2), so the walk never short-circuits to
+    # the entry-window-expired leg; the underlying trigger always resolves with
+    # a concrete exit price and timestamp.
+    assert walk.exit_price is not None
+    assert walk.exit_timestamp is not None
+    exit_underlying_price = float(walk.exit_price)
+    exit_timestamp = walk.exit_timestamp
+
+    exit_iv = _lookup_iv(iv_repo, instrument, exit_timestamp)
+    if exit_iv is None:
+        return OptionBracketResult(
+            exit_leg=walk.exit_leg,
+            exit_underlying_price=exit_underlying_price,
+            exit_price=None,
+            exit_timestamp=exit_timestamp,
+            same_bar_ambiguity=walk.same_bar_ambiguity,
+            exit_iv_lag_minutes=None,
+        )
+
+    exit_price = price_option_at_underlying_bar(
+        underlying_open=exit_underlying_price,
+        strike=instrument.strike,
+        expiration=instrument.expiration,
+        contract_type=instrument.contract_type,
+        bar_timestamp=exit_timestamp,
+        implied_volatility=exit_iv.implied_volatility,
+        risk_free_rate=risk_free_rate,
+    )
+    return OptionBracketResult(
+        exit_leg=walk.exit_leg,
+        exit_underlying_price=exit_underlying_price,
+        exit_price=exit_price,
+        exit_timestamp=exit_timestamp,
+        same_bar_ambiguity=walk.same_bar_ambiguity,
+        exit_iv_lag_minutes=exit_iv.lag_minutes,
+    )

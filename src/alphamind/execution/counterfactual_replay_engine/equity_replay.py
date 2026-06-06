@@ -24,6 +24,7 @@ from alphamind._kernel.money import DECIMAL_ZERO, Money, Price, money, price, si
 from alphamind.config.models.execution import OrderType, PaperHarness
 from alphamind.decision.analyst.models import (
     InstrumentEquity,
+    InstrumentOption,
     PriceCondition,
     Recommendation,
     TimeCondition,
@@ -203,8 +204,13 @@ def simulate_equity_brackets(
             same_bar_ambiguity=False,
         )
 
+    # Both equity and single-leg option proposals carry underlying-anchored
+    # price legs and time legs plus a position-level ``direction``, so the same
+    # underlying-bar walk drives the trigger for both. The option replay path
+    # (story 06) reuses this walker directly; only the exit-price recording
+    # differs (underlying price for equity, BS-derived premium for options).
     instrument = proposal.instrument
-    assert isinstance(instrument, InstrumentEquity)
+    assert isinstance(instrument, InstrumentEquity | InstrumentOption)
     direction = instrument.direction
     target = float(proposal.target.price)
     price_stop = _price_stop_trigger(proposal)
