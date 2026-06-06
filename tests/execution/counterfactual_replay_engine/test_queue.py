@@ -27,6 +27,8 @@ from alphamind.execution.counterfactual_replay_engine.queue import (
 )
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine, make_session_factory
+from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
+from alphamind.portfolio_state.events.pm_decision import PMDecisionDetail
 from alphamind.portfolio_state.events.types import PMVerdict
 from tests.execution.counterfactual_replay_engine._fixtures import (
     REPLAY_CONFIG,
@@ -76,7 +78,9 @@ def _seed_analyst(
     add_pm_decision_row(session, entry)
 
 
-def _collect(session: Session, *, as_of: datetime, since: datetime | None = None) -> list:
+def _collect(
+    session: Session, *, as_of: datetime, since: datetime | None = None
+) -> list[tuple[ActivityLogEntry, PMDecisionDetail, ReplayKind]]:
     return list(
         iter_pending_replay_proposals(session, as_of=as_of, since=since, config=REPLAY_CONFIG)
     )
