@@ -19,11 +19,19 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from alphamind._kernel.money import Price, price
-from alphamind.decision.analyst.models import InstrumentEquity, Recommendation
+from alphamind.decision.analyst.models import (
+    InstrumentEquity,
+    PriceCondition,
+    Recommendation,
+    TimeCondition,
+)
+from alphamind.execution.counterfactual_replay_engine.enums import ExitLeg
 from alphamind.execution.counterfactual_replay_engine.repos import OhlcvBar
 
 __all__ = [
+    "EquityBracketResult",
     "EquityEntryResult",
+    "simulate_equity_brackets",
     "simulate_equity_entry",
 ]
 
@@ -135,3 +143,121 @@ def _simulate_limit_entry(
                 entry_timestamp=bar.period_start,
             )
     return EquityEntryResult(entered=False, entry_price=None, entry_timestamp=None)
+
+
+# ---------------------------------------------------------------------------
+# Step 3 — Bracket simulation
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class EquityBracketResult:
+    """Outcome of the bracket walk (design Step 3).
+
+    ``same_bar_ambiguity`` is ``True`` when the target and the price stop both
+    trigger within the same bar; the engine assumes the stop fills first (a
+    conservative bias) and the confidence classifier (story 05b) demotes such
+    replays. When the entry never filled, ``exit_leg`` is
+    ``ENTRY_WINDOW_EXPIRED_UNFILLED`` and the price / timestamp are ``None``.
+    """
+
+    exit_leg: ExitLeg
+    exit_price: Price | None
+    exit_timestamp: datetime | None
+    same_bar_ambiguity: bool
+
+
+def simulate_equity_brackets(
+    proposal: Recommendation,
+    entry: EquityEntryResult,
+    bars: tuple[OhlcvBar, ...],
+) -> EquityBracketResult:
+    """Walk bars forward from entry, checking target / price-stop / time-stop.
+
+    Per design Step 3 the three conditions are evaluated each bar in the
+    documented order. A bar that triggers both the target and the price stop is
+    recorded as a stop hit with ``same_bar_ambiguity=True``. Price exits record
+    at the trigger level; time-stop exits at the bar open at the time-stop
+    timestamp. If *entry* never filled, the bracket walk is skipped and the
+    entry-window-expired-unfilled leg is returned.
+    """
+    if not entry.entered:
+        return EquityBracketResult(
+            exit_leg=ExitLeg.ENTRY_WINDOW_EXPIRED_UNFILLED,
+            exit_price=None,
+            exit_timestamp=None,
+            same_bar_ambiguity=False,
+        )
+
+    instrument = proposal.instrument
+    assert isinstance(instrument, InstrumentEquity)
+    direction = instrument.direction
+    target = float(proposal.target.price)
+    price_stop = _price_stop_trigger(proposal)
+    time_stop = _time_stop_deadline(proposal)
+
+    assert entry.entry_timestamp is not None
+    last_walked: OhlcvBar | None = None
+    for bar in bars:
+        if bar.period_start < entry.entry_timestamp:
+            continue
+        last_walked = bar
+        target_hit = bar.high >= target if direction == "long" else bar.low <= target
+        stop_hit = (
+            price_stop is not None
+            and (bar.low <= price_stop if direction == "long" else bar.high >= price_stop)
+        )
+        if stop_hit:
+            assert price_stop is not None
+            return EquityBracketResult(
+                exit_leg=ExitLeg.STOP_HIT,
+                exit_price=price(price_stop),
+                exit_timestamp=bar.period_start,
+                same_bar_ambiguity=target_hit,
+            )
+        if target_hit:
+            return EquityBracketResult(
+                exit_leg=ExitLeg.TARGET_HIT,
+                exit_price=proposal.target.price,
+                exit_timestamp=bar.period_start,
+                same_bar_ambiguity=False,
+            )
+        if time_stop is not None and bar.period_start >= time_stop:
+            return EquityBracketResult(
+                exit_leg=ExitLeg.TIME_STOP_FIRED,
+                exit_price=price(bar.open),
+                exit_timestamp=bar.period_start,
+                same_bar_ambiguity=False,
+            )
+
+    # No price target / stop / hard time-stop fired across the window. The
+    # replay window is bounded by the thesis horizon
+    # (``max(time_stop_horizon, target_estimated_horizon)`` — see
+    # ``compute_replay_window``), so reaching its end is the thesis-duration
+    # deadline elapsing: resolve as a time stop at the final bar's open, the
+    # same recording rule a hard time leg uses. A proposal carrying only a hard
+    # price leg (no time leg) is the case this covers — the schema requires only
+    # *one* hard leg, price or time.
+    assert last_walked is not None, "entered proposal has no bar at/after entry timestamp"
+    return EquityBracketResult(
+        exit_leg=ExitLeg.TIME_STOP_FIRED,
+        exit_price=price(last_walked.open),
+        exit_timestamp=last_walked.period_start,
+        same_bar_ambiguity=False,
+    )
+
+
+def _price_stop_trigger(proposal: Recommendation) -> float | None:
+    """Return the hard price-stop trigger level, or ``None`` if there is none."""
+    for leg in proposal.invalidation_legs:
+        if leg.type == "price" and leg.is_hard and isinstance(leg.condition, PriceCondition):
+            return float(leg.condition.trigger_price)
+    return None
+
+
+def _time_stop_deadline(proposal: Recommendation) -> datetime | None:
+    """Return the hard time-stop deadline, or ``None`` if there is none."""
+    for leg in proposal.invalidation_legs:
+        if leg.type == "time" and leg.is_hard and isinstance(leg.condition, TimeCondition):
+            return leg.condition.deadline
+    return None
