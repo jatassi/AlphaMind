@@ -55,7 +55,16 @@ def _check_finite(value: float, field_name: str) -> None:
 
 @dataclass(frozen=True, slots=True)
 class PortfolioPnLInputs:
-    """OMS-aggregate inputs needed for portfolio-pnl rollup (category 2b)."""
+    """OMS-aggregate inputs needed for portfolio-pnl rollup (category 2b).
+
+    These are portfolio aggregates derived from the per-**position**
+    ``positions.realized_pnl_to_date_usd`` field (summed over CLOSED positions by
+    ``get_portfolio_pnl_inputs``), **not** from the per-thesis
+    ``thesis_pnl_ledger``. The per-position grain is what lets the rollup span
+    non-thesis positions; the ledger is the separate thesis-attribution surface.
+    See ``docs/design/05-execution-layer/broker-boundary-redesign.md`` § 4
+    invariant 3.
+    """
 
     daily_realized_pnl_usd: float
     cumulative_realized_pnl_usd: float
