@@ -263,7 +263,26 @@ def _format_payload(payload: Mapping[str, Any], depth: int = 0) -> list[str]:
     return lines
 
 
-def format_block(block: OutputBlock) -> str:
+def _compact_non_calibrated_summary(block: OutputBlock) -> str:
+    """Return the one-line stand-in for a non-calibrated block's payload (ALP-839).
+
+    A non-calibrated (``accumulating`` / ``unavailable``) block cannot fire —
+    its baseline isn't built or its series is missing — yet its full
+    per-ticker table still dominates the sector bundle. When compression is
+    requested this line replaces that table. The block id, state, and reason
+    already ride the header line; the only payload-derived fact worth keeping
+    is the affected ticker count, so the researcher knows the indicator exists
+    and over how many names it would report once it calibrates.
+    """
+    per_ticker = block.payload.get(_PER_TICKER_KEY)
+    if isinstance(per_ticker, Mapping):
+        n = len(per_ticker)
+        suffix = "ticker" if n == 1 else "tickers"
+        return f"(non-calibrated — per-ticker detail omitted; {n} {suffix})"
+    return "(non-calibrated — payload omitted)"
+
+
+def format_block(block: OutputBlock, *, compress_non_calibrated: bool = False) -> str:
     """Render one :class:`OutputBlock` as deterministic structured text.
 
     The output shape follows
@@ -279,6 +298,16 @@ def format_block(block: OutputBlock) -> str:
     ``" | "``. The payload follows on the next line with no blank padding.
     The trailing ``Anomaly flags`` line is omitted when the block carries
     none — the universal anomaly summary already enumerates flags upstream.
+
+    ``compress_non_calibrated`` (ALP-839) is an opt-in per-call-site flag —
+    default off, so every existing caller renders byte-identically. When a
+    caller sets it (only the domain-researcher sector slice does, via
+    :func:`format_blocks_for_audience`), a block whose ``calibration_state``
+    is *not* ``CALIBRATED`` renders as a single summary line in place of its
+    full per-ticker table, and its per-block anomaly trailer is dropped —
+    every flag is already enumerated in the upstream anomaly summary, so no
+    signal is lost. ``CALIBRATED`` blocks are unaffected regardless of the
+    flag.
     """
     header_parts = [
         f"### {block.block_id}",
@@ -294,6 +323,9 @@ def format_block(block: OutputBlock) -> str:
     if block.regime_context is not None:
         header_parts.append(f"regime: {block.regime_context}")
     lines: list[str] = [" | ".join(header_parts)]
+    if compress_non_calibrated and block.calibration_state is not CalibrationState.CALIBRATED:
+        lines.append(_compact_non_calibrated_summary(block))
+        return "\n".join(lines) + "\n"
     lines.extend(_format_payload(block.payload))
     if block.anomaly_flags:
         lines.append(f"Anomaly flags ({len(block.anomaly_flags)}):")
@@ -306,6 +338,8 @@ def format_block(block: OutputBlock) -> str:
 def format_blocks_for_audience(
     blocks: Iterable[OutputBlock],
     audience: OutputAudience,
+    *,
+    compress_non_calibrated: bool = False,
 ) -> str:
     """Filter blocks by audience membership and concatenate in deterministic order.
 
@@ -313,9 +347,15 @@ def format_blocks_for_audience(
     per-consumer assembly (story 11a/11b) sees a stable concatenation order
     independent of producer-side iteration. Returns the empty string when no
     blocks match.
+
+    ``compress_non_calibrated`` is forwarded to :func:`format_block` per block;
+    it defaults off so every caller but the domain-researcher sector slice
+    (ALP-839) renders byte-identically.
     """
     matching = sorted(
         (block for block in blocks if audience in block.audience),
         key=lambda block: block.block_id,
     )
-    return "".join(format_block(block) for block in matching)
+    return "".join(
+        format_block(block, compress_non_calibrated=compress_non_calibrated) for block in matching
+    )

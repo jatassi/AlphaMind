@@ -259,7 +259,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # configured wall-clock tick time is dead config and was dropped from
     # config/continuous_monitor.yaml and ContinuousMonitorConfig, shifting the
     # resolved-config canonical bytes.
-    expected = "0e05cd7b03f2236c87dbef19efb935c5810aab08d52346a220b9198ec3af9070"
+    # Pin updated 2026-06-05 (tech_semis latency 900->1200, ALP-839): the heaviest
+    # domain researcher's latency_budget_seconds was raised in config/agents.yaml
+    # (paired with the distillation non-calibrated-block compression), shifting the
+    # resolved-config canonical bytes. financials/energy budgets are unchanged.
+    expected = "a6f79927605f3b47fe2ff09ea9c23c7c52255d8790aab67abb65e8bda009f7b0"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

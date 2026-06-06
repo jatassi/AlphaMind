@@ -19,6 +19,8 @@ from alphamind.distillation.output import (
     AnomalyFlag,
     OutputAudience,
     OutputBlock,
+    format_block,
+    format_blocks_for_audience,
 )
 from alphamind.distillation.sector_assembly import (
     DOMAIN_RESEARCHER_BY_AUDIENCE,
@@ -145,6 +147,107 @@ def _per_ticker_block(
         payload={"per_ticker": per_ticker},
         freshness_ts=freshness_ts,
     )
+
+
+# ---------------------------------------------------------------------------
+# da23fc74-shaped fixture (ALP-839)
+# ---------------------------------------------------------------------------
+#
+# Mirrors the production artifact inv-20260603T170000Z-da23fc74's tech_semis
+# SECTOR INDICATORS composition: a 40-ticker roster, a handful of small
+# CALIBRATED aggregate blocks, and a dozen heavy non-calibrated per-ticker
+# tables (95% of the rendered volume) whose baselines aren't built yet.
+
+_DA23_ROSTER: tuple[str, ...] = tuple(sorted(f"TK{i:02d}" for i in range(40)))
+_TECH_AUDIENCE = frozenset({OutputAudience.SECTOR_TECH_SEMIS})
+
+
+def _heavy_per_ticker() -> dict[str, dict[str, object]]:
+    """A 40-ticker x 10-metric table — the shape that dominated the bundle."""
+    return {
+        ticker: {
+            "rsi_1d": 55.0 + idx,
+            "rsi_5d": 50.0 + idx,
+            "macd_state": "bullish",
+            "atr": 4.0 + idx / 10,
+            "ema_20": 100.0 + idx,
+            "ema_50": 98.0 + idx,
+            "volume_z": 1.0 + idx / 20,
+            "gap_pct": 0.5,
+            "rel_perf_5d": -0.2,
+            "vol_profile": "balanced",
+        }
+        for idx, ticker in enumerate(_DA23_ROSTER)
+    }
+
+
+def _da23fc74_tech_semis_blocks() -> tuple[tuple[str, ...], list[OutputBlock]]:
+    """Return ``(roster, blocks)`` shaped like the da23fc74 tech_semis slice."""
+    calibrated_specs: tuple[tuple[str, dict[str, object]], ...] = (
+        ("q9.regime_alignment", {"regime": "normal", "confidence": 0.82}),
+        ("q7.sector_correlation", {"avg_corr": 0.45, "dispersion": 0.12}),
+        ("q6.vix_level", {"vix": 16.2, "term_structure": "contango"}),
+        ("q12.corporate_actions", {"events": 0}),
+        ("q6.funding_stress", {"composite_pct": 35.0}),
+        ("q7.lead_lag", {"semis_to_tech": "aligned"}),
+        ("q1.session_summary", {"advancers": 21, "decliners": 19}),
+        ("q6.macro_calendar", {"high_impact_events": 2}),
+    )
+    calibrated_aggregates: list[OutputBlock] = [
+        _make_block(block_id=bid, audience=_TECH_AUDIENCE, payload=payload)
+        for bid, payload in calibrated_specs
+    ]
+    # One CALIBRATED per-ticker block proves calibrated tables are preserved.
+    calibrated_table = _per_ticker_block(
+        block_id="q1.price_summary",
+        audience=_TECH_AUDIENCE,
+        per_ticker={t: {"last": 100.0 + i, "change_pct": 0.5} for i, t in enumerate(_DA23_ROSTER)},
+    )
+
+    def _heavy(block_id: str, state: CalibrationState, reason: str) -> OutputBlock:
+        return _make_block(
+            block_id=block_id,
+            audience=_TECH_AUDIENCE,
+            payload={"per_ticker": _heavy_per_ticker()},
+            calibration_state=state,
+            bootstrap_reason=reason,
+        )
+
+    def _aggregate_unavailable(block_id: str, reason: str, status: str) -> OutputBlock:
+        return _make_block(
+            block_id=block_id,
+            audience=_TECH_AUDIENCE,
+            payload={"status": status},
+            calibration_state=CalibrationState.UNAVAILABLE,
+            bootstrap_reason=reason,
+        )
+
+    acc = CalibrationState.ACCUMULATING
+    unavail = CalibrationState.UNAVAILABLE
+    non_calibrated: list[OutputBlock] = [
+        _heavy("q1.technicals", acc, "atr_baseline: 3 < 14"),
+        _heavy("q1.trend_state", acc, "trend_baseline: 3 < 20"),
+        _heavy("q1.relative_performance", acc, "relperf_baseline: 3 < 20"),
+        _heavy("q1.volume_profile", acc, "volprofile_baseline: 3 < 20"),
+        _heavy("q1.momentum", acc, "momentum_baseline: 3 < 20"),
+        _heavy("q1.volatility", acc, "vol_baseline: 3 < 14"),
+        _heavy("q1.support_resistance", acc, "sr_baseline: 3 < 60"),
+        _heavy("q1.range_compression", acc, "range_baseline: 3 < 20"),
+        _heavy("q3.flow_classification", unavail, "options_snapshots: 0 < 1 (0 observations)"),
+        _aggregate_unavailable("q1.gap", "gap_events: 0 < 30 (0 observations)", "no gap events"),
+        _aggregate_unavailable(
+            "q3.flow_imbalance", "options_snapshots: 0 < 1 (0 observations)", "no options snapshots"
+        ),
+        _make_block(
+            block_id="q6.sector_breadth",
+            audience=_TECH_AUDIENCE,
+            payload={"advancers": 18, "decliners": 22},
+            calibration_state=acc,
+            bootstrap_reason="breadth_baseline: 3 < 20",
+        ),
+    ]
+    blocks = [*calibrated_aggregates, calibrated_table, *non_calibrated]
+    return _DA23_ROSTER, blocks
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +438,130 @@ class TestPerTickerFiltering:
             invocation_id="inv-001",
         )
         assert "q9.regime" in output.block_ids
+
+
+# ---------------------------------------------------------------------------
+# Non-calibrated compression (ALP-839)
+# ---------------------------------------------------------------------------
+
+
+class TestNonCalibratedCompression:
+    def test_non_calibrated_sector_block_renders_compactly(self) -> None:
+        """A non-calibrated SECTOR INDICATORS block collapses to its summary line."""
+        block = _make_block(
+            block_id="q1.technicals",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            payload={"per_ticker": {"AAPL": {"rsi": 55.0}, "NVDA": {"rsi": 60.0}}},
+            calibration_state=CalibrationState.ACCUMULATING,
+            bootstrap_reason="atr_baseline: 3 < 14",
+        )
+        output = assemble_sector_output(
+            audience=OutputAudience.SECTOR_TECH_SEMIS,
+            blocks=(block,),
+            roster=TECH_SEMIS_ROSTER,
+            invocation_id="inv-001",
+        )
+        # The block is still represented (id + state + reason on the header).
+        assert "q1.technicals" in output.block_ids
+        assert "accumulating — reason: atr_baseline: 3 < 14" in output.text
+        # But its full per-ticker table no longer appears in the sector slice.
+        assert "per_ticker:" not in output.text
+        assert "NVDA rsi=60" not in output.text
+        assert "(non-calibrated — per-ticker detail omitted; 2 tickers)" in output.text
+
+    def test_non_calibrated_universal_block_is_not_compressed(self) -> None:
+        """UNIVERSAL CONTEXT is untouched — a non-calibrated universal block renders in full."""
+        universal = _make_block(
+            block_id="q6.breadth",
+            audience=frozenset({OutputAudience.UNIVERSAL_BROADCAST}),
+            payload={"advancers": 120, "decliners": 380},
+            calibration_state=CalibrationState.ACCUMULATING,
+            bootstrap_reason="breadth_baseline: 3 < 20",
+        )
+        output = assemble_sector_output(
+            audience=OutputAudience.SECTOR_TECH_SEMIS,
+            blocks=(universal,),
+            roster=TECH_SEMIS_ROSTER,
+            invocation_id="inv-001",
+        )
+        # Full payload survives in the universal-context section.
+        assert "advancers: 120" in output.text
+        assert "decliners: 380" in output.text
+        assert "(non-calibrated" not in output.text
+
+    def test_da23fc74_shaped_bundle_shrinks_to_calibrated_plus_summaries(self) -> None:
+        """Replay a da23fc74-shaped tech_semis block set through the assembler (ALP-839 AC).
+
+        The fixture mirrors the production artifact's composition: a 40-ticker
+        roster, a handful of small CALIBRATED aggregate blocks, and a dozen
+        heavy non-calibrated per-ticker tables (q1.technicals / q1.trend_state /
+        q1.gap / q3.flow_classification / ...) that drove the 95%-non-calibrated
+        SECTOR INDICATORS volume. After compression the sector slice equals
+        exactly the calibrated-in-full volume plus the non-calibrated summary
+        lines, every non-calibrated block still represented.
+        """
+        roster, blocks = _da23fc74_tech_semis_blocks()
+        calibrated = [b for b in blocks if b.calibration_state is CalibrationState.CALIBRATED]
+        non_calibrated = [
+            b for b in blocks if b.calibration_state is not CalibrationState.CALIBRATED
+        ]
+        assert len(calibrated) and len(non_calibrated)  # fixture sanity
+
+        output = assemble_sector_output(
+            audience=OutputAudience.SECTOR_TECH_SEMIS,
+            blocks=tuple(blocks),
+            roster=roster,
+            invocation_id="inv-da23fc74",
+        )
+        compressed_slice = output.text.split("=== SECTOR INDICATORS ===\n", 1)[1]
+
+        # Baseline: the same sector slice rendered with every block in full.
+        baseline_full = format_blocks_for_audience(blocks, OutputAudience.SECTOR_TECH_SEMIS)
+        assert len(compressed_slice) < len(baseline_full)  # the bundle shrinks
+
+        # The compressed slice is *exactly* calibrated-in-full + non-calibrated
+        # summaries — the reduction is a deterministic consequence of state.
+        calibrated_full = "".join(format_block(b) for b in calibrated)
+        non_calibrated_summaries = "".join(
+            format_block(b, compress_non_calibrated=True) for b in non_calibrated
+        )
+        assert len(compressed_slice) == len(calibrated_full) + len(non_calibrated_summaries)
+
+        # Every CALIBRATED block survives byte-for-byte (full table preserved).
+        for block in calibrated:
+            assert format_block(block) in compressed_slice
+
+        # Every non-calibrated block survives as exactly one summary line.
+        assert compressed_slice.count("(non-calibrated") == len(non_calibrated)
+        for block in non_calibrated:
+            assert block.block_id in output.block_ids
+            assert f"### {block.block_id} " in compressed_slice
+        # None of the heavy per-ticker rows leak through (the size driver is gone).
+        assert "macd_state=bullish" not in compressed_slice
+
+    def test_anomaly_summary_still_lists_flags_from_compressed_blocks(self) -> None:
+        """Compressing a block's body does not hide its flags — they ride the top summary."""
+        block = _make_block(
+            block_id="q1.technicals",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            payload={"per_ticker": {"NVDA": {"rsi": 60.0}}},
+            calibration_state=CalibrationState.ACCUMULATING,
+            bootstrap_reason="atr_baseline: 3 < 14",
+            anomaly_flags=(
+                AnomalyFlag(name="rsi_extreme", magnitude=2.5, severity="investigate_if_persists"),
+            ),
+        )
+        output = assemble_sector_output(
+            audience=OutputAudience.SECTOR_TECH_SEMIS,
+            blocks=(block,),
+            roster=TECH_SEMIS_ROSTER,
+            invocation_id="inv-001",
+        )
+        # The flag survives in the top-of-document anomaly summary...
+        assert "=== ANOMALY FLAGS (1) ===" in output.text
+        assert "rsi_extreme" in output.text
+        # ...even though the block body is compressed (no per-block trailer).
+        assert "(non-calibrated — per-ticker detail omitted; 1 ticker)" in output.text
 
 
 # ---------------------------------------------------------------------------
