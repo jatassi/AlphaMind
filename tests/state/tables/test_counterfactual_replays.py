@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -287,7 +288,7 @@ class TestCounterfactualReplaysTableShape:
         """Fetch the CREATE TABLE DDL for counterfactual_replays from sqlite_master."""
         query = "SELECT sql FROM sqlite_master WHERE type='table' AND name='counterfactual_replays'"
         with engine.connect() as conn:
-            return conn.execute(text(query)).scalar_one()
+            return str(conn.execute(text(query)).scalar_one())
 
     def test_check_vocab_includes_all_five_exit_leg_values(self, engine: Engine) -> None:
         """All five ExitLeg members including STRATEGIST_CLOSE_AT_PROPOSAL must be in DDL."""
@@ -384,14 +385,10 @@ class TestCodecRoundTrips:
     def test_confidence_encodes_to_lowercase(self) -> None:
         for conf in Confidence:
             record = _evaluated_equity_record()
-            # Build a new record with varied confidence
-            varied = CounterfactualReplayRecord(
-                **{
-                    **record.__dataclass_fields__,  # type: ignore[attr-defined]
-                    **{f: getattr(record, f) for f in record.__dataclass_fields__},  # type: ignore[attr-defined]
-                    "confidence": conf,
-                    "replay_id": ReplayId(f"rpl-conf-{conf.value}"),
-                }
+            varied = dataclasses.replace(
+                record,
+                confidence=conf,
+                replay_id=ReplayId(f"rpl-conf-{conf.value}"),
             )
             encoded = encode_counterfactual_replay(varied)
             assert encoded["confidence"] == conf.value

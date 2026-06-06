@@ -141,5 +141,5 @@ class TestCounterfactualReplaysMigration:
 
         for member in ExitLeg:
             assert f"'{member.value}'" in ddl, f"exit_leg CHECK missing {member.value!r}"
-        for member in UnevaluableReason:
-            assert f"'{member.value}'" in ddl, f"unevaluable_reason CHECK missing {member.value!r}"
+        for reason in UnevaluableReason:
+            assert f"'{reason.value}'" in ddl, f"unevaluable_reason CHECK missing {reason.value!r}"
