@@ -10,12 +10,12 @@ Composes the watcher entirely from existing primitives — no new infrastructure
   :class:`BrokerCancelClassification`.
 * :class:`AlpacaEntryReplace` — wraps :func:`submit_replace` (cancel-and-replace)
   and maps the broker answer onto :class:`BrokerReplaceClassification` (ALP-740).
-* :func:`make_entry_window_reprice_writeback` — opens a fresh session +
-  :class:`InvocationHandle` and runs the non-terminal ``persist_entry_window_reprice``
-  writeback, mirroring the breach loop's ``make_submit_envelope`` pattern. The
-  terminal **cancel** has no writeback any more (ALP-863): the canceller broker-
-  cancels and writes nothing — the pipeline projects the resulting
-  ``TERMINAL_ORDER_STATUS`` event and runs the dissolve cascade.
+* :func:`make_entry_window_reprice_event_append` — opens a fresh session and
+  appends the append-only ``ENTRY_REPRICED`` event (idempotent on its event_key),
+  mirroring the W1c terminal-status append. Neither the reprice nor the terminal
+  **cancel** path writes an order row any more (ALP-867 / ALP-863): the monitor's
+  only cross-process writes are append-only, and the pipeline projects both the
+  ``ENTRY_REPRICED`` and ``TERMINAL_ORDER_STATUS`` events.
 * :func:`register_entry_window_watcher_task` — assembles the
   :class:`BrokerEntryWindowRepricer` (which delegates the terminal path to a
   :class:`BrokerEntryWindowCanceller`) and registers the ``entry_window`` task.
@@ -50,21 +50,17 @@ from alphamind.execution.continuous_monitor.entry_window.canceller import (
 )
 from alphamind.execution.continuous_monitor.entry_window.repricer import (
     BrokerEntryWindowRepricer,
+    EntryRepriceEventAppend,
     RepriceTarget,
     RepriceTargetResolver,
-    RepriceWriteback,
 )
 from alphamind.execution.continuous_monitor.entry_window.task import (
     run_entry_window_watcher,
 )
-from alphamind.execution.continuous_monitor.greeks_refresh.wiring import (
-    make_invocation_id_provider,
-)
 from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
-from alphamind.execution.write_paths.phase2 import (
-    persist_entry_window_reprice,
-)
+from alphamind.execution.write_paths.broker_event_persistence import append_broker_event
+from alphamind.execution.write_paths.entry_reprice_sync import entry_reprice_event_record
 from alphamind.portfolio_state.records.orders import (
     BracketRecord,
     BracketStatus,
@@ -72,7 +68,6 @@ from alphamind.portfolio_state.records.orders import (
     OrderType,
     direction_to_side,
 )
-from alphamind.state.invocation_context.context import InvocationHandle
 from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.brackets import BracketRow
 from alphamind.state.tables.brackets_codec import (
@@ -305,8 +300,11 @@ def make_reprice_target_resolver(
 
     Reads the order's broker id, recorded-fill state, and the fields the
     repricer branches on: whether it is a repriceable equity ``LIMIT`` entry, its
-    ticker, its long/short ``direction``, and its ``modification_count`` (the
-    reprice-loop bound). Returns ``None`` when the order row is missing.
+    ticker, its long/short ``direction``, and its durable ``modification_count`` —
+    read only to seed :class:`EntryWindowSessionMemory` on first encounter (the
+    in-session count is the live reprice-loop bound thereafter, since the row's
+    count lags until the pipeline projects the ``ENTRY_REPRICED`` events, ALP-867).
+    Returns ``None`` when the order row is missing.
     """
 
     async def _resolve(entry_order_id: str) -> RepriceTarget | None:
@@ -355,34 +353,35 @@ def make_reprice_target_resolver(
     return _resolve
 
 
-def make_entry_window_reprice_writeback(
+def make_entry_window_reprice_event_append(
     session_factory: async_sessionmaker[AsyncSession],
-) -> RepriceWriteback:
-    """Return a reprice-writeback callable: open a fresh session + handle, run
-    the non-terminal Phase-2 ``persist_entry_window_reprice``, and commit.
+) -> EntryRepriceEventAppend:
+    """Return a callable that appends one ``ENTRY_REPRICED`` event and commits.
 
-    The reprice path keeps a between-invocations writeback (relocated to the
-    pipeline only when ALP-867 lands); the sibling terminal **cancel** path no
-    longer writes from the monitor at all (ALP-863).
+    Opens a fresh session and appends the append-only event via the canonical
+    idempotent helper :func:`append_broker_event` (keyed on the new
+    ``alpaca_order_id``). The monitor performs **no** order-row writeback (ALP-867):
+    the pipeline projects the latest ``ENTRY_REPRICED`` per order onto
+    ``orders.limit_price`` / ``alpaca_order_id`` / ``modification_count`` + the
+    reservation. The sibling terminal **cancel** path likewise writes nothing
+    (ALP-863) — so the monitor's only cross-process writes are append-only, and
+    the ``SQLITE_BUSY_SNAPSHOT`` race is unreachable on the entry-window task.
     """
-    invocation_id_provider = make_invocation_id_provider(session_factory)
 
-    async def _writeback(
+    async def _append(
         entry_order_id: str, new_limit: Price, new_alpaca_order_id: str, reprice_reason: str
     ) -> None:
-        invocation_id = await invocation_id_provider()
+        record = entry_reprice_event_record(
+            entry_order_id=entry_order_id,
+            new_limit=new_limit,
+            new_alpaca_order_id=new_alpaca_order_id,
+            reason=reprice_reason,
+        )
         async with session_factory() as session:
-            handle = InvocationHandle(session=session, invocation_id=invocation_id)
-            await persist_entry_window_reprice(
-                handle,
-                entry_order_id=entry_order_id,
-                new_limit_price=new_limit,
-                new_alpaca_order_id=new_alpaca_order_id,
-                reprice_reason=reprice_reason,
-            )
+            await append_broker_event(session, record)
             await session.commit()
 
-    return _writeback
+    return _append
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +413,7 @@ def register_entry_window_watcher_task(
         ),
     )
     reprice_resolver = make_reprice_target_resolver(session_factory)
-    reprice_writeback = make_entry_window_reprice_writeback(session_factory)
+    reprice_event_append = make_entry_window_reprice_event_append(session_factory)
     broker_replace = AlpacaEntryReplace(
         client_factory=client_factory, execution_config=execution_config
     )
@@ -428,7 +427,7 @@ def register_entry_window_watcher_task(
             resolve_target=reprice_resolver,
             quote_source=quote_source,
             broker_replace=broker_replace,
-            reprice_writeback=reprice_writeback,
+            append_event=reprice_event_append,
             canceller=canceller,
             max_reprice_count=config.entry_window_max_reprices,
             bps_through_touch=execution_config.marketable_entry_bps_through_touch,
@@ -450,7 +449,7 @@ __all__ = [
     "AlpacaEntryReplace",
     "SqlPendingEntryBracketReader",
     "make_entry_cancel_target_resolver",
-    "make_entry_window_reprice_writeback",
+    "make_entry_window_reprice_event_append",
     "make_reprice_target_resolver",
     "register_entry_window_watcher_task",
 ]

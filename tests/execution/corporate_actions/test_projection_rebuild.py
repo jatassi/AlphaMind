@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from alphamind._kernel.ids import AlpacaOrderId, BracketId, OrderId, PositionId, Symbol, ThesisId
 from alphamind._kernel.money import money, price
 from alphamind.execution.broker_adapter.queries import PositionSnapshot, TradeAccountSnapshot
+from alphamind.execution.write_paths.entry_reprice_sync import entry_reprice_event_record
 from alphamind.execution.write_paths.phase1 import rederive_thesis_ledgers
 from alphamind.execution.write_paths.projection_rebuild import (
     BrokerFactNoIntent,
@@ -69,6 +70,7 @@ from alphamind.state.tables.broker_event_log_codec import record_to_row as event
 from alphamind.state.tables.cash_ledger import CASH_LEDGER_SINGLETON_ID, CashLedgerRow
 from alphamind.state.tables.fill_records import FillRecordRow
 from alphamind.state.tables.orders import OrderRow
+from alphamind.state.tables.orders_codec import row_to_record as order_row_to_record
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.projection_rebuild_watermark import ProjectionRebuildWatermarkRow
 from alphamind.state.tables.theses import ThesisRow
@@ -1366,3 +1368,264 @@ async def test_filled_entry_in_cancel_race_is_not_dissolved(
         cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
         assert cash is not None
         assert cash.reserved_capital_usd == pytest.approx(1_000.0)
+
+
+# ---------------------------------------------------------------------------
+# Entry-window reprice projection (ALP-867)
+# ---------------------------------------------------------------------------
+# The monitor escalates a still-resting PENDING_ENTRY entry toward the market by
+# cancel-and-replacing at the broker and appending an ``ENTRY_REPRICED`` event —
+# it writes no order row. The pipeline folds those events onto the order cache via
+# ``persist_entry_window_reprice``: new limit / broker id / modification_count +
+# reservation. Sequenced after the cancel cascade and gated on a live resting entry
+# so a terminal (cancelled) order's dissolve wins over a stale reprice.
+# ---------------------------------------------------------------------------
+
+
+def _repriceable_entry_order(*, status: OrderStatus = OrderStatus.PENDING) -> OrderRecord:
+    """A patient never-filled equity-bracket LIMIT entry (10 sh @ $100 → $1,000 reserved),
+    broker id ``broker-uuid-0`` — the resting order the monitor reprices."""
+    return OrderRecord(
+        order_id=OrderId("ord-entry-1"),
+        position_id=PositionId("pos-1"),
+        bracket_id=BracketId("brk-1"),
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.LIMIT,
+        order_class=OrderClass.BRACKET,
+        price_parameters=PriceParameters(limit_price=price("100.0")),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=status,
+        alpaca_order_id=AlpacaOrderId("broker-uuid-0"),
+        alpaca_order_id_chain=(AlpacaOrderId("broker-uuid-0"),),
+        submission_timestamp=NOW,
+        last_update_timestamp=NOW,
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=ThesisId("thesis-1"),
+        originating_pm_command_id=None,
+        age_hours=0.25,
+    )
+
+
+def _reprice_event(
+    *, new_limit: str, new_alpaca_order_id: str, entry_order_id: str = "ord-entry-1"
+) -> BrokerEventRecord:
+    """An ``ENTRY_REPRICED`` event shaped like ``entry_reprice_event_record`` produces."""
+    return entry_reprice_event_record(
+        entry_order_id=entry_order_id,
+        new_limit=price(new_limit),
+        new_alpaca_order_id=new_alpaca_order_id,
+        reason="entry_window_reprice",
+    )
+
+
+async def test_entry_reprice_event_projects_onto_resting_entry(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-867 AC2 — the pipeline projects an ``ENTRY_REPRICED`` event onto the
+    resting entry: new ``limit_price`` / ``alpaca_order_id`` / ``modification_count``
+    and the reservation adjusted by the notional delta."""
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
+    await seed_position_cluster(
+        factory,
+        make_pending_equity_position(),
+        _repriceable_entry_order(),
+        make_active_thesis(),
+        _pending_entry_bracket(),
+    )
+    await _append_events(
+        factory,
+        _reprice_event(new_limit="101.0", new_alpaca_order_id="broker-uuid-1"),
+    )
+
+    ctx, handle = await open_handle(factory)
+    summary = await rebuild_projection(handle, alpaca_positions=(), alpaca_account=None)
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.entry_window_reprices_projected == 1
+    async with factory() as sess:
+        order = await sess.get(OrderRow, "ord-entry-1")
+        assert order is not None
+        record = order_row_to_record(order)
+        assert record.price_parameters.limit_price == price("101.0")
+        assert record.alpaca_order_id == "broker-uuid-1"
+        assert record.alpaca_order_id_chain == ("broker-uuid-0", "broker-uuid-1")
+        assert record.modification_count == 1
+        # Long entry repriced up 100 → 101 over 10 sh reserves $10 more: 1000 → 1010.
+        cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash is not None
+        assert cash.reserved_capital_usd == pytest.approx(1_010.0)
+
+
+async def test_entry_reprice_projection_is_idempotent(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-867 AC2 — re-projecting the same ``ENTRY_REPRICED`` log is a no-op: the
+    event's new broker id is already in the order's chain, so the second rebuild
+    advances nothing and the row is unchanged."""
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
+    await seed_position_cluster(
+        factory,
+        make_pending_equity_position(),
+        _repriceable_entry_order(),
+        make_active_thesis(),
+        _pending_entry_bracket(),
+    )
+    await _append_events(
+        factory,
+        _reprice_event(new_limit="101.0", new_alpaca_order_id="broker-uuid-1"),
+    )
+
+    ctx1, handle1 = await _open_handle_with(factory, "inv-867-r1")
+    summary1 = await rebuild_projection(handle1, alpaca_positions=(), alpaca_account=None)
+    await ctx1.__aexit__(None, None, None)
+
+    ctx2, handle2 = await _open_handle_with(factory, "inv-867-r2")
+    summary2 = await rebuild_projection(handle2, alpaca_positions=(), alpaca_account=None)
+    await ctx2.__aexit__(None, None, None)
+
+    assert summary1.entry_window_reprices_projected == 1
+    assert summary2.entry_window_reprices_projected == 0  # no-op re-projection
+    async with factory() as sess:
+        order = await sess.get(OrderRow, "ord-entry-1")
+        assert order is not None
+        record = order_row_to_record(order)
+        assert record.modification_count == 1  # not double-incremented
+        assert record.alpaca_order_id_chain == ("broker-uuid-0", "broker-uuid-1")
+        cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash is not None
+        assert cash.reserved_capital_usd == pytest.approx(1_010.0)  # not double-adjusted
+
+
+async def test_latest_of_multiple_reprices_wins_in_event_seq_order(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-867 AC2 — multiple ``ENTRY_REPRICED`` events for one order fold in
+    ``event_seq`` (append) order: the last limit / broker id wins, the chain carries
+    the full reprice history, and ``modification_count`` equals the reprice count."""
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
+    await seed_position_cluster(
+        factory,
+        make_pending_equity_position(),
+        _repriceable_entry_order(),
+        make_active_thesis(),
+        _pending_entry_bracket(),
+    )
+    # Appended in order → event_seq (rowid) ascending → folds 101 then 102.
+    await _append_events(
+        factory,
+        _reprice_event(new_limit="101.0", new_alpaca_order_id="broker-uuid-1"),
+        _reprice_event(new_limit="102.0", new_alpaca_order_id="broker-uuid-2"),
+    )
+
+    ctx, handle = await open_handle(factory)
+    summary = await rebuild_projection(handle, alpaca_positions=(), alpaca_account=None)
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.entry_window_reprices_projected == 2
+    async with factory() as sess:
+        order = await sess.get(OrderRow, "ord-entry-1")
+        assert order is not None
+        record = order_row_to_record(order)
+        assert record.price_parameters.limit_price == price("102.0")  # last wins
+        assert record.alpaca_order_id == "broker-uuid-2"
+        assert record.alpaca_order_id_chain == (
+            "broker-uuid-0",
+            "broker-uuid-1",
+            "broker-uuid-2",
+        )
+        assert record.modification_count == 2  # one per reprice event
+        # 1000 → 1010 → 1020 (telescoped notional deltas).
+        cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash is not None
+        assert cash.reserved_capital_usd == pytest.approx(1_020.0)
+
+
+async def test_terminal_entry_is_not_repriced_cancel_cascade_wins(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-867 — a stale ``ENTRY_REPRICED`` event for an entry that has since gone
+    terminal must NOT be projected: the cancel cascade dissolves the bracket and the
+    reprice gate (PENDING_ENTRY + non-terminal) excludes the now-cancelled order. The
+    cancel wins over the stale reprice."""
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
+    await seed_position_cluster(
+        factory,
+        make_pending_equity_position(),
+        _repriceable_entry_order(status=OrderStatus.CANCELLED),  # already terminal
+        make_active_thesis(),
+        _pending_entry_bracket(),
+    )
+    await _append_events(
+        factory,
+        _reprice_event(new_limit="101.0", new_alpaca_order_id="broker-uuid-1"),
+    )
+
+    ctx, handle = await open_handle(factory)
+    summary = await rebuild_projection(handle, alpaca_positions=(), alpaca_account=None)
+    await ctx.__aexit__(None, None, None)
+
+    # The cancel cascade dissolved the bracket; the reprice projection ran on nothing.
+    assert summary.entry_window_cancels_cascaded == 1
+    assert summary.entry_window_reprices_projected == 0
+    async with factory() as sess:
+        bracket = await sess.get(BracketRow, "brk-1")
+        assert bracket is not None
+        assert bracket.status == BracketStatus.DISSOLVED.value
+        order = await sess.get(OrderRow, "ord-entry-1")
+        assert order is not None
+        record = order_row_to_record(order)
+        # The stale reprice never touched the order's limit / broker id.
+        assert record.price_parameters.limit_price == price("100.0")
+        assert record.alpaca_order_id == "broker-uuid-0"
+
+
+async def test_filled_entry_is_not_repriced(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-867 — an entry with a recorded fill is not repriced (a filled entry is
+    integrated by its FILL event; repricing would adjust an already-released
+    reservation). The ``NOT EXISTS (fill_records)`` gate excludes it."""
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
+    await seed_position_cluster(
+        factory,
+        make_pending_equity_position(),
+        _repriceable_entry_order(),
+        make_active_thesis(),
+        _pending_entry_bracket(),
+    )
+    await _seed_unprocessed_fill(factory)  # a fill landed for the entry
+    await _append_events(
+        factory,
+        _reprice_event(new_limit="101.0", new_alpaca_order_id="broker-uuid-1"),
+    )
+
+    ctx, handle = await open_handle(factory)
+    summary = await rebuild_projection(handle, alpaca_positions=(), alpaca_account=None)
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.entry_window_reprices_projected == 0
+    async with factory() as sess:
+        order = await sess.get(OrderRow, "ord-entry-1")
+        assert order is not None
+        record = order_row_to_record(order)
+        assert record.price_parameters.limit_price == price("100.0")  # untouched
+        assert record.alpaca_order_id == "broker-uuid-0"
+        cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash is not None
+        assert cash.reserved_capital_usd == pytest.approx(1_000.0)  # reservation untouched

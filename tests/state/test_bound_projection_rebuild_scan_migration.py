@@ -9,9 +9,11 @@ and adds the durable state the bounded rebuild watermarks read/advance:
 The baseline is metadata-driven (``create_all`` against the live models), so a
 fresh ``upgrade head`` already stands these up and the migration is a guarded
 no-op there. The add/remove behaviour is exercised by stepping the migration
-itself down one revision and back up: ``downgrade -1`` drops both objects,
-``upgrade head`` re-creates them — the round-trip a production DB stamped at the
-baseline before these columns existed will take.
+down and back up: a ``downgrade`` to the baseline drops both objects, ``upgrade
+head`` re-creates them — the round-trip a production DB stamped at the baseline
+before these columns existed will take. (The ALP-867 reprice migration now sits
+above this one, so the down-step is reached via the baseline target rather than
+``downgrade -1`` from head.)
 """
 
 from __future__ import annotations
@@ -62,8 +64,11 @@ class TestBoundProjectionRebuildScanMigration:
     def test_migration_parents_on_baseline_in_a_linear_chain(self) -> None:
         repo_root = Path(__file__).parents[2]
         script = ScriptDirectory.from_config(Config(repo_root / "alembic.ini"))
-        # A single head (no branched history — ``upgrade head`` fails on a branch).
-        assert list(script.get_heads()) == [_MIGRATION_REVISION]
+        # A single head (no branched history — ``upgrade head`` fails on a branch);
+        # the ALP-867 reprice migration re-parented onto this one rather than the
+        # baseline, so it — not ``a865wm0000bb`` — is now the head, but the chain
+        # stays linear and this revision still parents on the genesis baseline.
+        assert len(script.get_heads()) == 1
         rev = script.get_revision(_MIGRATION_REVISION)
         assert rev is not None
         assert rev.down_revision == _BASELINE_REVISION
@@ -74,11 +79,14 @@ class TestBoundProjectionRebuildScanMigration:
         assert _watermark_present(db_path)
         assert _ledger_cursor_present(db_path)
 
-    def test_downgrade_one_step_removes_both_objects(self, tmp_path: Path) -> None:
+    def test_downgrade_below_this_revision_removes_both_objects(self, tmp_path: Path) -> None:
+        # The ALP-867 reprice migration now sits above this one, so this revision's
+        # down-step is no longer reachable by ``downgrade -1`` from head; downgrade to
+        # the baseline (reverting both) to exercise this migration's ``downgrade``.
         db_path = tmp_path / "mig.db"
         cfg = _alembic_config(db_path)
         command.upgrade(cfg, "head")
-        command.downgrade(cfg, "-1")
+        command.downgrade(cfg, _BASELINE_REVISION)
         assert not _watermark_present(db_path)
         assert not _ledger_cursor_present(db_path)
         # The ledger table itself survives — only the added column is dropped.
@@ -92,7 +100,7 @@ class TestBoundProjectionRebuildScanMigration:
         db_path = tmp_path / "mig.db"
         cfg = _alembic_config(db_path)
         command.upgrade(cfg, "head")
-        command.downgrade(cfg, "-1")
+        command.downgrade(cfg, _BASELINE_REVISION)
         command.upgrade(cfg, "head")
         assert _watermark_present(db_path)
         assert _ledger_cursor_present(db_path)

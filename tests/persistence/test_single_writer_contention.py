@@ -36,6 +36,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 
 from alphamind._kernel.ids import AlpacaOrderId, BracketId, OrderId, PositionId, Symbol, ThesisId
+from alphamind._kernel.money import price
 from alphamind.execution.continuous_monitor.bracket_stops.close_order_precommit import (
     precommit_monitor_close_order,
 )
@@ -43,9 +44,11 @@ from alphamind.execution.continuous_monitor.entry_window.canceller import (
     BrokerCancelClassification,
     BrokerEntryWindowCanceller,
     EntryWindowDeadlineOutcome,
+    EntryWindowSessionMemory,
 )
 from alphamind.execution.continuous_monitor.entry_window.wiring import (
     make_entry_cancel_target_resolver,
+    make_entry_window_reprice_event_append,
 )
 from alphamind.execution.continuous_monitor.greeks_refresh import SqlGreeksWriter
 from alphamind.persistence.models import Base
@@ -75,6 +78,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     PositionStatus,
 )
+from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.position_greeks import PositionGreeksRow
 from alphamind.state.tables.positions import PositionRow
@@ -482,7 +486,13 @@ async def test_entry_window_cancel_is_read_only_and_cannot_race_pipeline(
             resolve_target=make_entry_cancel_target_resolver(monitor_factory),
             broker_cancel=_confirming_broker_cancel,
         )
-        outcomes.append(await canceller.cancel(bracket=_pending_entry_bracket_record(), now=_NOW))
+        outcomes.append(
+            await canceller.cancel(
+                bracket=_pending_entry_bracket_record(),
+                now=_NOW,
+                reprice_memory=EntryWindowSessionMemory(),
+            )
+        )
         order.append("monitor_cancelled")
 
     try:
@@ -507,3 +517,81 @@ async def test_entry_window_cancel_is_read_only_and_cannot_race_pipeline(
     assert entry_row.status == OrderStatus.FILLED.value
     # The pipeline write landed; the monitor read-only path did not block it.
     assert pos_row.realized_pnl_to_date_usd == 7.0
+
+
+# ---------------------------------------------------------------------------
+# ALP-867: the entry-window reprice path's only write is an append — it cannot
+# race the pipeline
+# ---------------------------------------------------------------------------
+
+
+async def test_entry_window_reprice_append_and_pipeline_write_no_busy_snapshot(
+    db_path: str,
+) -> None:
+    """ALP-867 — the entry-window **reprice** path writes only an append-only
+    ``ENTRY_REPRICED`` event (no order-row RMW), so it cannot produce
+    ``SQLITE_BUSY_SNAPSHOT`` against a concurrent pipeline write.
+
+    The monitor used to RMW ``orders.limit_price`` / ``alpaca_order_id`` /
+    ``modification_count`` + the reservation on a reprice; now it appends one event
+    via :func:`make_entry_window_reprice_event_append` and the pipeline projects it.
+    A new-PK INSERT under the monitor's own session has no deferred-read→write-upgrade
+    on a shared row to collide with the pipeline's IMMEDIATE write lock — only plain
+    ``BUSY`` is possible, which ``busy_timeout`` absorbs. Both writes land.
+    """
+    monitor_engine = make_async_engine(db_path)
+    pipeline_engine = make_async_engine(db_path)
+    monitor_factory = make_async_session_factory(monitor_engine)
+    pipeline_factory = make_async_session_factory(pipeline_engine)
+
+    pipeline_holds_lock = asyncio.Event()
+    order: list[str] = []
+
+    async def pipeline_write() -> None:
+        async with pipeline_factory() as session:
+            await begin_write_immediate(session)
+            row = (
+                await session.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+            ).scalar_one()
+            row.realized_pnl_to_date_usd = 3.0
+            order.append("pipeline_wrote")
+            pipeline_holds_lock.set()
+            await asyncio.sleep(0.2)  # hold the write lock while the monitor contends
+            await session.commit()
+            order.append("pipeline_committed")
+
+    async def monitor_reprice_append() -> None:
+        await pipeline_holds_lock.wait()
+        # The monitor's only reprice-path write: an append-only ENTRY_REPRICED event.
+        append = make_entry_window_reprice_event_append(monitor_factory)
+        await append("ord-entry-1", price("99.50"), "broker-uuid-reprice-1", "entry_window_reprice")
+        order.append("monitor_appended")
+
+    try:
+        # No SQLITE_BUSY_SNAPSHOT (or any OperationalError) is raised.
+        await asyncio.gather(pipeline_write(), monitor_reprice_append())
+        async with monitor_factory() as sess:
+            events = (
+                (
+                    await sess.execute(
+                        select(BrokerEventLogRow).where(
+                            BrokerEventLogRow.event_type == "ENTRY_REPRICED"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            pos_row = (
+                await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+            ).scalar_one()
+    finally:
+        await monitor_engine.dispose()
+        await pipeline_engine.dispose()
+
+    # Both writers' effects are durable; the monitor's append serialized behind the
+    # pipeline's lock rather than racing it.
+    assert order[0] == "pipeline_wrote"
+    assert "monitor_appended" in order
+    assert len(events) == 1
+    assert pos_row.realized_pnl_to_date_usd == 3.0

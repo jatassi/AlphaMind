@@ -32,6 +32,7 @@ from typing import Protocol, runtime_checkable
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.continuous_monitor.entry_window.canceller import (
     EntryWindowDeadlineOutcome,
+    EntryWindowSessionMemory,
 )
 from alphamind.execution.continuous_monitor.entry_window.repricer import (
     EntryWindowDeadlineHandler,
@@ -72,15 +73,17 @@ async def _run_entry_window_cycle(
     handler: EntryWindowDeadlineHandler,
     now: datetime,
     fired: set[str],
+    reprice_memory: EntryWindowSessionMemory,
 ) -> None:
     """One inspection-cycle pass — public for testability.
 
     Hands each ``PENDING_ENTRY`` bracket whose ``entry_window_deadline`` is
     strictly before ``now`` and that has not already terminally fired this
-    session to the handler (reprice/escalate, else cancel). A per-bracket
-    failure is logged and skipped so one bad bracket never stalls the others
-    (the run-forever loop's catch is a backstop for programming bugs, mirroring
-    ``bracket_stops``).
+    session to the handler (reprice/escalate, else cancel), threading the
+    per-session ``reprice_memory`` so the handler reads the reprice loop bound +
+    the current broker id across cycles (ALP-867). A per-bracket failure is logged
+    and skipped so one bad bracket never stalls the others (the run-forever loop's
+    catch is a backstop for programming bugs, mirroring ``bracket_stops``).
     """
     del config  # cadence consumed by the run-forever loop; kernel is per-cycle
     brackets = await bracket_reader.get_pending_entry_brackets()
@@ -95,7 +98,7 @@ async def _run_entry_window_cycle(
             # instead of stalling the whole cycle.
             if deadline is None or now <= deadline:
                 continue
-            outcome = await handler.handle(bracket=bracket, now=now)
+            outcome = await handler.handle(bracket=bracket, now=now, reprice_memory=reprice_memory)
         except Exception:
             log.exception(
                 "entry_window: handler raised for bracket %s; retrying next cycle",
@@ -131,10 +134,14 @@ async def run_entry_window_watcher(
     per-session memory of which bracket has already terminally fired so a read of
     the still-``PENDING_ENTRY`` row before the next reconciliation does NOT
     re-fire (a REPRICED bracket is intentionally left out so it is re-evaluated
-    next cycle).
+    next cycle). Beside it, ``reprice_memory`` holds each bracket's in-session
+    reprice count (the loop bound) + current broker id (the cancel target after a
+    reprice), since the order row's ``modification_count`` / ``alpaca_order_id`` now
+    lag until the pipeline projects the ``ENTRY_REPRICED`` events (ALP-867).
     """
     del session  # session id is not woven into the cancel reason (no trigger id)
     fired: set[str] = set()
+    reprice_memory = EntryWindowSessionMemory()
     async for _ in loop():
         try:
             await _run_entry_window_cycle(
@@ -143,6 +150,7 @@ async def run_entry_window_watcher(
                 handler=handler,
                 now=now(),
                 fired=fired,
+                reprice_memory=reprice_memory,
             )
         except asyncio.CancelledError:
             raise

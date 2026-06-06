@@ -16,19 +16,23 @@ branches:
    bracket — never reprice or cancel a filled entry).
 3. broker id still absent (un-routed — ``alpaca_order_id is None``, ALP-847) →
    ``FAILED`` (retry once acked).
-4. not a repriceable equity limit, **or** ``modification_count`` has reached the
-   reprice budget → delegate to the terminal :class:`EntryWindowCanceller`
-   (cancel + ALP-739 no-fill alert). ``modification_count`` is the loop bound:
-   each successful reprice increments it (Alpaca cancel-and-replace), so the
-   escalation cannot chase the market indefinitely.
+4. not a repriceable equity limit, **or** the per-session reprice count has
+   reached the reprice budget → delegate to the terminal
+   :class:`EntryWindowCanceller` (cancel + ALP-739 no-fill alert). The loop bound
+   is the count held in :class:`EntryWindowSessionMemory` (ALP-867): seeded once
+   from the order row's durable ``modification_count`` so a process restart
+   respects the budget already spent + projected, then incremented in-session per
+   confirmed replace — because the order row's ``modification_count`` now lags
+   until the pipeline projects the ``ENTRY_REPRICED`` events. So the escalation
+   cannot chase the market indefinitely.
 5. otherwise → fetch the live touch and price a marketable limit. If that price
    would invert the bracket geometry (the market moved past the analyst's
    take-profit / stop) → delegate to the terminal cancel. Otherwise
-   cancel-and-replace at the broker and run the non-terminal Phase-2 reprice
-   writeback (``persist_entry_window_reprice``) → ``REPRICED`` (re-evaluated next
-   cycle).
+   cancel-and-replace at the broker, record the new id + bumped count in session
+   memory, and append the append-only ``ENTRY_REPRICED`` event (no order-row
+   writeback — ALP-867) → ``REPRICED`` (re-evaluated next cycle).
 
-The loop always terminates: a successful reprice increments ``modification_count``
+The loop always terminates: a successful reprice increments the session count
 toward the budget (then step 4 cancels), a geometry-inverting market cancels, and
 a successful marketable fill resolves to ``SKIPPED_FILLED`` next cycle. A *broker
 error* on the replace (transient gateway failure, or a 404/422 that most likely
@@ -59,6 +63,7 @@ from alphamind.execution.broker_adapter.entry_pricing import (
 from alphamind.execution.continuous_monitor.entry_window.canceller import (
     EntryWindowCanceller,
     EntryWindowDeadlineOutcome,
+    EntryWindowSessionMemory,
 )
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
@@ -87,6 +92,10 @@ class RepriceTarget:
     the fill-stream consumer ahead of reconciliation. ``alpaca_order_id`` is
     ``None`` for a not-yet-routed entry (ALP-847 deleted the synthetic ``alp-``
     placeholder) — the repricer retries rather than acting on a missing broker id.
+    ``modification_count`` is the order row's durable reprice count; since ALP-867
+    relocated the reprice writeback to the pipeline it lags between projections, so
+    it is read **only to seed** :class:`EntryWindowSessionMemory` on first encounter
+    — the in-session count is the live loop bound thereafter.
     """
 
     alpaca_order_id: AlpacaOrderId | None
@@ -107,8 +116,12 @@ type RepriceTargetResolver = Callable[[str], Awaitable[RepriceTarget | None]]
 # dissolve of a freshly-filled bracket (ALP-740 review). Geometry inversions are
 # caught pre-flight, so they never reach the broker.
 type BrokerReplace = Callable[[AlpacaOrderId, Price], Awaitable[AlpacaOrderId | None]]
-# (entry_order_id, new_limit, new_alpaca_order_id, reason) → run the Phase-2 reprice writeback.
-type RepriceWriteback = Callable[[str, Price, str, str], Awaitable[None]]
+# (entry_order_id, new_limit, new_alpaca_order_id, reason) → append the append-only
+# ``ENTRY_REPRICED`` event (idempotent on its event_key). The monitor no longer writes
+# the order row (ALP-867); the pipeline projects the event onto limit/id/mod-count +
+# reservation. This is the only DB touch the reprice path makes, and it is an append —
+# never an RMW on a shared row — so the SQLITE_BUSY_SNAPSHOT race stays unreachable.
+type EntryRepriceEventAppend = Callable[[str, Price, str, str], Awaitable[None]]
 
 
 def _leg_threshold(legs: tuple[BracketLeg, ...], leg_type: BracketLegType) -> float | None:
@@ -154,7 +167,7 @@ class EntryWindowDeadlineHandler(Protocol):
     """The seam the watcher cycle fires on an expired ``PENDING_ENTRY`` bracket."""
 
     async def handle(
-        self, *, bracket: BracketRecord, now: datetime
+        self, *, bracket: BracketRecord, now: datetime, reprice_memory: EntryWindowSessionMemory
     ) -> EntryWindowDeadlineOutcome: ...
 
 
@@ -171,12 +184,14 @@ class BrokerEntryWindowRepricer:
     resolve_target: RepriceTargetResolver
     quote_source: QuoteSource
     broker_replace: BrokerReplace
-    reprice_writeback: RepriceWriteback
+    append_event: EntryRepriceEventAppend
     canceller: EntryWindowCanceller
     max_reprice_count: int
     bps_through_touch: float
 
-    async def handle(self, *, bracket: BracketRecord, now: datetime) -> EntryWindowDeadlineOutcome:
+    async def handle(
+        self, *, bracket: BracketRecord, now: datetime, reprice_memory: EntryWindowSessionMemory
+    ) -> EntryWindowDeadlineOutcome:
         target = await self.resolve_target(bracket.entry_order_id)
         if target is None:
             log.error(
@@ -197,14 +212,33 @@ class BrokerEntryWindowRepricer:
                 bracket.bracket_id,
             )
             return EntryWindowDeadlineOutcome.FAILED
-        if not target.is_equity_limit or target.modification_count >= self.max_reprice_count:
+        # Seed the per-session reprice count from the order row's durable
+        # ``modification_count`` on first encounter; the in-session count is the
+        # loop bound thereafter (the row lags until the pipeline projects the
+        # ``ENTRY_REPRICED`` events, ALP-867).
+        reprice_memory.seed_if_absent(
+            bracket.bracket_id, durable_reprice_count=target.modification_count
+        )
+        if (
+            not target.is_equity_limit
+            or reprice_memory.reprice_count(bracket.bracket_id) >= self.max_reprice_count
+        ):
             # Not a repriceable equity limit, or the escalation budget is spent —
             # fall back to the terminal cancel (fires ALP-739's no-fill alert).
-            return await self.canceller.cancel(bracket=bracket, now=now)
-        return await self._reprice(bracket=bracket, target=target, now=now)
+            return await self.canceller.cancel(
+                bracket=bracket, now=now, reprice_memory=reprice_memory
+            )
+        return await self._reprice(
+            bracket=bracket, target=target, now=now, reprice_memory=reprice_memory
+        )
 
     async def _reprice(
-        self, *, bracket: BracketRecord, target: RepriceTarget, now: datetime
+        self,
+        *,
+        bracket: BracketRecord,
+        target: RepriceTarget,
+        now: datetime,
+        reprice_memory: EntryWindowSessionMemory,
     ) -> EntryWindowDeadlineOutcome:
         # _reprice is reached only past the un-routed guard in ``handle`` — a
         # repriceable equity limit is, by construction, already broker-routed.
@@ -238,7 +272,9 @@ class BrokerEntryWindowRepricer:
                 new_limit,
                 bracket.bracket_id,
             )
-            return await self.canceller.cancel(bracket=bracket, now=now)
+            return await self.canceller.cancel(
+                bracket=bracket, now=now, reprice_memory=reprice_memory
+            )
         new_alpaca_id = await self.broker_replace(target.alpaca_order_id, new_limit)
         if new_alpaca_id is None:
             # Transient gateway failure, or a 404/422 that most likely means the
@@ -250,14 +286,23 @@ class BrokerEntryWindowRepricer:
                 bracket.bracket_id,
             )
             return EntryWindowDeadlineOutcome.FAILED
-        await self.reprice_writeback(
-            bracket.entry_order_id, new_limit, new_alpaca_id, _REPRICE_REASON
+        # Record the new broker id + bumped count in session memory BEFORE the
+        # durable append: the cancel-and-replace already happened at the broker, so
+        # a terminal cancel this session must target the *new* id (the canceller
+        # reads ``current_alpaca_order_id``) even if the append below fails. Then
+        # append the append-only ``ENTRY_REPRICED`` event — the monitor writes NO
+        # order row (ALP-867); the pipeline projects limit / id / modification_count
+        # + the reservation from the event. This is the reprice path's only DB
+        # touch, and it is an append, never an RMW on a shared row.
+        new_count = reprice_memory.record_reprice(
+            bracket.bracket_id, new_alpaca_order_id=new_alpaca_id
         )
+        await self.append_event(bracket.entry_order_id, new_limit, new_alpaca_id, _REPRICE_REASON)
         log.info(
             "entry_window: repriced bracket %s entry to marketable %s (reprice #%d)",
             bracket.bracket_id,
             new_limit,
-            target.modification_count + 1,
+            new_count,
         )
         return EntryWindowDeadlineOutcome.REPRICED
 
@@ -265,8 +310,8 @@ class BrokerEntryWindowRepricer:
 __all__ = [
     "BrokerEntryWindowRepricer",
     "BrokerReplace",
+    "EntryRepriceEventAppend",
     "EntryWindowDeadlineHandler",
     "RepriceTarget",
     "RepriceTargetResolver",
-    "RepriceWriteback",
 ]
