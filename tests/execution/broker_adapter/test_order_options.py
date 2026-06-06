@@ -368,20 +368,19 @@ def test_build_occ_symbol_root_padding(ticker: str, expected_root: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_submit_options_open_market_constructs_request_with_occ_symbol() -> None:
-    """A market entry produces a MarketOrderRequest with the OCC-21 symbol,
+async def test_submit_options_open_constructs_request_with_occ_symbol() -> None:
+    """An options OPEN produces a request carrying the OCC-21 symbol,
     qty=position_size.quantity, side=BUY (long), DAY TIF, SIMPLE class, and the
-    supplied client_order_id.
+    supplied client_order_id; the OptionsSubmission payload mirrors the OCC symbol.
 
-    ALP-866 rejects a *market* options OPEN at the command boundary, but
-    ``order_options.py`` retains its ``market → MarketOrderRequest`` mapping
-    unchanged (the branch is simply unreachable via a validated ``OpenCommand``).
-    This test bypasses the command-boundary validator with ``model_construct`` so
-    that retained broker-adapter branch stays under test.
+    Entry type is incidental to the OCC/symbol/side/class wiring asserted here, so
+    the constructible resting (limit) entry is used (ALP-866 forbids a market
+    options OPEN). The ``market → MarketOrderRequest`` mapping in
+    ``order_options._build_request`` is exercised separately by
+    ``test_submit_options_add_constructs_simple_market_request`` — an options ADD
+    carries no capital floor, so a market entry is valid (and still reached) there.
     """
-    command = OpenCommand.model_construct(
-        **{**_open_options_command().__dict__, "entry_order": EntryOrder(type="market")}
-    )
+    command = _open_options_command()
     client, captured = _capturing_client()
 
     outcome = await submit_options_open(
@@ -398,7 +397,6 @@ async def test_submit_options_open_market_constructs_request_with_occ_symbol() -
     assert outcome.payload.client_order_id == _VALID_PM_COMMAND_ID
 
     [request] = captured
-    assert isinstance(request, MarketOrderRequest)
     assert request.symbol == "NVDA  240315C00800000"
     assert request.qty == 5.0
     assert request.side is OrderSide.BUY

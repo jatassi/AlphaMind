@@ -582,9 +582,11 @@ class OpenCommand(BaseModel):
         # broker-boundary redesign targets). Constraining the entry to rest
         # (limit / stop_limit) keeps it cancellable until the floor lands, so a
         # market options entry is rejected at the command boundary — the single
-        # enforcement chokepoint (broker_dispatch / order_options are unchanged;
-        # their market branch becomes unreachable for an options OPEN). Equity
-        # OPENs are unaffected: the native bracket protects a market equity entry.
+        # enforcement chokepoint (broker_dispatch / order_options are unchanged).
+        # The order_options ``market`` branch becomes unreachable for an options
+        # OPEN, but stays live for an options ADD (which carries no capital floor,
+        # so no fill-before-floor race) — it is not dead code. Equity OPENs are
+        # unaffected: the native bracket protects a market equity entry.
         is_options = isinstance(self.instrument, OptionInstrument | StrategyInstrument)
         if is_options and self.entry_order.type == "market":
             raise ValueError(

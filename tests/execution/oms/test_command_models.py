@@ -721,12 +721,15 @@ class TestCapitalProtectionFloor:
 
     def test_strategy_open_requires_floor(self) -> None:
         # The mandatory floor is options-scoped — a multi-leg strategy is an
-        # options position too, so a floorless strategy OPEN is rejected.
+        # options position too, so a floorless strategy OPEN is rejected. Use a
+        # resting entry so the floor is the *only* violation: a market entry would
+        # also fail (ALP-866), and which error surfaces would then depend on
+        # validator declaration order rather than the floor invariant under test.
         with pytest.raises((ValueError, TypeError)) as exc_info:
             OpenCommand(
                 command_type="open",
                 instrument=_strategy_instrument(),
-                entry_order=_entry_order_market(),
+                entry_order=_entry_order_limit(),
                 position_size=_position_size(),
                 target=Target(
                     target_type="pl_percentage",
