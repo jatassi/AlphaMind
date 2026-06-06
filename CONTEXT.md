@@ -4,6 +4,22 @@ Canonical vocabulary for how AlphaMind relates to the external broker. This is a
 glossary, not a spec — it fixes the words so both the architecture conversation and the
 code stay precise about *who owns which fact*.
 
+## Invocation lifecycle
+
+**Fill collection**:
+The invocation's opening write — AlphaMind brings its Projection level with the broker's
+settled facts before deliberating, draining the unprocessed fills (and corporate-action
+activities) the continuous monitor buffered since the last run and integrating each into
+positions / orders / brackets / theses / cash / drawdown. Deliberation then runs on
+settled state with no in-flight orders.
+_Avoid_: phase 1, phase1, collect phase (ordinal labels naming *when*, not *what*)
+
+**Command execution**:
+The invocation's closing write — the portfolio manager's issued commands are validated
+against guardrails and enacted at the broker, each command's mutations made durable on
+their own so a mid-batch failure cannot unwind the commands already executed.
+_Avoid_: phase 2, phase2, execute phase
+
 ## Broker boundary
 
 **System of Record**:
