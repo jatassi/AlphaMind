@@ -45,6 +45,24 @@ def test_strategist_prompt_path_exists() -> None:
     assert prompt_path.read_text().strip()
 
 
+def _load_entry(name: AgentName) -> BaseAgentConfig:
+    raw = cast(dict[str, Any], yaml.safe_load(AGENTS_YAML.read_text()))
+    config = AgentsConfig.model_validate(raw)
+    return config.agents[name]
+
+
+def test_domain_researcher_latency_budgets() -> None:
+    """tech_semis is bumped to 1200s (ALP-839); financials/energy stay at 900s.
+
+    A named field-level assertion so a regression back to 900 — or an
+    accidental bump of the siblings — surfaces as a readable failure rather
+    than only as an opaque resolved-config snapshot-hash drift.
+    """
+    assert _load_entry(AgentName.tech_semis_researcher).latency_budget_seconds == 1200
+    assert _load_entry(AgentName.financials_researcher).latency_budget_seconds == 900
+    assert _load_entry(AgentName.energy_researcher).latency_budget_seconds == 900
+
+
 def test_strategist_tools_contract() -> None:
     """`tools` matches the three-tool contract from the strategist design doc.
 

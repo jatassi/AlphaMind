@@ -117,7 +117,17 @@ agents:
     # ~70k chars as the collector accumulated data; the heaviest researcher
     # consistently overruns the 600s budget. Underlying bundle-size drift
     # tracked separately.
-    latency_budget_seconds: 900
+    # 2026-06-05 (ALP-839): bumped 900→1200, matching the adaptive precedent.
+    # tech_semis carries the largest roster (40 tickers) and *successful* runs
+    # already land at 750–888s against the 900s budget (~2% headroom), so any
+    # perturbation tips it over. Paired with the structural cure — distillation
+    # now compresses non-calibrated sector-indicator blocks (~95% of the
+    # bootstrap-period bundle) to one summary line each — which removes the
+    # underlying bundle-size driver, so this bump aims to retire the treadmill
+    # rather than extend it. Scope to tech_semis only: financials
+    # peaks ~760s and energy ~420s, both clear of 900. Supersedes the
+    # market_hours_rolling.yaml top-N-anomaly-cap follow-up (wrong lever).
+    latency_budget_seconds: 1200
     context_token_budget: 8000
     # Sonnet 4.6 extended thinking dominates output; observed actuals across
     # recent end-to-end runs range 8.5K–24.7K across the three sectors

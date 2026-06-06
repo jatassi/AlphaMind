@@ -26,9 +26,13 @@ agents:
       # passed). Clean market-hours runs already brush the ceiling (821.7s on
       # 2026-05-28). Raised to 1200s for ~30% headroom on high-anomaly days;
       # the subprocess parent-side kill auto-tracks this (+30s slack) and the
-      # worker teardown cap is already 1200s. Follow-ups (not in this change):
-      # pre_close + weekend_sunday share the same marginal base; a top-N cap on
-      # adaptive anomaly inputs would bound the synthesis workload at the source.
+      # worker teardown cap is already 1200s.
+      # 2026-06-05 (ALP-839): the earlier "top-N anomaly cap" follow-up named the
+      # wrong lever. For the *sector* researchers the bundle driver is per-ticker
+      # sector-indicator rendering, not anomaly count — addressed by ALP-839
+      # (non-calibrated-block compression + the tech_semis 900→1200s bump in
+      # config/agents.yaml). The *adaptive* researcher's anomaly-input discipline
+      # is owned by ALP-706 (severity-aware triage), not a top-N cap here.
       latency_budget_seconds: 1200
 
 qualitative_researcher:

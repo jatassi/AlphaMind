@@ -296,7 +296,14 @@ def assemble_sector_output(
     universal_text = format_blocks_for_audience(
         universal_blocks, OutputAudience.UNIVERSAL_BROADCAST
     )
-    sector_text = format_blocks_for_audience(sector_blocks, audience)
+    # SECTOR INDICATORS is the only slice that compresses non-calibrated blocks
+    # (ALP-839): a block whose baseline isn't built or whose series is missing
+    # cannot fire, yet its full per-ticker table dominates the bundle and pins
+    # the heaviest researcher (tech_semis, 40 tickers) at the latency ceiling.
+    # The compression is self-limiting — blocks render in full again as they
+    # calibrate. Universal context, the anomaly summary, and the CR brief are
+    # deliberately left at full fidelity.
+    sector_text = format_blocks_for_audience(sector_blocks, audience, compress_non_calibrated=True)
 
     body_parts = [
         _format_header(

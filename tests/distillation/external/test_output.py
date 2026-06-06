@@ -183,6 +183,96 @@ def test_format_per_ticker_renders_compact_one_line_per_ticker() -> None:
     assert "  NVDA:" not in rendered
 
 
+def test_compress_non_calibrated_collapses_accumulating_per_ticker_table() -> None:
+    """An ACCUMULATING per-ticker block collapses to one summary line under the flag.
+
+    The full per-ticker dump (the size driver per ALP-839) is replaced by a
+    single line naming the affected ticker count; the header still carries the
+    block id, state, and reason so the researcher knows the indicator exists.
+    """
+    block = _make_block(
+        block_id="q1.technicals",
+        calibration_state=CalibrationState.ACCUMULATING,
+        bootstrap_reason="atr_baseline: 3 < 14",
+        payload={
+            "per_ticker": {
+                "NVDA": {"rsi": 60.0, "macd_state": "bullish"},
+                "AAPL": {"rsi": 55.0, "macd_state": "bearish"},
+            },
+        },
+    )
+    rendered = format_block(block, compress_non_calibrated=True)
+    # Header is preserved: block id, state, reason all present.
+    assert rendered.startswith(
+        "### q1.technicals | freshness 2026-04-27T14:30:00+00:00"
+        " | accumulating — reason: atr_baseline: 3 < 14"
+    )
+    # The full per-ticker table is gone; a summary line with the ticker count
+    # stands in its place.
+    assert "per_ticker:" not in rendered
+    assert "NVDA macd_state=bullish rsi=60" not in rendered
+    assert "AAPL macd_state=bearish rsi=55" not in rendered
+    assert "2 tickers" in rendered
+
+
+def test_compress_non_calibrated_is_byte_identical_for_calibrated_block() -> None:
+    """The flag never touches CALIBRATED blocks — they render in full either way."""
+    block = _make_block(
+        block_id="q1.technicals",
+        calibration_state=CalibrationState.CALIBRATED,
+        payload={"per_ticker": {"NVDA": {"rsi": 60.0}, "AAPL": {"rsi": 55.0}}},
+    )
+    assert format_block(block, compress_non_calibrated=True) == format_block(block)
+
+
+def test_compress_non_calibrated_off_renders_non_calibrated_table_in_full() -> None:
+    """With the flag off (the default), a non-calibrated block keeps its full table.
+
+    Guards the opt-in contract: every call site that does not request
+    compression — the universal context, the CR brief, the regime archive —
+    is byte-identical to before ALP-839.
+    """
+    block = _make_block(
+        block_id="q1.technicals",
+        calibration_state=CalibrationState.ACCUMULATING,
+        bootstrap_reason="atr_baseline: 3 < 14",
+        payload={"per_ticker": {"NVDA": {"rsi": 60.0}, "AAPL": {"rsi": 55.0}}},
+    )
+    rendered = format_block(block)
+    assert rendered == format_block(block, compress_non_calibrated=False)
+    assert "per_ticker:" in rendered
+    assert "NVDA rsi=60" in rendered
+
+
+def test_compress_non_calibrated_summarizes_unavailable_block_without_per_ticker() -> None:
+    """An UNAVAILABLE block carrying no per-ticker dimension summarizes as payload-omitted."""
+    block = _make_block(
+        block_id="q3.flow_classification",
+        calibration_state=CalibrationState.UNAVAILABLE,
+        bootstrap_reason="options_snapshots: 0 < 1 (0 observations)",
+        payload={"status": "no options snapshots", "detail": {"reason": "vendor outage"}},
+    )
+    rendered = format_block(block, compress_non_calibrated=True)
+    assert "| unavailable — reason: options_snapshots: 0 < 1 (0 observations)" in rendered
+    assert "(non-calibrated — payload omitted)" in rendered
+    assert "vendor outage" not in rendered
+
+
+def test_compress_non_calibrated_drops_per_block_anomaly_trailer() -> None:
+    """A compressed block drops its per-block anomaly trailer — flags ride the upstream summary."""
+    block = _make_block(
+        block_id="q1.technicals",
+        calibration_state=CalibrationState.ACCUMULATING,
+        bootstrap_reason="atr_baseline: 3 < 14",
+        payload={"per_ticker": {"NVDA": {"rsi": 60.0}}},
+        anomaly_flags=(
+            AnomalyFlag(name="rsi_extreme", magnitude=2.5, severity="investigate_if_persists"),
+        ),
+    )
+    rendered = format_block(block, compress_non_calibrated=True)
+    assert "Anomaly flags" not in rendered
+
+
 def test_format_blocks_for_audience_filters_and_orders_by_block_id() -> None:
     """Filter to membership in audience, then sort by block_id ascending."""
     # Construct a multi-audience fixture. The blocks intentionally arrive in a
