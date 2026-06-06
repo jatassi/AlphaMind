@@ -18,6 +18,7 @@ node_modules/
 .env
 .claude/scheduled_tasks.lock
 .claude/worktrees/
+.claude/agent-memory-local/
 docs/design/01-data-layer/api-keys.md
 
 # Runtime artifacts (created at %USERPROFILE%\AlphaMind\ — collides with repo root on this machine)

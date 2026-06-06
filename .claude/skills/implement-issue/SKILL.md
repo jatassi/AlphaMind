@@ -1,6 +1,6 @@
 ---
 name: implement-issue
-description: Use to implement a single Linear issue end-to-end — read the issue, take a feature branch, implement via TDD, run `code-review`, address feedback, open a PR, run `/review`, address feedback, land. Triggers on `/implement-issue ALP-XXX` and operator phrases like "implement ALP-525", "ship ALP-525", "land ALP-525", "do ALP-525", "build out ALP-525", "fix ALP-525". Requires the issue body to be implementation-ready (actionable spec with Scope + Acceptance criteria). Do NOT use for parent feature Issues — use `/orchestrate`. Do NOT use for issues without a spec or for multi-issue work.
+description: Use to implement a single Linear issue end-to-end — read the issue, take a feature branch, implement via TDD, run `code-review`, address feedback, open a PR, run `/review`, address feedback, land. Triggers on `/implement-issue ALP-XXX` and operator phrases like "implement ALP-525", "ship ALP-525", "land ALP-525", "do ALP-525", "build out ALP-525", "fix ALP-525". Requires the issue body to be implementation-ready per `docs/agents/implementation-ready-issue.md` (a spec with Scope + Acceptance criteria); if it isn't yet, run `/refine-issue ALP-XXX` first. Do NOT use for parent feature Issues — use `/orchestrate`. Do NOT use for issues without a spec (refine them first) or for multi-issue work.
 ---
 
 # Implement a single Linear issue
@@ -33,6 +33,7 @@ Surface and confirm before proceeding if:
 - Status is `In Progress` (another session may be working it).
 - `blockedBy` non-empty with at least one blocker not `Done`.
 - The issue has children (it's a parent Issue) — stop, suggest `/orchestrate <Feature>`.
+- The body isn't implementation-ready per `docs/agents/implementation-ready-issue.md` (no Scope or Acceptance criteria, unresolved open decisions, a `Surface to operator` gate, or a reported-but-uninvestigated prod bug) — stop, suggest `/refine-issue <id>`. Don't implement against guesses.
 
 ### 2. Enter a worktree on the feature branch
 
@@ -57,7 +58,7 @@ Run every subsequent command — and every file read below — from inside the w
 
 From inside the worktree, read the body end-to-end. Then read every file in the Reading list end-to-end.
 
-Pause and surface if:
+Pause and surface if (in each case, `/refine-issue <id>` is the fix — it sharpens the spec to ready before you build):
 
 - The spec has unresolved gaps (e.g., a `Surface to operator` gate).
 - Acceptance criteria reference symbols or files that don't exist.
@@ -288,6 +289,10 @@ Four sections, in order, each with this exact heading:
 - **What should now be improved.** The functional upside of this change — what the system should now do better as a result. Frame in terms of observable behavior (e.g., "X no longer mis-classifies Y", "downstream consumers of Z now get a non-null signal"), not implementation details.
 
 A handful of sentences per section. Brevity beats completeness — the operator can read the diff for detail.
+
+## In-flight discoveries
+
+While implementing, it's likely that you may discover latent bugs, missing wiring, duplicative implementations, dead code, or other anomalies. These discoveries may or may not block or complicate your scope of work. If a discovery does block or complicate your work, **stop and report it, do not attempt to work around it**. Even if the discovery doesn't directly affect your work, **you must report it upon completion**.
 
 ## Boundaries
 

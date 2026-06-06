@@ -13,11 +13,9 @@ The output of a successful run is a Linear work tree that an agent can pick up v
 
 You — the conversation thread the operator is in — must do the gathering and drafting yourself. Do not spawn `Agent(...)` calls of any subagent type for any phase of this skill.
 
-**Why:** Drafting good user stories requires holding the whole feature's design + the up/downstream contracts + the dependency graph + the parallelism shape simultaneously. That synthesis collapses when fragmented across subagents — each one re-reads partial context, redrafts the dependency graph from scratch, and produces stories that don't compose. The orchestrator-level coherence is the value here, and it lives only in the thread that read everything in order.
+**Why:** drafting requires holding the whole design + up/downstream contracts + dependency graph + parallelism shape at once. Fragmented across subagents, that synthesis collapses — each re-reads partial context and produces stories that don't compose. The coherence is the value, and it lives only in the thread that read everything in order.
 
-**How to apply:** When the work feels heavy and you reach for `Agent`, instead read the next file yourself. If you genuinely run out of context, surface that to the operator and pause — do not paper over it with delegation.
-
-The Explore agent for *finding* a file you can't locate by name is fine — that's a lookup, not delegation of judgment. The line is: you may delegate searches; you must not delegate reading, synthesis, or drafting.
+When the work feels heavy and you reach for `Agent`, read the next file yourself instead; if you genuinely run out of context, surface it and pause. The Explore agent for *finding* a file by name is fine — you may delegate searches, never reading, synthesis, or drafting.
 
 ## Inputs
 
@@ -34,7 +32,7 @@ Locate the feature's design/architecture docs (search `docs/design/` and `docs/a
 - The **section** it lives under (e.g., "Risk guardrails", "Analysis layer") — this maps to the Linear Project (see [Linear specifics](#linear-specifics)). The design docs live under `docs/design/<section>/`, so the section is usually evident from the doc path.
 - The **design/architecture doc paths** for the feature — typically one or more files under `docs/design/<section>/` and possibly `docs/architecture/`. Capture every path.
 
-**Then verify the feature's drafting status against the as-built code.** Per memory `feedback_verify_backlog_prose`, backlog prose can lag the codebase — especially when sibling features have implemented typed records or utilities ahead of their owning feature being formally drafted (canonical example: Portfolio state ALP-53 shipped `PositionRecord`, `ThesisRecord`, `OrderRecord`, `BracketRecord` under `portfolio_state/records/` long before "Position & thesis model" was drafted, despite ~279 import sites already consuming the records). Open the design doc just long enough to extract the primary typed records or named functions it claims to ship, then grep for them across `src/` and `tests/` (e.g., `grep -rln <RecordName> src/ tests/`). If substantial hits exist outside the feature's own scaffolded directories, the as-built has diverged from the design intent. Surface the divergence to the operator *before* reading the design docs end-to-end — present it as a shape question (typical options: "mark as already done; close parent issue", "add the small remainders only — N stories", "move-to-canonical-home refactor"). The operator's answer determines whether you do a full Phase 2 + decomposition or a much smaller one. Skipping this check costs ~20 minutes of context-building per feature when the answer turns out to be "remainders only" or "already done".
+**Then verify the feature's drafting status against the as-built code.** Backlog prose can lag the codebase — a sibling feature often ships typed records ahead of its owning feature being drafted (Portfolio state shipped `PositionRecord`, `ThesisRecord`, etc. under `portfolio_state/records/` long before "Position & thesis model" was drafted, with ~279 import sites already consuming them). Extract the primary records / functions the design doc claims to ship and grep them across `src/` and `tests/`. If substantial hits exist outside the feature's own scaffolded directories, the as-built has diverged — surface it to the operator as a shape question (typical options: already-done / close parent; add the remainders only; move-to-canonical-home refactor) *before* reading the design docs end-to-end. The answer determines whether you do a full Phase 2 + decomposition or a much smaller one.
 
 Then check Linear for an existing parent Issue:
 
@@ -108,17 +106,7 @@ Don't worry about ordering or naming conventions yet — those happen in Phase 5
 
 Anchor the Scope sections of subsequent stories to the brief's concrete names — a story's "produces `PositionRecord` with these fields" is far more useful to a dispatched subagent than "introduces a position record". When the brief surfaces a hardest-to-reverse decision the design doc hasn't settled, add it to your Phase 6 open-decisions list. Skill invocation runs in your thread (no Agent dispatch), compatible with the no-delegation rule. Skip design mode when the feature is small, purely additive to an existing module, or already fully specified at the type level by its design doc.
 
-**E2E verification: default to no per-feature verify story.** ALP-502 retired the legacy per-feature verify suite (`verify_pm.py`, `verify_synthesizer.py`, …); the single e2e gate is now `scripts/verify_debug_e2e.py`, which subprocesses `python -m alphamind.scheduler run --debug-e2e` and asserts the full 12-phase pipeline against the synthetic portfolio + log-only broker. New features that compose into that pipeline automatically get covered when `verify_debug_e2e.py` next runs — no per-feature verify script, no per-feature RUNBOOK, no central-runbook insert needed.
-
-The default decomposition therefore omits the "verify + runbook" story entirely. Drop it unless one of these exceptions applies:
-
-- **Operator monitoring / data-invariant tools** (e.g., `verify_bootstrap.py` checks the snapshotted production DB; `verify_ongoing_collection.py` checks collector freshness; `verify_bootstrap_calibration_mix.py` checks calibration-state distribution). These run against operator-visible state, not the pipeline, so debug-e2e doesn't cover them. Ship a standalone script + dedicated runbook + tests.
-- **Offline pure-function verifiers** for type-layer-heavy features (canonical example: `verify_position_thesis_model.py` runs ~10s against the typed records with no SDK / no DB). The pipeline e2e exercises the records only incidentally; an offline verifier provides faster operator feedback on the type-layer invariants.
-- **Out-of-pipeline operator behavior** (CLI tools, ad-hoc operator commands, NSSM service install scripts). These have no pipeline path for debug-e2e to exercise.
-
-When one of these exceptions applies, the final story still lands `scripts/verify_<feature>.py` + `scripts/RUNBOOK_<feature>.md` (separate runbook, not folded into the central one). Its `blockedBy` list names every story whose deliverable the verify script must exercise. If you're unsure whether an exception applies, surface in Phase 6 — defaulting to "no verify story" is usually right.
-
-`scripts/RUNBOOK_end_to_end_verification.md` is the single central runbook for the e2e gate; new features do not insert sections into it. Updates to that file happen only when the debug-e2e flow itself changes (new phase, new SDK call site, new check helper) — that's a separate work tree, not a per-feature concern.
+**Operational runbook story.** Assess whether the feature changes production operational behavior — a service, the schedule, a port, an env var, a migration / bootstrap step, a CLI flag, a monitoring surface, or a new failure mode / gotcha. If so, add a final story that updates `scripts/RUNBOOK_production.md` (its Living-document rule keeps the runbook moving with the behavior), `blockedBy` every story whose operational change it documents so it lands last. Omit it for features with no operator-visible prod-runtime effect (pure internal logic, analysis / decision-layer changes, test-only work).
 
 ### Phase 5 — Order by dependency, name with parallelism convention
 
@@ -147,11 +135,7 @@ If your graph has the wrong shape (too sequential, or stories falsely marked par
 
 Before writing anything into Linear, surface the open decisions from your Phase 2 notes and resolve them with the operator in one batched exchange. Drafting-time decisions belong in drafting, not in story bodies as "Surface to operator before X" gates that bottleneck dispatch.
 
-**The test for drafting-time vs. dispatch-time:**
-
-A question is **drafting-time** if it can be answered without running code — config values, encoding choices (named constant vs. yaml-loaded), pipeline cadence, naming conventions, scope-boundary calls, scheduling shape, default behaviors, stub strategies for missing upstream features. Settle these now.
-
-A question is **dispatch-time** if it requires actual implementation discovery — schema drift between an upstream's expected and produced shape, a third-party API behavior the docs don't pin down, an algorithm that turns out to need an additional case the design didn't name. Leave these as Surfacing conditions in the parent issue and trust the orchestrator to escalate when they hit.
+**Drafting-time vs. dispatch-time** is the standard's cut: a question is drafting-time if it can be answered without running code (config values, encoding choices, cadence, naming, scope boundaries, stub strategies) — settle it now; it's dispatch-time only if it needs implementation discovery (schema drift, an unpinned third-party behavior, an algorithm case the design didn't name) — leave it as a Surfacing condition in the parent issue for the orchestrator to escalate.
 
 **Procedure:**
 
@@ -199,7 +183,7 @@ Run the cap-check script with that count:
 uv run python scripts/check_linear_cap.py --needed <needed> --json
 ```
 
-The script queries the Linear GraphQL API directly (key from the repo-root `.env`), paginates the whole workspace, and prints one JSON line — e.g. `{"active": 243, "cap": 250, "buffer": 7, "needed": 12, "margin": 2, "required": 14, "ok": false}`. It applies a 2-issue safety margin internally (`required = needed + margin`), so you pass only the raw `needed` count. Exit code mirrors `ok`: `0` = clear, `1` = cap risk, `2` = error. This replaces the old `mcp__linear-server__list_issues` probe, which dumped a large result to a temp file and could only report "≥ 250" once a page filled — the script returns an exact count.
+The script queries the Linear GraphQL API directly (key from the repo-root `.env`), paginates the whole workspace, and prints one JSON line — e.g. `{"active": 243, "cap": 250, "buffer": 7, "needed": 12, "margin": 2, "required": 14, "ok": false}`. It applies a 2-issue safety margin internally (`required = needed + margin`), so you pass only the raw `needed` count. Exit code mirrors `ok`: `0` = clear, `1` = cap risk, `2` = error.
 
 Decision:
 
@@ -245,9 +229,7 @@ Parent Issue description template (Markdown — fill the bracketed sections; rem
 
 ## Pre-resolved configuration decisions
 
-[Include this section iff Phase 6 produced resolved decisions. Omit entirely otherwise. Use bold-text paragraphs, NOT bullets — the Linear renderer drops bullet lists that follow a colon-ending paragraph or a heading-then-prose stanza, but bold-text paragraphs survive.]
-
-[**Inline-code-in-bold-prefix gotcha.** A bold prefix containing inline code, like `**(A) `code` rest of label.**`, is truncated by Linear's renderer at the first backtick — the closing `**` lands inside the inline-code span and the bold span ends prematurely. The label degrades to `**(A)** ` `code` ` rest of label. ...` (bold ends after the letter; the rest is plain prose). The content survives but the labeled-paragraph structure is degraded. To prevent: keep the bold prefix free of inline code (move backticks out of the bold span and into the following prose), OR phrase the label without the code reference.]
+[Include iff Phase 6 produced resolved decisions; omit otherwise. Use bold-text paragraphs, not bullets, and keep inline code out of the bold prefix — see the standard's render hazards.]
 
 The following choices were settled at drafting time and baked into the relevant stories. The orchestrator does not need to surface them at dispatch.
 
@@ -304,14 +286,14 @@ For each user story in dependency order:
 
 Work methodically — one story per `save_issue` call, verifying each lands before drafting the next. Do not batch.
 
-When you re-fetch a description you just wrote, the Linear renderer will have auto-converted naked issue references like `ALP-XXX` into `<issue id="...">ALP-XXX</issue>` tags. This is cosmetic and harmless — the rendered display is unchanged — but it means the round-tripped body is not byte-identical to what you sent. Don't chase the diff.
-
 After all sub-issues are created, do a final pass:
 
 - Verify every `blockedBy` edge from your dependency graph is wired (re-run `get_issue(id, includeRelations=true)` on a few stories and spot-check).
 - **Check for mid-flight commits to `main`.** Drafting takes 30–60 minutes; the codebase can move during that window. Run `git log <starting-sha>..main --oneline` (where `<starting-sha>` is whatever HEAD was at Phase 1 — capture it then if you anticipate a long session) or `git log --oneline -10` and look for any commits that landed since you started reading. For each new commit, run `git show --stat <sha>` and check whether its file changes overlap any path or symbol referenced in your stories' Reading lists, Scope sections, or coordinated-edit blocks. Common overlap patterns: a fix to a file your stories extend (typed-record edits, MCP-server wrappers, harness diagnostic surfaces); a sibling work tree shipping a typed record your story depends on; a refactor that renames a symbol your acceptance criteria mention. If overlap exists, surface to the operator with a one-line summary of each commit's impact and absorb the changes into affected stories *before* finalizing the work tree — Reading-list pointers, Scope deliverables, acceptance criteria, and the parent Issue's Pre-resolved decisions can all need touch-ups. The cost of catching this here is minutes; the cost of catching it after dispatch is a subagent diverging from a stale spec.
 
 ### User Story sub-issue template
+
+This template adds the greenfield-story specifics (Goal, Depends on, Out of scope, parallelism-aware naming) around the common Reading / Scope / Acceptance criteria / Verification sections defined in `docs/agents/implementation-ready-issue.md`. The semantics of those common sections, the writing rules (structural-not-numeric criteria, positive contracts, no invented names), and the Linear render mechanics live in the standard.
 
 The description body — Markdown, no frontmatter (status tracking lives in the file mirror, not the Linear description):
 
@@ -342,7 +324,7 @@ The description body — Markdown, no frontmatter (status tracking lives in the 
 
 In scope, all under `<src path>`. Tests at `<test path>`.
 
-[Editorial discipline: write the final shape, not your drafting process. Phrases like "Wait, this is a third method. Let me include it", "Actually, on second thought…", or "Let me consider…" are thinking-out-loud residue. They survive Linear's render and clutter the body for the agent picking it up. Edit them out before `save_issue`. Same applies to internal contradictions ("X is NOT in the API. … Implement X as a third method.") — converge to one positive statement.]
+[Editorial discipline (the standard's): write the final shape, not your drafting process — edit out thinking-out-loud residue and internal contradictions before `save_issue`.]
 
 ### 1. <First named deliverable>
 
@@ -380,15 +362,15 @@ Each acceptance criterion passes the **atomicity test**: it asserts one observab
 
 After every sub-issue is created and the Phase 7 final pass (every `blockedBy` wired, mid-flight commits absorbed) is done, take one more adversarial read through the whole tree — the parent and every sub-issue — before reporting. You are re-reading your own drafts, so read against the grain: hunt for the latitude you left yourself, not the intent you remember. A first draft routinely smuggles in a choice you deferred without noticing.
 
-Each issue must clear four bars. Fix in place with `save_issue` (description-only — never re-send `blockedBy`; it is append-only, per [`blockedBy` mechanics](#blockedby-mechanics)) and re-fetch to confirm the render, exactly as in Phase 7b.
+Each issue must clear the bar in `docs/agents/implementation-ready-issue.md`, applied here against the grain to every story. Fix in place with `save_issue` (description-only — never re-send `blockedBy`; it is append-only, per [`blockedBy` mechanics](#blockedby-mechanics)) and re-fetch to confirm the render, exactly as in Phase 7b.
 
-1. **Zero open design decisions.** No "e.g. X / Y", no "(or Z if cleaner)", no leaving a type's representation, a module's location, a public name, or an API's shape to the implementer when that choice ripples into sibling stories. Pin the concrete `module.py`, the concrete type/union and its fields, the concrete function name and signature, the concrete config key. If the drafter can settle it from the design docs + the code, it is a drafting-time decision — settle it now (the Phase 6 test).
+Three **tree-level** checks the standard's single-issue bar doesn't cover — apply them here because this pass sees the whole tree at once:
 
-2. **Zero scope ambiguities.** File ownership is crisp: state which files each story owns and hold one writer per file across the tree. Two stories editing the same `task.py` / `wiring.py` for different concerns is a conflict you pay at integration — resolve it by ownership (one story owns the file) or by a `blockedBy` edge that serialises them. No "appropriate", "as needed", or "a sensible default" standing in for a value or a boundary; every edge case the body names has a stated outcome.
+1. **One writer per file across the tree.** State which files each story owns and hold one writer per file. Two stories editing the same `task.py` / `wiring.py` for different concerns is a conflict you pay at integration — resolve it by ownership (one story owns the file) or a `blockedBy` edge that serialises them.
 
-3. **Zero hedging.** No A/B/C option forks, no "generalize or alias", no "e.g." offering latitude on a behavior. State the contract positively and singularly (the `feedback_no_decision_trails` discipline). The one legitimate exception is a genuine **dispatch-time** discovery — schema drift, a third-party behavior the docs don't pin, an algorithm case found only in implementation — which stays as a named **surfacing condition**, not a fork. The Phase 6 drafting-time-vs-dispatch-time test is the cut line: if it can be answered without running code, it may not remain a hedge.
+2. **Tree-wide vocabulary coherence.** A type, seam, module, config key, or error name pinned in its defining story is referenced by that exact name in every consuming story, and each consumer's Reading list points at the defining story. When this pass changes a pinned name in one story, propagate it to every sibling that references it — an inconsistent name across two stories is a scope ambiguity wearing a self-contained costume.
 
-4. **Fully self-contained with a Reading list.** Each issue is implementable by a fresh agent from its own body + Reading list (the fresh-agent test above). Crucially, **shared vocabulary must be coherent tree-wide**: a type, seam, module, config key, or error name pinned in its defining story is referenced by that exact name in every consuming story, and each consumer's Reading list points at the defining story. When the pass changes a pinned name in one story, propagate it to every sibling that references it — an inconsistent name across two stories is a scope ambiguity wearing a self-contained costume.
+3. **Sibling-rippling decisions are drafting-time.** A type's representation, a module's location, a public name, or an API's shape that ripples into sibling stories must be pinned now, not left to the implementer (the Phase 6 drafting-time-vs-dispatch-time test).
 
 Do this in-thread — the no-delegation rule holds, because coherence across the whole tree is exactly what the pass checks. If the pass surfaces a defect that changes a *decision* rather than its wording (e.g. a foundation story's API shape was underspecified in a way that reshapes its consumers), treat it as a late Phase 6 item: fix the defining story and every consumer in the same pass, then note it in the done-report.
 
@@ -426,15 +408,11 @@ If a `blockedBy` link fails (e.g., the upstream issue doesn't exist), surface th
 
 ## Anti-patterns to avoid
 
-- **Restating `/orchestrate` content in the parent Issue's "Notes for the orchestrator" section.** The orchestrator skill already covers worktree dispatch, status-frontmatter discipline, model-selection defaults, verification commands, and the report-back contract. Only write feature-specific exceptions, gates, and invariants here.
-- **Inventing typed records or component names.** Per `feedback_no_inventing_component_names`, every typed value object in a story's Scope section either mirrors an existing upstream record or is named by the design doc. If you find yourself naming a new record without a design-doc precedent, stop — re-read or surface to the operator.
-- **Numeric thresholds in story bodies.** Per `feedback_avoid_numeric_anchors`, don't bake `70/85/95`, `60%`, `30 minutes` etc. into acceptance criteria. Reference the configuration source (`config/<feature>.yaml`, `BreachBehaviorConfig`, etc.) and let the verification test load the value.
-- **Decision trails in story descriptions.** Per `feedback_no_decision_trails`, state contracts positively. Don't write "this story does NOT cover X" unless X is genuinely a likely-but-wrong reading; if X is obviously someone else's job, just don't mention it.
-- **Stories that bundle "and" of two algorithmic concerns.** Re-split. The dependency graph is cheaper to maintain than ambiguous scope.
-- **Adding a per-feature verify story by reflex.** Post-ALP-502, the central `scripts/verify_debug_e2e.py` covers any feature that composes into the pipeline. Only add a per-feature verify story for the exceptions documented in Phase 4 (operator monitoring, offline pure-function verifier, out-of-pipeline operator behavior). When unsure, surface in Phase 6 and default to omitting.
-- **Acceptance criteria that test "the system works".** Replace with criteria that test *observable behaviors* of *named functions* with *named inputs*.
-- **Skipping the operator-confirmation step in Phase 1** when a populated parent Issue already exists. Drafting stories on top of an in-progress work tree without confirming intent corrupts that tree.
-- **"Surface to operator" gates for drafting-time decisions.** Per Phase 6: if a decision can be made without running code (yaml value, encoding choice, pipeline cadence, scope boundary, stub strategy), settle it during drafting. Writing "the orchestrator should surface this before dispatch" turns the operator's review into N small interruptions during dispatch instead of one batched session before drafting — and the orchestrator typically lacks the context the drafter had to recommend a default.
+- **Restating `/orchestrate` content in "Notes for the orchestrator".** That skill already covers worktree dispatch, status discipline, model-selection defaults, verification, and the report-back contract. Write only feature-specific exceptions, gates, and invariants.
+- **Stories that bundle "and" of two algorithmic concerns.** Re-split — the dependency graph is cheaper to maintain than ambiguous scope.
+- **Drafting on top of a populated parent Issue without confirming intent** (Phase 1) — it corrupts an in-progress tree.
+
+The per-issue writing-rule anti-patterns — invented names, numeric anchors, decision trails, "the system works" criteria, and drafting-time "Surface to operator" gates — are the standard's (`docs/agents/implementation-ready-issue.md`) and Phase 6's.
 
 ## When you're done
 
@@ -451,12 +429,4 @@ Then stop. The operator drives next steps from there (typically: dispatch via `/
 
 ## Self-improvement
 
-While executing, note moments where this skill let you down: a step that was ambiguous, an edge case the procedure didn't anticipate, a Linear/MCP gotcha you hit and worked around, guidance that turned out wrong.
-
-Don't fix the skill mid-flight — interrupting the drafting flow to edit the procedure costs more than it saves. Keep working notes mentally, and at the end — *after* reporting the work tree to the operator — propose specific edits in this shape:
-
-- **Where:** the section/heading in this SKILL.md to change.
-- **What:** the concrete edit (added bullet, replaced sentence, new subsection).
-- **Why:** what went wrong without it.
-
-Skip silently if nothing came up. The bar is "would have saved a step" or "would have prevented a mistake", not "could be marginally smoother". The operator decides what to apply.
+Note where the skill let you down — an ambiguous step, an unanticipated edge case, a Linear/MCP gotcha. Don't fix it mid-flight; after reporting the work tree, propose edits as **Where** / **What** / **Why** (what went wrong without it). Bar: "would have saved a step" or "prevented a mistake"; skip silently otherwise.

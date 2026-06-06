@@ -1,8 +1,9 @@
 # Where production evidence lives, and how to query it
 
-Used by the `root-cause-analysis` skill. Every load-bearing claim in the final issue is
-confirmed or refuted against one of these **primary** sources — never against the report's
-own narrative.
+Used by `refine-issue`: **bug mode** builds the root-cause evidence chain (`bug-mode.md`);
+**spec mode** validates the ground-truth data assumptions a design depends on (`spec-mode.md`).
+Either way, every load-bearing claim is confirmed against one of these **primary** sources —
+never against the issue's own narrative.
 
 Per CLAUDE.md: **macOS = dev (read-only), Windows = prod.** You read prod; you never write
 it. Scripts that hit vendor APIs need `.env` loaded (`source .env`) — prod doesn't
