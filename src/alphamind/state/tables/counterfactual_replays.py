@@ -13,6 +13,8 @@ CHECK on a fresh metadata-built DB.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -32,10 +34,11 @@ from alphamind.execution.counterfactual_replay_engine.enums import (
 from alphamind.persistence.models import Base
 from alphamind.state.tables._money_column import DecimalText
 
-# CHECK-constraint vocabularies — frozen from the live enums at table-creation
-# time. Listed explicitly (not read lazily) so the DDL is stable across enum
-# additions that should *not* widen a deployed table's CHECK without a
-# migration.
+# CHECK-constraint vocabularies, derived from the live enums at import. These
+# drive the metadata DDL (Base.metadata.create_all on a fresh DB). The alembic
+# migration (a556rp0000dd) hardcodes the same token set as a point-in-time
+# snapshot; the head-vs-metadata autogenerate test flags any future enum
+# addition that would widen the metadata CHECK without a matching migration.
 _REPLAY_KIND_VALUES: tuple[str, ...] = tuple(m.value for m in ReplayKind)
 _REPLAY_STATUS_VALUES: tuple[str, ...] = tuple(m.value for m in ReplayStatus)
 _UNEVALUABLE_REASON_VALUES: tuple[str, ...] = tuple(m.value for m in UnevaluableReason)
@@ -59,21 +62,26 @@ class CounterfactualReplays(Base):
     __tablename__ = "counterfactual_replays"
 
     replay_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    # Logical reference to the originating ``pm_decision`` activity-log entry's
+    # envelope id. No DB-level ForeignKey: ``activity_log`` carries the
+    # envelope id inside ``detail_json`` (PMDecisionDetail.envelope_id), not as
+    # a top-level column, so there is no column to constrain against. The
+    # engine driver (story 08) resolves the referent at query time.
     pm_decision_envelope_id: Mapped[str] = mapped_column(Text, nullable=False)
     replay_kind: Mapped[str] = mapped_column(Text, nullable=False)
     replay_status: Mapped[str] = mapped_column(Text, nullable=False)
     unevaluable_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     entered: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    entry_price: Mapped[str | None] = mapped_column(DecimalText, nullable=True)
+    entry_price: Mapped[Decimal | None] = mapped_column(DecimalText, nullable=True)
     entry_timestamp: Mapped[str | None] = mapped_column(Text, nullable=True)
-    entry_slippage: Mapped[str | None] = mapped_column(DecimalText, nullable=True)
-    entry_fees: Mapped[str | None] = mapped_column(DecimalText, nullable=True)
+    entry_slippage: Mapped[Decimal | None] = mapped_column(DecimalText, nullable=True)
+    entry_fees: Mapped[Decimal | None] = mapped_column(DecimalText, nullable=True)
     exit_leg: Mapped[str | None] = mapped_column(Text, nullable=True)
-    exit_price: Mapped[str | None] = mapped_column(DecimalText, nullable=True)
+    exit_price: Mapped[Decimal | None] = mapped_column(DecimalText, nullable=True)
     exit_timestamp: Mapped[str | None] = mapped_column(Text, nullable=True)
-    exit_slippage: Mapped[str | None] = mapped_column(DecimalText, nullable=True)
-    exit_fees: Mapped[str | None] = mapped_column(DecimalText, nullable=True)
-    realized_pl: Mapped[str | None] = mapped_column(DecimalText, nullable=True)
+    exit_slippage: Mapped[Decimal | None] = mapped_column(DecimalText, nullable=True)
+    exit_fees: Mapped[Decimal | None] = mapped_column(DecimalText, nullable=True)
+    realized_pl: Mapped[Decimal | None] = mapped_column(DecimalText, nullable=True)
     confidence: Mapped[str | None] = mapped_column(Text, nullable=True)
     replay_timestamp: Mapped[str] = mapped_column(Text, nullable=False)
     replay_data_window_start: Mapped[str | None] = mapped_column(Text, nullable=True)

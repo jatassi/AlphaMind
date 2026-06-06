@@ -22,6 +22,10 @@ from alphamind.state.repository.activity_log_queries import (
     read_position_modification_trail,
     read_recent_pm_decision_log,
 )
+from alphamind.state.repository.counterfactual_replays import (
+    insert_counterfactual_replay,
+    load_counterfactual_replays_for_envelope,
+)
 from alphamind.state.repository.sql_option_price_provider import (
     SqlOptionPriceProvider,
 )
@@ -59,6 +63,8 @@ __all__ = [
     "SqlOptionPriceProvider",
     "SqlPortfolioStateRepository",
     "build_sql_portfolio_state_repository",
+    "insert_counterfactual_replay",
+    "load_counterfactual_replays_for_envelope",
     "read_intra_invocation_changelog",
     "read_most_recent_config_change_new_hash",
     "read_position_modification_trail",

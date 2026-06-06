@@ -3,9 +3,10 @@
 Two helpers expose the read / write surface consumed by the replay engine driver
 (story 08):
 
-* :func:`insert_counterfactual_replay` — encode + insert one record; raises
-  ``IntegrityError`` on a duplicate ``(pm_decision_envelope_id, replay_kind)``
-  pair so the engine's idempotency check is the caller's responsibility.
+* :func:`insert_counterfactual_replay` — encode + queue one record for insert.
+  The ``(pm_decision_envelope_id, replay_kind)`` UniqueConstraint raises
+  ``IntegrityError`` at flush / commit (not at the ``add`` call) on a
+  duplicate, so the engine's idempotency check is the caller's responsibility.
 
 * :func:`load_counterfactual_replays_for_envelope` — return all replay records
   for a given envelope, ordered by ``replay_kind``. Used by story 08 to detect
@@ -33,11 +34,12 @@ def insert_counterfactual_replay(
     session: Session,
     record: CounterfactualReplayRecord,
 ) -> None:
-    """Encode and insert a ``CounterfactualReplayRecord``.
+    """Encode and queue a ``CounterfactualReplayRecord`` for insert.
 
-    Raises :class:`sqlalchemy.exc.IntegrityError` on a
-    ``(pm_decision_envelope_id, replay_kind)`` collision — the table
-    enforces one-record-per-(envelope, kind). The engine driver is
+    Adds the row to *session*; the ``(pm_decision_envelope_id, replay_kind)``
+    UniqueConstraint is enforced when the unit of work flushes, so a duplicate
+    surfaces as :class:`sqlalchemy.exc.IntegrityError` at the next ``flush`` /
+    ``commit`` (or autoflush) — not at this call. The engine driver is
     responsible for idempotency checking before calling this helper.
     """
     row = CounterfactualReplays(**encode_counterfactual_replay(record))

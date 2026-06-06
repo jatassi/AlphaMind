@@ -20,11 +20,10 @@ Round-trip property: ``decode(encode(r)) == r`` for every valid
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import Decimal
 from typing import Any
 
 from alphamind._kernel.ids import EnvelopeId, ReplayId
-from alphamind._kernel.money import Money, Price
+from alphamind._kernel.money import Money, Price, money, price, signed_money
 from alphamind.execution.counterfactual_replay_engine.enums import (
     Confidence,
     ExitLeg,
@@ -89,45 +88,60 @@ def decode_counterfactual_replay(row: Any) -> CounterfactualReplayRecord:
     """
     get = row.__getitem__ if isinstance(row, dict) else lambda key: getattr(row, key)
 
-    def _get(key: str) -> Any:
-        return get(key)
-
-    # Decimal columns come back as ``Decimal`` from DecimalText; rewrap as
-    # the typed NewType aliases (Money / Price) at the record boundary.
+    # DecimalText columns hand back ``Decimal``; rewrap through the kernel
+    # boundary constructors (matching fill_records_codec) so validation runs
+    # at the read boundary: ``price`` (strictly positive) for fill prices,
+    # ``money`` (non-negative) for fees, and ``signed_money`` for the
+    # sign-carrying quantities (slippage, realized P/L).
     def _price(key: str) -> Price | None:
-        val = _get(key)
-        return Price(Decimal(val)) if val is not None else None
+        val = get(key)
+        return price(val) if val is not None else None
 
     def _money(key: str) -> Money | None:
-        val = _get(key)
-        return Money(Decimal(val)) if val is not None else None
+        val = get(key)
+        return money(val) if val is not None else None
+
+    def _signed_money(key: str) -> Money | None:
+        val = get(key)
+        return signed_money(val) if val is not None else None
+
+    def _required_dt(key: str) -> datetime:
+        parsed = _dt_from_iso(get(key))
+        if parsed is None:
+            msg = f"{key} is required but decoded to None"
+            raise ValueError(msg)
+        return parsed
+
+    unevaluable_reason_raw = get("unevaluable_reason")
+    exit_leg_raw = get("exit_leg")
+    confidence_raw = get("confidence")
 
     return CounterfactualReplayRecord(
-        replay_id=ReplayId(_get("replay_id")),
-        pm_decision_envelope_id=EnvelopeId(_get("pm_decision_envelope_id")),
-        replay_kind=ReplayKind(_get("replay_kind")),
-        replay_status=ReplayStatus(_get("replay_status")),
+        replay_id=ReplayId(get("replay_id")),
+        pm_decision_envelope_id=EnvelopeId(get("pm_decision_envelope_id")),
+        replay_kind=ReplayKind(get("replay_kind")),
+        replay_status=ReplayStatus(get("replay_status")),
         unevaluable_reason=(
-            UnevaluableReason(_get("unevaluable_reason"))
-            if _get("unevaluable_reason") is not None
+            UnevaluableReason(unevaluable_reason_raw)
+            if unevaluable_reason_raw is not None
             else None
         ),
-        entered=_get("entered"),
+        entered=get("entered"),
         entry_price=_price("entry_price"),
-        entry_timestamp=_dt_from_iso(_get("entry_timestamp")),
-        entry_slippage=_money("entry_slippage"),
+        entry_timestamp=_dt_from_iso(get("entry_timestamp")),
+        entry_slippage=_signed_money("entry_slippage"),
         entry_fees=_money("entry_fees"),
-        exit_leg=(ExitLeg(_get("exit_leg")) if _get("exit_leg") is not None else None),
+        exit_leg=ExitLeg(exit_leg_raw) if exit_leg_raw is not None else None,
         exit_price=_price("exit_price"),
-        exit_timestamp=_dt_from_iso(_get("exit_timestamp")),
-        exit_slippage=_money("exit_slippage"),
+        exit_timestamp=_dt_from_iso(get("exit_timestamp")),
+        exit_slippage=_signed_money("exit_slippage"),
         exit_fees=_money("exit_fees"),
-        realized_pl=_money("realized_pl"),
-        confidence=(Confidence(_get("confidence")) if _get("confidence") is not None else None),
-        replay_timestamp=_dt_from_iso(_get("replay_timestamp")),  # type: ignore[arg-type]
-        replay_data_window_start=_dt_from_iso(_get("replay_data_window_start")),
-        replay_data_window_end=_dt_from_iso(_get("replay_data_window_end")),
-        replay_engine_version=_get("replay_engine_version"),
+        realized_pl=_signed_money("realized_pl"),
+        confidence=Confidence(confidence_raw) if confidence_raw is not None else None,
+        replay_timestamp=_required_dt("replay_timestamp"),
+        replay_data_window_start=_dt_from_iso(get("replay_data_window_start")),
+        replay_data_window_end=_dt_from_iso(get("replay_data_window_end")),
+        replay_engine_version=get("replay_engine_version"),
     )
 
 
