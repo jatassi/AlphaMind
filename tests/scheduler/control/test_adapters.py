@@ -243,9 +243,12 @@ class TestAsyncIOSchedulerControlNextRunPreview:
         preview = control.next_run_preview()
 
         assert preview is not None  # narrow for the indexed asserts below
-        assert preview == (datetime(2026, 5, 7, 13, 0, tzinfo=UTC), "midday")
-        # Aware-datetime equality compares instants, so the line above also passes
-        # for an un-converted +02:00 value; this is what proves the UTC conversion.
+        # Aware-datetime equality compares instants, so an equality check alone would
+        # also pass for an un-converted +02:00 value; assert the offset directly so
+        # the .astimezone(UTC) conversion is what the test actually proves.
+        assert preview[1] == "midday"
+        assert preview[0] == datetime(2026, 5, 7, 13, 0, tzinfo=UTC)
+        assert preview[0].utcoffset() == timedelta(0)
         assert preview[0].tzinfo == UTC
 
     def test_returns_none_when_no_jobs(self) -> None:
@@ -304,15 +307,26 @@ class TestCooldownRemainingSeconds:
         self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         # Completed emergency 10 min ago; 30-min cooldown → 1800 - 600 = 1200 remaining.
+        # A *more-recently-completed* scheduled invocation is also seeded (and is the
+        # latest-started, so it wins the FK bind): the cooldown read must still anchor
+        # on the emergency row. If the query's trigger_type=='emergency' filter were
+        # dropped it would pick the scheduled completion (14:58) → 1680, not 1200, so
+        # this assertion proves the filter is load-bearing.
         await _seed_invocations(
             async_factory,
             records=[
                 _make_invocation_record(
                     invocation_id="inv-emerg",
-                    start_at="2026-05-07T14:45:00Z",
+                    start_at="2026-05-07T14:40:00Z",
                     trigger_type="emergency",
                     phase2_completed_at="2026-05-07T14:50:00Z",
-                )
+                ),
+                _make_invocation_record(
+                    invocation_id="inv-sched-recent",
+                    start_at="2026-05-07T14:55:00Z",
+                    trigger_type="scheduled",
+                    phase2_completed_at="2026-05-07T14:58:00Z",
+                ),
             ],
         )
         detail = await _trigger_and_read_detail(async_factory, cooldown_minutes=30, now=self._NOW)
