@@ -14,4 +14,4 @@ the single SQLite database (WAL mode). Design intent (historical):
 Append gotchas here as you hit them — non-obvious traps not evident from one file. Keep
 each to a line or two; delete any that no longer hold.
 
-- (none recorded yet)
+- The squashed baseline (`a000000000aa`) is **metadata-driven** (`Base.metadata.create_all`), so on a fresh DB it already creates whatever the current models declare. An incremental migration that adds a new model table/column must therefore be **idempotent** (guard `create_table`/`add_column` with `sa.inspect(op.get_bind())`), or `alembic upgrade head` double-creates ("table already exists") and `test_mapper_fk_autogenerate`'s head-equals-metadata check fails. See `a865wm0000bb`.

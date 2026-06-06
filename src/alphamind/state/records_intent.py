@@ -34,7 +34,9 @@ class ThesisPnlLedgerRecord(BaseModel):
     ``provenance_json`` carries the derivation trail (which event-log rows the
     figures were folded from) so a value is always traceable to its source
     events. ``derived_from_invocation_id`` records the pipeline invocation that
-    last (re)derived the entry.
+    last (re)derived the entry. ``last_derived_event_seq`` (ALP-865) is the max
+    ``broker_event_log.event_seq`` folded into the figures — the per-thesis
+    re-derivation watermark; ``None`` means never derived (always dirty).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -45,6 +47,7 @@ class ThesisPnlLedgerRecord(BaseModel):
     provenance_json: str
     derived_from_invocation_id: InvocationId | None
     updated_at: datetime
+    last_derived_event_seq: int | None = None
 
 
 class CapitalReservationRecord(BaseModel):

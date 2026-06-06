@@ -61,6 +61,10 @@ from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.positions_codec import row_to_record as position_row_to_record
+from alphamind.state.tables.projection_rebuild_watermark import (
+    PROJECTION_REBUILD_WATERMARK_SINGLETON_ID,
+    ProjectionRebuildWatermarkRow,
+)
 
 log = logging.getLogger(__name__)
 
@@ -318,7 +322,7 @@ async def rebuild_projection(
 
 
 async def _project_terminal_order_statuses(session: AsyncSession) -> int:
-    """Project every ``TERMINAL_ORDER_STATUS`` event onto its ``orders`` cache row.
+    """Project every *new* ``TERMINAL_ORDER_STATUS`` event onto its ``orders`` cache row.
 
     Reads the event payloads, folds them to typed projections (pure), then
     batch-resolves them to local ``orders`` rows — by the broker UUID, falling back
@@ -326,26 +330,42 @@ async def _project_terminal_order_statuses(session: AsyncSession) -> int:
     backfilled — and advances each row's cached ``status`` + ``last_update_timestamp``.
     Returns the count of rows advanced.
 
-    The resolve is **bounded** (PR1): the candidate ``orders`` rows are loaded in two
-    ``IN``-clause batches restricted to **non-terminal** orders, so an order already
-    in a terminal status is never re-resolved or re-stamped (an already-projected
-    terminal disposition is final). A projection whose order row does not resolve
-    against a non-terminal row (already terminal, or a genuinely out-of-band order)
-    is skipped; the order cache is optional, so a miss is not an error.
+    The **event scan is bounded** (ALP-865): a persisted singleton watermark
+    (``projection_rebuild_watermark.last_projected_event_seq``) records the max
+    ``event_seq`` (rowid) already projected, so the SELECT reads only
+    ``TERMINAL_ORDER_STATUS`` rows with ``event_seq`` greater than it — not the whole
+    O(all-history) log every run. After scanning, the watermark advances to the max
+    ``event_seq`` read, in **this** Phase-1 write transaction, so the advance commits
+    atomically with the projection (a crash rolls both back and the next run
+    re-scans). The first run finds no watermark row, treats it as ``0``, and scans
+    from the beginning once.
+
+    The resolve is **bounded** too (PR1): the candidate ``orders`` rows are loaded in
+    two ``IN``-clause batches restricted to **non-terminal** orders, so an order
+    already in a terminal status is never re-resolved or re-stamped (an
+    already-projected terminal disposition is final). A projection whose order row
+    does not resolve against a non-terminal row (already terminal, or a genuinely
+    out-of-band order) is skipped; the order cache is optional, so a miss is not an
+    error — the watermark still advances past it, since the event is processed.
     """
-    payloads = (
-        (
-            await session.execute(
-                select(BrokerEventLogRow.raw_payload_json).where(
-                    BrokerEventLogRow.event_type == BrokerEventType.TERMINAL_ORDER_STATUS.value
-                )
+    last_projected_seq = await _read_projection_watermark(session)
+    scanned = (
+        await session.execute(
+            select(BrokerEventLogRow.event_seq, BrokerEventLogRow.raw_payload_json)
+            .where(
+                BrokerEventLogRow.event_type == BrokerEventType.TERMINAL_ORDER_STATUS.value,
+                BrokerEventLogRow.event_seq > last_projected_seq,
             )
+            .order_by(BrokerEventLogRow.event_seq)
         )
-        .scalars()
-        .all()
-    )
-    projections = project_terminal_order_statuses(payloads)
+    ).all()
+    if not scanned:
+        return 0
+    # Rows are ordered by ``event_seq`` ascending, so the last one carries the max.
+    max_scanned_seq = scanned[-1].event_seq
+    projections = project_terminal_order_statuses(row.raw_payload_json for row in scanned)
     if not projections:
+        await _advance_projection_watermark(session, max_scanned_seq)
         return 0
     by_alpaca_id, by_client_id = await _resolve_non_terminal_order_rows(session, projections)
     now_iso = datetime.now(UTC).isoformat()
@@ -364,7 +384,42 @@ async def _project_terminal_order_statuses(session: AsyncSession) -> int:
         row.status = projection.terminal_status.value
         row.last_update_timestamp = now_iso
         projected += 1
+    await _advance_projection_watermark(session, max_scanned_seq)
     return projected
+
+
+async def _read_projection_watermark(session: AsyncSession) -> int:
+    """Return the singleton ``last_projected_event_seq`` (0 if never advanced).
+
+    The first rebuild ever finds no watermark row, which is the from-the-beginning
+    scan (``event_seq > 0`` reads the whole log once); every later run reads only
+    the events appended since the prior advance.
+    """
+    row = await session.get(
+        ProjectionRebuildWatermarkRow, PROJECTION_REBUILD_WATERMARK_SINGLETON_ID
+    )
+    return row.last_projected_event_seq if row is not None else 0
+
+
+async def _advance_projection_watermark(session: AsyncSession, new_seq: int) -> None:
+    """Advance the singleton watermark to *new_seq* in the open write transaction.
+
+    Single-writer (Phase-1 pipeline, ADR-0005), so a read-then-write on the
+    singleton is race-free; the advance joins the open transaction and commits
+    atomically with the projection it bounds.
+    """
+    row = await session.get(
+        ProjectionRebuildWatermarkRow, PROJECTION_REBUILD_WATERMARK_SINGLETON_ID
+    )
+    if row is None:
+        session.add(
+            ProjectionRebuildWatermarkRow(
+                id=PROJECTION_REBUILD_WATERMARK_SINGLETON_ID,
+                last_projected_event_seq=new_seq,
+            )
+        )
+    else:
+        row.last_projected_event_seq = new_seq
 
 
 # Order statuses already terminal for the order-status projection — a row in one

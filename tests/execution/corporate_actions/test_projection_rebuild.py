@@ -18,6 +18,7 @@ exercised over a real in-memory SQLite DB (a sanctioned mock boundary).
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from sqlalchemy import event, select
@@ -36,7 +37,14 @@ from alphamind.execution.write_paths.projection_rebuild import (
     project_terminal_order_statuses,
     rebuild_projection,
 )
+from alphamind.persistence.models import Base
+from alphamind.persistence.session import (
+    make_async_engine,
+    make_async_session_factory,
+    make_engine,
+)
 from alphamind.portfolio_state.records.orders import OrderStatus
+from alphamind.state.invocation_context.context import InvocationContext, InvocationHandle
 from alphamind.state.records_broker_event_log import (
     BrokerEventRecord,
     BrokerEventType,
@@ -44,6 +52,8 @@ from alphamind.state.records_broker_event_log import (
 )
 from alphamind.state.tables.broker_event_log_codec import record_to_row as event_record_to_row
 from alphamind.state.tables.orders import OrderRow
+from alphamind.state.tables.projection_rebuild_watermark import ProjectionRebuildWatermarkRow
+from alphamind.state.tables.theses_codec import record_to_rows as thesis_record_to_rows
 from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
 from tests.state._fk_substrate import stub_order_row
 
@@ -51,6 +61,7 @@ from ._handler_substrate import (
     NOW,
     make_active_bracket,
     make_active_thesis,
+    make_invocation_record,
     make_open_equity_position,
     make_pending_entry_order,
     make_pending_equity_position,
@@ -733,3 +744,354 @@ async def test_rederive_after_activities_poll_folds_same_invocation_lifecycle_ev
         # The post-poll rederive folded the activity's realized-PnL delta into the
         # ledger — the same-invocation lifecycle event is NOT lost.
         assert ledger[0].realized_pnl_usd == pytest.approx(275.0)
+
+
+# ---------------------------------------------------------------------------
+# ALP-865 — the two O(all-history) scans are bounded by an event_seq watermark.
+# ---------------------------------------------------------------------------
+
+
+async def _open_handle_with(
+    factory: async_sessionmaker[AsyncSession], invocation_id: str
+) -> tuple[InvocationContext, InvocationHandle]:
+    """Open a write handle bound to *invocation_id* (a distinct invocation per call).
+
+    ``open_handle`` always uses one fixed invocation id; the watermark/dirty-set
+    tests need several invocations in one DB (``insert_invocation_row`` is a plain
+    insert, so a repeated id would collide on the PK).
+    """
+    ctx = InvocationContext(
+        session_factory=factory,
+        record=make_invocation_record(invocation_id=invocation_id),
+    )
+    handle = await ctx.__aenter__()
+    return ctx, handle
+
+
+async def test_terminal_status_scan_is_bounded_by_the_watermark(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """AC (part-1) — the terminal-status scan reads only events with
+    ``event_seq > last_projected_event_seq``. After a first rebuild advances the
+    watermark, a later rebuild does **not** re-scan (and so cannot re-project) an
+    event at or below the watermark — only genuinely new events are folded.
+
+    Order A is cancelled by event ``tevt-A`` in rebuild #1 (watermark → seqA). Then
+    A is reset to PENDING and a new order B with a newer terminal event ``tevt-B``
+    (seqB > seqA) is appended. Rebuild #2 projects only B: A stays PENDING because
+    its event is at/below the watermark and is never re-read — the unbounded scan
+    would have re-folded ``tevt-A`` and re-cancelled A.
+    """
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await _entry_order(factory, alpaca_order_id="broker-uuid-A")
+    await _append_events(
+        factory,
+        _terminal_event(
+            event_key="tevt-A",
+            alpaca_order_id="broker-uuid-A",
+            client_order_id="cli-A",
+            terminal_status=OrderStatus.CANCELLED,
+        ),
+    )
+
+    ctx1, handle1 = await _open_handle_with(factory, "inv-865-r1")
+    summary1 = await rebuild_projection(handle1, alpaca_positions=(), alpaca_account=None)
+    await ctx1.__aexit__(None, None, None)
+    assert summary1.order_statuses_projected == 1
+
+    # The singleton watermark advanced to the scanned event's seq.
+    async with factory() as sess:
+        watermark = await sess.get(ProjectionRebuildWatermarkRow, "current")
+        assert watermark is not None
+        assert watermark.last_projected_event_seq > 0
+
+    # Reset A to PENDING (the unbounded scan would re-cancel it from tevt-A), and
+    # append a NEW pending order B with a terminal event past the watermark.
+    async with factory() as sess:
+        row_a = await sess.get(OrderRow, "ord-entry-1")
+        assert row_a is not None
+        row_a.status = OrderStatus.PENDING.value
+        sess.add(
+            stub_order_row(
+                "ord-extra-B",
+                "brk-1",
+                position_id="pos-1",
+                status=OrderStatus.PENDING.value,
+                alpaca_order_id="broker-uuid-B",
+            )
+        )
+        await sess.commit()
+    await _append_events(
+        factory,
+        _terminal_event(
+            event_key="tevt-B",
+            alpaca_order_id="broker-uuid-B",
+            client_order_id="cli-B",
+            terminal_status=OrderStatus.CANCELLED,
+        ),
+    )
+
+    ctx2, handle2 = await _open_handle_with(factory, "inv-865-r2")
+    summary2 = await rebuild_projection(handle2, alpaca_positions=(), alpaca_account=None)
+    await ctx2.__aexit__(None, None, None)
+
+    # Only B's event was scanned (seqB > watermark); A's older event was not re-read.
+    assert summary2.order_statuses_projected == 1
+    async with factory() as sess:
+        row_a = await sess.get(OrderRow, "ord-entry-1")
+        row_b = await sess.get(OrderRow, "ord-extra-B")
+        assert row_a is not None and row_b is not None
+        assert row_a.status == OrderStatus.PENDING.value  # NOT re-cancelled
+        assert row_b.status == OrderStatus.CANCELLED.value  # the new event projected
+
+
+async def test_clean_thesis_skipped_then_redirtied_by_new_event(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """AC (part-2) — a closed thesis with no new events is NOT re-derived on a later
+    invocation (its ledger ``updated_at`` + ``derived_from_invocation_id`` are
+    unchanged), and a new event re-dirties it.
+
+    Derivation #1 (invocation A) writes the ledger and stamps
+    ``last_derived_event_seq``. Derivation #2 (invocation B), no new events, finds
+    the thesis clean and skips it — the row still carries A's invocation id and
+    timestamp. A new OPASN event (seq past the watermark) makes it dirty again, so
+    derivation #3 (invocation C) re-derives and re-stamps it.
+    """
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_position_cluster(
+        factory,
+        make_open_equity_position(share_count=10.0),
+        make_pending_entry_order(),
+        make_active_thesis(),
+        make_active_bracket(),
+    )
+    await _append_events(
+        factory,
+        _fill_event(
+            event_key="fevt-1",
+            alpaca_order_id="broker-uuid-1",
+            fill_price=150.0,
+            fill_quantity=10.0,
+            side="buy",
+        ),
+    )
+
+    ctx_a, handle_a = await _open_handle_with(factory, "inv-865-a")
+    n_a = await rederive_thesis_ledgers(handle_a)
+    await ctx_a.__aexit__(None, None, None)
+    assert n_a == 1
+    async with factory() as sess:
+        row = await sess.get(ThesisPnlLedgerRow, "thesis-1")
+        assert row is not None
+        first_updated_at = row.updated_at
+        assert row.derived_from_invocation_id == "inv-865-a"
+        assert row.last_derived_event_seq is not None
+        first_seq = row.last_derived_event_seq
+
+    # Derivation #2 — no new events → thesis is clean → skipped (count 0).
+    ctx_b, handle_b = await _open_handle_with(factory, "inv-865-b")
+    n_b = await rederive_thesis_ledgers(handle_b)
+    await ctx_b.__aexit__(None, None, None)
+    assert n_b == 0
+    async with factory() as sess:
+        row = await sess.get(ThesisPnlLedgerRow, "thesis-1")
+        assert row is not None
+        # Untouched — NOT re-stamped to invocation B.
+        assert row.updated_at == first_updated_at
+        assert row.derived_from_invocation_id == "inv-865-a"
+        assert row.last_derived_event_seq == first_seq
+
+    # A new realized-PnL event re-dirties the thesis (seq past its watermark).
+    await _append_events(
+        factory,
+        _activity_event(
+            event_key="aevt-1",
+            event_type=BrokerEventType.OPASN,
+            realized_pnl_delta_usd=125.0,
+        ),
+    )
+    ctx_c, handle_c = await _open_handle_with(factory, "inv-865-c")
+    n_c = await rederive_thesis_ledgers(handle_c)
+    await ctx_c.__aexit__(None, None, None)
+    assert n_c == 1
+    async with factory() as sess:
+        row = await sess.get(ThesisPnlLedgerRow, "thesis-1")
+        assert row is not None
+        assert row.derived_from_invocation_id == "inv-865-c"  # re-derived
+        assert row.last_derived_event_seq is not None
+        assert row.last_derived_event_seq > first_seq
+        assert row.realized_pnl_usd == pytest.approx(125.0)
+
+
+async def _make_db(
+    tmp_path: Path, name: str
+) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
+    """Build a fresh on-disk SQLite DB + async session factory (mirrors the fixture).
+
+    The identical-output test needs two independent DBs (the incremental/bounded
+    run and the one-shot/full run) so it can compare their final state.
+    """
+    import alphamind.state.tables  # noqa: F401 — registers all tables
+
+    db_path = tmp_path / f"{name}.db"
+    sync_engine = make_engine(str(db_path))
+    Base.metadata.create_all(sync_engine)
+    sync_engine.dispose()
+    async_engine = make_async_engine(str(db_path))
+    return async_engine, make_async_session_factory(async_engine)
+
+
+async def _seed_extra_thesis(
+    factory: async_sessionmaker[AsyncSession], thesis_id: str, position_id: str
+) -> None:
+    """Seed a second bare thesis row (reusing *position_id*) for multi-thesis logs."""
+    thesis_row, component_rows = thesis_record_to_rows(
+        make_active_thesis(thesis_id=thesis_id, position_id=position_id)
+    )
+    async with factory() as sess:
+        sess.add(thesis_row)
+        for crow in component_rows:
+            sess.add(crow)
+        await sess.commit()
+
+
+async def _snapshot_state(
+    factory: async_sessionmaker[AsyncSession],
+) -> tuple[dict[str, tuple[float, float, str]], dict[str, str]]:
+    """Return comparable (ledger figures by thesis, order status by id).
+
+    Ledger figures are the derivation output (realized PnL, cost basis,
+    provenance) — the fields the bound path must reproduce identically.
+    ``last_derived_event_seq`` / ``updated_at`` / ``derived_from_invocation_id``
+    are deliberately excluded: the watermark and timestamps legitimately differ
+    between an incremental run and a one-shot run; the *derived figures* must not.
+    """
+    async with factory() as sess:
+        ledgers = (await sess.execute(select(ThesisPnlLedgerRow))).scalars().all()
+        orders = (await sess.execute(select(OrderRow))).scalars().all()
+    ledger_figures = {
+        row.thesis_id: (
+            float(row.realized_pnl_usd),
+            float(row.cost_basis_usd),
+            row.provenance_json,
+        )
+        for row in ledgers
+    }
+    order_status = {row.order_id: row.status for row in orders}
+    return ledger_figures, order_status
+
+
+async def test_bounded_incremental_matches_full_one_shot(tmp_path: Path) -> None:
+    """AC (identical output) — over a multi-event, multi-thesis log, the bounded
+    incremental path (a rebuild + rederive after each of two batches, so the
+    watermark + dirty-set actually bound the second pass) produces ledger figures
+    and projected order statuses **identical** to a single full one-shot derivation
+    of the same complete log.
+
+    Both DBs receive the same events; only the *number of bounded passes* differs.
+    Identical final state proves the watermark/dirty-set change the *amount scanned*,
+    never the derived result.
+    """
+
+    async def _build_and_run(
+        factory: async_sessionmaker[AsyncSession], *, incremental: bool
+    ) -> tuple[dict[str, tuple[float, float, str]], dict[str, str]]:
+        await seed_invocation_substrate(factory)
+        await seed_position_cluster(
+            factory,
+            make_open_equity_position(share_count=10.0),
+            make_pending_entry_order(),
+            make_active_thesis(),
+            make_active_bracket(),
+        )
+        await _seed_extra_thesis(factory, thesis_id="thesis-2", position_id="pos-1")
+        # A standalone pending order whose terminal event the projection folds.
+        async with factory() as sess:
+            sess.add(
+                stub_order_row(
+                    "ord-extra",
+                    "brk-1",
+                    position_id="pos-1",
+                    status=OrderStatus.PENDING.value,
+                    alpaca_order_id="broker-uuid-extra",
+                )
+            )
+            await sess.commit()
+
+        batch1 = (
+            _fill_event(
+                event_key="fevt-t1",
+                alpaca_order_id="broker-uuid-1",
+                fill_price=150.0,
+                fill_quantity=10.0,
+                side="buy",
+            ),
+            _fill_event(
+                event_key="fevt-t2",
+                alpaca_order_id="broker-uuid-2",
+                fill_price=200.0,
+                fill_quantity=5.0,
+                side="buy",
+                thesis_id="thesis-2",
+            ),
+            _terminal_event(
+                event_key="tevt-extra",
+                alpaca_order_id="broker-uuid-extra",
+                client_order_id="cli-extra",
+                terminal_status=OrderStatus.CANCELLED,
+            ),
+        )
+        batch2 = (
+            _activity_event(
+                event_key="aevt-t1",
+                event_type=BrokerEventType.OPASN,
+                realized_pnl_delta_usd=80.0,
+            ),
+            _activity_event(
+                event_key="aevt-t2",
+                event_type=BrokerEventType.OPASN,
+                realized_pnl_delta_usd=-30.0,
+                thesis_id="thesis-2",
+            ),
+        )
+
+        if incremental:
+            await _append_events(factory, *batch1)
+            ctx1, h1 = await _open_handle_with(factory, "inv-inc-1")
+            await rebuild_projection(h1, alpaca_positions=(), alpaca_account=None)
+            await rederive_thesis_ledgers(h1)
+            await ctx1.__aexit__(None, None, None)
+            await _append_events(factory, *batch2)
+            ctx2, h2 = await _open_handle_with(factory, "inv-inc-2")
+            await rebuild_projection(h2, alpaca_positions=(), alpaca_account=None)
+            await rederive_thesis_ledgers(h2)
+            await ctx2.__aexit__(None, None, None)
+        else:
+            await _append_events(factory, *batch1, *batch2)
+            ctx, h = await _open_handle_with(factory, "inv-full-1")
+            await rebuild_projection(h, alpaca_positions=(), alpaca_account=None)
+            await rederive_thesis_ledgers(h)
+            await ctx.__aexit__(None, None, None)
+
+        return await _snapshot_state(factory)
+
+    inc_engine, inc_factory = await _make_db(tmp_path, "incremental")
+    full_engine, full_factory = await _make_db(tmp_path, "oneshot")
+    try:
+        incremental_state = await _build_and_run(inc_factory, incremental=True)
+        one_shot_state = await _build_and_run(full_factory, incremental=False)
+    finally:
+        await inc_engine.dispose()
+        await full_engine.dispose()
+
+    incremental_ledgers, incremental_orders = incremental_state
+    one_shot_ledgers, one_shot_orders = one_shot_state
+    # Two theses derived, identically, regardless of batching.
+    assert set(incremental_ledgers) == {"thesis-1", "thesis-2"}
+    assert incremental_ledgers == one_shot_ledgers
+    # The cancelled order projected identically too.
+    assert incremental_orders == one_shot_orders
+    assert incremental_orders["ord-extra"] == OrderStatus.CANCELLED.value

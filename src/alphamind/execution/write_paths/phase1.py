@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import InvocationId, ThesisId
@@ -137,6 +137,7 @@ from alphamind.state.tables.positions_codec import (
 from alphamind.state.tables.positions_codec import (
     row_to_record as position_row_to_record,
 )
+from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
 
 log = logging.getLogger(__name__)
 
@@ -390,13 +391,37 @@ async def rederive_thesis_ledgers(handle: InvocationHandle) -> int:
     PR2 — the distinct ``thesis_id`` values are re-derived through the **batched**
     :func:`rederive_thesis_pnl_ledgers`: a single ``IN``-clause event fetch for all
     theses instead of one ``SELECT … WHERE thesis_id = ?`` per thesis (the N+1).
+
+    ALP-865 — only the **dirty** theses are re-derived, not every thesis ever seen
+    on the log. The dirty set is the theses carrying an event whose ``event_seq``
+    (rowid) is newer than their ledger's ``last_derived_event_seq``, plus theses
+    with events but no ledger row yet (or one never stamped, ``NULL`` watermark). A
+    long-closed thesis with no new events is skipped, so its ledger is left exactly
+    as the prior derivation wrote it — identical output by construction (a closed
+    thesis's events, and therefore its derived figures, can never change). Each
+    re-derivation stamps that thesis's ``last_derived_event_seq`` to the max
+    ``event_seq`` it folded, so the next run finds it clean.
     """
     session = handle.session
-    thesis_ids = (
+    dirty_ids = (
         (
             await session.execute(
                 select(BrokerEventLogRow.thesis_id)
-                .where(BrokerEventLogRow.thesis_id.is_not(None))
+                .outerjoin(
+                    ThesisPnlLedgerRow,
+                    ThesisPnlLedgerRow.thesis_id == BrokerEventLogRow.thesis_id,
+                )
+                .where(
+                    BrokerEventLogRow.thesis_id.is_not(None),
+                    or_(
+                        # No ledger row yet, or one never stamped (NULL watermark)
+                        # → always dirty.
+                        ThesisPnlLedgerRow.thesis_id.is_(None),
+                        ThesisPnlLedgerRow.last_derived_event_seq.is_(None),
+                        # An event newer than the thesis's last derivation.
+                        BrokerEventLogRow.event_seq > ThesisPnlLedgerRow.last_derived_event_seq,
+                    ),
+                )
                 .distinct()
             )
         )
@@ -407,7 +432,7 @@ async def rederive_thesis_ledgers(handle: InvocationHandle) -> int:
     # The ``is_not(None)`` filter guarantees non-NULL values at runtime; the
     # mypy-visible ``str | None`` column type does not narrow, so guard before
     # wrapping each in ``ThesisId``.
-    typed_ids = tuple(ThesisId(tid) for tid in thesis_ids if tid is not None)
+    typed_ids = tuple(ThesisId(tid) for tid in dirty_ids if tid is not None)
     records = await rederive_thesis_pnl_ledgers(session, typed_ids, invocation_id)
     return len(records)
 

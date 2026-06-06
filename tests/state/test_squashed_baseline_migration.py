@@ -71,11 +71,13 @@ def _table_constraint_sql(engine_path: str, table: str) -> str:
 
 
 class TestSquashedBaseline:
-    def test_baseline_is_the_sole_head_with_no_down_revision(self) -> None:
+    def test_baseline_is_the_genesis_with_no_down_revision(self) -> None:
         repo_root = Path(__file__).parents[2]
         script = ScriptDirectory.from_config(Config(repo_root / "alembic.ini"))
-        heads = script.get_heads()
-        assert list(heads) == [_BASELINE_REVISION]
+        # The baseline is the genesis (no predecessor); later incremental
+        # migrations (ALP-865 onward) parent onto it in a single linear chain, so
+        # there is exactly one head — a branched history would fail ``upgrade head``.
+        assert len(script.get_heads()) == 1
         rev = script.get_revision(_BASELINE_REVISION)
         assert rev is not None
         assert rev.down_revision is None
