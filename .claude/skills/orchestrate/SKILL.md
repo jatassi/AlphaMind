@@ -15,9 +15,9 @@ These are project invariants that override any default behavior. Track them with
 
 - **Take a feature branch off `main` before any subagent dispatches.** Branch name: `<initials>/alp-<parent-issue-number>-<slug>` matching the Linear `gitBranchName` for the parent Issue. Never let subagents work directly off `main`.
 - **Max 6 concurrent active subagents.** When a parallel wave has more than 6 eligible stories, batch into sub-waves of ≤6. Wait for a sub-wave to finish before dispatching the next.
-- **Always pass `isolation: "worktree"` and `run_in_background: true` to `Agent`.** Worktree isolation is mandatory per CLAUDE.md and prevents parallel-checkout collisions; background mode is mandatory per CLAUDE.md. You'll be notified as each completes — do not poll.
+- **Always pass `isolation: "worktree"` and `run_in_background: true` to `Agent`.** Worktree isolation prevents parallel-checkout collisions; background lets the wave run concurrently. You'll be notified as each completes — do not poll.
 - **Always tag the model in the dispatch's `description`** (`[Sonnet] 04a — Zone classifier`, `[Opus] 03 — Canonical types`, `[Grok] 05a — fixture hoist`) — the `Agent` tool's `description` for Opus/Sonnet, the background command's description for a Grok CLI dispatch. Visible-at-a-glance model selection is a CLAUDE.md requirement.
-- **Run the full lint chain after each parallelized wave merges** to the feature branch. Catches integration issues that pass per-story but fail in combination. Commands: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run lint-imports`. **Do NOT run the full pytest suite locally** — per CLAUDE.md "Testing", the CI workflow (`.github/workflows/ci.yml`) is the authoritative full-suite gate on every PR push. Per-story and per-wave pytest is scoped to the changed paths only (`uv run pytest tests/<area>/ -n auto` or a single test node-id), kept fast and used as a sanity check during integration. The CI run that fires when you open the PR (or push subsequent commits to it) is the wave-spanning full-suite check.
+- **Run the full lint chain after each parallelized wave merges** (`ruff check . && ruff format --check . && mypy && lint-imports`) — catches integration issues that pass per-story but fail combined. Keep pytest scoped to changed paths (`tests/<area>/ -n auto`); the full suite is CI's job, not local (CLAUDE.md "Testing").
 - **A story blocked mid-implementation gets `state="Blocked"` in Linear,** plus a `blockedBy` link to the blocking issue if one exists in Linear (use `save_issue(id=..., state="Blocked", blockedBy=[...])`). If the blocker isn't in Linear, surface it in the final summary instead.
 - **Do not skip the post-completion sequence.** PR → pre-review triage → wait for CI green → /review → address feedback → land → clean local git → PushNotification. Add these as tasks before the work begins (see below).
 
@@ -29,7 +29,7 @@ If your cwd is already under `.claude/worktrees/` (e.g., the operator launched `
 
 Otherwise, call `EnterWorktree(name="orchestrate-<feature-slug>")` to create a fresh worktree on a clean branch off `origin/main`. Pick a `<feature-slug>` that's short and matches the feature name (`breach-behavior`, `synthesizer`, `portfolio-manager`); the worktree path becomes `.claude/worktrees/orchestrate-<feature-slug>/` and the auto-generated branch is `worktree-orchestrate-<feature-slug>`. This auto-generated branch is throwaway — step 6 (create feature branch) will branch off `main` again to land on the canonical Linear `gitBranchName`, so the worktree branch never appears in the PR.
 
-The worktree exists for **process isolation**, not branch management: it keeps the orchestrator's wave merges, lint chains, and subagent integrations off the operator's main checkout so they can keep working in parallel, and it satisfies the bg-job isolation guard that blocks file edits in the shared checkout. Subagent dispatches in the wave loop still pass `isolation: "worktree"` to `Agent` — those create their own sibling worktrees under `.claude/worktrees/` and are unaffected by which worktree the orchestrator runs in.
+The worktree exists for **process isolation**, not branch management: it keeps the orchestrator's wave merges and lint chains off the operator's main checkout and satisfies the bg-job isolation guard. Subagent dispatches still pass `isolation: "worktree"` — they create their own sibling worktrees, unaffected by which one the orchestrator runs in.
 
 After EnterWorktree returns, every subsequent file path, `git`, and `gh` command in this skill runs against the worktree. Confirm with one `pwd` (it should report `.claude/worktrees/orchestrate-<feature-slug>`) before proceeding.
 
@@ -104,19 +104,13 @@ Recovery: `rm -f <repo>/.git/index.lock` and immediately re-run the chained git 
 
 **Delegate by default.** You drive sequencing and status; subagents do the work. Use `Agent` (`subagent_type: general-purpose`, `isolation: "worktree"`, `run_in_background: true`) for every Opus/Sonnet implementation story (a story flagged **Grok** dispatches via the CLI instead — see **Model selection**). Write code yourself only when the work is smaller than dispatch overhead — Linear status updates, frontmatter fixes, single-line README edits, file-existence checks while planning a wave.
 
-**Model selection.** Per CLAUDE.md's subagent taxonomy, pick by how much the story leaves to decide:
-
-- **Opus** — the approach itself must be worked out: design, architectural/algorithmic/schema decisions, ambiguous specs, non-obvious trade-offs.
-- **Sonnet** — the approach is clear, but execution still needs discretion a green test/lint run wouldn't prove: preserving behavior, choosing what to keep vs cut within a known pattern, cross-file coherence, edge cases.
-- **Grok** (run via its CLI, *not* the `Agent` tool) — a rote, fully-specified change whose correctness is captured entirely by the test + lint gate, with nothing left to decide: mechanical renames, verbatim refactors, fixture/builder hoists.
-
-The parent Issue's orchestrator notes — and any per-story model labels (e.g. ALP-783's `Grok`/`Sonnet` labels) — may assign specific stories; honor those over this default. Tag the dispatch `[Opus]` / `[Sonnet]` / `[Grok]`. A Grok story does not go through the `Agent` wave — see **Dispatching a Grok story (CLI)** below.
+**Model selection.** Pick per CLAUDE.md's subagent taxonomy (Opus = the approach must be worked out; Sonnet = clear approach, execution discretion; Grok = rote, fully gated by tests + lint). Honor any per-story model labels in the parent Issue's notes over the default. Tag the dispatch `[Opus]` / `[Sonnet]` / `[Grok]`. A Grok story runs via its CLI, not the `Agent` wave — see **Dispatching a Grok story (CLI)** below.
 
 **Run independent stories in parallel.** The dependency graph is in the parent Issue's description; the per-sub-issue `blockedBy` relations are the source of truth. A story is dispatch-eligible when: its status is `Todo` AND every story it `blockedBy` has status `Done`. Stories at the same dependency rank dispatch together in one wave (one `Agent` call per story, all in the same message), capped at 6 concurrent.
 
 **Each story runs in its own worktree.** `isolation: "worktree"` makes the harness create a fresh branch + checkout **from `main`** (not the feature branch), runs the subagent there, and reports the branch name and worktree path on completion. Subagents must rebase onto `origin/<feature-branch>` before starting work — otherwise they won't see prior waves' commits. The dispatch prompt below includes the rebase block; honor it verbatim. Subagents commit on the worktree branch; you cherry-pick or merge onto the feature branch after verification. Never run subagents on the feature branch checkout itself — parallel stories would collide.
 
-For wave-1 subagents, the rebase block is a no-op because at dispatch time `origin/<feature-branch>` is at the same SHA as `main` (you just created the branch). Wave-2+ subagents are the ones whose rebase actually advances their HEAD — and only because the orchestrator's wave-end `git push origin <feature-branch>` published the prior waves' merges. If a subagent reports "the integration branch reference exists locally as `<feature-branch>` (not `origin/...`)" or "the rebase did nothing", that's expected behavior on wave 1 — not a sign that the rebase machinery is broken.
+The wave-1 rebase is a no-op (`origin/<feature-branch>` is at `main`'s SHA); wave-2+ rebases advance HEAD only because the orchestrator's wave-end `git push origin <feature-branch>` published the prior merges.
 
 **Push the feature branch to `origin` after each wave's wave-end gate passes**, so the next wave's worktrees can rebase onto its latest tip. Without this, wave-2+ subagents only see content from `main`, missing all prior waves' commits.
 
@@ -124,58 +118,24 @@ For wave-1 subagents, the rebase block is a no-op because at dispatch time `orig
 
 ## Dispatching a story
 
-Each implementation subagent receives a prompt of this exact shape (replace `<Linear ID>`):
+Each implementation subagent is the **`story-implementer`** custom agent (`.claude/agents/story-implementer.md`) — its system prompt carries the full per-story procedure (TDD, the lint chain, commit discipline, the no-`code-review` rule, the report-back contract, stop-and-report-on-blocker). You don't restate it; you invoke it with the story ID and the integration branch:
 
 ```
-Implement story <Linear ID>.
-
-You are running in an isolated git worktree on a fresh branch. IT IS CRITICAL that you only make changes and commits inside the worktree. ALWAYS use relative paths (e.g. `src/alphamind/<package>/<module>.py`), NEVER use fully-qualified paths (e.g. `/Users/jatassi/Git/AlphaMind/src/alphamind/<package>/<module>.py`). Do not push, switch branches, or merge.
-
-**Verify your base before starting work.** The harness creates worktree branches off `main`. The integration branch for this work tree is `<feature-branch>` (it carries all prior waves' commits). Fetching is allowed; pushing is not. Run:
-
-    git fetch origin <feature-branch>
-    if ! git merge-base --is-ancestor origin/<feature-branch> HEAD; then
-      git rebase origin/<feature-branch>
-    fi
-
-Confirm with `git log --oneline -10` that prior waves' commits are reachable from HEAD before proceeding.
-
-Fetch the user story from Linear and read it first. It names the design docs to read, the scope, and the acceptance criteria. Treat the acceptance criteria as your test list.
-
-Use the `/tdd` skill (`Skill("tdd")`) to drive the work: red → green → refactor.
-- Each acceptance criterion that admits a programmatic test gets one.
-- Criteria that don't (file existence, doc structure, NSSM service config) are verified by post-implementation inspection.
-
-**Test-quality constraints** (canonical rules in `CLAUDE.md` "## Testing" → "### Test-quality rules" and `docs/agents/testing.md`):
-- Mock only at the four sanctioned boundaries (LLM / Claude Agent SDK, broker API, system clock, database) — not internal collaborators.
-- Coverage is a floor: ask "does this test fail for a reason no other test fails for?" before adding a test.
-- Refactor step includes the tests — consolidate and delete scaffolding the coarser tests subsume.
-- Architecture/purity invariants go in `.importlinter` / ruff rules, not in ceiling or source-grep tests.
-
-If the story scaffolds a new module, service, or package — anything beyond extending an existing file with one more function — invoke `Skill("python-architecture")` in design mode before writing code, scoped to the new component. Use the brief's package layout, named typed records, and testing seam to anchor your implementation. The story's Scope already names the concrete deliverables; the brief tells you *how* to shape them so the result is testable, deeply-modular, and respects the functional-core / imperative-shell split. Skip when the story is purely additive (one new function in an existing file, a config knob, a doc edit) — the overhead exceeds the value there.
-
-**Commit often during implementation — do not save all the work for one final commit.** A good cadence: each red→green→refactor cycle that lands a coherent piece of behavior gets its own commit. For a multi-part story (extending a Protocol + refactoring the consumers + writing the integration test, say) commit each part separately as soon as its tests are green and its lint is clean. This protects against mid-flight termination (token-limit cutoffs, OOM, accidental kill): if you get cut off after committing wave A but before wave B, the orchestrator can recover wave A and re-dispatch just B, instead of throwing away both. It also makes review easier — small focused commits beat one mega-commit. The harness's worktree branch persists across these commits; only the final report-back step matters for the orchestrator's verbatim-git-log gate. Commit messages should be conventional-commits-style and reference the Linear ID. The story's deliverables are usually 2–6 such commits; one commit is fine for a genuinely-small story (one new function + its test).
-
-After tests are green and before your final commit, run the lint chain on your changes:
-
-    uv run ruff check .
-    uv run ruff format .
-    uv run mypy
-    uv run lint-imports
-
-Address all findings from your changes only. **Do NOT invoke the `code-review` skill in your dispatch.** The orchestrator runs `code-review` in the main thread after each wave merges to the feature branch (with the integration view across multiple stories), and decides whether each finding should be applied inline or dispatched to a follow-up subagent based on scope. Running `code-review` in the dispatch prompt duplicates this work, produces narrower findings than the post-wave pass, and burns tokens on diff coverage the orchestrator will redo at integration-tip anyway.
-
-When done — **REQUIRED — DO NOT SKIP THE COMMIT STEP.**
-1. Run a scoped pytest covering this story's tests: `uv run pytest tests/<story-area>/ -n auto` (or the single-file / single-node-id form). Confirm green. **Do NOT run the full pytest suite locally** — the CI workflow (`.github/workflows/ci.yml`) is the authoritative full-suite gate on every PR push, per CLAUDE.md "Testing". The unscoped `uv run pytest` is forbidden during dispatch.
-2. **STAGE AND COMMIT** any remaining uncommitted work. `git add` then `git commit`. After committing, run `git log --oneline <feature-branch>..HEAD` and confirm your commits are listed. If `git status` shows untracked or modified files, you have NOT committed — `git add` and commit them.
-3. Report back with **the verbatim output of `git log --oneline <feature-branch>..HEAD`** as the FIRST item in your report (before any prose), followed by a one-line attestation per acceptance criterion ("met by test X", "met by file Y exists", "met by manual inspection of Z"). A report without verbatim git-log output as its first item signals to the orchestrator that the commit step was skipped — the orchestrator will reject the report and re-dispatch.
-
-If you hit a blocker — schema gap, ambiguous spec, sibling-work-tree primitive missing or shaped differently than the story expected, test that won't pass without scope creep — stop and report. Do not improvise.
-
-Do not change the status of the user story in Linear; the orchestrator owns status transitions.
+Agent({
+  subagent_type: "story-implementer",
+  model: "opus",            // or "sonnet" per the model split; REQUIRED — the agent's own default is `inherit`
+  description: "[Opus] 04a — Zone classifier",
+  prompt: "Implement story ALP-XXX. Integration branch: <feature-branch>."
+})
 ```
 
-When dispatching multiple parallel-eligible stories, send all `Agent` calls in a single message (one block per story). Use `description` like `[Opus] 04a — Zone classifier` for visibility.
+- **Model is per-dispatch and required.** The agent's frontmatter is `model: inherit`, so it runs on whatever you pass and the per-invocation `model` wins — pass `"opus"` or `"sonnet"` per the Opus/Sonnet split in CLAUDE.md "Subagents". Put the model in `description` (`[Opus] 04a — Zone classifier`) for visibility.
+- **Background + worktree isolation are automatic.** The agent's frontmatter sets `background: true` and `isolation: worktree`, so every dispatch runs concurrently in its own isolated worktree (branched from `main`) — you don't pass `run_in_background` or `isolation` yourself.
+- **Integration branch** is the feature branch you created in Pre-flight step 6 (it carries all prior waves' commits) — the agent rebases its worktree onto it and diffs its `git log` against it. Always pass it; without it the agent stops and reports.
+- **Parallel waves:** when dispatching multiple parallel-eligible stories, send all `Agent` calls in a single message (one block per story).
+- **Grok stories** do not use this agent — see below.
+
+To change a step (a lint command, the report-back gate), edit `.claude/agents/story-implementer.md` — both the Claude and Grok paths pick it up.
 
 ### Dispatching a Grok story (CLI)
 
@@ -185,7 +145,7 @@ A story flagged **Grok** does **not** go through the `Agent` tool — there is n
 - **Give a high `--max-turns`.** Grok issues one tool-call per turn; a multi-file hoist needs headroom or it stops mid-task *without committing* — which looks like broken output (e.g. tests left failing because it never reached the verify step).
 - **Verify the output yourself.** Grok self-reports success even when truncated. Run the scoped pytest + coverage guard and confirm it committed (`git -C <worktree> log`) before merging.
 
-Build the prompt from the same shape as the Agent dispatch prompt above — but **drop the `Skill("tdd")` / `Skill("python-architecture")` lines** (Claude-only) — and embed the story spec inline. Run it headless, e.g.:
+Build the prompt from the **`story-implementer`** agent's instructions (`.claude/agents/story-implementer.md`) — but **drop the `Skill("tdd")` / `Skill("python-architecture")` lines** (Claude-only) — and embed the story spec inline. Run it headless, e.g.:
 
     grok -m grok-build --cwd <worktree> --prompt-file <prompt> \
       --always-approve --no-subagents --max-turns 500 --output-format plain
@@ -234,7 +194,7 @@ Each agent result includes the worktree path and branch name. Per result:
 5. **Architectural integration gaps invisible to stubs.** Stub-heavy unit tests can pass while the framework itself rejects the constructed options at runtime. When a story touches an external SDK or framework's option-shape construction (e.g., `ClaudeAgentOptions.mcp_servers`, `Alembic.Config`'s logger configuration, `pytest` plugins, `pydantic` discriminated unions), confirm at least one test exercises the constructed shape end-to-end — not just stubbing the framework's response. If every test stubs the SDK, the harness can build wrong-shaped options that silently degrade in production (e.g., tools registered with `allowed_tools` but no `mcp_servers` — the LLM emits `<tool_use>` and the SDK returns "tool not found", and the agent falls back to its non-tool path). Add such a test before merging or surface as a follow-on issue.
 6. **Decision:**
    - **Pass:** **First confirm CWD is the main repo, not a worktree. The shell's CWD persists across tool invocations** — after ANY command that `cd`s into a worktree (even implicitly via a chained `&&` series running inside the worktree), the NEXT bash invocation operates from that CWD until you explicitly `cd` out. Symptoms: `git merge --ff-only worktree-X` reports `Already up to date` (because you're merging the worktree branch into itself); `git worktree remove` fails with `Unable to read current working directory`; `git status` reports the worktree's branch instead of the feature branch. Defenses (any one suffices): (a) chain `cd /Users/.../<repo> && <merge command>` as the first thing in the bash invocation, (b) run all merge / worktree-cleanup operations via `git -C /absolute/path/to/main/repo` so CWD is irrelevant, (c) never let a verification step's lint/test command shift CWD — use `git -C <worktree-path>` or absolute paths from main. After the merge: `git merge --ff-only <branch>`. If FF fails (parallel branches diverged), `git merge --no-ff <branch>` and resolve conflicts (this is a "trivial conflict" you handle directly per CLAUDE.md "When you handle work directly"). Verify the merge actually happened: `git log --oneline -3` should show the worktree's commit on the feature branch. Then update Linear: `save_issue(id=<sub-issue ID>, state="Done")`. Mark the corresponding TaskUpdate to `completed`. Clean up: `git worktree remove -f -f <path>` then `git branch -d <branch>`. The double `-f` is required: the Claude agent harness places a `claude agent agent-...` lock on the worktree on completion, and single `-f` fails the unlock check. Double-force overrides; safe because the agent has already returned and you own the worktree's lifecycle.
-   - **Fail (test failure, lint failure, blocker reported, criterion miss):** Diagnose the gap. If the subagent reported a blocker that exists as another Linear issue, set `state="Blocked"` and add the `blockedBy` link. Otherwise re-dispatch with the specific gap noted in the prompt. Clean up the failed worktree first: `git worktree remove -f -f <path>` and `git branch -D <branch>`.
+   - **Fail (test failure, lint failure, blocker reported, criterion miss):** Diagnose the gap. If the subagent reported a blocker that exists as another Linear issue, set `state="Blocked"` and add the `blockedBy` link. If the blocker is that the story's own spec is underspecified or ambiguous (not a missing sibling primitive), run `/refine-issue <id>` to sharpen it to ready, then re-dispatch. Otherwise re-dispatch with the specific gap noted in the prompt. Clean up the failed worktree first: `git worktree remove -f -f <path>` and `git branch -D <branch>`.
 
 ### Wave-end gate
 
@@ -243,7 +203,7 @@ After all stories in a wave have been verified and merged (or blocked), and *bef
 - Run the full lint chain on the feature branch: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run lint-imports`. Catches lint/type/import-graph integration issues that pass per-story but fail combined. **Do NOT run the full pytest suite here** — per CLAUDE.md "Testing", CI runs the full suite on PR. A scoped pytest covering the union of paths the wave touched (e.g., `uv run pytest tests/synthesizer/ tests/analyst/ -n auto`) is fine as a sanity check if the wave touched cross-cutting code; keep it narrow.
 - **Push the feature branch to `origin`** (`git push origin <feature-branch>`) so the next wave's worktrees can rebase onto its latest tip. Skipping this means wave-N+1 subagents will only see content reachable from `main`, missing every story merged in waves 1..N.
 - **Regenerate fixture artifacts ONCE per wave, not per-story.** When 3+ parallel stories in the same wave each modify a generated artifact (typical: `tests/fixtures/replay_harness/fixture_store/*/raw_inputs.sqlite` after migrations land — every story regenerates from `python tests/fixtures/replay_harness/generate_fixtures.py`), each per-story merge produces a binary-file conflict. Resolve trivially with `git checkout --theirs <path>` during cherry-pick (the regenerated content is wrong-for-the-final-state anyway), then run the regen script ONCE after all parallel stories merge and commit the result as a `test(<feature>): regenerate fixtures after wave-N <thing>` follow-up commit. Avoids N-1 useless conflict-resolution cycles.
-- **Run `code-review` in the main thread** (`Skill("code-review")`) on the post-wave state — unless the wave is docs-only (no `*.py` or other code-bearing files changed). The orchestrator owns the integration view across the wave's stories; `code-review` surfaces correctness bugs and integration gaps that per-story subagents cannot see (one story's helper duplicating another's; a state mutation in story A that breaks an invariant story B's caller relies on; a wave's worth of validators all repeating the same boilerplate that could centralize; a Protocol extension in story A whose new method story B implements but story C's caller never invokes). Subagent dispatch prompts no longer invoke `code-review` — the post-wave main-thread pass is the single point of consolidation. Skip the pass on docs-only waves (`docs/`, `*.md`) since the skill targets code-correctness signal, not prose; record the skip explicitly ("Wave-N is docs-only; code-review skipped") and proceed.
+- **Run `code-review` in the main thread** (`Skill("code-review")`) on the post-wave state — unless the wave is docs-only (no `*.py` or other code-bearing files changed). The orchestrator owns the integration view across the wave's stories; `code-review` surfaces correctness bugs and integration gaps that per-story subagents cannot see (one story's helper duplicating another's; a state mutation in story A that breaks an invariant story B's caller relies on; a wave's worth of validators all repeating the same boilerplate that could centralize; a Protocol extension in story A whose new method story B implements but story C's caller never invokes). Subagent dispatches do not invoke `code-review`; the post-wave main-thread pass is the single point of consolidation. Skip the pass on docs-only waves (`docs/`, `*.md`) since the skill targets code-correctness signal, not prose; record the skip explicitly ("Wave-N is docs-only; code-review skipped") and proceed.
 
   **Effort selection.** `code-review` accepts an effort level — `low`/`medium` yield fewer, higher-confidence findings; `high`/`max` broaden coverage at the cost of more uncertain findings. Default to **medium** for routine waves. Bump to **high** when the wave (a) touches an architectural seam — Protocol contracts, persistence boundary, cross-feature primitive; (b) edits a schema, migration, or wire-format; (c) lands a multi-story feature whose stories have non-trivial cross-story integration (Protocol extension + consumers + integration tests all in one wave); or (d) collectively changes >300 lines or >5 production files. Drop to **low** for waves that are predominantly mechanical (verbatim renames, generated-fixture regenerations, single-file additive changes, doc-adjacent code). The cost of `high`/`max` is operator-triage time on uncertain findings; spend it where a missed bug would force a re-dispatch + re-merge cycle, not on a wave that's near-impossible to break. Do not pass `--comment` — the wave runs against the integration branch, not a PR; the orchestrator consolidates and applies findings itself, and `--comment` requires a PR target anyway.
 
@@ -332,35 +292,22 @@ When the triage list is empty, record that explicitly ("Pre-review triage: no ad
 
 ### 3. Wait for CI green on the PR — and iterate until it IS green
 
-The `ci` workflow runs on every PR push: lint chain on Linux, full pytest suite on Windows (matches production). It is the authoritative full-suite gate; this skill no longer runs the full suite locally. Watch the run **by ID**, not by PR — per CLAUDE.md "Watching CI on a PR", `gh pr checks <PR> --watch` invoked immediately after a push exits early with "no checks reported" because the check hasn't registered yet:
+The `ci` workflow (lint on Linux + full pytest on Windows) is the authoritative full-suite gate. Watch it **by ID** per `docs/agents/ci.md` "Watching CI on a PR" (the bare `gh pr checks --watch` races the pre-registration window). This is an iterate-until-green loop, not a wait-once:
 
-```bash
-sleep 5
-RUN_ID=$(gh run list --branch <feature-branch> --workflow ci.yml --limit 1 --json databaseId -q '.[0].databaseId')
-gh run watch "$RUN_ID" --exit-status
-```
+1. Watch to terminal state.
+2. **Green:** proceed to /review.
+3. **Red:** fetch the failing log (`gh run view --log-failed`, per ci.md), diagnose, fix on the feature branch, commit `fix(<feature>): address CI <category> failure`, push, re-fetch the run ID, re-watch.
 
-`gh run watch --exit-status` blocks until the run reaches a terminal state and propagates the run's pass/fail as the command's exit code (non-zero on failure). **This step is not "wait once and proceed regardless" — it is an iteration loop.** Stay in the loop until CI is green:
-
-1. Watch the run to completion.
-2. **If green:** proceed to /review (step 4).
-3. **If red:** read the failure log via `gh run view "$RUN_ID" --log-failed --job <job ID>` (the failed-job ID is printed by `gh run watch`). Diagnose. Fix on the feature branch. Commit with a `fix(<feature>): address CI <category> failure in <area>` message. Push. Go back to step 1 — re-fetch the new `RUN_ID` after the push and watch the fresh run to completion.
-4. **Do not declare the post-completion sequence done while CI is red.** Do not advance to /review. Do not merge. Do not move on to the next feature. The orchestration is not complete until CI is green on the latest pushed commit.
+Do not advance to /review, merge, or move on while CI is red on the latest commit.
 
 **Failure-class diagnosis:**
 
-- **Lint failure** — the wave-end lint chain should have caught this; if it didn't, the failure is in a path the wave-end gate didn't fully cover. Read the CI log, fix on the feature branch, commit as `fix(<feature>): address CI lint failure in <area>`, push. Re-watch.
-- **Test failure on Windows that you can't reproduce locally** — the failure is platform-specific (path separators, file-handle behavior, line endings, timezone-naive datetime drift, signal handling, `cp1252` default text encoding, missing env vars CI doesn't have, Unix-only stdlib modules like `fcntl`). Read the failing test's full traceback from the CI log. Reproduce by running the scoped pytest path locally if you can; if not, the fix is informed by reading the test and the production code under suspicion. Commit and push. Re-watch.
-- **Test failure that looks flaky** — re-run via `gh run rerun <run ID> --failed`. If it persists, treat as a real failure (xdist flake from shared global state — bisect per CLAUDE.md "Testing" guidance on test-order dependence). Bisect the offending test; fix; push; re-watch.
-- **Pre-existing failure orthogonal to this feature's work** — if the failure is in code/tests this feature didn't touch and is reproducible on `main` itself (verify by checking the most recent push-to-main CI run on origin/main), surface to the operator with the diagnosis. Open a Linear issue under "To-dos" describing the symptom + scope, and xfail (or skip-with-reason) the offending test in this PR with `reason="ALP-<new-issue-id>: ..."` so this PR's CI goes green without masking the real bug. Do NOT silently downgrade an in-scope failure to "pre-existing" — verify against main first. Do NOT xfail without an open tracking issue.
+- **Lint** — the wave-end gate missed a path. Fix on the feature branch, push, re-watch.
+- **Windows-only test failure you can't reproduce locally** — platform-specific (path separators, file-handle behavior, line endings, naive-datetime drift, `cp1252` default encoding, Unix-only stdlib like `fcntl`). Read the traceback from the CI log; fix from reading the test + suspect production code; push; re-watch.
+- **Looks flaky** — `gh run rerun <run ID> --failed`; if it persists it's real (xdist test-order dependence — bisect per CLAUDE.md "Testing"). Fix the offending test/code, push, re-watch.
+- **Pre-existing, orthogonal to this feature** — verify it reproduces on `origin/main` first. If so, open a "To-dos" Linear issue and xfail with `reason="ALP-<id>: ..."` so this PR goes green without masking it. Don't downgrade an in-scope failure to "pre-existing" without checking main; don't xfail without a tracking issue.
 
-Pair the wait with a final local lint sanity (cheap, catches anything that drifted between wave-end and now):
-
-```bash
-uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run lint-imports
-```
-
-When CI is green on the latest pushed commit and local lint is clean, proceed to /review.
+When CI is green on the latest commit, proceed to /review.
 
 ### 4. Spawn /review subagent
 
@@ -400,7 +347,7 @@ After all accepted feedback is addressed, push the new commits to the PR.
 
 ### 6. Land PR and clean local git state
 
-- Confirm CI is still green on the PR — completion-sequence step 3 waited for the initial run, but the address-feedback push (step 5) triggered a fresh CI run. Watch it by ID per CLAUDE.md "Watching CI on a PR": `sleep 5 && gh run watch $(gh run list --branch <feature-branch> --workflow ci.yml --limit 1 --json databaseId -q '.[0].databaseId') --exit-status`. Iterate (fix → push → re-watch) until green.
+- Confirm CI is still green — the address-feedback push (step 5) triggered a fresh run. Watch it by ID (`docs/agents/ci.md`) and iterate (fix → push → re-watch) until green.
 - **Before `gh pr merge`, sweep stale `main`-bearing worktrees.** Run `git worktree list` and look for orphan worktrees from prior sessions checked out to `main` (typical naming: `.claude/worktrees/<random-name>` with no `agent-` prefix). `gh pr merge` switches the local checkout to `main` to apply the merge and fails with `fatal: 'main' is already used by worktree at <path>` if a stale `main` worktree exists. Confirm the orphan's `git -C <path> status --short` is clean (no uncommitted work), then `git worktree remove -f -f <path>`. Diagnose only if the worktree has uncommitted work — rare for orphans, but possible if it represents the operator's in-progress side work.
 - Squash-merge the PR per CLAUDE.md "Git / GitHub Instructions" (`gh pr merge <PR number> --squash --delete-branch`).
 - Locally:
@@ -486,8 +433,8 @@ Surface blockers immediately, do not work around them:
 - **Do not amend commits** — create new commits instead. If a hook fails, the commit didn't happen, and `--amend` would corrupt the previous commit.
 - **Do not skip hooks** (`--no-verify`, `--no-gpg-sign`). If a hook fails, fix the underlying issue.
 - **Do not dispatch a subagent without `isolation: "worktree"`** — parallel work on the feature branch checkout corrupts state.
-- **Do not dispatch a subagent without `run_in_background: true`** — CLAUDE.md mandates async dispatch; foreground subagents block parallelism.
-- **Do not declare a story `Done` without scoped `uv run pytest tests/<story-area>/ -n auto` green, lint clean, and a spot-check of every acceptance criterion.** The full-suite check happens in CI on the PR; per-story local pytest stays scoped.
+- **Do not dispatch a subagent without `run_in_background: true`** — foreground blocks parallelism.
+- **Do not declare a story `Done` without scoped pytest green, lint clean, and a spot-check of every acceptance criterion.**
 - **Do not modify a sub-issue's description in Linear** — only the `state` and `blockedBy` fields. Description ownership lives with `/draft-user-stories`.
 - **Do not pick up a story whose `blockedBy` stories are not all `Done`.**
 - **Do not exceed 6 concurrent active subagents.** Sub-wave instead.
@@ -500,8 +447,8 @@ Surface blockers immediately, do not work around them:
 - **Dispatching all stories at once "to save time".** Wave structure exists because dependencies are real. Out-of-order dispatch produces stories that depend on absent code and waste subagent cycles.
 - **Dispatching multiple stories that share a target file in the same wave.** When two or more stories all create or edit the same file (e.g., three sub-stories each adding a test case to one shared file), parallel worktrees produce independent versions of the file and the cherry-picks conflict at integration time. Either sequence them across waves, merge them into one story, or — if the parent Issue's notes say "story A creates the file; siblings ADD to it" — dispatch story A first, wait for merge + push, then dispatch the siblings.
 - **Running `pytest` without `-n auto`** anywhere — your verification, the subagent's verification, the wave gate. Serial pytest runs hide xdist-only failures.
-- **Running the unscoped full pytest suite locally.** CLAUDE.md "Testing" forbids this by default — CI runs the full suite on every PR push and is the authoritative gate. This skill's per-story checks, dispatch prompts, mid-wave checks, and wave-end gates all use scoped pytest (`tests/<area>/ -n auto` or a single test node-id). When you write a verbatim pytest command into a dispatch prompt, default to the scoped form. There is no longer a pre-/review local full-suite drift-check — the CI run on the PR replaces it (completion-sequence step 3).
-- **Pushing directly to `main` instead of via PR.** CLAUDE.md "Branch policy" makes main PR-only — even though server-side branch protection isn't enforced. Push to the feature branch, open the PR, wait for CI, then merge.
+- **Running the unscoped full pytest suite locally.** CLAUDE.md "Testing" forbids it by default — CI is the full-suite gate. Every local pytest (verification, dispatch prompts, wave gates) stays scoped (`tests/<area>/ -n auto`).
+- **Pushing directly to `main` instead of via PR** (CLAUDE.md "Branch policy"). Feature branch → PR → CI green → merge.
 - **Trusting subagent self-reports.** They sometimes report "done" with uncommitted changes (`feedback_subagent_must_commit`). Always verify with `git log <feature-branch>..<subagent-branch>` and `git status` in the worktree. Per-story tests cover per-story acceptance criteria, but they often don't exercise the production-call path end-to-end. The /review can surface integration gaps the wave gates miss — e.g., a Phase 1 transaction commit and a repository snapshot-read each working in isolation, but the production caller unable to string them together because a sentinel field (`phase1_completed_at`) is never set on the production write path. When a story's tests rely on synthetic timestamps or state stamps that production code should but doesn't write, treat them as a yellow flag — scan for such constructs during verification and mark them as a pre-merge follow-up.
 - **Skipping the wave-end global lint+test gate.** Per-story verification doesn't catch integration issues. The global gate is cheap; skipping it costs more later.
 - **Restating the parent Issue's orchestrator notes here.** This skill provides defaults; the parent Issue provides feature-specific overrides. Read both; apply them additively.
@@ -509,12 +456,4 @@ Surface blockers immediately, do not work around them:
 
 ## Self-improvement
 
-While executing, note moments where this skill let you down: a wave-handling edge case it didn't anticipate, a Linear/git/subagent gotcha you hit and worked around, a verification step that missed a real failure mode, a recovery path the procedure didn't describe, guidance that turned out wrong.
-
-Don't fix the skill mid-flight — the orchestration loop has too many moving parts to safely edit while running. Keep working notes mentally (or in a scratch TaskCreate), and at the end — *after* the PushNotification — propose specific edits in this shape:
-
-- **Where:** the section/heading in this SKILL.md to change.
-- **What:** the concrete edit (added bullet, replaced sentence, new subsection).
-- **Why:** what went wrong without it.
-
-Skip silently if nothing came up. The bar is "would have saved a step" or "would have prevented a mistake", not "could be marginally smoother". The operator decides what to apply.
+Note where the skill let you down — a wave-handling edge case, a Linear/git/subagent gotcha, a verification step that missed a real failure, guidance that turned out wrong. Don't fix it mid-flight; after the PushNotification, propose edits as **Where** / **What** / **Why** (what went wrong without it). Bar: "would have saved a step" or "prevented a mistake"; skip silently otherwise.
