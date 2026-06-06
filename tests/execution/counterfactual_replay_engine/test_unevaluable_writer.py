@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -51,7 +52,7 @@ _WIN_END = datetime(2026, 1, 11, 14, 0, tzinfo=UTC)
 
 
 @pytest.fixture()
-def _engine():
+def _engine() -> Iterator[Engine]:
     eng = make_engine(":memory:")
     Base.metadata.create_all(eng)
     yield eng
@@ -59,7 +60,7 @@ def _engine():
 
 
 @pytest.fixture()
-def session(_engine) -> Iterator[Session]:
+def session(_engine: Engine) -> Iterator[Session]:
     factory = make_session_factory(_engine)
     with factory() as sess:
         yield sess
