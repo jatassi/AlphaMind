@@ -87,10 +87,7 @@ def decode_counterfactual_replay(row: Any) -> CounterfactualReplayRecord:
     an ORM row (attribute access) so the same function serves both the round-trip
     tests and the live read path.
     """
-    if isinstance(row, dict):
-        get = row.__getitem__
-    else:
-        get = lambda key: getattr(row, key)  # noqa: E731
+    get = row.__getitem__ if isinstance(row, dict) else lambda key: getattr(row, key)
 
     def _get(key: str) -> Any:
         return get(key)
@@ -120,17 +117,13 @@ def decode_counterfactual_replay(row: Any) -> CounterfactualReplayRecord:
         entry_timestamp=_dt_from_iso(_get("entry_timestamp")),
         entry_slippage=_money("entry_slippage"),
         entry_fees=_money("entry_fees"),
-        exit_leg=(
-            ExitLeg(_get("exit_leg")) if _get("exit_leg") is not None else None
-        ),
+        exit_leg=(ExitLeg(_get("exit_leg")) if _get("exit_leg") is not None else None),
         exit_price=_price("exit_price"),
         exit_timestamp=_dt_from_iso(_get("exit_timestamp")),
         exit_slippage=_money("exit_slippage"),
         exit_fees=_money("exit_fees"),
         realized_pl=_money("realized_pl"),
-        confidence=(
-            Confidence(_get("confidence")) if _get("confidence") is not None else None
-        ),
+        confidence=(Confidence(_get("confidence")) if _get("confidence") is not None else None),
         replay_timestamp=_dt_from_iso(_get("replay_timestamp")),  # type: ignore[arg-type]
         replay_data_window_start=_dt_from_iso(_get("replay_data_window_start")),
         replay_data_window_end=_dt_from_iso(_get("replay_data_window_end")),

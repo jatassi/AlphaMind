@@ -95,7 +95,8 @@ class CounterfactualReplays(Base):
             name="ck_counterfactual_replays_replay_status",
         ),
         CheckConstraint(
-            f"unevaluable_reason IS NULL OR {_check_in('unevaluable_reason', _UNEVALUABLE_REASON_VALUES)}",
+            "unevaluable_reason IS NULL OR "
+            + _check_in("unevaluable_reason", _UNEVALUABLE_REASON_VALUES),
             name="ck_counterfactual_replays_unevaluable_reason",
         ),
         CheckConstraint(

@@ -164,9 +164,7 @@ class TestInsertCounterfactualReplay:
         loaded = load_counterfactual_replays_for_envelope(session, _ENV_1)
         assert len(loaded) == 2
 
-    def test_load_returns_records_for_requested_envelope_only(
-        self, session: Session
-    ) -> None:
+    def test_load_returns_records_for_requested_envelope_only(self, session: Session) -> None:
         r_env1 = _evaluated_record("rpl-4a", _ENV_1)
         r_env2 = _evaluated_record("rpl-4b", _ENV_2)
         insert_counterfactual_replay(session, r_env1)
@@ -178,9 +176,7 @@ class TestInsertCounterfactualReplay:
         assert loaded[0].pm_decision_envelope_id == _ENV_1
 
     def test_load_empty_envelope_returns_empty_tuple(self, session: Session) -> None:
-        loaded = load_counterfactual_replays_for_envelope(
-            session, EnvelopeId("ENV-REC-999")
-        )
+        loaded = load_counterfactual_replays_for_envelope(session, EnvelopeId("ENV-REC-999"))
         assert loaded == ()
 
     def test_load_ordered_by_replay_kind(self, session: Session) -> None:
@@ -199,9 +195,7 @@ class TestInsertCounterfactualReplay:
 
 
 class TestUniqueConstraintViolation:
-    def test_duplicate_envelope_kind_raises_integrity_error(
-        self, session: Session
-    ) -> None:
+    def test_duplicate_envelope_kind_raises_integrity_error(self, session: Session) -> None:
         """Two inserts with the same (envelope, kind) raise IntegrityError.
 
         The UniqueConstraint ``uq_counterfactual_replays_envelope_kind`` enforces

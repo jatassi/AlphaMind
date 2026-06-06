@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import EnvelopeId, ReplayId
-from alphamind._kernel.money import Money, Price, money, price
+from alphamind._kernel.money import Money, money, price
 from alphamind.execution.counterfactual_replay_engine.enums import (
     Confidence,
     ExitLeg,
@@ -240,9 +240,7 @@ class TestCounterfactualReplaysTableShape:
 
     def test_unique_constraint_envelope_kind(self, session: Session) -> None:
         row1 = encode_counterfactual_replay(_evaluated_equity_record())
-        row2 = encode_counterfactual_replay(
-            _evaluated_equity_record(replay_id="rpl-1b")
-        )
+        row2 = encode_counterfactual_replay(_evaluated_equity_record(replay_id="rpl-1b"))
         # Both have same envelope_id + replay_kind → unique violation
         session.add(CounterfactualReplays(**row1))
         session.flush()
@@ -285,29 +283,25 @@ class TestCounterfactualReplaysTableShape:
         with pytest.raises(IntegrityError):
             session.flush()
 
+    def _get_ddl(self, engine: Engine) -> str:
+        """Fetch the CREATE TABLE DDL for counterfactual_replays from sqlite_master."""
+        query = "SELECT sql FROM sqlite_master WHERE type='table' AND name='counterfactual_replays'"
+        with engine.connect() as conn:
+            return conn.execute(text(query)).scalar_one()
+
     def test_check_vocab_includes_all_five_exit_leg_values(self, engine: Engine) -> None:
         """All five ExitLeg members including STRATEGIST_CLOSE_AT_PROPOSAL must be in DDL."""
-        with engine.connect() as conn:
-            ddl = conn.execute(
-                text(
-                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='counterfactual_replays'"
-                )
-            ).scalar_one()
+        ddl = self._get_ddl(engine)
         for member in ExitLeg:
             assert f"'{member.value}'" in ddl, f"Missing {member.value!r} from exit_leg CHECK"
 
-    def test_check_vocab_includes_all_five_unevaluable_reason_values(
-        self, engine: Engine
-    ) -> None:
+    def test_check_vocab_includes_all_five_unevaluable_reason_values(self, engine: Engine) -> None:
         """All five UnevaluableReason members must be in DDL from the start."""
-        with engine.connect() as conn:
-            ddl = conn.execute(
-                text(
-                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='counterfactual_replays'"
-                )
-            ).scalar_one()
+        ddl = self._get_ddl(engine)
         for member in UnevaluableReason:
-            assert f"'{member.value}'" in ddl, f"Missing {member.value!r} from unevaluable_reason CHECK"
+            assert f"'{member.value}'" in ddl, (
+                f"Missing {member.value!r} from unevaluable_reason CHECK"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -346,7 +340,8 @@ class TestCodecRoundTrips:
         """Each UnevaluableReason encodes to its lowercase .value."""
         for reason in UnevaluableReason:
             record = _unevaluable_record(
-                replay_id=f"rpl-{reason.value}", envelope_id=f"ENV-REC-{reason.value[:4]}",
+                replay_id=f"rpl-{reason.value}",
+                envelope_id=f"ENV-REC-{reason.value[:4]}",
                 reason=reason,
             )
             encoded = encode_counterfactual_replay(record)
@@ -403,9 +398,7 @@ class TestCodecRoundTrips:
 
     def test_replay_kind_encodes_to_lowercase(self) -> None:
         for kind in ReplayKind:
-            record = _evaluated_equity_record(
-                kind=kind, replay_id=f"rpl-kind-{kind.value}"
-            )
+            record = _evaluated_equity_record(kind=kind, replay_id=f"rpl-kind-{kind.value}")
             encoded = encode_counterfactual_replay(record)
             assert encoded["replay_kind"] == kind.value
 
