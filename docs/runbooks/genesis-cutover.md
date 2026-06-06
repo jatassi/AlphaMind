@@ -79,15 +79,23 @@ safety-core → collector** (NSSM stop each service).
   creds returns the **new** account number, **Level 3**, expected starting cash, and
   `get_positions` empty **and** `get_orders(status=open)` empty.
 
-### 4. Stand up the fresh DB from the new Alembic baseline
+### 4. Stand up the fresh DB at schema head
 - [ ] Point config at the **new** DB path (do not reuse the old file).
 - [ ] `alembic upgrade head` to create the new-design schema — append-only **broker-event
       log**, separated **Intent**, **greeks side table**, link-carrying `client_order_id`
       (ADR-0002/0003/0005).
+- ℹ️ **`upgrade head` is the full chain, not just the baseline.** Head =
+      `a000000000aa` (baseline) → `a865wm0000bb` (ALP-865: `projection_rebuild_watermark`
+      table + `thesis_pnl_ledger.last_derived_event_seq`) → `a867er0000cc` (ALP-867: widen
+      the `broker_event_log` event_type CHECK for `ENTRY_REPRICED`). It is a **single
+      linear head** — run `alembic heads` and confirm it returns **exactly one** revision
+      (`a867er0000cc`) before proceeding; two heads means a follow-up migration branched off
+      the baseline instead of chaining, and `upgrade head` will fail.
 - ⚠️ When authoring the baseline's CHECK constraints, include the **full intended enum
       vocabulary** up front (see the "migration CHECK-vocab" trap) so later enum additions
       don't retroactively differ on fresh DBs.
-- ✅ **Verify:** schema at head; new tables exist; all portfolio/Intent tables empty.
+- ✅ **Verify:** schema at head (single head, per above); new tables exist (incl.
+      `projection_rebuild_watermark`); all portfolio/Intent tables empty.
 
 ### 5. Carry over collector market-data + reference tables (only)
 Copy from the old DB **only** the schema-stable, expensive-to-recollect tables the
