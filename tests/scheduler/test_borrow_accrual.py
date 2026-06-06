@@ -301,6 +301,42 @@ class TestBorrowAccrualBooks:
         assert invocation_ids == [_INVOCATION_ID]
 
 
+class TestUncoveredShortDoesNotAbort:
+    """ALP-862: an OPEN SHORT whose ticker has no borrow rate accrues 0.0, not a rollback.
+
+    The account-activities poll opens a SHORT equity leg from a forced assignment
+    earlier in the same Phase-1 write unit; ``run_borrow_accrual`` runs right
+    after, in the same transaction. If the ticker is uncovered (no
+    ``borrow_cost_daily`` row), the accrual must accrue 0.0 rather than raise —
+    raising would roll back the just-opened short, re-stranding the broker short.
+    """
+
+    async def test_uncovered_ticker_accrues_zero_and_does_not_raise(
+        self, async_factory: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        await _seed_parents(async_factory)
+        await _seed_default_short(async_factory)  # pos-1 / ABCD
+        await _seed_ohlcv(async_factory, ticker="ABCD", close=50.0)
+
+        # The resolver has NO rate for ABCD (uncovered ticker → resolver miss).
+        with caplog.at_level("WARNING", logger="alphamind.scheduler.borrow_accrual"):
+            await _run_in_handle(async_factory, resolver=_resolver({}))
+
+        async with async_factory() as sess:
+            row = (
+                await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+            ).scalar_one()
+            details = position_row_to_record(row).details
+            assert isinstance(details, EquityPositionDetails)
+            # Accrued 0.0 — unchanged, no raise, no rollback of the short.
+            assert details.accrued_borrow_cost_usd == pytest.approx(0.0)
+            # A 0.0 BORROW_COST_ACCRUED entry is still booked (audit trail).
+            rows = (await sess.execute(select(ActivityLogRow))).scalars().all()
+            assert len(rows) == 1
+        # The uncovered ticker is surfaced in a warning naming it.
+        assert any("ABCD" in rec.message and rec.levelname == "WARNING" for rec in caplog.records)
+
+
 class TestOncePerTradingDayGuard:
     async def test_second_same_day_invocation_is_noop(
         self, async_factory: async_sessionmaker[AsyncSession]

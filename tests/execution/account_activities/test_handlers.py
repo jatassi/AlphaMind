@@ -311,11 +311,18 @@ async def test_assignment_opens_equity_at_strike_with_thesis_link(
         equity = row_to_record(equities[0])
         assert equity.thesis_id == "thesis-1"
         assert equity.parent_position_id == "pos-1"
+        # A buy-side delivery → LONG equity; the four short-only fields stay None
+        # after the codec round-trip (guards against a LONG row decoding SHORT).
+        assert equity.direction is Direction.LONG
         details = equity.details
         assert isinstance(details, EquityPositionDetails)
         assert details.ticker == "AAPL"
         assert details.share_count == 500.0
         assert details.average_cost_basis_per_share == pytest.approx(150.0)
+        assert details.borrow_rate_pct is None
+        assert details.accrued_borrow_cost_usd is None
+        assert details.locate_status is None
+        assert details.margin_held_usd is None
 
         # Both the OPASN and its paired OPTRD landed in the event log, and BOTH
         # carry the resolved thesis/position attribution (the OPTRD row must not

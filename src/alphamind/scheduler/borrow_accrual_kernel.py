@@ -22,12 +22,17 @@ Positions that are not OPEN SHORT EQUITY (LONG equity, options, strategy,
 CLOSED, PENDING) are silently skipped — the imperative shell does not
 need to filter them out before the call.
 
-The kernel is **fail-fast**: a missing close or missing fee for any
-in-scope ticker raises :class:`ValueError` naming the ticker. The shell
+The kernel **fail-fasts on a missing close**: a missing closing print for
+any in-scope ticker raises :class:`ValueError` naming the ticker. The shell
 catches the raise at the surrounding transaction boundary and rolls back
-the whole tick — partial accruals would silently underaccount P/L. Per
-the pre-resolved decision on ALP-715, a tick that fails for any reason
-stays lost and the next trading day's tick catches up.
+the whole tick — accruing against a stale/absent price would silently
+mis-account P/L. Per the pre-resolved decision on ALP-715, a tick that fails
+this way stays lost and the next trading day's tick catches up.
+
+An **uncovered borrow rate** (resolver miss → ``None`` fee) is NOT fatal: the
+position accrues 0.0 this tick, mirroring the assignment-booking 0.0 fallback
+(ALP-862). A forced short must never roll the invocation back — it is already
+delivered at the broker — and the next tick catches up once a rate appears.
 
 The kernel is pure: no clock, no DB, no resolver — every input is passed
 in by the shell. Tests exercise it without any pytest-asyncio or SQLAlchemy
@@ -102,8 +107,10 @@ def compute_tick(
     ``close_prices`` maps every in-scope ticker to its session closing
     print. ``fee_rates`` maps every in-scope ticker to its current
     annualized borrow fee (``%/yr``) or ``None`` if the resolver had no
-    row. A missing close or a ``None`` fee for any in-scope ticker raises
-    :class:`ValueError` — the shell rolls the transaction back.
+    row. A missing close raises :class:`ValueError` (the shell rolls the
+    transaction back); a ``None`` fee accrues 0.0 this tick instead of
+    raising (ALP-862 — an uncovered forced short must not abort the write
+    unit), to be caught up once a rate appears.
     """
     updated_positions: list[PositionRecord] = []
     activity_log_entries: list[ActivityLogEntry] = []
@@ -127,12 +134,16 @@ def compute_tick(
 
         fee_rate = fee_rates.get(ticker)
         if fee_rate is None:
-            msg = (
-                f"borrow-accrual tick: borrow_cost_resolver returned no rate for "
-                f"ticker {ticker!r} (position_id={position.position_id!r}); "
-                f"rolling tick back"
-            )
-            raise ValueError(msg)
+            # An uncovered ticker (no ``borrow_cost_daily`` row → resolver miss)
+            # accrues 0.0 this tick rather than aborting the whole write unit
+            # (ALP-862). A forced assignment / exercise can open a SHORT equity
+            # leg whose borrow is uncovered; the booking path stamps
+            # ``borrow_rate_pct=0.0`` for exactly that case and never raises, so
+            # the accrual mirrors it — zero known cost this tick, caught up
+            # automatically once a rate appears. (A missing CLOSE still
+            # fail-fasts above: that is a data-freshness fault, not an uncovered
+            # borrow.)
+            fee_rate = 0.0
 
         # ``share_count`` is wrapped in ``abs`` so the formula is sign-agnostic.
         # The SHORT-equity codec stores ``share_count`` as a positive value

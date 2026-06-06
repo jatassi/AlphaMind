@@ -204,7 +204,7 @@ def test_short_assignment_falls_back_to_zero_rate_when_resolver_none(
     option = _open_option(contract_count=5.0, premium_paid_per_contract=250.0, strike=150.0)
     event = _assignment_event(side="sell", symbol="GME")
 
-    with caplog.at_level("WARNING"):
+    with caplog.at_level("WARNING", logger="alphamind.execution.account_activities.booking"):
         result = book_assignment_or_exercise(
             option,
             event,
