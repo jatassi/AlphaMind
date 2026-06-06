@@ -11,8 +11,12 @@ In-memory fakes are used in tests.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Protocol
+from datetime import date, datetime
+from decimal import Decimal
+from typing import TYPE_CHECKING, Literal, Protocol
+
+if TYPE_CHECKING:
+    from alphamind.execution.counterfactual_replay_engine.iv_lookup import IVSnapshotLookupResult
 
 __all__ = [
     "BarRepository",
@@ -85,7 +89,13 @@ class BarRepository(Protocol):
 
 
 class OptionsSnapshotRepository(Protocol):
-    """Read access to per-contract implied-volatility snapshots."""
+    """Read access to per-contract implied-volatility snapshots.
+
+    Widened in story 05c (ALP-561) to add :meth:`resolve_contract_ticker` and
+    :meth:`lookup_iv`. The SQL-backed implementation is
+    :class:`~alphamind.execution.counterfactual_replay_engine.iv_lookup.SqlOptionsSnapshotRepository`;
+    in-memory fakes only need to implement the methods they exercise.
+    """
 
     def has_snapshot_at_or_before(
         self,
@@ -97,8 +107,43 @@ class OptionsSnapshotRepository(Protocol):
         *contract_ticker* is the Polygon OCC symbol
         (``O:{UNDERLYING}{YYMMDD}{C|P}{round(strike*1000):08d}``) that
         ``options_contract_snapshots`` is keyed by — see ``occ_symbol_for_options``.
-        Used by :func:`check_eligibility` for option proposals; absence triggers
-        ``DATA_MISSING``.
+        Only non-null IV rows are counted so the eligibility pre-check (story 04)
+        agrees with :meth:`lookup_iv`. Absence triggers ``DATA_MISSING``.
+        """
+        ...
+
+    def resolve_contract_ticker(
+        self,
+        *,
+        underlying: str,
+        strike: Decimal,
+        expiration: date,
+        contract_type: Literal["call", "put"],
+    ) -> str:
+        """Build the canonical Polygon OCC ``contract_ticker`` for an option.
+
+        Pure: delegates to
+        :func:`~alphamind.execution.counterfactual_replay_engine.iv_lookup.resolve_contract_ticker`.
+        The engine driver uses this to derive the contract key from proposal
+        fields without float-equality on ``strike_price``.
+        """
+        ...
+
+    def lookup_iv(
+        self,
+        *,
+        contract_ticker: str,
+        target_ts: datetime,
+    ) -> IVSnapshotLookupResult | None:
+        """Return the nearest usable IV snapshot at or before *target_ts*.
+
+        Returns ``None`` when no snapshot exists at-or-before the target, or
+        when all at-or-before snapshots have ``implied_volatility IS NULL``
+        (the engine driver maps both to ``DATA_MISSING``). On a hit, the
+        returned :class:`~.iv_lookup.IVSnapshotLookupResult` carries
+        ``implied_volatility`` (always non-None), ``underlying_price_at_snapshot``
+        (nullable), ``snapshot_ts``, and ``lag_minutes`` for the confidence
+        classifier (story 05b).
         """
         ...
 
