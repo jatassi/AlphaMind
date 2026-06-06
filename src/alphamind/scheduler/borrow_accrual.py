@@ -100,9 +100,11 @@ async def run_borrow_accrual(
     row per position — all inside *handle*'s transaction (single writer =
     pipeline). The caller commits.
 
-    A miss on any closing print or any fee rate raises :class:`ValueError` from
-    the kernel; it propagates to abort the surrounding write unit (a real
-    inconsistency, not a transient).
+    A miss on any closing print raises :class:`ValueError` from the kernel and
+    propagates to abort the surrounding write unit (a stale/absent price is a
+    real inconsistency, not a transient). An uncovered borrow rate is non-fatal:
+    the position accrues 0.0 this tick (ALP-862, so a forced short opened earlier
+    in the same write unit is never rolled back) and a warning names the ticker(s).
     """
     session = handle.session
     accrual_date_et = now.astimezone(_US_EASTERN).date().isoformat()
@@ -122,6 +124,15 @@ async def run_borrow_accrual(
     fee_rates: dict[Symbol, float | None] = {
         _ticker_of(p): borrow_cost_resolver(str(_ticker_of(p))) for p in in_scope
     }
+    uncovered = sorted(str(ticker) for ticker, rate in fee_rates.items() if rate is None)
+    if uncovered:
+        log.warning(
+            "borrow_accrual: no borrow_cost_daily rate for %d in-scope SHORT "
+            "position ticker(s) %s; accruing 0.0 this tick rather than aborting "
+            "(ALP-862). The next tick catches up once a rate appears.",
+            len(uncovered),
+            uncovered,
+        )
 
     result = compute_tick(
         positions=positions,

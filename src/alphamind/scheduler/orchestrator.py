@@ -756,11 +756,16 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
             # transaction (single writer = pipeline). A booking error (a missing
             # local position, or the surfacing condition where an assignment is
             # not fully described by the paired OPTRD) propagates to abort the
-            # write unit — it is a real inconsistency, not a transient.
+            # write unit — it is a real inconsistency, not a transient. The
+            # already-built ``borrow_cost_resolver`` (ALP-862) stamps the
+            # short-only fields on a SHORT equity leg an assignment delivers —
+            # the same single resolver instance ``process_unprocessed_fills``
+            # uses, never a second one.
             await run_account_activities_poll(
                 write_handle,
                 venue_config=venue_config,
                 execution_mode=execution_mode,
+                borrow_cost_resolver=borrow_cost_resolver,
                 activities_source_factory=_activities_source_factory_from_debug_e2e(context),
             )
             # ALP-855 / W4a — daily SHORT-equity borrow accrual, relocated out of

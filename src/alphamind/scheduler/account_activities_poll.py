@@ -96,6 +96,7 @@ async def run_account_activities_poll(
     *,
     venue_config: VenueConfig | None,
     execution_mode: ExecutionMode,
+    borrow_cost_resolver: Callable[[str], float | None],
     activities_source_factory: ActivitiesSourceFactory | None = None,
     after: str | None = None,
 ) -> PollResult:
@@ -103,16 +104,24 @@ async def run_account_activities_poll(
 
     Resolves the activities source (inline Alpaca default when
     *activities_source_factory* is ``None``) and drives
-    :func:`poll_account_activities`. When *after* is not supplied, the resume
-    cursor is derived from the durable ``broker_event_log`` (see
-    :func:`_resolve_resume_cursor`) so each run resumes after the last booked
-    activity rather than re-fetching the full history. Returns the poll result so
-    the orchestrator can log the count booked.
+    :func:`poll_account_activities`. ``borrow_cost_resolver`` is the single
+    invocation-scoped resolver the orchestrator already built for the Phase-1
+    write unit; it is forwarded so a SHORT equity-delivery assignment stamps its
+    short-only fields. When *after* is not supplied, the resume cursor is derived
+    from the durable ``broker_event_log`` (see :func:`_resolve_resume_cursor`) so
+    each run resumes after the last booked activity rather than re-fetching the
+    full history. Returns the poll result so the orchestrator can log the count
+    booked.
     """
     source_factory = activities_source_factory or _default_activities_source_factory
     source = source_factory(venue_config, execution_mode)
     resume_after = after if after is not None else await _resolve_resume_cursor(handle)
-    return await poll_account_activities(handle, queries=source, after=resume_after)
+    return await poll_account_activities(
+        handle,
+        queries=source,
+        borrow_cost_resolver=borrow_cost_resolver,
+        after=resume_after,
+    )
 
 
 __all__ = ["ActivitiesSourceFactory", "run_account_activities_poll"]

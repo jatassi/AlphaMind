@@ -256,9 +256,12 @@ class TestComputeTickFiltering:
 
 
 class TestComputeTickFailFast:
-    """A missing close or missing fee for any in-scope ticker raises ``ValueError``.
+    """A missing close for any in-scope ticker raises ``ValueError``.
 
-    The shell rolls the whole tick back on the raise.
+    A missing closing print is a data-freshness fault: the shell rolls the whole
+    tick back on the raise rather than accrue against a stale/absent price. (An
+    uncovered borrow *rate* is handled separately — see
+    :class:`TestComputeTickUncoveredFee`.)
     """
 
     def test_missing_close_price_raises_value_error_naming_ticker(self) -> None:
@@ -272,30 +275,61 @@ class TestComputeTickFailFast:
                 invocation_id=_INV,
             )
 
-    def test_missing_fee_rate_raises_value_error_naming_ticker(self) -> None:
-        position = _short_equity_position(position_id="pos-1", ticker="EFGH")
-        with pytest.raises(ValueError, match="EFGH"):
-            compute_tick(
-                positions=(position,),
-                close_prices={make_symbol("EFGH"): 50.0},
-                fee_rates={make_symbol("EFGH"): None},  # resolver miss
-                now=_NOW,
-                invocation_id=_INV,
-            )
 
-    def test_resolver_miss_on_one_of_two_positions_raises_and_drops_other(self) -> None:
-        """The kernel raises on first miss; the shell's atomic transaction is
-        the mechanism that rolls back the other position."""
-        ok = _short_equity_position(position_id="pos-1", ticker="ABCD")
-        bad = _short_equity_position(position_id="pos-2", ticker="EFGH")
-        with pytest.raises(ValueError, match="EFGH"):
-            compute_tick(
-                positions=(ok, bad),
-                close_prices={make_symbol("ABCD"): 50.0, make_symbol("EFGH"): 50.0},
-                fee_rates={make_symbol("ABCD"): 10.0, make_symbol("EFGH"): None},
-                now=_NOW,
-                invocation_id=_INV,
-            )
+class TestComputeTickUncoveredFee:
+    """An uncovered borrow rate (resolver miss → ``None`` fee) accrues 0.0, never raises.
+
+    ALP-862: a forced assignment / exercise can open a SHORT equity leg whose
+    borrow is uncovered (no ``borrow_cost_daily`` row). The booking path stamps
+    ``borrow_rate_pct=0.0`` for exactly that case and never raises; the accrual
+    tick mirrors it — a ``None`` fee accrues 0.0 this tick rather than aborting
+    the whole Phase-1 write unit (which would roll back the just-opened short and
+    re-strand the broker short with no local Intent). The next tick catches up
+    once a rate appears.
+    """
+
+    def test_uncovered_fee_accrues_zero_without_raising(self) -> None:
+        position = _short_equity_position(position_id="pos-1", ticker="EFGH", accrued=5.0)
+        result = compute_tick(
+            positions=(position,),
+            close_prices={make_symbol("EFGH"): 50.0},
+            fee_rates={make_symbol("EFGH"): None},  # resolver miss — uncovered ticker
+            now=_NOW,
+            invocation_id=_INV,
+        )
+        assert len(result.updated_positions) == 1
+        updated = result.updated_positions[0]
+        assert isinstance(updated.details, EquityPositionDetails)
+        # No known borrow rate → 0.0 accrual this tick; the accumulator is unchanged.
+        assert updated.details.accrued_borrow_cost_usd == pytest.approx(5.0)
+        assert result.total_accrued_usd == pytest.approx(0.0)
+        # An entry is still emitted (audit trail), carrying a 0.0 fee + 0.0 cost.
+        assert len(result.activity_log_entries) == 1
+        entry = result.activity_log_entries[0]
+        assert isinstance(entry.detail, BorrowCostAccruedDetail)
+        assert entry.detail.annual_fee_pct_used == 0.0
+        assert entry.detail.accrued_amount_usd == money(0.0)
+
+    def test_uncovered_position_accrues_zero_while_covered_accrues_normally(self) -> None:
+        """One uncovered short no longer aborts the whole tick (ALP-862): the
+        covered position accrues normally; the uncovered one accrues 0.0."""
+        covered = _short_equity_position(position_id="pos-1", ticker="ABCD")
+        uncovered = _short_equity_position(position_id="pos-2", ticker="EFGH")
+        result = compute_tick(
+            positions=(covered, uncovered),
+            close_prices={make_symbol("ABCD"): 50.0, make_symbol("EFGH"): 50.0},
+            fee_rates={make_symbol("ABCD"): 10.0, make_symbol("EFGH"): None},
+            now=_NOW,
+            invocation_id=_INV,
+        )
+        assert len(result.updated_positions) == 2
+        by_id = {str(p.position_id): p.details for p in result.updated_positions}
+        covered_details = by_id["pos-1"]
+        uncovered_details = by_id["pos-2"]
+        assert isinstance(covered_details, EquityPositionDetails)
+        assert isinstance(uncovered_details, EquityPositionDetails)
+        assert covered_details.accrued_borrow_cost_usd == pytest.approx(5000.0 * 0.10 / 252.0)
+        assert uncovered_details.accrued_borrow_cost_usd == pytest.approx(0.0)
 
 
 class TestComputeTickMultiPosition:
