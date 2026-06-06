@@ -344,11 +344,26 @@ async def _project_terminal_order_statuses(session: AsyncSession) -> int:
     two ``IN``-clause batches restricted to **non-terminal** orders, so an order
     already in a terminal status is never re-resolved or re-stamped (an
     already-projected terminal disposition is final). A projection whose order row
-    does not resolve against a non-terminal row (already terminal, or a genuinely
-    out-of-band order) is skipped; the order cache is optional, so a miss is not an
-    error — the watermark still advances past it, since the event is processed.
+    does not resolve against a non-terminal row is skipped; the order cache is
+    optional, so a miss is not an error — and the watermark still advances past it.
+
+    Advancing past an *unresolved* event is safe because a durable ``orders`` row is
+    committed before the broker submit that produces the event (ALP-836 atomic order
+    persistence), so a terminal event never precedes its order row. An unresolved
+    miss is therefore either an order already in a terminal status (final — correct
+    to skip) or a genuinely out-of-band order with no local row that will ever exist
+    (correct to skip) — never a not-yet-persisted order a later run would have
+    resolved. Re-scanning every terminal event each run to "self-heal" such a row
+    (the pre-ALP-865 behavior) is exactly the O(all-history) cost this bound removes;
+    if a future change reintroduces an event-before-row path, it must re-scan those
+    events explicitly rather than rely on the unbounded scan.
     """
-    last_projected_seq = await _read_projection_watermark(session)
+    # Read the singleton watermark row once and reuse it for the advance below
+    # (avoids a second ``session.get`` of the same row); ``None`` on the first run.
+    watermark = await session.get(
+        ProjectionRebuildWatermarkRow, PROJECTION_REBUILD_WATERMARK_SINGLETON_ID
+    )
+    last_projected_seq = watermark.last_projected_event_seq if watermark is not None else 0
     scanned = (
         await session.execute(
             select(BrokerEventLogRow.event_seq, BrokerEventLogRow.raw_payload_json)
@@ -365,7 +380,7 @@ async def _project_terminal_order_statuses(session: AsyncSession) -> int:
     max_scanned_seq = scanned[-1].event_seq
     projections = project_terminal_order_statuses(row.raw_payload_json for row in scanned)
     if not projections:
-        await _advance_projection_watermark(session, max_scanned_seq)
+        _advance_projection_watermark(session, watermark, max_scanned_seq)
         return 0
     by_alpaca_id, by_client_id = await _resolve_non_terminal_order_rows(session, projections)
     now_iso = datetime.now(UTC).isoformat()
@@ -384,34 +399,24 @@ async def _project_terminal_order_statuses(session: AsyncSession) -> int:
         row.status = projection.terminal_status.value
         row.last_update_timestamp = now_iso
         projected += 1
-    await _advance_projection_watermark(session, max_scanned_seq)
+    _advance_projection_watermark(session, watermark, max_scanned_seq)
     return projected
 
 
-async def _read_projection_watermark(session: AsyncSession) -> int:
-    """Return the singleton ``last_projected_event_seq`` (0 if never advanced).
-
-    The first rebuild ever finds no watermark row, which is the from-the-beginning
-    scan (``event_seq > 0`` reads the whole log once); every later run reads only
-    the events appended since the prior advance.
-    """
-    row = await session.get(
-        ProjectionRebuildWatermarkRow, PROJECTION_REBUILD_WATERMARK_SINGLETON_ID
-    )
-    return row.last_projected_event_seq if row is not None else 0
-
-
-async def _advance_projection_watermark(session: AsyncSession, new_seq: int) -> None:
+def _advance_projection_watermark(
+    session: AsyncSession,
+    watermark: ProjectionRebuildWatermarkRow | None,
+    new_seq: int,
+) -> None:
     """Advance the singleton watermark to *new_seq* in the open write transaction.
 
-    Single-writer (Phase-1 pipeline, ADR-0005), so a read-then-write on the
-    singleton is race-free; the advance joins the open transaction and commits
-    atomically with the projection it bounds.
+    *watermark* is the singleton row already loaded at the top of the rebuild
+    (``None`` on the first run, before the row exists) — passing it back avoids a
+    second ``session.get`` of the same row. Single-writer (Phase-1 pipeline,
+    ADR-0005), so the read-then-write on the singleton is race-free; the advance
+    joins the open transaction and commits atomically with the projection it bounds.
     """
-    row = await session.get(
-        ProjectionRebuildWatermarkRow, PROJECTION_REBUILD_WATERMARK_SINGLETON_ID
-    )
-    if row is None:
+    if watermark is None:
         session.add(
             ProjectionRebuildWatermarkRow(
                 id=PROJECTION_REBUILD_WATERMARK_SINGLETON_ID,
@@ -419,7 +424,7 @@ async def _advance_projection_watermark(session: AsyncSession, new_seq: int) -> 
             )
         )
     else:
-        row.last_projected_event_seq = new_seq
+        watermark.last_projected_event_seq = new_seq
 
 
 # Order statuses already terminal for the order-status projection — a row in one

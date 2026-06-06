@@ -95,15 +95,24 @@ class BrokerEventLogRow(Base):
     # surfaced as a mapped column so the rebuild watermarks can scan only events
     # past the last one they processed. The rowid is assigned by SQLite in commit
     # order with no app-side ``MAX(seq)+1``, so it is race-free across the two
-    # appender processes (pipeline + monitor), and monotonic for this append-only,
-    # never-deleted log. It is mapped via ``column_property`` over a
-    # ``literal_column`` (not ``mapped_column``) precisely so it emits **no DDL** —
-    # the rowid already exists on a non-``WITHOUT ROWID`` table whose PK is the
-    # TEXT ``event_key``, so there is nothing to create. A query referencing
-    # ``event_seq`` must also reference a real column (so the ``FROM`` clause is
-    # anchored); ``func.max(event_seq)`` alone has no ``FROM`` — take the max of
-    # the scanned rows in Python instead.
-    event_seq: Mapped[int] = column_property(literal_column("broker_event_log.rowid", Integer))
+    # appender processes (pipeline + monitor) — SQLite serializes write
+    # transactions, so a lower rowid can never commit after a higher one — and
+    # monotonic for this append-only, never-deleted log. It is mapped via
+    # ``column_property`` over a ``literal_column`` (not ``mapped_column``) precisely
+    # so it emits **no DDL** — the rowid already exists on a non-``WITHOUT ROWID``
+    # table whose PK is the TEXT ``event_key``, so there is nothing to create.
+    #
+    # Two non-obvious traps:
+    #   * A query referencing ``event_seq`` must also reference a real column (so the
+    #     ``FROM`` clause is anchored); ``func.max(event_seq)`` alone has no ``FROM``
+    #     — take the max of the scanned rows in Python instead.
+    #   * ``VACUUM`` renumbers rowids on a table without an explicit INTEGER PRIMARY
+    #     KEY, which would silently invalidate the persisted watermarks
+    #     (``last_projected_event_seq`` / ``last_derived_event_seq``). This DB is
+    #     never VACUUMed (WAL-mode, append-only); if that ever changes, the
+    #     watermarks must be reset to 0 / NULL so the next run re-scans from the
+    #     start.
+    event_seq: Mapped[int] = column_property(literal_column(f"{__tablename__}.rowid", Integer))
 
     __table_args__ = (
         CheckConstraint(

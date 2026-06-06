@@ -133,23 +133,29 @@ async def _events_by_thesis(
 
     Replaces the per-thesis ``WHERE thesis_id = ?`` fetch (one round-trip per
     thesis, the N+1) with a single ``WHERE thesis_id IN (…)`` read, grouping the
-    rows by their broker-carried ``thesis_id`` in-process. A thesis with no events
-    is absent from both maps (the caller derives an empty ledger for it). The
-    second map is the per-thesis max ``event_seq`` folded — the watermark each
-    re-derivation stamps (ALP-865).
+    rows by their broker-carried ``thesis_id`` in-process. Every requested thesis is
+    present in the first (events) map (an empty tuple when it has no events); the
+    second map — the per-thesis max ``event_seq`` folded, the watermark each
+    re-derivation stamps (ALP-865) — carries only theses that have events, computed
+    through the same :func:`_max_event_seq` helper the single-thesis path uses, so
+    the two paths cannot diverge on the watermark.
     """
     stmt = select(BrokerEventLogRow).where(BrokerEventLogRow.thesis_id.in_(thesis_ids))
     rows = (await session.execute(stmt)).scalars().all()
-    grouped: dict[ThesisId, list[BrokerEventRecord]] = {tid: [] for tid in thesis_ids}
-    max_seq: dict[ThesisId, int] = {}
+    rows_by_thesis: dict[ThesisId, list[BrokerEventLogRow]] = {tid: [] for tid in thesis_ids}
     for row in rows:
-        record = event_row_to_record(row)
-        tid = record.thesis_id
-        if tid is not None:
-            grouped.setdefault(tid, []).append(record)
-            if row.event_seq is not None and row.event_seq > max_seq.get(tid, 0):
-                max_seq[tid] = row.event_seq
-    return {tid: tuple(records) for tid, records in grouped.items()}, max_seq
+        if row.thesis_id is not None:
+            rows_by_thesis.setdefault(ThesisId(row.thesis_id), []).append(row)
+    events_by_thesis = {
+        tid: tuple(event_row_to_record(row) for row in thesis_rows)
+        for tid, thesis_rows in rows_by_thesis.items()
+    }
+    max_seq_by_thesis = {
+        tid: max_seq
+        for tid, thesis_rows in rows_by_thesis.items()
+        if (max_seq := _max_event_seq(thesis_rows)) is not None
+    }
+    return events_by_thesis, max_seq_by_thesis
 
 
 def _to_ledger_record(

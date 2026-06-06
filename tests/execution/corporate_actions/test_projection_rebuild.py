@@ -37,12 +37,6 @@ from alphamind.execution.write_paths.projection_rebuild import (
     project_terminal_order_statuses,
     rebuild_projection,
 )
-from alphamind.persistence.models import Base
-from alphamind.persistence.session import (
-    make_async_engine,
-    make_async_session_factory,
-    make_engine,
-)
 from alphamind.portfolio_state.records.orders import OrderStatus
 from alphamind.state.invocation_context.context import InvocationContext, InvocationHandle
 from alphamind.state.records_broker_event_log import (
@@ -59,6 +53,7 @@ from tests.state._fk_substrate import stub_order_row
 
 from ._handler_substrate import (
     NOW,
+    build_async_db,
     make_active_bracket,
     make_active_thesis,
     make_invocation_record,
@@ -846,6 +841,57 @@ async def test_terminal_status_scan_is_bounded_by_the_watermark(
         assert row_b.status == OrderStatus.CANCELLED.value  # the new event projected
 
 
+async def test_unresolved_terminal_event_still_advances_watermark(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """AC (part-1) — a TERMINAL_ORDER_STATUS event that resolves to no order row
+    (a genuinely out-of-band order, no local row that will ever exist) still
+    advances the watermark, so it is processed exactly once and never re-scanned.
+
+    This pins the safety contract the bounded scan depends on: advancing past an
+    unresolved event is correct because (ALP-836) a durable order row precedes the
+    broker submit that produces the event, so an unresolved miss is never a
+    not-yet-persisted order a later run would resolve. Re-scanning it forever would
+    reintroduce the O(all-history) cost the bound removes.
+    """
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    # An out-of-band terminal event: no local order row, no thesis/position link.
+    await _append_events(
+        factory,
+        _terminal_event(
+            event_key="tevt-orphan",
+            alpaca_order_id="broker-uuid-orphan",
+            client_order_id="cli-orphan",
+            terminal_status=OrderStatus.CANCELLED,
+            thesis_id=None,
+            position_id=None,
+        ),
+    )
+
+    ctx1, handle1 = await _open_handle_with(factory, "inv-orphan-1")
+    summary1 = await rebuild_projection(handle1, alpaca_positions=(), alpaca_account=None)
+    await ctx1.__aexit__(None, None, None)
+    # Nothing projected (no row resolves), but the watermark advanced past the event.
+    assert summary1.order_statuses_projected == 0
+    async with factory() as sess:
+        watermark = await sess.get(ProjectionRebuildWatermarkRow, "current")
+        assert watermark is not None
+        assert watermark.last_projected_event_seq > 0
+        advanced_to = watermark.last_projected_event_seq
+
+    # Second rebuild: the orphan event is at/below the watermark, so it is not
+    # re-scanned — the watermark is unchanged (no new events past it).
+    ctx2, handle2 = await _open_handle_with(factory, "inv-orphan-2")
+    summary2 = await rebuild_projection(handle2, alpaca_positions=(), alpaca_account=None)
+    await ctx2.__aexit__(None, None, None)
+    assert summary2.order_statuses_projected == 0
+    async with factory() as sess:
+        watermark = await sess.get(ProjectionRebuildWatermarkRow, "current")
+        assert watermark is not None
+        assert watermark.last_projected_event_seq == advanced_to
+
+
 async def test_clean_thesis_skipped_then_redirtied_by_new_event(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
@@ -924,24 +970,6 @@ async def test_clean_thesis_skipped_then_redirtied_by_new_event(
         assert row.last_derived_event_seq is not None
         assert row.last_derived_event_seq > first_seq
         assert row.realized_pnl_usd == pytest.approx(125.0)
-
-
-async def _make_db(
-    tmp_path: Path, name: str
-) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
-    """Build a fresh on-disk SQLite DB + async session factory (mirrors the fixture).
-
-    The identical-output test needs two independent DBs (the incremental/bounded
-    run and the one-shot/full run) so it can compare their final state.
-    """
-    import alphamind.state.tables  # noqa: F401 — registers all tables
-
-    db_path = tmp_path / f"{name}.db"
-    sync_engine = make_engine(str(db_path))
-    Base.metadata.create_all(sync_engine)
-    sync_engine.dispose()
-    async_engine = make_async_engine(str(db_path))
-    return async_engine, make_async_session_factory(async_engine)
 
 
 async def _seed_extra_thesis(
@@ -1078,8 +1106,8 @@ async def test_bounded_incremental_matches_full_one_shot(tmp_path: Path) -> None
 
         return await _snapshot_state(factory)
 
-    inc_engine, inc_factory = await _make_db(tmp_path, "incremental")
-    full_engine, full_factory = await _make_db(tmp_path, "oneshot")
+    inc_engine, inc_factory = build_async_db(tmp_path, "incremental")
+    full_engine, full_factory = build_async_db(tmp_path, "oneshot")
     try:
         incremental_state = await _build_and_run(inc_factory, incremental=True)
         one_shot_state = await _build_and_run(full_factory, incremental=False)

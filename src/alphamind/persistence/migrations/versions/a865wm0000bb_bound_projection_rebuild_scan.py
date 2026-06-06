@@ -70,7 +70,16 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop the per-thesis cursor + the watermark singleton."""
+    """Drop the per-thesis cursor + the watermark singleton.
+
+    ``op.drop_column`` uses SQLite's native ``ALTER TABLE … DROP COLUMN`` (no
+    ``batch_alter_table``) — deliberately, because a batch table-rebuild of
+    ``thesis_pnl_ledger`` reflects-and-recreates its DEFERRABLE FKs and can drop the
+    deferrable attribute, drifting from ``Base.metadata``. Native DROP COLUMN needs
+    SQLite ≥ 3.35 (2021), which the pinned Python 3.13 runtime's bundled SQLite
+    satisfies everywhere (dev + Windows CI); the migration test exercises this exact
+    downgrade on that runtime.
+    """
     inspector = sa.inspect(op.get_bind())
     if _has_column(inspector, _LEDGER_TABLE, _LEDGER_CURSOR_COLUMN):
         op.drop_column(_LEDGER_TABLE, _LEDGER_CURSOR_COLUMN)

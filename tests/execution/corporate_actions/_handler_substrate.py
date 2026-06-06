@@ -9,8 +9,9 @@ share the seed helpers without duplicating ~250 lines per file.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.ids import (
     AlpacaOrderId,
@@ -23,6 +24,12 @@ from alphamind._kernel.ids import (
 from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import RiskZone
 from alphamind.execution.broker_adapter.queries import PositionSnapshot
+from alphamind.persistence.models import Base
+from alphamind.persistence.session import (
+    make_async_engine,
+    make_async_session_factory,
+    make_engine,
+)
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
@@ -476,6 +483,32 @@ def make_drawdown_state() -> DrawdownState:
         cumulative_tier=None,
         drawdown_by_source_pct={},
     )
+
+
+# ---------------------------------------------------------------------------
+# DB construction
+# ---------------------------------------------------------------------------
+
+
+def build_async_db(
+    tmp_path: Path, name: str = "alphamind_ca"
+) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
+    """Create a fresh on-disk SQLite DB with the full schema + an async factory.
+
+    The single source of truth for building a corporate-actions test DB: the ``db``
+    fixture wraps this with yield/dispose, and tests needing two independent DBs (the
+    bounded-vs-full identical-output comparison) call it directly. Centralizing the
+    sequence (register tables → ``create_all`` → async engine + factory) keeps the
+    fixture and the direct callers from drifting.
+    """
+    import alphamind.state.tables  # noqa: F401 — registers all tables on Base.metadata
+
+    db_path = tmp_path / f"{name}.db"
+    sync_engine = make_engine(str(db_path))
+    Base.metadata.create_all(sync_engine)
+    sync_engine.dispose()
+    async_engine = make_async_engine(str(db_path))
+    return async_engine, make_async_session_factory(async_engine)
 
 
 # ---------------------------------------------------------------------------
