@@ -11,7 +11,7 @@ directly, and asserts each expected outcome against the returned
 :class:`CounterfactualReplayRecord` set.
 
 The seed is the *ground truth*: :func:`build_test_seed` inserts the eight
-documented proposals and returns a :class:`TestSeed` carrying, per proposal, the
+documented proposals and returns a :class:`ReplaySeed` carrying, per proposal, the
 expected ``replay_status`` / ``unevaluable_reason`` / ``exit_leg`` and the two
 analytically-derived P/L expectations. Because the engine driver passes
 ``adv_shares=None`` / ``realized_volatility=None``, the paper harness returns no
@@ -49,6 +49,7 @@ from sqlalchemy.orm import Session
 import alphamind.state.tables  # noqa: F401
 from alphamind._kernel.ids import BracketId, EnvelopeId, OrderId, PositionId, Symbol
 from alphamind._kernel.money import money, price
+from alphamind.config.models.execution import FeeSchedule, OrderType, PaperHarness
 from alphamind.config.models.replay_engine import CounterfactualReplayEngineConfig
 from alphamind.execution.counterfactual_replay_engine.engine import (
     ReplayBatchResult,
@@ -61,7 +62,6 @@ from alphamind.execution.counterfactual_replay_engine.enums import (
     ReplayStatus,
     UnevaluableReason,
 )
-from alphamind.config.models.execution import FeeSchedule, OrderType, PaperHarness
 from alphamind.persistence.models import (
     AssetUniverse,
     Base,
@@ -117,7 +117,7 @@ if TYPE_CHECKING:
 __all__ = [
     "EXPECTED_TOTAL",
     "ExpectedProposal",
-    "TestSeed",
+    "ReplaySeed",
     "assert_batch_counts",
     "assert_corporate_action_in_window",
     "assert_data_missing",
@@ -198,7 +198,7 @@ class ExpectedProposal:
 
 
 @dataclass(frozen=True, slots=True)
-class TestSeed:
+class ReplaySeed:
     """The ground truth a :func:`build_test_seed` run establishes.
 
     ``proposals`` is the per-envelope expectation list (one per seeded proposal);
@@ -227,24 +227,24 @@ EXPECTED_TOTAL = 8
 _EQUITY_ENTRY_OPEN = 100.0
 _EQUITY_TARGET = 110.0
 _EQUITY_QTY = 10.0
-_EQUITY_EXPECTED_PL = (Decimal("110.00") - Decimal("100.00")) * Decimal("10")
+_EQUITY_EXPECTED_PL = (Decimal("110.00") - Decimal("100.00")) * Decimal(10)
 
 # Strategist CLOSE P/L: one-shot exit at bars[1].open (= 105) against the
 # average cost basis (100); long 8 shares; zero drag → (105 - 100) * 8 = 40.
 _CLOSE_BASIS = 100.0
 _CLOSE_EXIT_OPEN = 105.0
 _CLOSE_QTY = 8.0
-_CLOSE_EXPECTED_PL = (Decimal("105.00") - Decimal("100.00")) * Decimal("8")
+_CLOSE_EXPECTED_PL = (Decimal("105.00") - Decimal("100.00")) * Decimal(8)
 
 
-def build_test_seed(session: Session) -> TestSeed:
+def build_test_seed(session: Session) -> ReplaySeed:
     """Insert the eight documented proposals + their supporting data.
 
     Seeds, in one transaction, the FK substrate (process-lifetime + invocation),
     the per-proposal PM-decision activity-log rows, the bar histories / IV
     snapshots / corporate actions the eligibility gate and simulators read, and
     the strategist position state (with brackets) the close / add paths fold.
-    Returns the :class:`TestSeed` ground truth the assertions read.
+    Returns the :class:`ReplaySeed` ground truth the assertions read.
     """
     _seed_fk_substrate(session)
 
@@ -259,7 +259,7 @@ def build_test_seed(session: Session) -> TestSeed:
 
     session.flush()
 
-    return TestSeed(
+    return ReplaySeed(
         proposals=(
             ExpectedProposal(
                 label="analyst equity reject (TARGET_HIT)",
@@ -613,7 +613,9 @@ def _analyst_equity_json(*, ticker: str, target: str) -> dict[str, Any]:
     }
 
 
-def _analyst_option_json(*, ticker: str, strike: str, expiration: str, target: str) -> dict[str, Any]:
+def _analyst_option_json(
+    *, ticker: str, strike: str, expiration: str, target: str
+) -> dict[str, Any]:
     """A valid analyst single-leg long-call ``Recommendation`` body."""
     body = _analyst_equity_json(ticker=ticker, target=target)
     body["recommendation_id"] = "REC-2"
@@ -693,9 +695,7 @@ def _strategist_close_json(*, position_id: str, underlying: str) -> dict[str, An
     }
 
 
-def _strategist_add_json(
-    *, position_id: str, underlying: str, target: str
-) -> dict[str, Any]:
+def _strategist_add_json(*, position_id: str, underlying: str, target: str) -> dict[str, Any]:
     """A valid strategist ``PositionAssessment`` body (add action, option position).
 
     The add carries a ``bracket_adjustment.new_target_level`` so the bracket walk
@@ -773,18 +773,25 @@ def _seed_equity_position(
     session.flush()
 
 
+@dataclass(frozen=True, slots=True)
+class _OptionPositionSpec:
+    """The economics of a seeded long-call option position + its bracket levels."""
+
+    underlying: str
+    strike: float
+    expiration: str
+    premium: float
+    qty: float
+    target: float
+    stop: float
+
+
 def _seed_option_position_with_bracket(
     session: Session,
     *,
     position_id: str,
     bracket_id: str,
-    underlying: str,
-    strike: float,
-    expiration: str,
-    premium: float,
-    qty: float,
-    target: float,
-    stop: float,
+    spec: _OptionPositionSpec,
 ) -> None:
     """Seed an open long option position + one bracket (TAKE_PROFIT + PRICE_STOP).
 
@@ -796,25 +803,25 @@ def _seed_option_position_with_bracket(
     record = PositionRecord(
         position_id=PositionId(position_id),
         thesis_id=None,
-        bracket_id=bracket_id,
+        bracket_id=BracketId(bracket_id),
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_PROPOSAL_TS - timedelta(days=1),
         details=OptionsPositionDetails(
-            underlying_ticker=Symbol(underlying),
-            strike_price=strike,
-            expiration_date=datetime.fromisoformat(expiration).date(),
+            underlying_ticker=Symbol(spec.underlying),
+            strike_price=spec.strike,
+            expiration_date=datetime.fromisoformat(spec.expiration).date(),
             contract_type=OptionContractType.CALL,
-            contract_count=qty,
+            contract_count=spec.qty,
             contract_multiplier=100.0,
-            premium_paid_per_contract=premium,
+            premium_paid_per_contract=spec.premium,
             greeks=OptionGreeks(delta=0.5, gamma=0.1, theta=-0.1, vega=0.2),
         ),
         execution_history=(
             PositionFill(
                 fill_timestamp=_PROPOSAL_TS - timedelta(days=1),
-                fill_price=price(str(premium)),
-                fill_quantity=qty,
+                fill_price=price(str(spec.premium)),
+                fill_quantity=spec.qty,
                 slippage=money("0"),
                 fees=money("0"),
             ),
@@ -838,7 +845,9 @@ def _seed_option_position_with_bracket(
                 leg_type=BracketLegType.TAKE_PROFIT,
                 order_id=None,
                 trigger=PriceTrigger(
-                    underlying_ticker=Symbol(underlying), threshold_usd=target, direction="GTE"
+                    underlying_ticker=Symbol(spec.underlying),
+                    threshold_usd=spec.target,
+                    direction="GTE",
                 ),
                 enforcement=BracketLegEnforcement.MECHANICAL,
                 status=BracketLegStatus.ACTIVE,
@@ -848,7 +857,9 @@ def _seed_option_position_with_bracket(
                 leg_type=BracketLegType.PRICE_STOP,
                 order_id=None,
                 trigger=PriceTrigger(
-                    underlying_ticker=Symbol(underlying), threshold_usd=stop, direction="LTE"
+                    underlying_ticker=Symbol(spec.underlying),
+                    threshold_usd=spec.stop,
+                    direction="LTE",
                 ),
                 enforcement=BracketLegEnforcement.MECHANICAL,
                 status=BracketLegStatus.ACTIVE,
@@ -866,7 +877,11 @@ def _seed_option_position_with_bracket(
     session.flush()
     # The bracket's ``entry_order_id`` carries a deferrable FK to ``orders``;
     # seed the entry order so the cluster commits cleanly.
-    session.add(_entry_order_row(order_id=f"{bracket_id}-entry", bracket_id=bracket_id, position_id=position_id))
+    session.add(
+        _entry_order_row(
+            order_id=f"{bracket_id}-entry", bracket_id=bracket_id, position_id=position_id
+        )
+    )
     session.flush()
 
 
@@ -935,7 +950,11 @@ def _seed_analyst_option_target(session: Session) -> None:
     )
     session.flush()
     _add_iv_snapshots(
-        session, contract_ticker=contract_ticker, underlying=ticker, implied_volatility=0.35, count=8
+        session,
+        contract_ticker=contract_ticker,
+        underlying=ticker,
+        implied_volatility=0.35,
+        count=8,
     )
     _add_pm_decision(
         session,
@@ -972,7 +991,14 @@ def _seed_strategist_close(session: Session) -> None:
     for i in range(6):
         ts = _PROPOSAL_TS + _BAR_STEP * i
         session.add(
-            _bar(ticker, ts, open_=_CLOSE_EXIT_OPEN, high=_CLOSE_EXIT_OPEN, low=_CLOSE_EXIT_OPEN, close=_CLOSE_EXIT_OPEN)
+            _bar(
+                ticker,
+                ts,
+                open_=_CLOSE_EXIT_OPEN,
+                high=_CLOSE_EXIT_OPEN,
+                low=_CLOSE_EXIT_OPEN,
+                close=_CLOSE_EXIT_OPEN,
+            )
         )
     _seed_equity_position(
         session, position_id=position_id, ticker=ticker, basis=_CLOSE_BASIS, qty=_CLOSE_QTY
@@ -1010,19 +1036,25 @@ def _seed_strategist_add(session: Session) -> None:
     )
     session.flush()
     _add_iv_snapshots(
-        session, contract_ticker=contract_ticker, underlying=ticker, implied_volatility=0.35, count=8
+        session,
+        contract_ticker=contract_ticker,
+        underlying=ticker,
+        implied_volatility=0.35,
+        count=8,
     )
     _seed_option_position_with_bracket(
         session,
         position_id=position_id,
         bracket_id=bracket_id,
-        underlying=ticker,
-        strike=strike,
-        expiration=expiration,
-        premium=5.0,
-        qty=4.0,
-        target=_EQUITY_TARGET,
-        stop=80.0,
+        spec=_OptionPositionSpec(
+            underlying=ticker,
+            strike=strike,
+            expiration=expiration,
+            premium=5.0,
+            qty=4.0,
+            target=_EQUITY_TARGET,
+            stop=80.0,
+        ),
     )
     _add_pm_decision(
         session,
@@ -1108,7 +1140,7 @@ def _seed_corporate_action(session: Session) -> None:
 # ---------------------------------------------------------------------------
 
 
-def assert_batch_counts(result: ReplayBatchResult, seed: TestSeed) -> str | None:
+def assert_batch_counts(result: ReplayBatchResult, seed: ReplaySeed) -> str | None:
     """The first run evaluated 5 proposals and wrote 3 UNEVALUABLE records."""
     expected_evaluated = sum(
         1 for p in seed.proposals if p.expected_status is ReplayStatus.EVALUATED
@@ -1137,7 +1169,7 @@ def assert_batch_counts(result: ReplayBatchResult, seed: TestSeed) -> str | None
 
 
 def assert_per_envelope_outcomes(
-    records: dict[str, CounterfactualReplayRecord], seed: TestSeed
+    records: dict[str, CounterfactualReplayRecord], seed: ReplaySeed
 ) -> str | None:
     """Each seeded proposal wrote one record with the expected status + reason/leg."""
     if len(records) != EXPECTED_TOTAL:
@@ -1158,7 +1190,10 @@ def assert_per_envelope_outcomes(
                     f"{proposal.expected_reason.value if proposal.expected_reason else None}, "
                     f"got {record.unevaluable_reason.value if record.unevaluable_reason else None}"
                 )
-        elif proposal.expected_exit_leg is not None and record.exit_leg is not proposal.expected_exit_leg:
+        elif (
+            proposal.expected_exit_leg is not None
+            and record.exit_leg is not proposal.expected_exit_leg
+        ):
             return (
                 f"{proposal.label}: expected exit_leg {proposal.expected_exit_leg.value}, "
                 f"got {record.exit_leg.value if record.exit_leg else None}"
@@ -1167,14 +1202,14 @@ def assert_per_envelope_outcomes(
 
 
 def assert_target_hit_pl(
-    records: dict[str, CounterfactualReplayRecord], seed: TestSeed
+    records: dict[str, CounterfactualReplayRecord], seed: ReplaySeed
 ) -> str | None:
     """The equity TARGET_HIT record's realized P/L is positive and within tolerance."""
     return _assert_pl_within_tolerance(records, seed, _ENV_EQUITY_TARGET)
 
 
 def assert_strategist_close(
-    records: dict[str, CounterfactualReplayRecord], seed: TestSeed
+    records: dict[str, CounterfactualReplayRecord], seed: ReplaySeed
 ) -> str | None:
     """The strategist-close record's realized P/L matches the documented value."""
     record = records.get(_ENV_STRATEGIST_CLOSE)
@@ -1247,14 +1282,14 @@ def assert_corporate_action_in_window(
     )
 
 
-def assert_idempotent_second_run(
-    second: ReplayBatchResult, first_total: int
-) -> str | None:
+def assert_idempotent_second_run(second: ReplayBatchResult, first_total: int) -> str | None:
     """A second run writes no new records; ``skipped_idempotent`` equals the prior total."""
     if second.evaluated != 0:
         return f"second run: expected 0 evaluated, got {second.evaluated}"
     if second.unevaluable_by_reason:
-        return f"second run: expected no new unevaluable records, got {second.unevaluable_by_reason}"
+        return (
+            f"second run: expected no new unevaluable records, got {second.unevaluable_by_reason}"
+        )
     if second.skipped_idempotent != first_total:
         return (
             f"second run: expected skipped_idempotent == prior total {first_total}, "
@@ -1283,7 +1318,7 @@ def _assert_unevaluable(
 
 def _assert_pl_within_tolerance(
     records: dict[str, CounterfactualReplayRecord],
-    seed: TestSeed,
+    seed: ReplaySeed,
     envelope_id: str,
 ) -> str | None:
     record = records.get(envelope_id)
@@ -1301,8 +1336,7 @@ def _assert_pl_within_tolerance(
         return f"{envelope_id}: realized_pl {actual} is not positive"
     if abs(actual - expected) > _PL_TOLERANCE:
         return (
-            f"{envelope_id}: realized_pl {actual} not within {_PL_TOLERANCE} of "
-            f"expected {expected}"
+            f"{envelope_id}: realized_pl {actual} not within {_PL_TOLERANCE} of expected {expected}"
         )
     return None
 
@@ -1313,7 +1347,7 @@ def _assert_pl_within_tolerance(
 
 
 def _load_records_by_envelope(
-    session: Session, seed: TestSeed
+    session: Session, seed: ReplaySeed
 ) -> dict[str, CounterfactualReplayRecord]:
     """Load one persisted record per seeded envelope, keyed by envelope id."""
     records: dict[str, CounterfactualReplayRecord] = {}
@@ -1325,7 +1359,7 @@ def _load_records_by_envelope(
     return records
 
 
-def _run_batch(session: Session, seed: TestSeed) -> ReplayBatchResult:
+def _run_batch(session: Session, seed: ReplaySeed) -> ReplayBatchResult:
     return replay_pending_proposals(
         session,
         config=_ENGINE_CONFIG,
