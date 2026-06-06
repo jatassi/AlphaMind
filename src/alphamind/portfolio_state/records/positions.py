@@ -303,9 +303,10 @@ class PositionRecord:
     details: PositionDetailsPayload
 
     execution_history: tuple[PositionFill, ...]
-    # Per-**position** cumulative realized P&L. Written by the fill-integration
-    # write path on exit (``write_paths/phase1._apply_exit_fill`` /
-    # ``_apply_options_exit_fill``, ``account_activities/booking._closed_option``)
+    # Per-**position** cumulative realized P&L. Written by the close paths on exit
+    # (e.g. ``write_paths/phase1._apply_exit_fill`` / ``_apply_options_exit_fill``,
+    # ``account_activities/booking._closed_option``, the corporate-action
+    # ``corporate_actions/handlers/mergers`` cash-merger close)
     # and summed over CLOSED positions by ``get_portfolio_pnl_inputs`` to produce
     # the portfolio-aggregate cumulative realized P&L — so it deliberately covers
     # non-thesis positions (DVN / manual-trade / broker-fact-with-no-Intent) that
