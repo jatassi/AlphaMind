@@ -186,6 +186,8 @@ def test_entry_unfilled_yields_unentered_result() -> None:
     assert result.entry_price is None
     assert result.exit_leg is ExitLeg.ENTRY_WINDOW_EXPIRED_UNFILLED
     assert result.exit_price is None
-    assert result.realized_pl == signed_money(Decimal(0))
+    assert result.realized_pl is None
+    assert result.entry_slippage is None
+    assert result.entry_fees is None
     assert result.exit_slippage is None
     assert result.exit_fees is None

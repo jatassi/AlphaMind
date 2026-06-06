@@ -124,9 +124,12 @@ def _simulate_stop_limit_entry(
 def _simulate_market_entry(bars: tuple[OhlcvBar, ...]) -> EquityEntryResult:
     """Market order: fill at the open of the bar following the proposal bar.
 
-    The bar sequence starts at the proposal timestamp (window_start), so the
-    proposal-following bar is the second element. A sequence with only the
-    proposal bar (or empty) yields no fill.
+    Contract with the engine driver (story 08): ``bars[0]`` is the bar that
+    *contains* the proposal timestamp (``load_bars`` is called from
+    ``window_start`` = the proposal bar's period). The market order therefore
+    fills at ``bars[1].open`` — the open of the *next* bar — because filling at
+    ``bars[0].open`` would use a price that predates the proposal. A sequence
+    with only the proposal bar (or empty) yields no fill.
     """
     if len(bars) < _MIN_BARS_FOR_MARKET_FILL:
         return EquityEntryResult(entered=False, entry_price=None, entry_timestamp=None)
@@ -302,16 +305,18 @@ _EXIT_ORDER_TYPE: dict[ExitLeg, OrderType] = {
 class EquityPLResult:
     """Outcome of P/L composition (design Step 4).
 
-    When the entry never filled, ``realized_pl`` is zero and the exit-side
-    fields are ``None`` (no exit occurred). When the paper harness cannot
-    produce an estimate (missing ADV or realized volatility), the corresponding
-    slippage and fees are recorded as zero — the confidence classifier
-    (story 05b) demotes such replays.
+    When the entry never filled, every monetary field is ``None`` — no entry,
+    no exit, no P/L — matching the ``CounterfactualReplayRecord`` invariant
+    (story 01: ``realized_pl`` must be ``None`` when ``entered`` is ``False``)
+    and state-persistence.md's "null if not entered". When the paper harness
+    cannot produce an estimate (missing ADV or realized volatility), the
+    corresponding slippage and fees are recorded as zero — the confidence
+    classifier (story 05b) demotes such replays.
     """
 
-    realized_pl: Money
-    entry_slippage: Money
-    entry_fees: Money
+    realized_pl: Money | None
+    entry_slippage: Money | None
+    entry_fees: Money | None
     exit_slippage: Money | None
     exit_fees: Money | None
 
@@ -335,10 +340,13 @@ def compute_equity_pl(
     return records that side's slippage and fees as zero.
     """
     if not entry.entered:
+        # No fill → no entry/exit costs and no P/L. All None per the record's
+        # "null when entered is False" invariant (story 01) and
+        # state-persistence.md "null if not entered".
         return EquityPLResult(
-            realized_pl=signed_money(DECIMAL_ZERO),
-            entry_slippage=money(DECIMAL_ZERO),
-            entry_fees=money(DECIMAL_ZERO),
+            realized_pl=None,
+            entry_slippage=None,
+            entry_fees=None,
             exit_slippage=None,
             exit_fees=None,
         )
@@ -435,21 +443,21 @@ class EquityReplayResult:
     Composes the entry, bracket, and P/L primitives. ``same_bar_ambiguity`` is
     surfaced for the confidence classifier (story 05b). When the entry never
     filled, ``entered`` is ``False``, ``exit_leg`` is
-    ``ENTRY_WINDOW_EXPIRED_UNFILLED``, ``realized_pl`` is zero, and the
-    exit-side fields are ``None``.
+    ``ENTRY_WINDOW_EXPIRED_UNFILLED``, and every monetary field (entry/exit
+    slippage and fees, ``realized_pl``) is ``None`` per the record invariant.
     """
 
     entered: bool
     entry_price: Price | None
     entry_timestamp: datetime | None
-    entry_slippage: Money
-    entry_fees: Money
+    entry_slippage: Money | None
+    entry_fees: Money | None
     exit_leg: ExitLeg
     exit_price: Price | None
     exit_timestamp: datetime | None
     exit_slippage: Money | None
     exit_fees: Money | None
-    realized_pl: Money
+    realized_pl: Money | None
     same_bar_ambiguity: bool
 
 

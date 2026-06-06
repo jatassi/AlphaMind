@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from alphamind._kernel.money import Money, price, signed_money
 from alphamind.config.models.execution import FeeSchedule, OrderType, PaperHarness
@@ -111,13 +111,15 @@ def _exit(exit_price: str, leg: ExitLeg) -> EquityBracketResult:
     )
 
 
-def _drag(fill_price: str, side: str, order_type: OrderType) -> tuple[Money, Money]:
+def _drag(
+    fill_price: str, side: Literal["buy", "sell"], order_type: OrderType
+) -> tuple[Money, Money]:
     """Return (slippage, fees) the harness would attribute for a fill."""
     est = compute_live_execution_estimate(
         fill_price=price(Decimal(fill_price)),
         fill_quantity=10.0,
         instrument_type=InstrumentType.EQUITY,
-        side=side,  # type: ignore[arg-type]
+        side=side,
         order_type=order_type,
         adv_shares=_ADV,
         realized_volatility=_RVOL,

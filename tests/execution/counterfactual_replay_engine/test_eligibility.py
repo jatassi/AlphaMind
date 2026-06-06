@@ -10,8 +10,9 @@ implementations wired at story 08.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
-from typing import Any
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
+from typing import Any, Literal
 
 from alphamind.config.models.replay_engine import CounterfactualReplayEngineConfig
 from alphamind.execution.counterfactual_replay_engine.eligibility import (
@@ -21,6 +22,9 @@ from alphamind.execution.counterfactual_replay_engine.eligibility import (
 from alphamind.execution.counterfactual_replay_engine.enums import (
     ReplayStatus,
     UnevaluableReason,
+)
+from alphamind.execution.counterfactual_replay_engine.iv_lookup import (
+    IVSnapshotLookupResult,
 )
 from alphamind.execution.counterfactual_replay_engine.repos import OhlcvBar
 
@@ -59,10 +63,42 @@ class _AlwaysHasSnapshot:
     def has_snapshot_at_or_before(self, contract_ticker: str, when: datetime) -> bool:
         return True
 
+    def resolve_contract_ticker(
+        self,
+        *,
+        underlying: str,
+        strike: Decimal,
+        expiration: date,
+        contract_type: Literal["call", "put"],
+    ) -> str:
+        # Eligibility never resolves tickers or looks up IV; these satisfy the
+        # widened Protocol (ALP-561).
+        return ""
+
+    def lookup_iv(
+        self, *, contract_ticker: str, target_ts: datetime
+    ) -> IVSnapshotLookupResult | None:
+        return None
+
 
 class _NeverHasSnapshot:
     def has_snapshot_at_or_before(self, contract_ticker: str, when: datetime) -> bool:
         return False
+
+    def resolve_contract_ticker(
+        self,
+        *,
+        underlying: str,
+        strike: Decimal,
+        expiration: date,
+        contract_type: Literal["call", "put"],
+    ) -> str:
+        return ""
+
+    def lookup_iv(
+        self, *, contract_ticker: str, target_ts: datetime
+    ) -> IVSnapshotLookupResult | None:
+        return None
 
 
 class _NoCorporateActions:
