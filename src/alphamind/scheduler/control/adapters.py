@@ -168,19 +168,11 @@ class ActivityLogEmergencyTrigger:
         from autonomous monitor-triggered ones in the activity log.
         """
         annotated_reason = f"{source}:{reason}"
-        # The receiver maps ``EmergencyInvocationRequestedDetail.trigger_type``
-        # against ``_TRIGGER_TYPE_BY_PRIMITIVE`` to enforce the cooldown.
-        # Operator-console emergencies route through ``multi_rule_breach``
-        # which respects the cooldown like any other non-margin trigger.
-        # The cooldown_remaining_seconds field is the writer-side observation
-        # (informational); the receiver re-checks against the live DB.
-        cooldown_remaining = await self._compute_cooldown_remaining_seconds(now=now)
-        detail = EmergencyInvocationRequestedDetail(
-            trigger_type="multi_rule_breach",
-            trigger_reason=annotated_reason,
-            cooldown_remaining_seconds=cooldown_remaining,
-        )
         entry_id = _build_operator_console_entry_id(now=now)
+        # One session for both reads and the write: resolve invocation_id first
+        # so a cold-start trigger fails fast without the informational cooldown
+        # query, and so the cooldown read and the invocation binding share a
+        # single consistent snapshot.
         async with self._session_factory() as session:
             # The activity_log row is a context/correlation row: the receiver
             # mints the requested invocation independently when it picks the
@@ -207,6 +199,13 @@ class ActivityLogEmergencyTrigger:
                     "invocation since boot)"
                 )
                 raise RuntimeError(msg)
+            # The receiver maps ``EmergencyInvocationRequestedDetail.trigger_type``
+            # against ``_TRIGGER_TYPE_BY_PRIMITIVE`` to enforce the cooldown.
+            # Operator-console emergencies route through ``multi_rule_breach``
+            # which respects the cooldown like any other non-margin trigger.
+            # The cooldown_remaining_seconds field is the writer-side observation
+            # (informational); the receiver re-checks against the live DB.
+            cooldown_remaining = await self._compute_cooldown_remaining_seconds(session, now=now)
             entry = ActivityLogEntry(
                 entry_id=entry_id,
                 invocation_id=invocation_id,
@@ -217,7 +216,11 @@ class ActivityLogEmergencyTrigger:
                 order_id=None,
                 thesis_id=None,
                 source=EventSource.GUARDRAIL_LAYER,
-                detail=detail,
+                detail=EmergencyInvocationRequestedDetail(
+                    trigger_type="multi_rule_breach",
+                    trigger_reason=annotated_reason,
+                    cooldown_remaining_seconds=cooldown_remaining,
+                ),
             )
             session.add(activity_log_entry_to_row(entry))
             await session.commit()
@@ -254,19 +257,24 @@ class ActivityLogEmergencyTrigger:
         """
         return None
 
-    async def _compute_cooldown_remaining_seconds(self, *, now: datetime) -> int:
-        """Inspect the most-recent completed emergency for an informational read."""
-        async with self._session_factory() as session:
-            stmt = (
-                select(InvocationRow.phase2_completed_at)
-                .where(
-                    InvocationRow.trigger_type == "emergency",
-                    InvocationRow.phase2_completed_at.is_not(None),
-                )
-                .order_by(InvocationRow.phase2_completed_at.desc())
-                .limit(1)
+    async def _compute_cooldown_remaining_seconds(
+        self, session: AsyncSession, *, now: datetime
+    ) -> int:
+        """Inspect the most-recent completed emergency for an informational read.
+
+        Runs on the caller's session so the cooldown read shares one snapshot
+        with the invocation-id binding.
+        """
+        stmt = (
+            select(InvocationRow.phase2_completed_at)
+            .where(
+                InvocationRow.trigger_type == "emergency",
+                InvocationRow.phase2_completed_at.is_not(None),
             )
-            text = (await session.execute(stmt)).scalar_one_or_none()
+            .order_by(InvocationRow.phase2_completed_at.desc())
+            .limit(1)
+        )
+        text = (await session.execute(stmt)).scalar_one_or_none()
         if text is None:
             return 0
         last_completed = datetime.fromisoformat(text)
