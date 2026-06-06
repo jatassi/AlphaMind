@@ -291,3 +291,142 @@ def simulate_option_brackets(
         same_bar_ambiguity=walk.same_bar_ambiguity,
         exit_iv_lag_minutes=exit_iv.lag_minutes,
     )
+
+
+# ---------------------------------------------------------------------------
+# Step 4 — P/L composition for options
+# ---------------------------------------------------------------------------
+
+# Standard US listed-options contract multiplier (design Step 4: multiplier =
+# 100 for options). 100 underlying shares per contract.
+_OPTIONS_MULTIPLIER = Decimal(100)
+
+# Option entries always fill as a market-style order (Step 2), so the entry
+# crosses as a market order for the harness's impact coefficient.
+_ENTRY_ORDER_TYPE = OrderType.market
+
+# Exit leg → the order type the exit would have crossed as. A target fills as a
+# resting limit; a price stop as a stop; a time stop as a market close. Mirrors
+# the equity exit mapping.
+_EXIT_ORDER_TYPE: dict[ExitLeg, OrderType] = {
+    ExitLeg.TARGET_HIT: OrderType.limit,
+    ExitLeg.STOP_HIT: OrderType.stop,
+    ExitLeg.TIME_STOP_FIRED: OrderType.market,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class OptionPLResult:
+    """Outcome of option P/L composition (design Step 4 — options).
+
+    All fields are non-``None``: option entries always fire (Step 2) and this
+    function is only reached for a resolved exit (the exit-IV-miss sentinel is
+    handled by the driver before P/L). When the paper harness cannot produce an
+    estimate (missing ADV or realized volatility), the corresponding slippage
+    and fees are recorded as zero.
+    """
+
+    realized_pl: Money
+    entry_slippage: Money
+    entry_fees: Money
+    exit_slippage: Money
+    exit_fees: Money
+
+
+def compute_option_pl(
+    proposal: Recommendation,
+    entry: OptionEntryResult,
+    brackets: OptionBracketResult,
+    *,
+    paper_harness_config: PaperHarness,
+    adv_contracts: float | None,
+    realized_volatility: float | None,
+) -> OptionPLResult:
+    """Compose realized P/L for an option replay (design Step 4).
+
+    ``realized_pl = (exit_price - entry_price) * quantity * 100 * direction_sign
+    - entry_slippage - entry_fees - exit_slippage - exit_fees``, with
+    ``direction_sign = +1`` for long and ``-1`` for short, ``quantity`` in
+    contracts, and ``multiplier = 100``. Entry and exit slippage / fees come
+    from :func:`compute_live_execution_estimate` with
+    ``instrument_type=OPTIONS``, called once per side; a ``None`` return records
+    that side's slippage and fees as zero. ``realized_pl`` is signed (losses are
+    negative).
+    """
+    instrument = proposal.instrument
+    assert isinstance(instrument, InstrumentOption)
+    assert brackets.exit_price is not None, "compute_option_pl reached with the exit-IV sentinel"
+
+    direction = instrument.direction
+    direction_sign = Decimal(1) if direction == "long" else Decimal(-1)
+    quantity = Decimal(str(proposal.position_size.quantity))
+
+    entry_side: Literal["buy", "sell"] = "buy" if direction == "long" else "sell"
+    exit_side: Literal["buy", "sell"] = "sell" if direction == "long" else "buy"
+
+    entry_slippage, entry_fees = _side_drag(
+        fill_price=entry.entry_price,
+        order_type=_ENTRY_ORDER_TYPE,
+        side=entry_side,
+        quantity=proposal.position_size.quantity,
+        config=paper_harness_config,
+        adv_contracts=adv_contracts,
+        realized_volatility=realized_volatility,
+    )
+    exit_slippage, exit_fees = _side_drag(
+        fill_price=brackets.exit_price,
+        order_type=_EXIT_ORDER_TYPE[brackets.exit_leg],
+        side=exit_side,
+        quantity=proposal.position_size.quantity,
+        config=paper_harness_config,
+        adv_contracts=adv_contracts,
+        realized_volatility=realized_volatility,
+    )
+
+    gross = (
+        (Decimal(brackets.exit_price) - Decimal(entry.entry_price))
+        * quantity
+        * _OPTIONS_MULTIPLIER
+        * direction_sign
+    )
+    realized = gross - entry_slippage - entry_fees - exit_slippage - exit_fees
+    return OptionPLResult(
+        realized_pl=signed_money(realized),
+        entry_slippage=entry_slippage,
+        entry_fees=entry_fees,
+        exit_slippage=exit_slippage,
+        exit_fees=exit_fees,
+    )
+
+
+def _side_drag(
+    *,
+    fill_price: Price,
+    order_type: OrderType,
+    side: Literal["buy", "sell"],
+    quantity: float,
+    config: PaperHarness,
+    adv_contracts: float | None,
+    realized_volatility: float | None,
+) -> tuple[Money, Money]:
+    """Return ``(slippage, fees)`` for one option fill side via the paper harness.
+
+    ``slippage = estimated_spread_usd + estimated_impact_usd``;
+    ``fees = estimated_regulatory_fees_usd``. The harness handles options via
+    its 100-share multiplier branch (``adv_shares=adv_contracts``). A ``None``
+    estimate (missing ADV / realized vol) records both as zero (design Step 4).
+    """
+    estimate = compute_live_execution_estimate(
+        fill_price=fill_price,
+        fill_quantity=quantity,
+        instrument_type=InstrumentType.OPTIONS,
+        side=side,
+        order_type=order_type,
+        adv_shares=adv_contracts,
+        realized_volatility=realized_volatility,
+        config=config,
+    )
+    if estimate is None:
+        return money(DECIMAL_ZERO), money(DECIMAL_ZERO)
+    slippage = money(estimate.estimated_spread_usd + estimate.estimated_impact_usd)
+    return slippage, estimate.estimated_regulatory_fees_usd
