@@ -372,11 +372,13 @@ class _SequentialRecorder:
 
     filled: bool = False
     appends: int = 0
+    replace_targets: list[str] = field(default_factory=list)
 
     async def resolve_target(self, entry_order_id: str) -> RepriceTarget:
         del entry_order_id
-        # The durable count never changes between cycles (no pipeline run); the
-        # session memory drives the loop bound.
+        # The durable row never changes between cycles (no pipeline run): the same
+        # broker id ("alpaca-uuid-xyz") and modification_count=0. The session memory
+        # drives both the loop bound and the live broker id across cycles.
         return _target(has_recorded_fills=self.filled, modification_count=0)
 
     async def latest_quote(self, symbol: str) -> TouchQuote:
@@ -386,7 +388,8 @@ class _SequentialRecorder:
     async def broker_replace(
         self, alpaca_order_id: AlpacaOrderId, new_limit: Price
     ) -> AlpacaOrderId | None:
-        del alpaca_order_id, new_limit
+        del new_limit
+        self.replace_targets.append(alpaca_order_id)
         return AlpacaOrderId(f"alpaca-new-uuid-{self.appends}")
 
     async def append_event(
@@ -433,6 +436,26 @@ async def test_bounded_loop_reprices_then_cancels_when_budget_spent() -> None:
     assert third is EntryWindowDeadlineOutcome.CANCELLED
     assert rec.appends == 2
     assert memory.reprice_count("BRK-1") == 2
+
+
+async def test_in_session_reprice_targets_the_previous_replace_id() -> None:
+    """ALP-867 — the order row's broker id is NOT written back on a reprice, so a
+    second in-session reprice must replace the CURRENT broker order (the previous
+    replace's new id from session memory), not the now-cancelled stale row id. The
+    repricer reads the session id for its replace target exactly as the canceller
+    does for its cancel target."""
+    rec = _SequentialRecorder()
+    repricer = _sequential_repricer(rec)
+    bracket = _bracket()
+    memory = EntryWindowSessionMemory()
+
+    await repricer.handle(bracket=bracket, now=_NOW, reprice_memory=memory)  # cycle 1
+    await repricer.handle(bracket=bracket, now=_NOW, reprice_memory=memory)  # cycle 2
+
+    # Cycle 1 replaces the row id; cycle 2 replaces cycle 1's NEW id (the live order),
+    # not the stale row id "alpaca-uuid-xyz".
+    assert rec.replace_targets == ["alpaca-uuid-xyz", "alpaca-new-uuid-0"]
+    assert memory.current_alpaca_order_id("BRK-1") == AlpacaOrderId("alpaca-new-uuid-1")
 
 
 async def test_bounded_loop_stops_when_marketable_limit_fills() -> None:

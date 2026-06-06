@@ -275,7 +275,15 @@ class BrokerEntryWindowRepricer:
             return await self.canceller.cancel(
                 bracket=bracket, now=now, reprice_memory=reprice_memory
             )
-        new_alpaca_id = await self.broker_replace(target.alpaca_order_id, new_limit)
+        # Replace the CURRENT broker order: after a prior in-session reprice the order
+        # row's ``alpaca_order_id`` is stale (the cancel-and-replace produced a new id
+        # the pipeline has not projected yet, ALP-867), so the session-tracked id wins;
+        # before any reprice it is ``None`` and we fall back to the row's id (asserted
+        # non-None above). ``is not None`` rather than ``or`` so an empty-string id (a
+        # str NewType) never silently falls back to the stale row.
+        session_id = reprice_memory.current_alpaca_order_id(bracket.bracket_id)
+        replace_target_id = session_id if session_id is not None else target.alpaca_order_id
+        new_alpaca_id = await self.broker_replace(replace_target_id, new_limit)
         if new_alpaca_id is None:
             # Transient gateway failure, or a 404/422 that most likely means the
             # entry just filled during the round trip. Retry: next cycle's fill

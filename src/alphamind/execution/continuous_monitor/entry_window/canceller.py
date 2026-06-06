@@ -236,10 +236,11 @@ class BrokerEntryWindowCanceller:
         # Cancel the CURRENT broker order: after an in-session reprice the order
         # row's id is stale (the cancel-and-replace produced a new id the pipeline
         # has not projected yet, ALP-867), so the session-tracked id wins; before
-        # any reprice it is ``None`` and we fall back to the row's id.
-        alpaca_order_id = (
-            reprice_memory.current_alpaca_order_id(bracket.bracket_id) or target.alpaca_order_id
-        )
+        # any reprice it is ``None`` and we fall back to the row's id. ``is not None``
+        # rather than ``or`` so an empty-string id (a str NewType) never silently
+        # falls back to the stale row.
+        session_id = reprice_memory.current_alpaca_order_id(bracket.bracket_id)
+        alpaca_order_id = session_id if session_id is not None else target.alpaca_order_id
         if alpaca_order_id is None:
             # Not yet routed to the broker (no broker id) — nothing to cancel yet;
             # retry once it is acked rather than misreading a missing id as terminal.

@@ -34,13 +34,13 @@ test DB).
 
 **Note on the rebuild + ``event_seq``.** A SQLite CHECK change is a table rebuild,
 which renumbers the implicit ``rowid`` ALP-865 surfaces as ``event_seq`` (the same
-caveat as ``VACUUM`` — see ``persistence/CLAUDE.md``). This is benign here: the
-rebuild only runs on the narrow-CHECK path, i.e. a DB created before ``ENTRY_REPRICED``
-existed, which in this project means a combined ``upgrade head`` where ``a865wm0000bb``
-created the rebuild watermarks moments earlier at 0 / NULL — a re-scan from the start
-is correct. If this migration is ever applied standalone to a DB with *advanced*
-watermarks, reset ``projection_rebuild_watermark.last_projected_event_seq`` (0) and
-``thesis_pnl_ledger.last_derived_event_seq`` (NULL) afterward per that gotcha.
+caveat as ``VACUUM`` — see ``persistence/CLAUDE.md``). The rebuild runs only on the
+narrow-CHECK path (a DB created before ``ENTRY_REPRICED`` existed); whenever it runs,
+``_rebuild_event_type_check`` resets ``projection_rebuild_watermark.last_projected_event_seq``
+(0) and ``thesis_pnl_ledger.last_derived_event_seq`` (NULL) so the next pipeline rebuild
+re-scans from the start (idempotent), making the renumber safe regardless of deploy
+ordering — even if applied standalone to a DB whose watermarks had advanced. On a fresh
+DB the guarded ``upgrade`` skips the rebuild, so neither the renumber nor the reset runs.
 """
 
 from collections.abc import Sequence
@@ -103,10 +103,22 @@ def _rebuild_event_type_check(values: tuple[str, ...]) -> None:
     ``batch_alter_table``: drop the named CHECK and add it back over the target
     vocabulary. Migrations run with ``PRAGMA foreign_keys=OFF`` (see the alembic
     env), so the intermediate ``DROP TABLE`` does not trip the incoming FKs.
+
+    The rebuild renumbers the implicit ``rowid`` ALP-865 surfaces as ``event_seq``
+    (the same caveat as ``VACUUM``), so any persisted rebuild watermark now points
+    at a different row. Reset both watermarks here so the next pipeline rebuild
+    re-scans from the start — idempotent (re-projecting a terminal status / re-folding
+    a thesis ledger reproduces the same row) — closing the advanced-watermark hazard
+    in-migration instead of relying on an operator remembering the gotcha. Both objects
+    exist whenever this runs (``a865wm0000bb`` is the parent on the up path and is not
+    yet reverted on the down path); on a fresh DB the guarded ``upgrade`` skips the
+    rebuild entirely, so this reset never runs there.
     """
     with op.batch_alter_table(_TABLE, recreate="always") as batch_op:
         batch_op.drop_constraint(_CHECK_NAME, type_="check")
         batch_op.create_check_constraint(_CHECK_NAME, _check_condition(values))
+    op.execute(sa.text("UPDATE projection_rebuild_watermark SET last_projected_event_seq = 0"))
+    op.execute(sa.text("UPDATE thesis_pnl_ledger SET last_derived_event_seq = NULL"))
 
 
 def upgrade() -> None:
