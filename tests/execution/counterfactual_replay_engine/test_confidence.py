@@ -9,6 +9,8 @@ the design's minute-bar ``Confidence.LOW``.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from alphamind.execution.counterfactual_replay_engine.confidence import (
     ConfidenceSignals,
     classify_confidence,
@@ -32,3 +34,10 @@ def _clean_equity_signals() -> ConfidenceSignals:
 
 def test_equity_happy_path_is_high() -> None:
     assert classify_confidence(_clean_equity_signals()) is Confidence.HIGH
+
+
+def test_same_bar_ambiguity_alone_demotes_to_medium_not_low() -> None:
+    # Parent decision (D): at 15-min production resolution this is the baseline
+    # demotion to MEDIUM, not the design's minute-bar LOW.
+    signals = replace(_clean_equity_signals(), same_bar_ambiguity=True)
+    assert classify_confidence(signals) is Confidence.MEDIUM

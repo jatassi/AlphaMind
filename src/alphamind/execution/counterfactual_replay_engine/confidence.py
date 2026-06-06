@@ -75,4 +75,57 @@ def classify_confidence(signals: ConfidenceSignals) -> Confidence:
     § Step 5: any LOW trigger wins; otherwise any MEDIUM trigger; otherwise
     HIGH. See :class:`ConfidenceSignals` for the per-signal meaning.
     """
+    if _is_low(signals):
+        return Confidence.LOW
+    if _is_medium(signals):
+        return Confidence.MEDIUM
     return Confidence.HIGH
+
+
+def _is_low(signals: ConfidenceSignals) -> bool:
+    """LOW when the trigger determination or fill estimate is genuinely unreliable.
+
+    * A coverage gap coinciding with same-bar ambiguity — the trigger
+      determination is genuinely uncertain.
+    * Thin liquidity affecting trigger-price reliability (``None`` is "unknown"
+      and does not demote).
+    * For options only: a materially stale IV snapshot at entry or exit degrades
+      the BS fill estimate.
+    """
+    if not signals.bar_coverage_complete and signals.same_bar_ambiguity:
+        return True
+    if signals.liquidity_within_typical_envelope is False:
+        return True
+    return _iv_materially_stale(signals)
+
+
+def _is_medium(signals: ConfidenceSignals) -> bool:
+    """MEDIUM when a caveat is present but the trigger determination still holds.
+
+    * Same-bar target-and-stop ambiguity — the parent decision (D) baseline at
+      15-minute resolution.
+    * Minor data gaps not affecting trigger determination.
+    * Spread outside the typical-day envelope (``None`` is "unknown").
+    """
+    return (
+        signals.same_bar_ambiguity
+        or not signals.bar_coverage_complete
+        or signals.spread_within_typical_envelope is False
+    )
+
+
+def _iv_materially_stale(signals: ConfidenceSignals) -> bool:
+    """``True`` iff an option's IV snapshot lags past the threshold at entry or exit.
+
+    Fires only for option proposals; equity proposals carry ``None`` IV fields
+    and never demote on this signal.
+    """
+    if signals.instrument_kind != "option":
+        return False
+    threshold = signals.iv_lag_threshold_minutes
+    if threshold is None:
+        return False
+    return any(
+        lag is not None and lag > threshold
+        for lag in (signals.iv_lag_minutes_entry, signals.iv_lag_minutes_exit)
+    )
