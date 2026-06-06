@@ -18,12 +18,13 @@ exercised over a real in-memory SQLite DB (a sanctioned mock boundary).
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from alphamind._kernel.ids import PositionId, ThesisId
+from alphamind._kernel.ids import AlpacaOrderId, BracketId, OrderId, PositionId, Symbol, ThesisId
 from alphamind._kernel.money import money, price
 from alphamind.execution.broker_adapter.queries import PositionSnapshot, TradeAccountSnapshot
 from alphamind.execution.write_paths.phase1 import rederive_thesis_ledgers
@@ -36,14 +37,38 @@ from alphamind.execution.write_paths.projection_rebuild import (
     project_terminal_order_statuses,
     rebuild_projection,
 )
-from alphamind.portfolio_state.records.orders import OrderStatus
+from alphamind.portfolio_state.records.orders import (
+    BracketLeg,
+    BracketLegEnforcement,
+    BracketLegStatus,
+    BracketLegType,
+    BracketRecord,
+    BracketStatus,
+    EquityInstrumentSpec,
+    OrderClass,
+    OrderDirection,
+    OrderDuration,
+    OrderRecord,
+    OrderRole,
+    OrderStatus,
+    OrderType,
+    PriceParameters,
+    PriceTrigger,
+)
+from alphamind.portfolio_state.records.theses import ThesisRecordStatus
+from alphamind.state.records import FillProcessingStatus
 from alphamind.state.records_broker_event_log import (
     BrokerEventRecord,
     BrokerEventType,
     serialize_event_payload,
 )
+from alphamind.state.tables.brackets import BracketRow
 from alphamind.state.tables.broker_event_log_codec import record_to_row as event_record_to_row
+from alphamind.state.tables.cash_ledger import CASH_LEDGER_SINGLETON_ID, CashLedgerRow
+from alphamind.state.tables.fill_records import FillRecordRow
 from alphamind.state.tables.orders import OrderRow
+from alphamind.state.tables.positions import PositionRow
+from alphamind.state.tables.theses import ThesisRow
 from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
 from tests.state._fk_substrate import stub_order_row
 
@@ -55,6 +80,7 @@ from ._handler_substrate import (
     make_pending_entry_order,
     make_pending_equity_position,
     open_handle,
+    seed_cash_ledger,
     seed_invocation_substrate,
     seed_position_cluster,
 )
@@ -733,3 +759,221 @@ async def test_rederive_after_activities_poll_folds_same_invocation_lifecycle_ev
         # The post-poll rederive folded the activity's realized-PnL delta into the
         # ledger — the same-invocation lifecycle event is NOT lost.
         assert ledger[0].realized_pnl_usd == pytest.approx(275.0)
+
+
+# ---------------------------------------------------------------------------
+# ALP-863 — entry-window cancel cascade, relocated off the always-on monitor.
+#
+# With ``orders.status`` projected, every bracket still ``PENDING_ENTRY`` whose
+# ENTRY order just reached a terminal status with no recorded fills is dissolved
+# by the pipeline (not the monitor): bracket DISSOLVED, capital released, thesis
+# ``CANCELLED_NEVER_ENTERED``, position PENDING→CANCELLED. The cascade internals
+# are covered by the phase-2 ``persist_entry_window_cancel`` test; these prove the
+# *rebuild* triggers it — and declines when the entry filled in the cancel race.
+# ---------------------------------------------------------------------------
+
+
+def _pending_entry_bracket() -> BracketRecord:
+    """A ``PENDING_ENTRY`` bracket (still awaiting its patient limit entry to fill)
+    over the standard ``brk-1`` / ``pos-1`` / ``ord-entry-1`` cluster."""
+    leg = BracketLeg(
+        leg_id="brk-1-leg-stop",
+        leg_type=BracketLegType.PRICE_STOP,
+        order_id=OrderId("brk-1-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.PENDING_ACTIVATION,
+    )
+    return BracketRecord(
+        bracket_id=BracketId("brk-1"),
+        position_id=PositionId("pos-1"),
+        status=BracketStatus.PENDING_ENTRY,
+        entry_order_id=OrderId("ord-entry-1"),
+        protective_legs=(leg,),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
+        entry_window_deadline=NOW,
+    )
+
+
+def _pending_entry_limit_order(*, status: OrderStatus = OrderStatus.PENDING) -> OrderRecord:
+    """A patient never-filled equity-bracket LIMIT entry (10 sh @ $100 → $1,000 reserved)."""
+    return OrderRecord(
+        order_id=OrderId("ord-entry-1"),
+        position_id=PositionId("pos-1"),
+        bracket_id=BracketId("brk-1"),
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.LIMIT,
+        order_class=OrderClass.BRACKET,
+        price_parameters=PriceParameters(limit_price=price("100.0")),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=status,
+        alpaca_order_id=AlpacaOrderId("broker-uuid-cancel"),
+        alpaca_order_id_chain=(AlpacaOrderId("broker-uuid-cancel"),),
+        submission_timestamp=NOW,
+        last_update_timestamp=NOW,
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id=ThesisId("thesis-1"),
+        originating_pm_command_id=None,
+        age_hours=0.25,
+    )
+
+
+async def _seed_unprocessed_fill(factory: async_sessionmaker[AsyncSession]) -> None:
+    """Seed one UNPROCESSED ``fill_records`` row for ``ord-entry-1`` — the FILL the
+    fill-stream consumer wrote in the cancel race, not yet drained into
+    ``filled_quantity``. Its mere presence is the ``has_recorded_fills`` signal the
+    cascade predicate excludes on (it is the load-bearing guard, not ``filled_quantity``).
+    """
+    async with factory() as sess:
+        sess.add(
+            FillRecordRow(
+                fill_id="fill-race-1",
+                order_id="ord-entry-1",
+                fill_timestamp=NOW.isoformat(),
+                fill_price=Decimal("100.0"),
+                fill_quantity=4.0,
+                remaining_quantity_after=6.0,
+                order_status_after=OrderStatus.PARTIALLY_FILLED.value,
+                slippage_usd=None,
+                fees_usd=Decimal(0),
+                execution_venue=None,
+                gateway_reference=None,
+                persistence_timestamp=NOW.isoformat(),
+                processing_status=FillProcessingStatus.UNPROCESSED.value,
+                processing_invocation_id=None,
+                processing_timestamp=None,
+                regt_attribution_json=None,
+                live_execution_estimate_json=None,
+            )
+        )
+        await sess.commit()
+
+
+@pytest.mark.parametrize("terminal_status", [OrderStatus.CANCELLED, OrderStatus.EXPIRED])
+async def test_terminal_entry_event_dissolves_pending_entry_bracket_via_cascade(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    terminal_status: OrderStatus,
+) -> None:
+    """ALP-863 AC2 — a zero-fill terminal event for a ``PENDING_ENTRY`` bracket's
+    ENTRY order makes the *pipeline* (not the monitor) run the dissolve cascade:
+    the order projects to its terminal status, then the bracket DISSOLVES, the
+    reserved capital releases, the thesis resolves ``CANCELLED_NEVER_ENTERED``, and
+    the never-filled position goes PENDING→CANCELLED.
+
+    Driven for both CANCELLED (the monitor broker-cancel) and EXPIRED (the broker's
+    own TIF lapse) — the cascade canonicalizes either disposition to ``CANCELLED`` on
+    the order via the shared CANCEL writeback (matching the monitor's prior behavior).
+    The order stays terminal + ``filled_quantity == 0`` so the ``entry_no_fill`` alert
+    still matches (it fires off ``orders.status``, independently of the cascade).
+    """
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
+    await seed_position_cluster(
+        factory,
+        make_pending_equity_position(),
+        _pending_entry_limit_order(),
+        make_active_thesis(),
+        _pending_entry_bracket(),
+    )
+    await _append_events(
+        factory,
+        _terminal_event(
+            event_key="tevt-cancel",
+            alpaca_order_id="broker-uuid-cancel",
+            client_order_id="inv-1.ENV-1.0.0",
+            terminal_status=terminal_status,
+        ),
+    )
+
+    ctx, handle = await open_handle(factory)
+    summary = await rebuild_projection(handle, alpaca_positions=(), alpaca_account=None)
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.order_statuses_projected == 1
+    assert summary.entry_window_cancels_cascaded == 1
+    async with factory() as sess:
+        order = await sess.get(OrderRow, "ord-entry-1")
+        assert order is not None
+        # Canonicalized to CANCELLED by the shared CANCEL writeback, even for EXPIRED.
+        assert order.status == OrderStatus.CANCELLED.value
+        assert order.filled_quantity == 0  # the no-fill alert precondition still holds
+
+        bracket = await sess.get(BracketRow, "brk-1")
+        assert bracket is not None
+        assert bracket.status == BracketStatus.DISSOLVED.value
+
+        thesis = await sess.get(ThesisRow, "thesis-1")
+        assert thesis is not None
+        assert thesis.status == ThesisRecordStatus.CANCELLED.value
+        assert thesis.resolution_category == "CANCELLED_NEVER_ENTERED"
+
+        position = await sess.get(PositionRow, "pos-1")
+        assert position is not None
+        assert position.status == "CANCELLED"
+
+        cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash is not None
+        assert cash.reserved_capital_usd == pytest.approx(0.0)  # the $1,000 released
+
+
+async def test_filled_entry_in_cancel_race_is_not_dissolved(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-863 AC3 — if the entry filled in the cancel race, the cascade does NOT
+    fire. The order reached a terminal status (broker-cancelled), but a FILL flowed
+    in the race: an UNPROCESSED ``fill_records`` row exists, not yet drained into
+    ``filled_quantity``. The predicate's ``NOT EXISTS (fill_records)`` guard (the
+    ``has_recorded_fills`` parity) excludes it, so the never-dissolved bracket keeps
+    protecting the filled shares and the reserved capital is left untouched.
+
+    The untouched-capital assertion is the discriminator: without the fill_records
+    guard the cascade would run and ``persist_entry_window_cancel`` would release the
+    unfilled-remainder capital (via its ALP-760 early-return) before declining to
+    dissolve — so capital would drop below the reserved $1,000.
+    """
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
+    await seed_position_cluster(
+        factory,
+        make_pending_equity_position(),
+        _pending_entry_limit_order(status=OrderStatus.CANCELLED),
+        make_active_thesis(),
+        _pending_entry_bracket(),
+    )
+    await _seed_unprocessed_fill(factory)  # the FILL that flowed in the race
+
+    ctx, handle = await open_handle(factory)
+    summary = await rebuild_projection(handle, alpaca_positions=(), alpaca_account=None)
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.entry_window_cancels_cascaded == 0
+    async with factory() as sess:
+        # Bracket NOT dissolved — the filled shares stay protected.
+        bracket = await sess.get(BracketRow, "brk-1")
+        assert bracket is not None
+        assert bracket.status == BracketStatus.PENDING_ENTRY.value
+
+        # Thesis NOT resolved, position NOT cancelled — a fill landed.
+        thesis = await sess.get(ThesisRow, "thesis-1")
+        assert thesis is not None
+        assert thesis.status == ThesisRecordStatus.ACTIVE.value
+
+        position = await sess.get(PositionRow, "pos-1")
+        assert position is not None
+        assert position.status == "PENDING"
+
+        # Reserved capital untouched — the cascade never ran (the discriminator).
+        cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash is not None
+        assert cash.reserved_capital_usd == pytest.approx(1_000.0)
