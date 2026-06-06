@@ -17,8 +17,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
+from typing import Literal
 
-from alphamind._kernel.money import Price, price
+from alphamind._kernel.money import DECIMAL_ZERO, Money, Price, money, price, signed_money
+from alphamind.config.models.execution import OrderType, PaperHarness
 from alphamind.decision.analyst.models import (
     InstrumentEquity,
     PriceCondition,
@@ -27,10 +30,16 @@ from alphamind.decision.analyst.models import (
 )
 from alphamind.execution.counterfactual_replay_engine.enums import ExitLeg
 from alphamind.execution.counterfactual_replay_engine.repos import OhlcvBar
+from alphamind.execution.paper_evaluation_harness.harness import (
+    compute_live_execution_estimate,
+)
+from alphamind.portfolio_state.records.positions import InstrumentType
 
 __all__ = [
     "EquityBracketResult",
     "EquityEntryResult",
+    "EquityPLResult",
+    "compute_equity_pl",
     "simulate_equity_brackets",
     "simulate_equity_entry",
 ]
@@ -261,3 +270,154 @@ def _time_stop_deadline(proposal: Recommendation) -> datetime | None:
         if leg.type == "time" and leg.is_hard and isinstance(leg.condition, TimeCondition):
             return leg.condition.deadline
     return None
+
+
+# ---------------------------------------------------------------------------
+# Step 4 — P/L composition
+# ---------------------------------------------------------------------------
+
+# Equity has no contract multiplier (design Step 4: multiplier = 1 for equity).
+_EQUITY_MULTIPLIER = Decimal(1)
+
+# EntryOrder.type → the paper harness's OrderType (which impact coefficient to
+# use). stop_limit maps to the harness's stop coefficient — the only stop-like
+# member it carries.
+_ENTRY_ORDER_TYPE: dict[str, OrderType] = {
+    "market": OrderType.market,
+    "limit": OrderType.limit,
+    "stop_limit": OrderType.stop,
+}
+
+# Exit leg → the order type the exit would have crossed as. A target fills as a
+# resting limit; a price stop as a stop; a time stop as a market close.
+_EXIT_ORDER_TYPE: dict[ExitLeg, OrderType] = {
+    ExitLeg.TARGET_HIT: OrderType.limit,
+    ExitLeg.STOP_HIT: OrderType.stop,
+    ExitLeg.TIME_STOP_FIRED: OrderType.market,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class EquityPLResult:
+    """Outcome of P/L composition (design Step 4).
+
+    When the entry never filled, ``realized_pl`` is zero and the exit-side
+    fields are ``None`` (no exit occurred). When the paper harness cannot
+    produce an estimate (missing ADV or realized volatility), the corresponding
+    slippage and fees are recorded as zero — the confidence classifier
+    (story 05b) demotes such replays.
+    """
+
+    realized_pl: Money
+    entry_slippage: Money
+    entry_fees: Money
+    exit_slippage: Money | None
+    exit_fees: Money | None
+
+
+def compute_equity_pl(
+    proposal: Recommendation,
+    entry: EquityEntryResult,
+    brackets: EquityBracketResult,
+    *,
+    paper_harness_config: PaperHarness,
+    adv_shares: float | None,
+    realized_volatility: float | None,
+) -> EquityPLResult:
+    """Compose realized P/L for an equity replay (design Step 4).
+
+    ``realized_pl = (exit_price - entry_price) * quantity * direction_sign
+    - entry_slippage - entry_fees - exit_slippage - exit_fees``, with
+    ``direction_sign = +1`` for long and ``-1`` for short and ``multiplier = 1``
+    for equity. Entry and exit slippage / fees come from
+    :func:`compute_live_execution_estimate`, called once per side; a ``None``
+    return records that side's slippage and fees as zero.
+    """
+    if not entry.entered:
+        return EquityPLResult(
+            realized_pl=signed_money(DECIMAL_ZERO),
+            entry_slippage=money(DECIMAL_ZERO),
+            entry_fees=money(DECIMAL_ZERO),
+            exit_slippage=None,
+            exit_fees=None,
+        )
+
+    assert entry.entry_price is not None
+    assert brackets.exit_price is not None
+
+    instrument = proposal.instrument
+    assert isinstance(instrument, InstrumentEquity)
+    direction = instrument.direction
+    direction_sign = Decimal(1) if direction == "long" else Decimal(-1)
+    quantity = Decimal(str(proposal.position_size.quantity))
+
+    entry_side: Literal["buy", "sell"] = "buy" if direction == "long" else "sell"
+    exit_side: Literal["buy", "sell"] = "sell" if direction == "long" else "buy"
+
+    entry_slippage, entry_fees = _side_drag(
+        fill_price=entry.entry_price,
+        order_type=_ENTRY_ORDER_TYPE[proposal.entry_order.type],
+        side=entry_side,
+        quantity=proposal.position_size.quantity,
+        config=paper_harness_config,
+        adv_shares=adv_shares,
+        realized_volatility=realized_volatility,
+    )
+    exit_slippage, exit_fees = _side_drag(
+        fill_price=brackets.exit_price,
+        order_type=_EXIT_ORDER_TYPE[brackets.exit_leg],
+        side=exit_side,
+        quantity=proposal.position_size.quantity,
+        config=paper_harness_config,
+        adv_shares=adv_shares,
+        realized_volatility=realized_volatility,
+    )
+
+    gross = (
+        (Decimal(brackets.exit_price) - Decimal(entry.entry_price))
+        * quantity
+        * _EQUITY_MULTIPLIER
+        * direction_sign
+    )
+    realized = (
+        gross - entry_slippage - entry_fees - exit_slippage - exit_fees
+    )
+    return EquityPLResult(
+        realized_pl=signed_money(realized),
+        entry_slippage=entry_slippage,
+        entry_fees=entry_fees,
+        exit_slippage=exit_slippage,
+        exit_fees=exit_fees,
+    )
+
+
+def _side_drag(
+    *,
+    fill_price: Price,
+    order_type: OrderType,
+    side: Literal["buy", "sell"],
+    quantity: float,
+    config: PaperHarness,
+    adv_shares: float | None,
+    realized_volatility: float | None,
+) -> tuple[Money, Money]:
+    """Return ``(slippage, fees)`` for one fill side via the paper harness.
+
+    ``slippage = estimated_spread_usd + estimated_impact_usd``;
+    ``fees = estimated_regulatory_fees_usd``. A ``None`` harness estimate
+    (missing ADV / realized vol) records both as zero (design Step 4).
+    """
+    estimate = compute_live_execution_estimate(
+        fill_price=fill_price,
+        fill_quantity=quantity,
+        instrument_type=InstrumentType.EQUITY,
+        side=side,
+        order_type=order_type,
+        adv_shares=adv_shares,
+        realized_volatility=realized_volatility,
+        config=config,
+    )
+    if estimate is None:
+        return money(DECIMAL_ZERO), money(DECIMAL_ZERO)
+    slippage = money(estimate.estimated_spread_usd + estimate.estimated_impact_usd)
+    return slippage, estimate.estimated_regulatory_fees_usd
