@@ -24,8 +24,8 @@ __all__ = [
 class ReplayStatus(StrEnum):
     """Whether the engine produced a counterfactual P/L for the proposal."""
 
-    EVALUATED = "EVALUATED"
-    UNEVALUABLE = "UNEVALUABLE"
+    EVALUATED = "evaluated"
+    UNEVALUABLE = "unevaluable"
 
 
 class ReplayKind(StrEnum):
@@ -37,8 +37,8 @@ class ReplayKind(StrEnum):
     actual modified-form trade.
     """
 
-    REJECTION = "REJECTION"
-    MODIFICATION_ORIGINAL_FORM = "MODIFICATION_ORIGINAL_FORM"
+    REJECTION = "rejection"
+    MODIFICATION_ORIGINAL_FORM = "modification_original_form"
 
 
 class UnevaluableReason(StrEnum):
@@ -59,11 +59,11 @@ class UnevaluableReason(StrEnum):
     declines). Consumed by eligibility (story 04) and the driver (story 08).
     """
 
-    UNSUPPORTED_INSTRUMENT = "UNSUPPORTED_INSTRUMENT"
-    UNSUPPORTED_BRACKET_TYPE = "UNSUPPORTED_BRACKET_TYPE"
-    DATA_MISSING = "DATA_MISSING"
-    CORPORATE_ACTION_IN_WINDOW = "CORPORATE_ACTION_IN_WINDOW"
-    STRATEGIST_POSITION_ACTION_NOT_SUPPORTED = "STRATEGIST_POSITION_ACTION_NOT_SUPPORTED"
+    UNSUPPORTED_INSTRUMENT = "unsupported_instrument"
+    UNSUPPORTED_BRACKET_TYPE = "unsupported_bracket_type"
+    DATA_MISSING = "data_missing"
+    CORPORATE_ACTION_IN_WINDOW = "corporate_action_in_window"
+    STRATEGIST_POSITION_ACTION_NOT_SUPPORTED = "strategist_position_action_not_supported"
 
 
 class ExitLeg(StrEnum):
@@ -76,11 +76,11 @@ class ExitLeg(StrEnum):
     / ``ENTRY_WINDOW_EXPIRED_UNFILLED`` legs.
     """
 
-    TARGET_HIT = "TARGET_HIT"
-    STOP_HIT = "STOP_HIT"
-    TIME_STOP_FIRED = "TIME_STOP_FIRED"
-    ENTRY_WINDOW_EXPIRED_UNFILLED = "ENTRY_WINDOW_EXPIRED_UNFILLED"
-    STRATEGIST_CLOSE_AT_PROPOSAL = "STRATEGIST_CLOSE_AT_PROPOSAL"
+    TARGET_HIT = "target_hit"
+    STOP_HIT = "stop_hit"
+    TIME_STOP_FIRED = "time_stop_fired"
+    ENTRY_WINDOW_EXPIRED_UNFILLED = "entry_window_expired_unfilled"
+    STRATEGIST_CLOSE_AT_PROPOSAL = "strategist_close_at_proposal"
 
 
 class Confidence(StrEnum):
@@ -88,6 +88,6 @@ class Confidence(StrEnum):
     PM accuracy metrics at query time per the engine's confidence rule.
     """
 
-    HIGH = "HIGH"
-    MEDIUM = "MEDIUM"
-    LOW = "LOW"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
