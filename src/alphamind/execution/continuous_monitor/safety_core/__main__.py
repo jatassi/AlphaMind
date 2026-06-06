@@ -77,6 +77,14 @@ _HEARTBEAT_FILENAME = "safety_core.heartbeat"
 # The NSSM service name the watchdog restarts. Mirrors the install script.
 _SAFETY_CORE_SERVICE_NAME = "alphamind-safety-core"
 
+# Per-process rotating-log filenames (ALP-868). The safety core, its watchdog,
+# and the continuous monitor are three separate processes; on Windows
+# ``TimedRotatingFileHandler`` cannot rotate a file held open by another process
+# (``WinError 32``), so each gets its own file. These mirror the NSSM
+# stdout/stderr targets in ``install_safety_core_service.ps1``.
+_SAFETY_CORE_LOG_FILENAME = "safety_core.log"
+_WATCHDOG_LOG_FILENAME = "safety_core_watchdog.log"
+
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -99,6 +107,17 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
 
     return parser.parse_args(argv)
+
+
+def _log_filename_for_subcommand(subcommand: str) -> str:
+    """Pick the rotating-log filename for the running process (ALP-868).
+
+    ``run`` and ``watchdog`` are distinct NSSM services (distinct processes), and
+    neither may share the monitor's ``monitor.log`` — see the module constants.
+    """
+    if subcommand == "watchdog":
+        return _WATCHDOG_LOG_FILENAME
+    return _SAFETY_CORE_LOG_FILENAME
 
 
 def _heartbeat_path() -> Path:  # pragma: no cover - filesystem path resolution
@@ -264,7 +283,7 @@ async def _cadence_loop(  # pragma: no cover - python -m
 def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover - python -m
     args = _parse_args(argv)
     load_dotenv()
-    configure_monitor_logging()
+    configure_monitor_logging(filename=_log_filename_for_subcommand(args.subcommand))
 
     if args.subcommand == "run":
         asyncio.run(_run_safety_core_daemon(mode=cast(MonitorMode, args.mode)))

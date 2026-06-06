@@ -28,14 +28,20 @@ def _log_directory() -> Path:
     return Path(base) / "AlphaMind" / "logs"
 
 
-def configure_monitor_logging() -> None:
-    """Install a TimedRotatingFileHandler writing to ``monitor.log``.
+def configure_monitor_logging(filename: str = "monitor.log") -> None:
+    """Install a TimedRotatingFileHandler writing to ``filename`` in the log dir.
+
+    ``filename`` defaults to ``monitor.log`` (the continuous monitor). A separate
+    process sharing this helper — the isolated safety core (ALP-868) — passes its
+    own filename so no two processes rotate the same file: on Windows
+    ``TimedRotatingFileHandler`` cannot rename a file another process holds open
+    (``WinError 32``).
 
     Idempotent: a repeat call returns without attaching a duplicate handler.
     """
     log_dir = _log_directory()
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "monitor.log"
+    log_file = log_dir / filename
 
     level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)

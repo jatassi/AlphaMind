@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import pytest
 
-from alphamind.execution.continuous_monitor.safety_core.__main__ import _parse_args
+from alphamind.execution.continuous_monitor.safety_core.__main__ import (
+    _log_filename_for_subcommand,
+    _parse_args,
+)
 from alphamind.execution.continuous_monitor.safety_core.process_control import (
     NssmServiceController,
 )
@@ -20,6 +23,21 @@ from alphamind.execution.continuous_monitor.safety_core.process_control import (
 def test_parse_args_routes_run_subcommand() -> None:
     args = _parse_args(["run"])
     assert args.subcommand == "run"
+
+
+def test_run_and_watchdog_log_to_distinct_non_monitor_files() -> None:
+    """Each safety-core process gets its own rotating file (ALP-868).
+
+    The safety core, its watchdog, and the continuous monitor are three separate
+    processes; on Windows ``TimedRotatingFileHandler`` cannot rotate a file held
+    open by another process, so no two may share a filename.
+    """
+    run_log = _log_filename_for_subcommand("run")
+    watchdog_log = _log_filename_for_subcommand("watchdog")
+
+    assert run_log == "safety_core.log"
+    assert watchdog_log == "safety_core_watchdog.log"
+    assert len({run_log, watchdog_log, "monitor.log"}) == 3
 
 
 def test_parse_args_routes_watchdog_subcommand() -> None:

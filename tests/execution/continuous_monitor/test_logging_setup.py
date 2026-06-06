@@ -60,6 +60,24 @@ class TestConfigureMonitorLogging:
         assert handler.interval == 24 * 60 * 60
         assert handler.backupCount == 30
 
+    def test_filename_argument_redirects_the_rotating_handler(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_logger: logging.Logger,
+    ) -> None:
+        # A second process (the safety core) must not share monitor.log: it
+        # passes its own filename so no two processes rotate the same file
+        # (Windows WinError 32 — ALP-868).
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        configure_monitor_logging(filename="safety_core.log")
+
+        rotating = [h for h in isolated_logger.handlers if isinstance(h, TimedRotatingFileHandler)]
+        assert len(rotating) == 1
+        assert Path(rotating[0].baseFilename) == tmp_path / "AlphaMind" / "logs" / "safety_core.log"
+
     def test_honours_userprofile_on_windows_style_env(
         self,
         tmp_path: Path,
