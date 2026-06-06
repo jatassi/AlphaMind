@@ -185,8 +185,13 @@ class ActivityLogEmergencyTrigger:
             # The activity_log row is a context/correlation row: the receiver
             # mints the requested invocation independently when it picks the
             # row up. ``invocation_id`` is NOT-NULL with an FK to invocations,
-            # so bind it to the most-recently-started invocation — the same
-            # semantics the monitor's emergency emit uses.
+            # so bind it to the most-recently-started invocation — mirroring
+            # the monitor's emergency emit (wiring.make_invocation_id_provider).
+            # Cold-start (no invocation row yet) deliberately DIVERGES from the
+            # monitor: we raise below rather than fall back to its
+            # ``"monitor-bootstrap"`` sentinel, which is not a real invocations
+            # row and would itself violate this FK. Do not "align" the two by
+            # returning a sentinel — that re-introduces the crash this fixes.
             invocation_id = (
                 await session.execute(
                     select(InvocationRow.invocation_id)
