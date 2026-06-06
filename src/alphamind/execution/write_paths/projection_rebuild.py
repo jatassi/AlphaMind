@@ -10,7 +10,7 @@ snapshot/projection mismatch triggers a rebuild rather than a per-delta
 comparison-and-correct. No ``RECONCILIATION_ALERT`` / ``RECONCILIATION_CORRECTION``
 row is ever written here.
 
-Two derivations run in the open Phase-1 write transaction (single writer =
+Three derivations run in the open Phase-1 write transaction (single writer =
 pipeline, ADR-0005):
 
 1. **Order-status projection** — fold every ``TERMINAL_ORDER_STATUS`` event in
@@ -20,7 +20,16 @@ pipeline, ADR-0005):
    alert never matched). The order row is an optional projection cache — a zero-fill
    terminal event advances its cached status to ``CANCELLED`` / ``EXPIRED``.
 
-2. **Broker-fact-no-Intent classification** — a broker position with no matching
+2. **Entry-window cancel cascade** (ALP-863) — with ``orders.status`` projected,
+   every bracket still ``PENDING_ENTRY`` whose ENTRY order just reached a terminal
+   status with no recorded fills is dissolved here: the bracket goes DISSOLVED, its
+   legs cancel, the reserved capital releases, the thesis resolves
+   ``CANCELLED_NEVER_ENTERED``, and the never-filled position goes PENDING→CANCELLED.
+   This relocates the monitor's old entry-window cancel writeback (a residual
+   cross-process RMW reachable by the ``SQLITE_BUSY_SNAPSHOT`` race) onto the single
+   pipeline writer; the monitor keeps only the real-time broker cancel.
+
+3. **Broker-fact-no-Intent classification** — a broker position with no matching
    local Intent overlay (the DVN / manual-trade case) is a **first-class
    projection state**, surfaced in the summary (attach/flag), never a reconcile
    alert. The "Alpaca wins" auto-materialize / alert doctrine is deleted.
@@ -49,7 +58,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from alphamind.execution.broker_adapter.queries import PositionSnapshot, TradeAccountSnapshot
-from alphamind.portfolio_state.records.orders import OrderStatus
+from alphamind.execution.write_paths.phase2 import persist_entry_window_cancel
+from alphamind.portfolio_state.records.orders import BracketStatus, OrderStatus
 from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
     OptionsPositionDetails,
@@ -57,6 +67,7 @@ from alphamind.portfolio_state.records.positions import (
 )
 from alphamind.state.invocation_context.context import InvocationHandle
 from alphamind.state.records_broker_event_log import BrokerEventType
+from alphamind.state.tables.brackets import BracketRow
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.positions import PositionRow
@@ -281,6 +292,11 @@ async def rebuild_projection(
     del alpaca_account  # No per-delta cash comparison — the rebuild has no adjudication.
 
     order_statuses_projected = await _project_terminal_order_statuses(handle.session)
+    # ALP-863 — with ``orders.status`` now projected, run the entry-window cancel
+    # cascade (relocated off the always-on monitor) for every never-filled entry
+    # whose terminal status just landed: dissolve the bracket, release capital,
+    # resolve the thesis, cancel the position. Reuses the Phase-2 CANCEL cascade.
+    await _dissolve_terminal_pending_entry_brackets(handle)
     symbols_by_status = await _live_position_symbols_by_status(handle.session)
     intent_backed_symbols = frozenset().union(*symbols_by_status.values())
     pending_symbols = symbols_by_status.get("PENDING", frozenset())
@@ -423,6 +439,68 @@ async def _resolve_non_terminal_order_rows(
             if row.client_order_id is not None:
                 by_client_id[row.client_order_id] = row
     return by_alpaca_id, by_client_id
+
+
+# Provenance the entry-window cancel cascade stamps onto the CANCEL writeback —
+# the same reason string the continuous monitor used before the writeback moved
+# to the pipeline (ALP-863). Mirrors the ``_ENTRY_NO_FILL_REASONS`` vocabulary the
+# operator alert reads off ``orders.status``.
+_ENTRY_WINDOW_EXPIRED_REASON = "entry_window_expired"
+
+
+async def _dissolve_terminal_pending_entry_brackets(handle: InvocationHandle) -> int:
+    """Run the entry-window cancel cascade for never-filled terminal entries (ALP-863).
+
+    The continuous monitor's entry-window watcher broker-cancels a patient bracket
+    entry whose window elapsed but now writes nothing (single-writer invariant 1,
+    ADR-0005). Once ``_project_terminal_order_statuses`` has advanced ``orders.status``
+    from the resulting ``TERMINAL_ORDER_STATUS`` event, every bracket still
+    ``PENDING_ENTRY`` whose ENTRY order sits in a terminal status with zero recorded
+    fills is a never-filled entry that cancelled / expired. The pipeline — the single
+    writer — runs the dissolve cascade the monitor used to RMW: reusing
+    :func:`persist_entry_window_cancel` unchanged (only its caller moved
+    monitor→pipeline), it marks the entry CANCELLED, cancels the protective legs,
+    dissolves the bracket, releases the reserved capital, resolves the thesis
+    ``CANCELLED_NEVER_ENTERED``, and drives the never-filled position PENDING→CANCELLED.
+
+    The predicate is re-derivable and idempotent: a dissolved bracket leaves
+    ``PENDING_ENTRY`` so it never re-matches, and a terminal entry that **filled** in
+    the cancel race is excluded by the ``filled_quantity == 0`` guard — a FILL event
+    integrates that position instead, and no zero-fill terminal event is even appended.
+    The cascade's own partial-fill guard (ALP-760) is the final backstop. The no-fill
+    operator alert (ALP-739) fires off the projected ``orders.status`` independently of
+    this cascade. Returns the count of brackets dissolved.
+    """
+    session = handle.session
+    entry_order_ids = (
+        (
+            await session.execute(
+                select(BracketRow.entry_order_id)
+                .join(OrderRow, OrderRow.order_id == BracketRow.entry_order_id)
+                .where(
+                    BracketRow.status == BracketStatus.PENDING_ENTRY.value,
+                    OrderRow.status.in_(_TERMINAL_ORDER_STATUSES),
+                    OrderRow.filled_quantity == 0,
+                )
+                .order_by(BracketRow.entry_order_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for entry_order_id in entry_order_ids:
+        await persist_entry_window_cancel(
+            handle,
+            entry_order_id=entry_order_id,
+            cancel_reason=_ENTRY_WINDOW_EXPIRED_REASON,
+        )
+        log.info(
+            "projection rebuild: dissolved PENDING_ENTRY bracket for never-filled "
+            "terminal entry %s (entry-window cancel cascade relocated off the monitor, "
+            "ALP-863)",
+            entry_order_id,
+        )
+    return len(entry_order_ids)
 
 
 async def _live_position_symbols_by_status(session: AsyncSession) -> dict[str, frozenset[str]]:

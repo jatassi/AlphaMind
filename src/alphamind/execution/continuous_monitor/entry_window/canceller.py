@@ -1,9 +1,9 @@
-"""The fire-action for an expired entry window: broker-cancel + Phase-2 writeback.
+"""The fire-action for an expired entry window: broker-cancel, no DB write (ALP-863).
 
 When the watcher cycle (``task.py``) finds a ``PENDING_ENTRY`` bracket past its
 ``entry_window_deadline``, it delegates to an :class:`EntryWindowCanceller`. The
 production implementation (:class:`BrokerEntryWindowCanceller`) decides whether
-to dissolve the bracket from whether the entry **filled** — not from the broker's
+the entry will be dissolved from whether it **filled** — not from the broker's
 answer to the cancel request, which is not a reliable fill oracle (a fire-and-
 forget cancel returns "accepted" even for an order that races to FILLED):
 
@@ -18,15 +18,22 @@ forget cancel returns "accepted" even for an order that races to FILLED):
 4. Otherwise ask the broker to cancel. A transient gateway failure or a non-
    terminal 4xx (auth / rate-limit / malformed) → ``FAILED`` (retry, do NOT latch
    the bracket as handled). A confirmed cancel or an already-terminal 404/422,
-   combined with the no-recorded-fills check above, → run the Phase-2 CANCEL
-   writeback (``persist_entry_window_cancel``), which marks the entry
-   ``CANCELLED``, dissolves the bracket, releases reserved capital, and resolves
-   the thesis ``CANCELLED_NEVER_ENTERED``.
+   combined with the no-recorded-fills check above, → ``CANCELLED``.
 
-The residual race — a fill that lands at the broker after the no-fills check but
-before the cancel processes, and has not yet been recorded — is the same async
-window the PM-originated CANCEL path (``submit_cancel`` → ``_writeback_cancel``)
-already accepts; the fill-record check closes the common case.
+**The cancel writes nothing to local state** (ALP-863 — single-writer invariant 1,
+ADR-0005). The monitor used to RMW ``orders`` / ``brackets`` / ``positions`` /
+``theses`` here via a fresh-handle ``persist_entry_window_cancel`` writeback — a
+residual cross-process writer reachable by the ``SQLITE_BUSY_SNAPSHOT`` race
+(ALP-824 class). That writeback is gone. The disposition now reaches local state
+the same way every other terminal order status does (W1c): the broker cancel
+produces a ``canceled`` / ``expired`` trade-update → the fill-stream consumer
+appends a ``TERMINAL_ORDER_STATUS`` event → the single (pipeline) writer projects
+``orders.status`` and runs the dissolve cascade (bracket DISSOLVED + legs
+cancelled + capital released + thesis ``CANCELLED_NEVER_ENTERED`` + position
+PENDING→CANCELLED) in ``write_paths/projection_rebuild.py``. This is strictly
+more robust than deciding off the cancel ack: if the entry actually filled in the
+cancel race a FILL event flows instead, no zero-fill terminal event is appended,
+and the cascade correctly does not fire.
 
 Per parent issue ALP-123 § Pre-resolved decision (I) the continuous monitor
 talks to the broker adapter directly rather than through an engine envelope —
@@ -47,8 +54,6 @@ from alphamind._kernel.ids import AlpacaOrderId
 from alphamind.portfolio_state.records.orders import BracketRecord
 
 log = logging.getLogger(__name__)
-
-_CANCEL_REASON = "entry_window_expired"
 
 
 class BrokerCancelClassification(Enum):
@@ -115,27 +120,23 @@ class EntryWindowCanceller(Protocol):
 type EntryCancelTargetResolver = Callable[[str], Awaitable[EntryCancelTarget | None]]
 # broker order id → how the broker answered the cancel.
 type BrokerCancel = Callable[[AlpacaOrderId], Awaitable[BrokerCancelClassification]]
-# entry_order_id + cancel_reason → run the Phase-2 CANCEL writeback under a fresh handle.
-type CancelWriteback = Callable[[str, str], Awaitable[None]]
 
 
 @dataclass(frozen=True, slots=True)
 class BrokerEntryWindowCanceller:
     """Production :class:`EntryWindowCanceller`.
 
-    Holds three injected seams so the broker round-trip and the DB reads/writes
-    are all fakeable in tests without a live Alpaca client:
+    Holds two injected seams so the broker round-trip and the DB read are both
+    fakeable in tests without a live Alpaca client. The canceller performs **no**
+    local-state write (ALP-863) — the dissolve cascade is the pipeline's job:
 
     * ``resolve_target`` — entry_order_id → :class:`EntryCancelTarget` (broker id
       + recorded-fill state), or ``None`` when the order row is missing.
     * ``broker_cancel`` — broker order id → :class:`BrokerCancelClassification`.
-    * ``writeback`` — runs ``persist_entry_window_cancel`` under a fresh
-      session + :class:`InvocationHandle` and commits.
     """
 
     resolve_target: EntryCancelTargetResolver
     broker_cancel: BrokerCancel
-    writeback: CancelWriteback
 
     async def cancel(self, *, bracket: BracketRecord, now: datetime) -> EntryWindowDeadlineOutcome:
         del now  # the deadline check already fired; provenance lives in the reason
@@ -171,10 +172,14 @@ class BrokerEntryWindowCanceller:
             )
             return EntryWindowDeadlineOutcome.FAILED
         # CANCEL_CONFIRMED with no recorded fills → the resting entry was cancelled
-        # (or already gone) without filling. Dissolve the bracket.
-        await self.writeback(bracket.entry_order_id, _CANCEL_REASON)
+        # (or already gone) without filling. The monitor writes NOTHING (ALP-863):
+        # the broker's ``canceled`` trade-update flows to the fill-stream consumer
+        # as a TERMINAL_ORDER_STATUS event, and the pipeline projects it and runs
+        # the dissolve cascade. Latching CANCELLED here only stops this session's
+        # watcher re-firing on the still-PENDING_ENTRY row before that projection.
         log.info(
-            "entry_window: cancelled never-filled entry for bracket %s (window elapsed)",
+            "entry_window: broker-cancelled never-filled entry for bracket %s (window "
+            "elapsed); dissolve cascade deferred to the pipeline projection",
             bracket.bracket_id,
         )
         return EntryWindowDeadlineOutcome.CANCELLED

@@ -1,10 +1,15 @@
-"""Tests for ``BrokerEntryWindowCanceller`` (ALP-737).
+"""Tests for ``BrokerEntryWindowCanceller`` (ALP-737 / ALP-863).
 
-The canceller decides dissolve-vs-skip from whether the entry **filled**, not
-from the broker's cancel response. These tests drive each branch with fakes:
-recorded fills, an un-routed entry (no broker id — None), the two broker
-classifications, and a missing order — asserting the returned outcome and
-whether the dissolve writeback ran.
+The canceller decides cancel-vs-skip from whether the entry **filled**, not from
+the broker's cancel response. These tests drive each branch with fakes: recorded
+fills, an un-routed entry (no broker id — None), the two broker classifications,
+and a missing order — asserting the returned outcome and which broker calls ran.
+
+ALP-863: the canceller no longer has a DB writeback seam — a confirmed cancel
+with no recorded fills returns ``CANCELLED`` and writes nothing. The dissolve
+cascade is the pipeline's job (it projects the ``TERMINAL_ORDER_STATUS`` event
+the broker cancel produces). The only injected seams left are ``resolve_target``
+(a read) and ``broker_cancel``.
 """
 
 from __future__ import annotations
@@ -63,7 +68,6 @@ class _Recorder:
         self._classification = classification
         self.resolved: list[str] = []
         self.cancelled: list[str] = []
-        self.written_back: list[tuple[str, str]] = []
 
     async def resolve_target(self, entry_order_id: str) -> EntryCancelTarget | None:
         self.resolved.append(entry_order_id)
@@ -73,19 +77,19 @@ class _Recorder:
         self.cancelled.append(alpaca_id)
         return self._classification
 
-    async def writeback(self, entry_order_id: str, cancel_reason: str) -> None:
-        self.written_back.append((entry_order_id, cancel_reason))
-
 
 def _canceller(rec: _Recorder) -> BrokerEntryWindowCanceller:
     return BrokerEntryWindowCanceller(
         resolve_target=rec.resolve_target,
         broker_cancel=rec.broker_cancel,
-        writeback=rec.writeback,
     )
 
 
-async def test_confirmed_cancel_with_no_fills_dissolves_and_returns_cancelled() -> None:
+async def test_confirmed_cancel_with_no_fills_returns_cancelled_and_writes_nothing() -> None:
+    """ALP-863 — a confirmed broker cancel with no recorded fills latches
+    ``CANCELLED`` (so the watcher stops re-firing this session) after broker-
+    cancelling the resting entry, and performs NO local-state writeback. The
+    canceller has only the two read/broker seams — there is no writeback to run."""
     rec = _Recorder(
         target=EntryCancelTarget(
             alpaca_order_id=AlpacaOrderId("alpaca-uuid-xyz"), has_recorded_fills=False
@@ -96,10 +100,9 @@ async def test_confirmed_cancel_with_no_fills_dissolves_and_returns_cancelled() 
 
     assert outcome is EntryWindowDeadlineOutcome.CANCELLED
     assert rec.cancelled == ["alpaca-uuid-xyz"]
-    assert rec.written_back == [("ORD-entry-1", "entry_window_expired")]
 
 
-async def test_recorded_fill_skips_cancel_and_writeback() -> None:
+async def test_recorded_fill_skips_cancel() -> None:
     """If the entry already has a recorded fill, never cancel/dissolve — even
     if the bracket DB row still reads PENDING_ENTRY pre-reconciliation."""
     rec = _Recorder(
@@ -111,10 +114,9 @@ async def test_recorded_fill_skips_cancel_and_writeback() -> None:
 
     assert outcome is EntryWindowDeadlineOutcome.SKIPPED_FILLED
     assert rec.cancelled == []  # never asked the broker to cancel a filled entry
-    assert rec.written_back == []
 
 
-async def test_unrouted_entry_is_retried_not_dissolved() -> None:
+async def test_unrouted_entry_is_retried_not_cancelled() -> None:
     """An entry not yet routed to the broker carries NO broker id (None, ALP-847
     — the synthetic 'alp-' placeholder is deleted); we retry rather than misread
     a missing id as terminal."""
@@ -125,12 +127,11 @@ async def test_unrouted_entry_is_retried_not_dissolved() -> None:
 
     assert outcome is EntryWindowDeadlineOutcome.FAILED
     assert rec.cancelled == []
-    assert rec.written_back == []
 
 
-async def test_retryable_broker_answer_skips_writeback() -> None:
+async def test_retryable_broker_answer_does_not_latch() -> None:
     """A transient gateway failure or non-terminal 4xx (auth / rate-limit) must
-    NOT dissolve and must NOT latch the bracket — it retries next cycle."""
+    NOT latch the bracket as handled — it retries next cycle."""
     rec = _Recorder(
         target=EntryCancelTarget(
             alpaca_order_id=AlpacaOrderId("alpaca-uuid-xyz"), has_recorded_fills=False
@@ -140,7 +141,6 @@ async def test_retryable_broker_answer_skips_writeback() -> None:
     outcome = await _canceller(rec).cancel(bracket=_bracket(), now=_NOW)
 
     assert outcome is EntryWindowDeadlineOutcome.FAILED
-    assert rec.written_back == []
 
 
 async def test_missing_order_returns_failed_without_cancelling() -> None:
@@ -149,4 +149,3 @@ async def test_missing_order_returns_failed_without_cancelling() -> None:
 
     assert outcome is EntryWindowDeadlineOutcome.FAILED
     assert rec.cancelled == []
-    assert rec.written_back == []

@@ -35,9 +35,17 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 
-from alphamind._kernel.ids import BracketId, PositionId, ThesisId
+from alphamind._kernel.ids import AlpacaOrderId, BracketId, OrderId, PositionId, Symbol, ThesisId
 from alphamind.execution.continuous_monitor.bracket_stops.close_order_precommit import (
     precommit_monitor_close_order,
+)
+from alphamind.execution.continuous_monitor.entry_window.canceller import (
+    BrokerCancelClassification,
+    BrokerEntryWindowCanceller,
+    EntryWindowDeadlineOutcome,
+)
+from alphamind.execution.continuous_monitor.entry_window.wiring import (
+    make_entry_cancel_target_resolver,
 )
 from alphamind.execution.continuous_monitor.greeks_refresh import SqlGreeksWriter
 from alphamind.persistence.models import Base
@@ -47,6 +55,16 @@ from alphamind.persistence.session import (
     make_async_session_factory,
     make_engine,
     make_session_factory,
+)
+from alphamind.portfolio_state.records.orders import (
+    BracketLeg,
+    BracketLegEnforcement,
+    BracketLegStatus,
+    BracketLegType,
+    BracketRecord,
+    BracketStatus,
+    OrderStatus,
+    PriceTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -381,3 +399,112 @@ async def test_monitor_close_precommit_and_pipeline_write_no_busy(
     assert "monitor_precommitted" in order
     assert close_row.client_order_id == "coid-contention-close-1"
     assert pos_row.realized_pnl_to_date_usd == 42.0
+
+
+# ---------------------------------------------------------------------------
+# ALP-863: the entry-window cancel path is read-only — it cannot race the pipeline
+# ---------------------------------------------------------------------------
+
+
+def _pending_entry_bracket_record() -> BracketRecord:
+    """A ``PENDING_ENTRY`` bracket over the seeded contention cluster — the input
+    the canceller's ``cancel`` reads (``entry_order_id`` + ``bracket_id``)."""
+    leg = BracketLeg(
+        leg_id=f"{_BRACKET_ID}-leg-stop",
+        leg_type=BracketLegType.PRICE_STOP,
+        order_id=OrderId(f"{_BRACKET_ID}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.PENDING_ACTIVATION,
+    )
+    return BracketRecord(
+        bracket_id=BracketId(_BRACKET_ID),
+        position_id=PositionId(_CLOSE_POSITION_ID),
+        status=BracketStatus.PENDING_ENTRY,
+        entry_order_id=OrderId(_ENTRY_ORDER_ID),
+        protective_legs=(leg,),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
+        entry_window_deadline=_NOW,
+    )
+
+
+async def _confirming_broker_cancel(_alpaca_order_id: AlpacaOrderId) -> BrokerCancelClassification:
+    """Fake broker round-trip: the cancel is confirmed (no DB, no network)."""
+    return BrokerCancelClassification.CANCEL_CONFIRMED
+
+
+async def test_entry_window_cancel_is_read_only_and_cannot_race_pipeline(
+    db_path_with_cluster: str,
+) -> None:
+    """ALP-863 — the entry-window **cancel** path performs the broker cancel and
+    NO DB write, so it cannot produce ``SQLITE_BUSY_SNAPSHOT`` against a concurrent
+    pipeline write.
+
+    The canceller's only DB touch is the target *resolve* (a read in its own
+    session); the broker round-trip is faked. Run it while the pipeline holds an
+    up-front IMMEDIATE write lock and neither ``SQLITE_BUSY_SNAPSHOT`` nor any
+    other ``OperationalError`` is raised — there is no deferred-read→write-upgrade
+    on a shared row to collide. The cancel returns ``CANCELLED`` and the entry
+    order row is left **untouched**: the dissolve cascade is the pipeline's job,
+    projected later from the ``TERMINAL_ORDER_STATUS`` event the broker cancel
+    produces (the monitor's old in-place ``orders``/``brackets`` RMW is gone).
+    """
+    monitor_engine = make_async_engine(db_path_with_cluster)
+    pipeline_engine = make_async_engine(db_path_with_cluster)
+    monitor_factory = make_async_session_factory(monitor_engine)
+    pipeline_factory = make_async_session_factory(pipeline_engine)
+
+    pipeline_holds_lock = asyncio.Event()
+    order: list[str] = []
+    outcomes: list[EntryWindowDeadlineOutcome] = []
+
+    async def pipeline_write() -> None:
+        async with pipeline_factory() as session:
+            await begin_write_immediate(session)
+            row = (
+                await session.execute(
+                    select(PositionRow).where(PositionRow.position_id == _CLOSE_POSITION_ID)
+                )
+            ).scalar_one()
+            row.realized_pnl_to_date_usd = 7.0
+            order.append("pipeline_wrote")
+            pipeline_holds_lock.set()
+            await asyncio.sleep(0.2)  # hold the lock while the monitor contends
+            await session.commit()
+            order.append("pipeline_committed")
+
+    async def monitor_cancel() -> None:
+        await pipeline_holds_lock.wait()
+        canceller = BrokerEntryWindowCanceller(
+            resolve_target=make_entry_cancel_target_resolver(monitor_factory),
+            broker_cancel=_confirming_broker_cancel,
+        )
+        outcomes.append(await canceller.cancel(bracket=_pending_entry_bracket_record(), now=_NOW))
+        order.append("monitor_cancelled")
+
+    try:
+        # No SQLITE_BUSY_SNAPSHOT (or any OperationalError) is raised.
+        await asyncio.gather(pipeline_write(), monitor_cancel())
+        async with monitor_factory() as sess:
+            entry_row = await sess.get(OrderRow, _ENTRY_ORDER_ID)
+            pos_row = (
+                await sess.execute(
+                    select(PositionRow).where(PositionRow.position_id == _CLOSE_POSITION_ID)
+                )
+            ).scalar_one()
+    finally:
+        await monitor_engine.dispose()
+        await pipeline_engine.dispose()
+
+    assert order[0] == "pipeline_wrote"
+    assert outcomes == [EntryWindowDeadlineOutcome.CANCELLED]
+    # The monitor wrote NOTHING — the entry order keeps its seeded status (the
+    # ``stub_order_row`` default), NOT the CANCELLED the old writeback would set.
+    assert entry_row is not None
+    assert entry_row.status == OrderStatus.FILLED.value
+    assert entry_row.status != OrderStatus.CANCELLED.value
+    # The pipeline write landed; the monitor read-only path did not block it.
+    assert pos_row.realized_pnl_to_date_usd == 7.0
