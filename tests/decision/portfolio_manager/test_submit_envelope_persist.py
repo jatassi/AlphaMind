@@ -61,6 +61,7 @@ async def test_persist_envelope_outcome_via_phase2_forwards_config_unchanged(
         envelope=object(),  # type: ignore[arg-type]  # spy ignores it
         submission_results=(),
         state_persistence_config=cfg,
+        originating_proposal_json={"recommendation_id": "REC-1"},
     )
 
     assert captured["config"] is cfg

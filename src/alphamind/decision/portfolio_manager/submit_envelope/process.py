@@ -34,7 +34,10 @@ from alphamind.commands.command_models import (
     OptionInstrument,
     StrategyInstrument,
 )
-from alphamind.commands.pm_envelope import PMEnvelope
+from alphamind.commands.pm_envelope import (
+    PMAnalystEnvelope,
+    PMEnvelope,
+)
 from alphamind.decision.portfolio_manager.submit_envelope.types import (
     Acknowledgment,
     RejectionPayload,
@@ -45,6 +48,7 @@ from alphamind.decision.portfolio_manager.submit_envelope.types import (
     _PerRuleHeadroomEntry,
     _ValidationMetadata,
 )
+from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
 from alphamind.execution.oms.command_ids import (
     compute_attempt_seq,
     derive_open_thesis_id,
@@ -87,6 +91,70 @@ the originating thesis off the targeted pending order's record (``None`` if the
 order is absent from the PM view or carries no thesis)."""
 
 _ENVELOPE_ADAPTER: TypeAdapter[PMEnvelope] = TypeAdapter(PMEnvelope)
+
+
+# ---------------------------------------------------------------------------
+# Originating-proposal lookup (ALP-557)
+# ---------------------------------------------------------------------------
+
+
+class OriginatingProposalLookupError(LookupError):
+    """The originating proposal for a PM envelope is absent from the bundle.
+
+    Raised by :func:`lookup_originating_proposal_json` when an envelope's
+    ``source_recommendation_id`` resolves to no analyst Recommendation /
+    strategist assessment in the pre-processor bundle. This is a genuine
+    invariant violation, not a graceful-degradation case: Layer-3 validation
+    (``validation._check_source_recommendation_id_resolves``) already rejects
+    any envelope whose ``source_recommendation_id`` cannot resolve, so by the
+    time the submission log is built the proposal is guaranteed in scope. A
+    miss here therefore signals a real wiring bug rather than an absent body —
+    the contract is "if PM produces an envelope, the originating proposal is in
+    scope at the persistence call site" (ALP-557 / parent ALP-129).
+    """
+
+
+def lookup_originating_proposal_json(
+    bundle: ProposalPreProcessorBundle, envelope: PMEnvelope
+) -> dict[str, Any]:
+    """Resolve the originating proposal body for *envelope* from *bundle*.
+
+    Keyed by ``envelope.source_recommendation_id`` against the bundle section
+    matching the envelope's provenance, mirroring the resolution Layer-3
+    validation performs:
+
+    * ``pm_analyst`` (``REC-N``) → ``analyst_section.recommendations[].recommendation``
+      keyed by ``recommendation_id``.
+    * ``pm_strategist`` / ``position_assessment`` (``SA-N``) →
+      ``strategist_section.position_assessments[].assessment`` keyed by
+      ``assessment_id``.
+    * ``pm_strategist`` / ``pending_order_assessment`` (``SA-ORD-N``) →
+      ``strategist_section.pending_order_assessments[].pending_order_assessment``
+      keyed by ``pending_order_assessment_id``.
+
+    Returns the resolved model's ``model_dump(mode="json")``. Raises
+    :class:`OriginatingProposalLookupError` (never returns an empty dict) when
+    the id resolves to nothing.
+    """
+    sid = envelope.source_recommendation_id
+    if isinstance(envelope, PMAnalystEnvelope):
+        recommendations = bundle.analyst_section.recommendations or ()
+        for wrapped in recommendations:
+            if wrapped.recommendation.recommendation_id == sid:
+                return wrapped.recommendation.model_dump(mode="json")
+    elif envelope.recommendation_type == "position_assessment":
+        for wrapped_pa in bundle.strategist_section.position_assessments:
+            if wrapped_pa.assessment.assessment_id == sid:
+                return wrapped_pa.assessment.model_dump(mode="json")
+    else:  # pending_order_assessment
+        for wrapped_poa in bundle.strategist_section.pending_order_assessments:
+            if wrapped_poa.pending_order_assessment.pending_order_assessment_id == sid:
+                return wrapped_poa.pending_order_assessment.model_dump(mode="json")
+    msg = (
+        f"originating proposal for envelope {envelope.envelope_id!r} "
+        f"(source_recommendation_id={sid!r}) is absent from the pre-processor bundle"
+    )
+    raise OriginatingProposalLookupError(msg)
 
 
 def _instrument_ticker_key(
@@ -1010,6 +1078,7 @@ __all__ = [
     "_OMS_TO_VALIDATION_DIRECTION",
     "_OPTION_CONTRACT_TYPE_TO_VALIDATION_STR",
     "OrderThesisLookup",
+    "OriginatingProposalLookupError",
     "PositionLookup",
     "_add_instrument_kwargs",
     "_build_acknowledgment",
@@ -1033,4 +1102,5 @@ __all__ = [
     "_strip_analyst_only_command_fields",
     "_unwrap_envelope_args",
     "_validate_envelope_payload",
+    "lookup_originating_proposal_json",
 ]

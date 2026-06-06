@@ -756,7 +756,13 @@ async def test_six_step_snapshot_isolation_contract(
     )
     session2, handle2 = await _open_handle_for_existing_invocation(factory, invocation_id=_INV_ID)
     try:
-        await persist_envelope_outcome(handle2, envelope, results, config=_config())
+        await persist_envelope_outcome(
+            handle2,
+            envelope,
+            results,
+            config=_config(),
+            originating_proposal_json={"recommendation_id": "REC-1"},
+        )
         await session2.commit()
     finally:
         await session2.close()

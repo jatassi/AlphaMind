@@ -361,6 +361,15 @@ def _all_detail_instances() -> list[tuple[type, object]]:
                 modifications_json=[],
                 resulting_command_ids=("cmd-001",),
                 verdict=PMVerdict.APPROVE,
+                originating_proposal_json={
+                    "recommendation_id": "REC-1",
+                    "ticker": "NVDA",
+                    "entry_order": {"type": "limit", "limit_price": "1000.00"},
+                    "time_expectation_hours": 24,
+                },
+                reprice_markers_json=[
+                    {"ticker": "NVDA", "analyst_price": "1000.00", "marketable_price": "1001.50"}
+                ],
             ),
         ),
         (

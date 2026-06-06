@@ -45,6 +45,7 @@ def _pm_detail() -> PMDecisionDetail:
         modifications_json=[],
         resulting_command_ids=(),
         verdict=PMVerdict.APPROVE,
+        originating_proposal_json={},
     )
 
 

@@ -796,6 +796,7 @@ def test_multi_position_rollup() -> None:
             modifications_json=[],
             resulting_command_ids=(),
             verdict=PMVerdict.APPROVE,
+            originating_proposal_json={},
         ),
     )
 

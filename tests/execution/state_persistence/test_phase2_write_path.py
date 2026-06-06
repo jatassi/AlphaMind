@@ -93,7 +93,9 @@ from alphamind.persistence.session import (
 )
 from alphamind.portfolio_state.events.activity_log import (
     EventType,
+    PMDecisionDetail,
 )
+from alphamind.portfolio_state.events.codec import decode_detail
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
@@ -179,6 +181,10 @@ from tests.execution.state_persistence.conftest import (
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
 _INV_ID = "inv-2026-05-08T12:00:00Z-aaaa"
 _PROCESS_ID = "proc-1"
+# ALP-557: a representative originating proposal body for ``persist_envelope_outcome``
+# calls whose assertions do not inspect the proposal — these tests exercise other
+# facets of the write path and only need the now-required keyword satisfied.
+_ORIGINATING_PROPOSAL: dict[str, Any] = {"recommendation_id": "REC-1"}
 
 
 # ---------------------------------------------------------------------------
@@ -1166,7 +1172,11 @@ async def test_open_command_writes_position_thesis_bracket_orders_and_events(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -1207,6 +1217,50 @@ async def test_open_command_writes_position_thesis_bracket_orders_and_events(
     assert EventType.PM_DECISION.value in types
 
 
+async def test_pm_decision_carries_originating_proposal_json_and_reprice_markers(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-557: ``persist_envelope_outcome`` writes the originating proposal
+    body into the ``pm_decision`` row's ``originating_proposal_json`` and
+    preserves the ALP-765 ``reprice_markers_json`` alongside it. The persisted
+    detail decodes back to the same proposal body."""
+    from alphamind.execution.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    envelope = _make_analyst_envelope(commands=(_open_command(underlying=Symbol("NVDA")),))
+    results = (_accepted_result(command_ordinal=0, command_id=_open_command_id()),)
+    proposal_body = {
+        "recommendation_id": "REC-1",
+        "ticker": "NVDA",
+        "time_expectation_hours": 24,
+        "entry_order": {"type": "limit", "limit_price": "1000.00"},
+    }
+    markers = ({"ticker": "NVDA", "analyst_price": "1000.00", "marketable_price": "1001.50"},)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        reprice_markers=markers,
+        originating_proposal_json=proposal_body,
+    )
+    await ctx.__aexit__(None, None, None)
+
+    rows = await _read_activity_log_for(factory, handle.invocation_id)
+    pm_rows = [r for r in rows if r.event_type == EventType.PM_DECISION.value]
+    assert len(pm_rows) == 1
+    detail = decode_detail(pm_rows[0].detail_json, PMDecisionDetail)
+    assert detail.originating_proposal_json == proposal_body
+    assert detail.reprice_markers_json == [markers[0]]
+
+
 async def test_open_persisted_thesis_id_equals_link_embedded_thesis(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
@@ -1234,7 +1288,11 @@ async def test_open_persisted_thesis_id_equals_link_embedded_thesis(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -1282,7 +1340,11 @@ async def test_open_command_threads_entry_window_deadline_onto_bracket(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -1329,7 +1391,11 @@ async def test_open_command_persists_real_position_size_and_capital_reservation(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -1379,7 +1445,11 @@ async def test_persist_envelope_outcome_stamps_phase2_completion_on_invocation_r
     ctx, handle = await _open_handle(factory)
     invocation_id = handle.invocation_id
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -1552,7 +1622,11 @@ async def test_close_command_writes_close_order_and_emits_order_submitted(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -1591,7 +1665,11 @@ async def test_close_command_surfaces_rationale_metadata_on_order_submitted(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -1634,7 +1712,11 @@ async def test_close_command_with_partial_quantity_uses_command_quantity(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -1690,7 +1772,11 @@ async def test_close_all_against_pending_position_raises(
     ctx, handle = await _open_handle(factory)
     with pytest.raises(ValueError, match="PENDING"):
         await persist_envelope_outcome(
-            handle, envelope, results, config=_make_state_persistence_config()
+            handle,
+            envelope,
+            results,
+            config=_make_state_persistence_config(),
+            originating_proposal_json=_ORIGINATING_PROPOSAL,
         )
     await ctx.__aexit__(None, None, None)
 
@@ -1717,7 +1803,11 @@ async def test_adjust_command_dispatches_on_thesis_only(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -1836,7 +1926,11 @@ async def test_cancel_command_releases_capital_from_order_notional(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -1921,7 +2015,11 @@ async def test_cancel_command_on_protective_leg_does_not_release_capital(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -1969,7 +2067,11 @@ async def test_add_command_persists_real_quantity_and_dollar_value(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -2007,7 +2109,11 @@ async def test_open_command_persists_target_and_invalidation_legs(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -2081,6 +2187,7 @@ async def test_open_command_stamps_captured_leg_ids_on_protective_orders(
         results,
         config=_make_state_persistence_config(),
         dispatch_results=(dispatch,),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -2207,6 +2314,7 @@ async def test_options_open_single_pass_persists_floor_orderrow_fk_safe(
         results,
         config=_make_state_persistence_config(),
         dispatch_results=(dispatch,),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     # The commit (FK-enforced) happens here — a mispointed floor leg FK would
     # raise FOREIGN KEY constraint failed at this boundary.
@@ -2283,6 +2391,7 @@ async def test_open_command_stamps_stop_id_on_first_price_leg_only(
         results,
         config=_make_state_persistence_config(),
         dispatch_results=(dispatch,),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -2361,7 +2470,11 @@ async def test_adjust_command_cancels_old_protective_order_and_submits_new(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -2483,7 +2596,11 @@ async def test_adjust_stop_only_leaves_take_profit_leg_pending(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -2556,7 +2673,11 @@ async def test_adjust_stop_repersists_price_stop_leg_trigger(
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -2596,7 +2717,11 @@ async def test_adjust_target_repersists_equity_take_profit_as_plain_price(
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -2649,7 +2774,11 @@ async def test_adjust_target_repersists_strategy_take_profit_as_pl_anchored(
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -2714,7 +2843,11 @@ async def test_adjust_rejects_non_pl_percentage_target_on_strategy_position(
             record=_make_invocation_record(invocation_id=_INV_ID + "-phase2"),
         ) as handle:
             await persist_envelope_outcome(
-                handle, envelope, results, config=_make_state_persistence_config()
+                handle,
+                envelope,
+                results,
+                config=_make_state_persistence_config(),
+                originating_proposal_json=_ORIGINATING_PROPOSAL,
             )
 
 
@@ -2744,7 +2877,11 @@ async def test_adjust_time_expiration_repersists_time_leg_deadline(
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -2783,7 +2920,11 @@ async def test_add_bracket_adjustment_repersists_modified_leg(
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -2824,7 +2965,11 @@ async def test_adjust_targeting_absent_leg_type_fails_closed_with_clear_error(
             record=_make_invocation_record(invocation_id=_INV_ID + "-phase2"),
         ) as handle:
             await persist_envelope_outcome(
-                handle, envelope, results, config=_make_state_persistence_config()
+                handle,
+                envelope,
+                results,
+                config=_make_state_persistence_config(),
+                originating_proposal_json=_ORIGINATING_PROPOSAL,
             )
 
 
@@ -2921,7 +3066,11 @@ async def test_cancel_command_on_entry_dissolves_bracket_and_resolves_thesis(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -3119,7 +3268,11 @@ async def test_cancel_command_marks_never_filled_position_cancelled(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -3213,7 +3366,11 @@ async def test_cancel_command_leaves_partially_filled_strategy_pending(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -3365,7 +3522,11 @@ async def test_cancel_command_on_entry_with_unprocessed_partial_fill_retains_bra
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -3437,7 +3598,11 @@ async def test_cancel_command_on_entry_with_integrated_partial_fill_retains_brac
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -3684,7 +3849,11 @@ async def test_open_reprice_cancel_returns_reserved_capital_to_zero(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -3832,7 +4001,11 @@ async def test_cancel_entry_dissolve_cancels_all_legs_and_reloads(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -3922,7 +4095,11 @@ async def test_add_command_writes_add_entry_order_thesis_component_capital_reser
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -3977,7 +4154,11 @@ async def test_multi_command_envelope_emits_single_pm_decision(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -4035,7 +4216,11 @@ async def test_persist_envelope_outcome_override_verdict(
 
     ctx, handle = await _open_handle(factory)
     await persist_envelope_outcome(
-        handle, envelope, results, config=_make_state_persistence_config()
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json=_ORIGINATING_PROPOSAL,
     )
     await ctx.__aexit__(None, None, None)
 
@@ -4079,6 +4264,7 @@ async def test_command_abandoned_emission_survives_per_command_rollback(
             envelope,
             results,
             config=_make_state_persistence_config(),
+            originating_proposal_json=_ORIGINATING_PROPOSAL,
         )
         _trip_failure()
     except RuntimeError:

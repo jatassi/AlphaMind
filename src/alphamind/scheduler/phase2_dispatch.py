@@ -177,6 +177,7 @@ async def dispatch_phase2(
                         entry.dispatch_results,
                     ),
                     reprice_markers=entry.reprice_markers,
+                    originating_proposal_json=entry.originating_proposal_json,
                 )
                 await session.commit()
         # ALP-711 — when broker routing returned ``GatewaySubmissionFailed``

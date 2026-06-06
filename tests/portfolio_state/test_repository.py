@@ -309,6 +309,7 @@ def _make_activity_log_entry(entry_id: str, position_id: str | None = None) -> A
             modifications_json=[],
             resulting_command_ids=(),
             verdict=PMVerdict.APPROVE,
+            originating_proposal_json={},
         ),
     )
 

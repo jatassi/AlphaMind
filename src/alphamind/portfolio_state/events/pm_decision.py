@@ -23,6 +23,12 @@ class PMDecisionDetail:
     modifications_json: list[dict[str, Any]]
     resulting_command_ids: tuple[str, ...]
     verdict: PMVerdict
+    # ALP-557: the full body of the originating proposal — the analyst
+    # Recommendation (pm_analyst envelopes) or the strategist PositionAssessment /
+    # PendingOrderAssessment (pm_strategist envelopes), as ``model_dump(mode="json")``.
+    # The counterfactual-replay engine (ALP-129) reconstructs entry_order / target /
+    # invalidation_legs / time_expectation_hours / position_size / instrument from it.
+    originating_proposal_json: dict[str, Any]
     # ALP-765: execution-layer enter-now reprices that happened after the PM
     # authored the verdict. Empty for envelopes with no enter-now limit entries.
     reprice_markers_json: list[dict[str, Any]] = dataclasses.field(default_factory=list)
