@@ -13,7 +13,7 @@ Repository protocols are defined in :mod:`.repos`.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from alphamind.config.models.replay_engine import CounterfactualReplayEngineConfig
 from alphamind.decision.analyst.models import (
@@ -185,7 +185,11 @@ def _analyst_window_end(
     """Compute window_end for an analyst Recommendation."""
     entry_window_duration = timedelta(0)
     if proposal.entry_window is not None:
-        entry_window_duration = proposal.entry_window.deadline - proposal_timestamp
+        # Floor at zero: a stale deadline before the proposal timestamp must not
+        # produce a negative duration that inverts the window (end < start).
+        entry_window_duration = max(
+            timedelta(0), proposal.entry_window.deadline - proposal_timestamp
+        )
 
     time_stop_horizon = timedelta(0)
     for leg in proposal.invalidation_legs:
@@ -218,6 +222,11 @@ def _strategist_window_end(
         bracket_adj = proposal.action_parameters.bracket_adjustment
         if bracket_adj is not None and bracket_adj.new_time_expiration is not None:
             expiration = bracket_adj.new_time_expiration
+            # The strategist model does not enforce tz-awareness on this optional
+            # field (unlike the analyst deadlines); treat a naive value as UTC so
+            # the comparison below never raises on naive-vs-aware.
+            if expiration.tzinfo is None:
+                expiration = expiration.replace(tzinfo=UTC)
             if expiration > default_end:
                 return expiration
     return default_end
@@ -240,10 +249,18 @@ def _get_underlying(proposal: _Proposal) -> str:
 
 
 def _option_contract_ticker(proposal: Recommendation) -> str:
-    """Derive an OCC-style contract ticker for the option IV snapshot lookup."""
+    """Derive the Polygon OCC contract ticker for the option IV snapshot lookup.
+
+    Mirrors the canonical ``occ_symbol_for_options`` encoding,
+    ``O:{UNDERLYING}{YYMMDD}{C|P}{round(strike*1000):08d}`` — the collector keys
+    every ``options_contract_snapshots`` row by this exact symbol, so the ``O:``
+    prefix and the ``round`` (not truncate) are load-bearing: a mismatch makes
+    every option lookup miss. Story 05c's ``resolve_contract_ticker`` is the
+    shared resolver later stories consume.
+    """
     instr = proposal.instrument
     assert isinstance(instr, InstrumentOption)
     exp_str = instr.expiration.strftime("%y%m%d")
     cp = "C" if instr.contract_type == "call" else "P"
-    strike_int = int(float(str(instr.strike)) * 1000)
-    return f"{instr.underlying}{exp_str}{cp}{strike_int:08d}"
+    strike_milli = round(instr.strike * 1000)
+    return f"O:{instr.underlying}{exp_str}{cp}{strike_milli:08d}"

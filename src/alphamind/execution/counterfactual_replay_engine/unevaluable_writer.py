@@ -40,8 +40,6 @@ def write_unevaluable_record(
     replay_kind: ReplayKind,
     reason: UnevaluableReason,
     *,
-    window_start: datetime | None = None,
-    window_end: datetime | None = None,
     replay_engine_version: str = "v2",
 ) -> CounterfactualReplayRecord:
     """Construct and insert an UNEVALUABLE :class:`CounterfactualReplayRecord`.
@@ -57,11 +55,6 @@ def write_unevaluable_record(
         Whether this replay is for a rejection or a modification's original form.
     reason:
         Why the proposal could not be evaluated.
-    window_start:
-        Data-window start when the window was computed before the ineligibility
-        was determined (Rules C and D); ``None`` for Rules A and B.
-    window_end:
-        Data-window end; paired with *window_start*.
     replay_engine_version:
         Engine version tag persisted for provenance. Defaults to ``"v2"``.
 
@@ -72,16 +65,14 @@ def write_unevaluable_record(
         ``(pm_decision_envelope_id, replay_kind)`` unique constraint is
         enforced at flush time — a duplicate raises
         :class:`sqlalchemy.exc.IntegrityError`.
+
+    Notes
+    -----
+    The data window computed by :func:`check_eligibility` (Rules C / D) is
+    intentionally *not* persisted: the record's ``__post_init__`` requires
+    ``replay_data_window_*`` to be ``None`` for UNEVALUABLE status.
     """
     replay_id = ReplayId(f"CFR-{envelope_id}-{replay_kind.value}")
-    # CounterfactualReplayRecord.__post_init__ enforces that replay_data_window_*
-    # must be None for UNEVALUABLE records.  The window_start/end parameters are
-    # accepted by the writer so the engine driver can pass the computed window
-    # alongside the reason in the same call, but the record stores None per its
-    # invariant.  The window values are available to the caller via the return
-    # tuple from check_eligibility and are not persisted in the record itself.
-    _ = window_start  # accepted but not stored; record invariant enforces None
-    _ = window_end
     record = CounterfactualReplayRecord(
         replay_id=replay_id,
         pm_decision_envelope_id=envelope_id,

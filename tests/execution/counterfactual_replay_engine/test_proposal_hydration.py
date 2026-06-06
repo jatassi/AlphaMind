@@ -140,15 +140,16 @@ class TestHydrateAnalystProposal:
         assert result.recommendation_id == "REC-1"
 
     def test_pm_analyst_equity_instrument(self) -> None:
-        from alphamind.decision.analyst.models import InstrumentEquity
+        from alphamind.decision.analyst.models import InstrumentEquity, Recommendation
 
         detail = _FakeDetail(
             source_provenance_json={"source_provenance": "pm_analyst"},
             originating_proposal_json=_analyst_recommendation_json(),
         )
         result = hydrate_originating_proposal(detail)  # type: ignore[arg-type]
-        assert isinstance(result.instrument, InstrumentEquity)  # type: ignore[union-attr]
-        assert result.instrument.ticker == "AAPL"  # type: ignore[union-attr]
+        assert isinstance(result, Recommendation)
+        assert isinstance(result.instrument, InstrumentEquity)
+        assert result.instrument.ticker == "AAPL"
 
 
 class TestHydrateStrategistPositionAssessment:
@@ -167,6 +168,8 @@ class TestHydrateStrategistPositionAssessment:
         assert str(result.assessment_id) == "SA-1"
 
     def test_pm_strategist_position_assessment_action(self) -> None:
+        from alphamind.decision.strategist.models import PositionAssessment
+
         detail = _FakeDetail(
             source_provenance_json={
                 "source_provenance": "pm_strategist",
@@ -175,7 +178,8 @@ class TestHydrateStrategistPositionAssessment:
             originating_proposal_json=_strategist_position_assessment_json(),
         )
         result = hydrate_originating_proposal(detail)  # type: ignore[arg-type]
-        assert result.recommended_action == "close"  # type: ignore[union-attr]
+        assert isinstance(result, PositionAssessment)
+        assert result.recommended_action == "close"
 
 
 class TestHydrateStrategistPendingOrderAssessment:
@@ -194,6 +198,8 @@ class TestHydrateStrategistPendingOrderAssessment:
         assert result.recommended_action == "cancel"
 
     def test_pm_strategist_pending_order_id(self) -> None:
+        from alphamind.decision.strategist.models import PendingOrderAssessment
+
         detail = _FakeDetail(
             source_provenance_json={
                 "source_provenance": "pm_strategist",
@@ -202,7 +208,8 @@ class TestHydrateStrategistPendingOrderAssessment:
             originating_proposal_json=_strategist_pending_order_assessment_json(),
         )
         result = hydrate_originating_proposal(detail)  # type: ignore[arg-type]
-        assert str(result.pending_order_assessment_id) == "SA-ORD-1"  # type: ignore[union-attr]
+        assert isinstance(result, PendingOrderAssessment)
+        assert str(result.pending_order_assessment_id) == "SA-ORD-1"
 
 
 class TestHydrationErrors:

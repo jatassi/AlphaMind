@@ -31,8 +31,12 @@ class BarRepository(Protocol):
     ) -> bool:
         """Return ``True`` if bar data is available for *ticker* over [*start*, *end*].
 
-        Used by :func:`check_eligibility` to gate ``DATA_MISSING``; a ``False``
-        result causes the replay to be recorded as unevaluable.
+        *ticker* is the underlying equity symbol for analyst and
+        ``PositionAssessment`` proposals. A ``PendingOrderAssessment`` carries no
+        underlying, so :func:`check_eligibility` passes its ``position_id``
+        instead; the SQL-backed implementation (story 08) must resolve that to
+        the underlying ticker before querying ``ohlcv_bars``. Used to gate
+        ``DATA_MISSING``; a ``False`` result records the replay as unevaluable.
         """
         ...
 
@@ -47,6 +51,9 @@ class OptionsSnapshotRepository(Protocol):
     ) -> bool:
         """Return ``True`` if a non-null IV snapshot exists at or before *when*.
 
+        *contract_ticker* is the Polygon OCC symbol
+        (``O:{UNDERLYING}{YYMMDD}{C|P}{round(strike*1000):08d}``) that
+        ``options_contract_snapshots`` is keyed by — see ``occ_symbol_for_options``.
         Used by :func:`check_eligibility` for option proposals; absence triggers
         ``DATA_MISSING``.
         """
@@ -64,6 +71,10 @@ class CorporateActionRepository(Protocol):
     ) -> bool:
         """Return ``True`` if any corporate action falls within [*start*, *end*].
 
-        Used by :func:`check_eligibility` to gate ``CORPORATE_ACTION_IN_WINDOW``.
+        *ticker* follows the same convention as
+        :meth:`BarRepository.has_bars_over_window` — the underlying symbol, or a
+        ``PendingOrderAssessment``'s ``position_id`` the story-08 implementation
+        resolves. Used by :func:`check_eligibility` to gate
+        ``CORPORATE_ACTION_IN_WINDOW``.
         """
         ...

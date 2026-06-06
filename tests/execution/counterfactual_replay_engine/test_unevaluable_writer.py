@@ -4,8 +4,8 @@ Covers:
 * :func:`write_unevaluable_record` — constructs + inserts an UNEVALUABLE
   record; the inserted record is readable via
   :func:`load_counterfactual_replays_for_envelope` and round-trips correctly.
-* Optional ``window_start`` / ``window_end`` populate
-  ``replay_data_window_start`` / ``replay_data_window_end``.
+* UNEVALUABLE records always store ``None`` for ``replay_data_window_*`` per
+  the record invariant.
 * Inserting the same ``(envelope_id, replay_kind)`` twice surfaces an
   ``IntegrityError`` (idempotency-violation surfacing).
 """
@@ -13,7 +13,6 @@ Covers:
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy.engine import Engine
@@ -42,8 +41,6 @@ from alphamind.state.repository.counterfactual_replays import (
 
 _ENV_1 = EnvelopeId("ENV-REC-10")
 _ENV_2 = EnvelopeId("ENV-REC-11")
-_WIN_START = datetime(2026, 1, 10, 14, 0, tzinfo=UTC)
-_WIN_END = datetime(2026, 1, 11, 14, 0, tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -129,9 +126,8 @@ class TestWriteUnevaluableRecord:
     def test_window_always_none_in_unevaluable_record(self, session: Session) -> None:
         """CounterfactualReplayRecord forbids window fields for UNEVALUABLE status.
 
-        The writer accepts window_start/window_end from the call site (so the
-        driver can pass the computed window alongside the reason) but does not
-        store them in the record — the record invariant enforces None.
+        The data window computed by check_eligibility is never persisted on an
+        UNEVALUABLE record — the record invariant enforces None.
         """
         result = write_unevaluable_record(
             session,
@@ -141,21 +137,6 @@ class TestWriteUnevaluableRecord:
         )
         assert result.replay_data_window_start is None
         assert result.replay_data_window_end is None
-
-    def test_window_params_accepted_without_error(self, session: Session) -> None:
-        """Passing window_start/end does not raise even though the record stores None."""
-        result = write_unevaluable_record(
-            session,
-            _ENV_1,
-            ReplayKind.REJECTION,
-            UnevaluableReason.DATA_MISSING,
-            window_start=_WIN_START,
-            window_end=_WIN_END,
-        )
-        # Record invariant: window fields are always None for UNEVALUABLE
-        assert result.replay_data_window_start is None
-        assert result.replay_data_window_end is None
-        assert result.replay_status is ReplayStatus.UNEVALUABLE
 
     def test_replay_engine_version_default(self, session: Session) -> None:
         result = write_unevaluable_record(
@@ -185,8 +166,6 @@ class TestRoundTrip:
             _ENV_1,
             ReplayKind.REJECTION,
             UnevaluableReason.DATA_MISSING,
-            window_start=_WIN_START,
-            window_end=_WIN_END,
         )
         session.flush()
 
