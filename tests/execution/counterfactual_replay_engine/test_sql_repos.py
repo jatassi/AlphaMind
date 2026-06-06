@@ -218,6 +218,31 @@ class TestSqlBarRepository:
             is False
         )
 
+    def test_has_bars_over_window_true_prod_shape_containing_bar(self, session: Session) -> None:
+        # Prod shape (period_end == period_start): the proposal-containing 14:00
+        # bar is present, so the gate passes (load_bars returns it as bars[0]).
+        _ensure_underlying(session, "AAPL")
+        session.add(_prod_bar("AAPL", datetime(2026, 6, 1, 14, 0, tzinfo=UTC), open_=100.0))
+        session.flush()
+        assert (
+            SqlBarRepository(session).has_bars_over_window("AAPL", _WINDOW_START, _WINDOW_END)
+            is True
+        )
+
+    def test_has_bars_over_window_false_when_containing_bar_missing(self, session: Session) -> None:
+        # The proposal-containing 14:00 bar is missing but a later 14:15 bar
+        # exists. An overlap predicate would return True, then load_bars' bars[0]
+        # would be the 14:15 bar (not the containing bar), shifting every entry
+        # one bar late. The gate must return False so the driver records
+        # DATA_MISSING rather than a silently-misaligned replay.
+        _ensure_underlying(session, "AAPL")
+        session.add(_prod_bar("AAPL", datetime(2026, 6, 1, 14, 15, tzinfo=UTC), open_=101.0))
+        session.flush()
+        assert (
+            SqlBarRepository(session).has_bars_over_window("AAPL", _WINDOW_START, _WINDOW_END)
+            is False
+        )
+
     def test_has_bars_resolves_position_id_to_underlying(self, session: Session) -> None:
         _ensure_underlying(session, "AAPL")
         _equity_position(session, position_id="POS-1", ticker="AAPL")

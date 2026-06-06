@@ -104,24 +104,38 @@ class SqlBarRepository:
         start: datetime,
         end: datetime,
     ) -> bool:
-        """Return ``True`` if any 15-minute bar overlaps [*start*, *end*].
+        """Return ``True`` if the proposal-containing bar exists for [*start*, *end*].
+
+        Mirrors :meth:`load_bars`: the earliest bar at or after the 15-minute
+        floor of *start* must be the bar that *contains* *start*
+        (``period_start == floor(start)``). If the containing bar is missing
+        while later bars exist, ``load_bars`` would return a sequence whose
+        ``bars[0]`` is no longer the proposal-containing bar and the entry
+        simulators would silently shift one bar late — so a missing containing
+        bar is "no data" (the driver records ``DATA_MISSING``). A
+        ``period_end``-overlap predicate is not usable: the prod collector writes
+        ``period_end == period_start``, which would degenerate to
+        ``period_start > start`` and drop the containing bar.
 
         *ticker* is the underlying for analyst / ``PositionAssessment``
         proposals or a ``position_id`` for ``PendingOrderAssessment`` (resolved
         to the underlying first).
         """
         resolved = _resolve_underlying(self._session, ticker)
+        floored_start = _floor_to_bar_start(start)
         stmt = (
             select(OhlcvBars.period_start)
             .where(
                 OhlcvBars.ticker == resolved,
                 OhlcvBars.timeframe == _TIMEFRAME,
-                OhlcvBars.period_end > start.isoformat(),
+                OhlcvBars.period_start >= floored_start.isoformat(),
                 OhlcvBars.period_start <= end.isoformat(),
             )
+            .order_by(OhlcvBars.period_start.asc())
             .limit(1)
         )
-        return self._session.execute(stmt).first() is not None
+        earliest = self._session.execute(stmt).scalar()
+        return earliest is not None and earliest == floored_start.isoformat()
 
     def load_bars(
         self,

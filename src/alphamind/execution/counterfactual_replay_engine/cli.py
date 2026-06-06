@@ -239,8 +239,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     from alphamind.persistence.session import make_engine, make_session_factory
 
+    engine = make_engine(args.db_path)
     try:
-        engine = make_engine(args.db_path)
         factory = make_session_factory(engine)
         with factory() as session:
             result = replay_pending_proposals(
@@ -254,6 +254,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         log.exception("Replay engine failed")
         return 2
+    finally:
+        engine.dispose()
 
     # --- Print summary ---
     summary = _format_summary(

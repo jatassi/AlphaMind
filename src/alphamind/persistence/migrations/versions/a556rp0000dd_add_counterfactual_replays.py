@@ -39,8 +39,9 @@ depends_on: str | Sequence[str] | None = None
 _TABLE = "counterfactual_replays"
 
 # CHECK vocabularies frozen as of this revision (not read from live enums —
-# the CHECK-vocab trap). All five members of each enum are listed from the
-# start so no later story has to retroactively widen a CHECK on a deployed DB.
+# the CHECK-vocab trap). Every member of each enum is listed from the start
+# (incl. the two reserved extensions on UnevaluableReason / ExitLeg) so no
+# later story has to retroactively widen a CHECK on a deployed DB.
 _REPLAY_KIND_VALUES: tuple[str, ...] = ("rejection", "modification_original_form")
 _REPLAY_STATUS_VALUES: tuple[str, ...] = ("evaluated", "unevaluable")
 _UNEVALUABLE_REASON_VALUES: tuple[str, ...] = (
