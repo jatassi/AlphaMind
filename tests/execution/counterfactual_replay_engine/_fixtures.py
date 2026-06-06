@@ -98,7 +98,7 @@ def analyst_equity_recommendation_json(*, ticker: str = "AAPL") -> dict[str, Any
 def analyst_option_recommendation_json(*, ticker: str = "AAPL") -> dict[str, Any]:
     """Minimal valid analyst single-leg option ``Recommendation`` body."""
     body = analyst_equity_recommendation_json(ticker=ticker)
-    body["recommendation_id"] = "REC-OPT-1"
+    body["recommendation_id"] = "REC-2"
     body["instrument"] = {
         "asset_type": "option",
         "underlying": ticker,
