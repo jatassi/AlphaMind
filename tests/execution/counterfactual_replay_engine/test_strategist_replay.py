@@ -130,6 +130,22 @@ def _flat_bars(open_price: float, n: int = 6) -> tuple[OhlcvBar, ...]:
     )
 
 
+def _bars_hitting_high(*, base: float, spike_high: float) -> tuple[OhlcvBar, ...]:
+    """Flat bars at *base*, with the third bar spiking up to *spike_high*."""
+    bars = list(_flat_bars(base, n=4))
+    spike = bars[2]
+    bars[2] = _bar(spike.period_start, o=base, h=spike_high, low=base, c=base)
+    return tuple(bars)
+
+
+def _bars_hitting_low(*, base: float, spike_low: float) -> tuple[OhlcvBar, ...]:
+    """Flat bars at *base*, with the third bar dipping down to *spike_low*."""
+    bars = list(_flat_bars(base, n=4))
+    spike = bars[2]
+    bars[2] = _bar(spike.period_start, o=base, h=base, low=spike_low, c=base)
+    return tuple(bars)
+
+
 def _equity_snapshot(
     *,
     direction: Direction = Direction.LONG,
@@ -465,3 +481,244 @@ class TestReduceEquity:
         )
         gross = (Decimal(110) - Decimal(100)) * Decimal(15)
         assert result.realized_pl == Money(gross - Decimal(exit_slip) - Decimal(exit_fee))
+
+
+def _adjust_bracket_assessment(
+    *,
+    new_target: str | None = None,
+    new_stop: str | None = None,
+) -> PositionAssessment:
+    params: dict[str, Any] = {"action": "adjust-bracket"}
+    if new_target is not None:
+        params["new_target_level"] = {"price": new_target, "order_type": "limit"}
+    if new_stop is not None:
+        params["new_stop_level"] = {"trigger_price": new_stop, "order_type": "stop"}
+    return _position_assessment(
+        action="adjust-bracket",
+        params=params,
+        extra={"adjustment_rationale": "Tighten."},
+    )
+
+
+class TestAdjustBracketEquity:
+    def test_target_hit_long(self) -> None:
+        # Long position; proposed target 115 is hit on the spike bar.
+        snap = _equity_snapshot(direction=Direction.LONG, net_qty=50.0, basis=100.0)
+        bars = _bars_hitting_high(base=105.0, spike_high=116.0)
+
+        result = replay_strategist_proposal(
+            _adjust_bracket_assessment(new_target="115.00", new_stop="95.00"),
+            snap,
+            bars,
+            iv_repo=_FakeIVRepo(),
+            paper_harness_config=_CONFIG,
+            risk_free_rate=_RFR,
+            adv=_ADV,
+            realized_volatility=_RVOL,
+        )
+
+        assert result.entered is True
+        assert result.exit_leg is ExitLeg.TARGET_HIT
+        assert result.exit_price == price("115")
+        # Only the exit side carries drag (the position was already open).
+        assert result.entry_slippage == money("0")
+        exit_slip, exit_fee = _drag(
+            fill_price=115.0,
+            side="sell",
+            order_type=OrderType.limit,
+            quantity=50.0,
+            instrument_type=InstrumentType.EQUITY,
+        )
+        gross = (Decimal(115) - Decimal(100)) * Decimal(50)
+        assert result.realized_pl == Money(gross - Decimal(exit_slip) - Decimal(exit_fee))
+
+    def test_stop_hit_long(self) -> None:
+        snap = _equity_snapshot(direction=Direction.LONG, net_qty=50.0, basis=100.0)
+        bars = _bars_hitting_low(base=98.0, spike_low=90.0)
+
+        result = replay_strategist_proposal(
+            _adjust_bracket_assessment(new_target="130.00", new_stop="95.00"),
+            snap,
+            bars,
+            iv_repo=_FakeIVRepo(),
+            paper_harness_config=_CONFIG,
+            risk_free_rate=_RFR,
+            adv=_ADV,
+            realized_volatility=_RVOL,
+        )
+
+        assert result.exit_leg is ExitLeg.STOP_HIT
+        assert result.exit_price == price("95")
+        assert result.realized_pl is not None
+        assert Decimal(result.realized_pl) < 0
+
+
+class TestAdjustBracketOption:
+    def test_stop_hit_long_option_bs_priced(self) -> None:
+        snap = _option_snapshot(direction=Direction.LONG, net_qty=4.0, premium=5.0)
+        bars = _bars_hitting_low(base=98.0, spike_low=88.0)
+
+        result = replay_strategist_proposal(
+            _adjust_bracket_assessment(new_target="130.00", new_stop="90.00"),
+            snap,
+            bars,
+            iv_repo=_FakeIVRepo(iv=0.35),
+            paper_harness_config=_CONFIG,
+            risk_free_rate=_RFR,
+            adv=_ADV,
+            realized_volatility=_RVOL,
+        )
+
+        assert result.exit_leg is ExitLeg.STOP_HIT
+        # Exit premium BS-priced at the stop's underlying level (90).
+        assert result.exit_price is not None
+        assert result.exit_price == _bs_premium(underlying=90.0, ts=bars[2].period_start)
+
+
+def _add_assessment(
+    *,
+    additional_quantity: float,
+    entry_order: dict[str, Any],
+    bracket_adjustment: dict[str, Any] | None = None,
+) -> PositionAssessment:
+    params: dict[str, Any] = {
+        "action": "add",
+        "additional_quantity": additional_quantity,
+        "additional_dollar_value": "1000.00",
+        "entry_order": entry_order,
+    }
+    if bracket_adjustment is not None:
+        params["bracket_adjustment"] = bracket_adjustment
+    return _position_assessment(
+        action="add",
+        params=params,
+        extra={
+            "exposure_impact": _EXPOSURE,
+            "guardrail_validation_result": {
+                "overall": "PASS",
+                "per_rule": [],
+                "checked_at": "2026-06-01T14:00:00+00:00",
+            },
+            "add_conviction_justification": "Conviction up.",
+        },
+    )
+
+
+class TestAddEquity:
+    def test_add_fills_then_target_hit(self) -> None:
+        # Market add fills at the next bar open (105); target 115 hit on the spike.
+        snap = _equity_snapshot(direction=Direction.LONG, net_qty=50.0, basis=100.0)
+        bars = _bars_hitting_high(base=105.0, spike_high=116.0)
+        proposal = _add_assessment(
+            additional_quantity=10.0,
+            entry_order={"type": "market"},
+            bracket_adjustment={
+                "action": "adjust-bracket",
+                "new_target_level": {"price": "115.00", "order_type": "limit"},
+                "new_stop_level": {"trigger_price": "95.00", "order_type": "stop"},
+            },
+        )
+
+        result = replay_strategist_proposal(
+            proposal,
+            snap,
+            bars,
+            iv_repo=_FakeIVRepo(),
+            paper_harness_config=_CONFIG,
+            risk_free_rate=_RFR,
+            adv=_ADV,
+            realized_volatility=_RVOL,
+        )
+
+        assert result.entered is True
+        assert result.exit_leg is ExitLeg.TARGET_HIT
+        assert result.exit_price == price("115")
+        # ADD is a fresh fill — both entry and exit drag apply, on 10 shares only.
+        entry_slip, entry_fee = _drag(
+            fill_price=105.0,
+            side="buy",
+            order_type=OrderType.market,
+            quantity=10.0,
+            instrument_type=InstrumentType.EQUITY,
+        )
+        exit_slip, exit_fee = _drag(
+            fill_price=115.0,
+            side="sell",
+            order_type=OrderType.limit,
+            quantity=10.0,
+            instrument_type=InstrumentType.EQUITY,
+        )
+        assert result.entry_slippage == entry_slip
+        assert result.entry_fees == entry_fee
+        gross = (Decimal(115) - Decimal(105)) * Decimal(10)
+        expected = (
+            gross
+            - Decimal(entry_slip)
+            - Decimal(entry_fee)
+            - Decimal(exit_slip)
+            - Decimal(exit_fee)
+        )
+        assert result.realized_pl == Money(expected)
+
+    def test_add_entry_window_expired_unfilled(self) -> None:
+        # Limit add at 90; bars never trade down to 90 → never fills.
+        snap = _equity_snapshot(direction=Direction.LONG, net_qty=50.0, basis=100.0)
+        bars = _flat_bars(110.0)
+        proposal = _add_assessment(
+            additional_quantity=10.0,
+            entry_order={"type": "limit", "limit_price": "90.00"},
+            bracket_adjustment={
+                "action": "adjust-bracket",
+                "new_target_level": {"price": "120.00", "order_type": "limit"},
+            },
+        )
+
+        result = replay_strategist_proposal(
+            proposal,
+            snap,
+            bars,
+            iv_repo=_FakeIVRepo(),
+            paper_harness_config=_CONFIG,
+            risk_free_rate=_RFR,
+            adv=_ADV,
+            realized_volatility=_RVOL,
+        )
+
+        assert result.entered is False
+        assert result.exit_leg is ExitLeg.ENTRY_WINDOW_EXPIRED_UNFILLED
+        assert result.realized_pl is None
+        assert result.entry_price is None
+        assert result.exit_price is None
+
+
+class TestAddOption:
+    def test_option_add_fills_then_target_hit(self) -> None:
+        snap = _option_snapshot(direction=Direction.LONG, net_qty=4.0, premium=5.0)
+        bars = _bars_hitting_high(base=105.0, spike_high=130.0)
+        proposal = _add_assessment(
+            additional_quantity=2.0,
+            entry_order={"type": "market"},
+            bracket_adjustment={
+                "action": "adjust-bracket",
+                "new_target_level": {"price": "125.00", "order_type": "limit"},
+                "new_stop_level": {"trigger_price": "95.00", "order_type": "stop"},
+            },
+        )
+
+        result = replay_strategist_proposal(
+            proposal,
+            snap,
+            bars,
+            iv_repo=_FakeIVRepo(iv=0.35),
+            paper_harness_config=_CONFIG,
+            risk_free_rate=_RFR,
+            adv=_ADV,
+            realized_volatility=_RVOL,
+        )
+
+        assert result.entered is True
+        assert result.exit_leg is ExitLeg.TARGET_HIT
+        assert result.exit_price is not None
+        # Both entry and exit premium are BS-derived on the added 2 contracts.
+        assert result.entry_price == _bs_premium(underlying=105.0, ts=_NEXT_BAR_TS)
+        assert result.realized_pl is not None
