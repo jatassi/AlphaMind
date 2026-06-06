@@ -242,8 +242,10 @@ class TestAsyncIOSchedulerControlNextRunPreview:
 
         preview = control.next_run_preview()
 
+        assert preview is not None  # narrow for the indexed asserts below
         assert preview == (datetime(2026, 5, 7, 13, 0, tzinfo=UTC), "midday")
-        assert preview is not None
+        # Aware-datetime equality compares instants, so the line above also passes
+        # for an un-converted +02:00 value; this is what proves the UTC conversion.
         assert preview[0].tzinfo == UTC
 
     def test_returns_none_when_no_jobs(self) -> None:

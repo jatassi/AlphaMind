@@ -84,22 +84,16 @@ def _add_call(
         )
     )
     session.flush()
+    # Only the three fields the loaders read (implied_volatility, underlying_price,
+    # volume_today) plus the NOT-NULL columns are set; the nullable greeks / OI /
+    # bid-ask are left unset because no unit under test consults them.
     session.add(
         OptionsContractSnapshots(
             snapshot_ts=snapshot_ts,
             contract_ticker=contract_ticker,
             underlying_ticker=underlying,
-            open_interest=100,
             volume_today=volume,
-            last_price=1.0,
-            bid=0.95,
-            ask=1.05,
             implied_volatility=iv,
-            delta=0.5,
-            gamma=0.05,
-            theta=-0.03,
-            vega=0.10,
-            rho=0.02,
             underlying_price=underlying_price,
             source="test",
             ingested_at=snapshot_ts,
@@ -300,6 +294,40 @@ class TestSelectEtfIvSpreadBaseline:
         assert mean == pytest.approx(0.20)
         assert stdev == pytest.approx(0.10)
 
+    def test_multi_constituent_pairing_is_positional_over_a_flat_concat(
+        self, session: Session
+    ) -> None:
+        """Characterize the multi-constituent pairing: the loader flat-concats
+        every constituent's history then pairs ETF[i] - constituent_history[i]
+        positionally. With the ETF window shorter than the concatenated
+        constituent list, only the LEADING constituent(s) contribute and the
+        pairing is not cross-sectionally date-aligned — so adding MSFT here
+        leaves the result identical to the AAPL-only case. This pins the actual
+        behavior (see the divergence-baseline inconsistency noted on ALP-812).
+        """
+        _add_ticker(session, "XLK")
+        _add_ticker(session, "AAPL")
+        _add_ticker(session, "MSFT")
+        # ETF [0.50, 0.50]; AAPL [0.40, 0.20]; MSFT [0.10, 0.15].
+        for ts, iv in (("2026-04-20T20:00:00Z", 0.50), ("2026-04-27T20:00:00Z", 0.50)):
+            _add_call(session, underlying="XLK", snapshot_ts=ts, iv=iv, underlying_price=300)
+        for ts, iv in (("2026-04-20T20:00:00Z", 0.40), ("2026-04-27T20:00:00Z", 0.20)):
+            _add_call(session, underlying="AAPL", snapshot_ts=ts, iv=iv, underlying_price=100)
+        for ts, iv in (("2026-04-20T20:00:00Z", 0.10), ("2026-04-27T20:00:00Z", 0.15)):
+            _add_call(session, underlying="MSFT", snapshot_ts=ts, iv=iv, underlying_price=200)
+
+        # constituent_history = [0.40, 0.20, 0.10, 0.15]; paired_length = min(2, 4) = 2;
+        # spreads = [0.50-0.40, 0.50-0.20] = [0.10, 0.30] → (0.20, 0.10). MSFT is dropped.
+        mean, stdev = loaders._select_etf_iv_spread_baseline(
+            session,
+            etf_ticker="XLK",
+            constituents=["AAPL", "MSFT"],
+            range_end=_AS_OF,
+            baseline_days=_BASELINE_DAYS,
+        )
+        assert mean == pytest.approx(0.20)
+        assert stdev == pytest.approx(0.10)
+
     def test_zero_zero_when_etf_history_empty(self, session: Session) -> None:
         _add_ticker(session, "XLK")
         _add_ticker(session, "AAPL")
@@ -399,7 +427,11 @@ def _seed_resolved_sector(session: Session) -> None:
     _add_call(
         session, underlying="MSFT", snapshot_ts=_AS_OF, iv=0.35, underlying_price=200, volume=100
     )
-    # Trailing history giving >= 2 paired points with non-zero variance.
+    # Trailing history giving >= 2 paired points with non-zero variance. Only XLK +
+    # AAPL history is seeded: the baseline pairs ETF against the flat concat of
+    # constituent histories positionally, so AAPL alone suffices to make stdev > 0
+    # (the per-key emit is what this sector exercises; the baseline math itself is
+    # pinned in TestSelectEtfIvSpreadBaseline).
     _add_call(
         session, underlying="XLK", snapshot_ts="2026-04-20T20:00:00Z", iv=0.30, underlying_price=300
     )

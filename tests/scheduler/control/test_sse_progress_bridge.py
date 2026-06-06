@@ -96,7 +96,14 @@ class TestToSchemaAgentName:
 
     @pytest.mark.parametrize(
         "agent",
-        ["qualitative_researcher", "adaptive_researcher", "synthesizer", "analyst", "strategist"],
+        [
+            "qualitative_researcher",
+            "adaptive_researcher",
+            "synthesizer",
+            "analyst",
+            "strategist",
+            "portfolio_manager",
+        ],
     )
     def test_passes_other_agents_through_unchanged(self, agent: str) -> None:
         assert bridge_mod._to_schema_agent_name(agent) == agent
