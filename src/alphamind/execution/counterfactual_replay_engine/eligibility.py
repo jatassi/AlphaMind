@@ -14,10 +14,10 @@ Repository protocols are defined in :mod:`.repos`.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
 
 from alphamind.config.models.replay_engine import CounterfactualReplayEngineConfig
 from alphamind.decision.analyst.models import (
+    InstrumentOption,
     InstrumentStrategy,
     Recommendation,
     TimeCondition,
@@ -37,17 +37,17 @@ from alphamind.execution.counterfactual_replay_engine.repos import (
     OptionsSnapshotRepository,
 )
 
-if TYPE_CHECKING:
-    pass
-
 __all__ = [
     "check_eligibility",
     "compute_replay_window",
 ]
 
-# Type alias for clarity
+# Type alias for the three proposal shapes the engine processes.
 _Proposal = Recommendation | PositionAssessment | PendingOrderAssessment
 _EligibilityResult = tuple[ReplayStatus, UnevaluableReason | None, datetime | None, datetime | None]
+
+_UNEVALUABLE = ReplayStatus.UNEVALUABLE
+_EVALUATED = ReplayStatus.EVALUATED
 
 
 def check_eligibility(
@@ -74,63 +74,42 @@ def check_eligibility(
     Default → EVALUATED
     """
     # --- Rule A ---
-    if isinstance(proposal, Recommendation) and isinstance(
-        proposal.instrument, InstrumentStrategy
-    ):
-        return (ReplayStatus.UNEVALUABLE, UnevaluableReason.UNSUPPORTED_INSTRUMENT, None, None)
+    rule_a = _check_rule_a(proposal)
+    if rule_a is not None:
+        return rule_a
 
     # --- Rule B ---
-    if isinstance(proposal, PositionAssessment) and proposal.recommended_action == "hold":
-        return (
-            ReplayStatus.UNEVALUABLE,
-            UnevaluableReason.STRATEGIST_POSITION_ACTION_NOT_SUPPORTED,
-            None,
-            None,
-        )
-    if isinstance(proposal, PendingOrderAssessment) and proposal.recommended_action == "maintain":
-        return (
-            ReplayStatus.UNEVALUABLE,
-            UnevaluableReason.STRATEGIST_POSITION_ACTION_NOT_SUPPORTED,
-            None,
-            None,
-        )
+    rule_b = _check_rule_b(proposal)
+    if rule_b is not None:
+        return rule_b
 
     # Compute window for Rules C, D, and EVALUATED
     window_start, window_end = compute_replay_window(
         proposal, proposal_timestamp=proposal_timestamp, config=config
     )
+    underlying = _get_underlying(proposal)
 
     # --- Rule C: missing bars ---
-    underlying = _get_underlying(proposal)
     if not bar_repo.has_bars_over_window(underlying, window_start, window_end):
-        return (ReplayStatus.UNEVALUABLE, UnevaluableReason.DATA_MISSING, window_start, window_end)
+        return (_UNEVALUABLE, UnevaluableReason.DATA_MISSING, window_start, window_end)
 
-    # Rule C: missing IV snapshot for option proposals
-    if isinstance(proposal, Recommendation) and hasattr(proposal.instrument, "underlying"):
-        from alphamind.decision.analyst.models import InstrumentOption
-        if isinstance(proposal.instrument, InstrumentOption):
-            contract_ticker = _option_contract_ticker(proposal)
-            if not options_snapshot_repo.has_snapshot_at_or_before(
-                contract_ticker, proposal_timestamp
-            ):
-                return (
-                    ReplayStatus.UNEVALUABLE,
-                    UnevaluableReason.DATA_MISSING,
-                    window_start,
-                    window_end,
-                )
+    # Rule C continued: missing IV snapshot for option proposals
+    if isinstance(proposal, Recommendation) and isinstance(proposal.instrument, InstrumentOption):
+        contract_ticker = _option_contract_ticker(proposal)
+        if not options_snapshot_repo.has_snapshot_at_or_before(contract_ticker, proposal_timestamp):
+            return (_UNEVALUABLE, UnevaluableReason.DATA_MISSING, window_start, window_end)
 
     # --- Rule D: corporate action in window ---
     if corporate_action_repo.has_action_in_window(underlying, window_start, window_end):
         return (
-            ReplayStatus.UNEVALUABLE,
+            _UNEVALUABLE,
             UnevaluableReason.CORPORATE_ACTION_IN_WINDOW,
             window_start,
             window_end,
         )
 
     # --- Default: EVALUATED ---
-    return (ReplayStatus.EVALUATED, None, window_start, window_end)
+    return (_EVALUATED, None, window_start, window_end)
 
 
 def compute_replay_window(
@@ -143,38 +122,59 @@ def compute_replay_window(
 
     ``window_start = proposal_timestamp`` always.
 
-    **Analyst :class:`~alphamind.decision.analyst.models.Recommendation`**:
-
-    ``window_end = proposal_timestamp
-                  + entry_window_duration       (if entry_window is set)
-                  + max(time_stop_horizon, target_estimated_horizon)``
-
-    where ``entry_window_duration = entry_window.deadline - proposal_timestamp``,
-    ``time_stop_horizon = latest TimeCondition.deadline - proposal_timestamp``
-    (if any ``type="time"`` invalidation leg exists, else zero), and
+    **Analyst** :class:`~alphamind.decision.analyst.models.Recommendation`:
+    ``window_end = proposal_timestamp + entry_window_duration
+    + max(time_stop_horizon, target_estimated_horizon)``,
+    where ``entry_window_duration = entry_window.deadline - proposal_timestamp``
+    (zero when no entry_window), ``time_stop_horizon`` is the latest
+    ``TimeCondition.deadline - proposal_timestamp`` across time-type
+    invalidation legs (zero if none), and
     ``target_estimated_horizon = timedelta(hours=time_expectation_hours)``.
 
-    **Strategist** (:class:`~alphamind.decision.strategist.models.PositionAssessment`
-    or :class:`~alphamind.decision.strategist.models.PendingOrderAssessment`):
-
-    ``window_end = proposal_timestamp + timedelta(hours=config.strategist_default_forward_window_hours)``
-
-    For ADD proposals that carry a ``bracket_adjustment.new_time_expiration``,
-    ``window_end`` is extended to that deadline if it falls later than the
-    config-driven default.
+    **Strategist** proposals use
+    ``proposal_timestamp + timedelta(hours=config.strategist_default_forward_window_hours)``.
+    For ADD proposals with ``bracket_adjustment.new_time_expiration``,
+    ``window_end`` extends to that deadline when it falls later than the default.
     """
     window_start = proposal_timestamp
-
     if isinstance(proposal, Recommendation):
-        window_end = _analyst_window_end(proposal, proposal_timestamp)
-    else:
-        window_end = _strategist_window_end(proposal, proposal_timestamp, config)
-
-    return window_start, window_end
+        return window_start, _analyst_window_end(proposal, proposal_timestamp)
+    return window_start, _strategist_window_end(proposal, proposal_timestamp, config)
 
 
 # ---------------------------------------------------------------------------
-# Private helpers
+# Private rule helpers
+# ---------------------------------------------------------------------------
+
+
+def _check_rule_a(proposal: _Proposal) -> _EligibilityResult | None:
+    """Return Rule A result or None if rule doesn't apply."""
+    if isinstance(proposal, Recommendation) and isinstance(proposal.instrument, InstrumentStrategy):
+        return (_UNEVALUABLE, UnevaluableReason.UNSUPPORTED_INSTRUMENT, None, None)
+    return None
+
+
+def _check_rule_b(proposal: _Proposal) -> _EligibilityResult | None:
+    """Return Rule B result or None if rule doesn't apply."""
+    if isinstance(proposal, PositionAssessment) and proposal.recommended_action == "hold":
+        return (
+            _UNEVALUABLE,
+            UnevaluableReason.STRATEGIST_POSITION_ACTION_NOT_SUPPORTED,
+            None,
+            None,
+        )
+    if isinstance(proposal, PendingOrderAssessment) and proposal.recommended_action == "maintain":
+        return (
+            _UNEVALUABLE,
+            UnevaluableReason.STRATEGIST_POSITION_ACTION_NOT_SUPPORTED,
+            None,
+            None,
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Private window helpers
 # ---------------------------------------------------------------------------
 
 
@@ -183,12 +183,10 @@ def _analyst_window_end(
     proposal_timestamp: datetime,
 ) -> datetime:
     """Compute window_end for an analyst Recommendation."""
-    # Entry window duration
     entry_window_duration = timedelta(0)
     if proposal.entry_window is not None:
         entry_window_duration = proposal.entry_window.deadline - proposal_timestamp
 
-    # Time-stop horizon: latest TimeCondition.deadline across time-type invalidation legs
     time_stop_horizon = timedelta(0)
     for leg in proposal.invalidation_legs:
         if leg.type == "time" and isinstance(leg.condition, TimeCondition):
@@ -196,15 +194,12 @@ def _analyst_window_end(
             if leg_horizon > time_stop_horizon:
                 time_stop_horizon = leg_horizon
 
-    # Target estimated horizon
     target_estimated_horizon = timedelta(hours=proposal.time_expectation_hours)
-
-    window_end = (
+    return (
         proposal_timestamp
         + entry_window_duration
         + max(time_stop_horizon, target_estimated_horizon)
     )
-    return window_end
 
 
 def _strategist_window_end(
@@ -216,8 +211,7 @@ def _strategist_window_end(
     default_end = proposal_timestamp + timedelta(
         hours=config.strategist_default_forward_window_hours
     )
-
-    # For ADD with bracket_adjustment.new_time_expiration, extend if needed
+    # For ADD with bracket_adjustment.new_time_expiration, extend if needed.
     if isinstance(proposal, PositionAssessment) and isinstance(
         proposal.action_parameters, AddParameters
     ):
@@ -226,44 +220,30 @@ def _strategist_window_end(
             expiration = bracket_adj.new_time_expiration
             if expiration > default_end:
                 return expiration
-
     return default_end
 
 
 def _get_underlying(proposal: _Proposal) -> str:
-    """Extract the underlying ticker from any proposal type."""
+    """Extract the underlying ticker from any proposal type.
+
+    For :class:`~alphamind.decision.strategist.models.PendingOrderAssessment`
+    the model carries no ``underlying`` field — ``position_id`` is used as
+    the repo key here; the SQL-backed repo (story 08) resolves the actual
+    underlying from the position record.
+    """
     if isinstance(proposal, Recommendation):
         return proposal.underlying
-    # PositionAssessment and PendingOrderAssessment both have position_id, not underlying directly.
-    # PositionAssessment has underlying; PendingOrderAssessment doesn't expose it directly.
-    # For bar and CA checks we use the underlying. For PendingOrderAssessment, we need position info.
-    # The design says the underlying bar stream drives the check — use position_id's underlying.
-    # PendingOrderAssessment doesn't carry underlying directly, but the design doc's bar-check
-    # uses the underlying ticker. We derive it from position_id in the full implementation;
-    # for now we need a ticker. PendingOrderAssessment has no .underlying field directly —
-    # but the story says bar check is on the underlying. We'll use a convention:
-    # For PendingOrderAssessment, we need the underlying ticker for bar presence.
-    # Looking at the model: PendingOrderAssessment has order_id, position_id but no underlying.
-    # The engine driver (story 08) will provide this context; for now the Protocol interface
-    # provides has_bars_over_window(ticker, ...) — the driver will supply the ticker.
-    # Since this function must return a ticker, and PendingOrderAssessment lacks an underlying field,
-    # we use position_id as a placeholder ticker for the repo calls.
-    # Story 08 will wire the actual position's underlying.
     if isinstance(proposal, PositionAssessment):
         return proposal.underlying
-    # PendingOrderAssessment: no underlying field — use position_id as the repo key.
-    # The SQL-backed repo implementation (story 08) looks up the actual underlying.
+    # PendingOrderAssessment: no .underlying — use position_id as repo key.
     return proposal.position_id
 
 
 def _option_contract_ticker(proposal: Recommendation) -> str:
     """Derive an OCC-style contract ticker for the option IV snapshot lookup."""
-    from alphamind.decision.analyst.models import InstrumentOption
     instr = proposal.instrument
     assert isinstance(instr, InstrumentOption)
-    # OCC format: UNDERLYING + YYMMDD + C/P + strike (8-digit, 3 decimal places)
-    exp = instr.expiration
-    exp_str = exp.strftime("%y%m%d")
+    exp_str = instr.expiration.strftime("%y%m%d")
     cp = "C" if instr.contract_type == "call" else "P"
     strike_int = int(float(str(instr.strike)) * 1000)
     return f"{instr.underlying}{exp_str}{cp}{strike_int:08d}"

@@ -6,9 +6,7 @@ validation-failure path.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
-from decimal import Decimal
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -17,7 +15,6 @@ from alphamind.execution.counterfactual_replay_engine.proposal_hydration import 
     ProposalHydrationError,
     hydrate_originating_proposal,
 )
-
 
 # ---------------------------------------------------------------------------
 # Minimal PMDecisionDetail stub — we only need two fields consumed here.

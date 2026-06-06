@@ -19,7 +19,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-import alphamind.state.invocation_context  # noqa: F401 — break circular import seam
+import alphamind.state.invocation_context
 import alphamind.state.tables  # noqa: F401 — register state tables on metadata
 from alphamind._kernel.ids import EnvelopeId
 from alphamind.execution.counterfactual_replay_engine.enums import (
@@ -52,8 +52,6 @@ _WIN_END = datetime(2026, 1, 11, 14, 0, tzinfo=UTC)
 
 @pytest.fixture()
 def _engine():
-    import alphamind.state.tables  # noqa: F401 — register all tables
-
     eng = make_engine(":memory:")
     Base.metadata.create_all(eng)
     yield eng
@@ -196,7 +194,7 @@ class TestRoundTrip:
         assert loaded[0] == written
 
     def test_round_trip_no_window(self, session: Session) -> None:
-        written = write_unevaluable_record(
+        write_unevaluable_record(
             session,
             _ENV_2,
             ReplayKind.MODIFICATION_ORIGINAL_FORM,

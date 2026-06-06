@@ -60,22 +60,19 @@ def hydrate_originating_proposal(
     provenance = detail.source_provenance_json
     source = provenance.get("source_provenance")
 
+    if source not in ("pm_analyst", "pm_strategist"):
+        raise ProposalHydrationError(
+            f"Unknown source_provenance {source!r} in source_provenance_json; "
+            f"expected 'pm_analyst' or 'pm_strategist'."
+        )
     try:
         if source == "pm_analyst":
             return _hydrate_analyst(detail.originating_proposal_json)
-        elif source == "pm_strategist":
-            return _hydrate_strategist(provenance, detail.originating_proposal_json)
-        else:
-            raise ProposalHydrationError(
-                f"Unknown source_provenance {source!r} in source_provenance_json; "
-                f"expected 'pm_analyst' or 'pm_strategist'."
-            )
+        return _hydrate_strategist(provenance, detail.originating_proposal_json)
     except ProposalHydrationError:
         raise
     except Exception as exc:
-        raise ProposalHydrationError(
-            f"Failed to hydrate originating proposal: {exc}"
-        ) from exc
+        raise ProposalHydrationError(f"Failed to hydrate originating proposal: {exc}") from exc
 
 
 def _hydrate_analyst(body: dict[str, Any]) -> Recommendation:

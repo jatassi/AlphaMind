@@ -10,11 +10,8 @@ implementations wired at story 08.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
+from datetime import UTC, datetime, timedelta
 from typing import Any
-
-import pytest
 
 from alphamind.config.models.replay_engine import CounterfactualReplayEngineConfig
 from alphamind.execution.counterfactual_replay_engine.eligibility import (
@@ -374,12 +371,12 @@ def _pending_order_assessment_cancel() -> Any:
 # ---------------------------------------------------------------------------
 
 
-class TestRuleA_UnsupportedInstrument:
+class TestRuleAUnsupportedInstrument:
     """Strategy proposals → UNSUPPORTED_INSTRUMENT, no window."""
 
     def test_strategy_proposal_returns_unevaluable(self) -> None:
         proposal = _strategy_recommendation()
-        status, reason, ws, we = check_eligibility(
+        status, reason, _ws, _we = check_eligibility(
             proposal,
             proposal_timestamp=_TS,
             config=_CONFIG,
@@ -409,12 +406,12 @@ class TestRuleA_UnsupportedInstrument:
 # ---------------------------------------------------------------------------
 
 
-class TestRuleB_StrategistNoAction:
+class TestRuleBStrategistNoAction:
     """hold / maintain → STRATEGIST_POSITION_ACTION_NOT_SUPPORTED."""
 
     def test_position_hold_returns_unevaluable(self) -> None:
         proposal = _position_assessment_hold()
-        status, reason, ws, we = check_eligibility(
+        status, reason, _ws, _we = check_eligibility(
             proposal,
             proposal_timestamp=_TS,
             config=_CONFIG,
@@ -427,7 +424,7 @@ class TestRuleB_StrategistNoAction:
 
     def test_pending_order_maintain_returns_unevaluable(self) -> None:
         proposal = _pending_order_assessment_maintain()
-        status, reason, ws, we = check_eligibility(
+        status, reason, _ws, _we = check_eligibility(
             proposal,
             proposal_timestamp=_TS,
             config=_CONFIG,
@@ -457,12 +454,12 @@ class TestRuleB_StrategistNoAction:
 # ---------------------------------------------------------------------------
 
 
-class TestRuleC_DataMissing:
+class TestRuleCDataMissing:
     """Missing bars → DATA_MISSING; missing IV snapshot for option → DATA_MISSING."""
 
     def test_equity_missing_bars_returns_data_missing(self) -> None:
         proposal = _equity_recommendation()
-        status, reason, ws, we = check_eligibility(
+        status, reason, _ws, _we = check_eligibility(
             proposal,
             proposal_timestamp=_TS,
             config=_CONFIG,
@@ -489,7 +486,7 @@ class TestRuleC_DataMissing:
 
     def test_option_missing_iv_snapshot_returns_data_missing(self) -> None:
         proposal = _option_recommendation()
-        status, reason, ws, we = check_eligibility(
+        status, reason, _ws, _we = check_eligibility(
             proposal,
             proposal_timestamp=_TS,
             config=_CONFIG,
@@ -515,7 +512,7 @@ class TestRuleC_DataMissing:
 
     def test_option_with_iv_snapshot_and_bars_not_data_missing(self) -> None:
         proposal = _option_recommendation()
-        status, reason, _, _ = check_eligibility(
+        _status, reason, _, _ = check_eligibility(
             proposal,
             proposal_timestamp=_TS,
             config=_CONFIG,
@@ -531,12 +528,12 @@ class TestRuleC_DataMissing:
 # ---------------------------------------------------------------------------
 
 
-class TestRuleD_CorporateAction:
+class TestRuleDCorporateAction:
     """Corporate action in window → CORPORATE_ACTION_IN_WINDOW."""
 
     def test_equity_corporate_action_returns_unevaluable(self) -> None:
         proposal = _equity_recommendation()
-        status, reason, ws, we = check_eligibility(
+        status, reason, _ws, _we = check_eligibility(
             proposal,
             proposal_timestamp=_TS,
             config=_CONFIG,
@@ -571,7 +568,7 @@ class TestDefaultEvaluated:
 
     def test_equity_happy_path_returns_evaluated(self) -> None:
         proposal = _equity_recommendation()
-        status, reason, ws, we = check_eligibility(
+        status, reason, _ws, _we = check_eligibility(
             proposal,
             proposal_timestamp=_TS,
             config=_CONFIG,
@@ -598,7 +595,7 @@ class TestDefaultEvaluated:
 
     def test_option_happy_path_returns_evaluated(self) -> None:
         proposal = _option_recommendation()
-        status, reason, ws, we = check_eligibility(
+        status, reason, _ws, _we = check_eligibility(
             proposal,
             proposal_timestamp=_TS,
             config=_CONFIG,
@@ -657,31 +654,24 @@ class TestDefaultEvaluated:
             assert reason is not UnevaluableReason.UNSUPPORTED_BRACKET_TYPE
 
 
-# ---------------------------------------------------------------------------
-# Tests: compute_replay_window
-# ---------------------------------------------------------------------------
-
-
 class TestComputeReplayWindow:
     def test_window_start_equals_proposal_timestamp(self) -> None:
         proposal = _equity_recommendation()
-        start, end = compute_replay_window(
-            proposal, proposal_timestamp=_TS, config=_CONFIG
-        )
+        start, _end = compute_replay_window(proposal, proposal_timestamp=_TS, config=_CONFIG)
         assert start == _TS
 
     def test_analyst_window_end_includes_time_expectation(self) -> None:
         """Without entry_window or time leg, window = ts + time_expectation_hours."""
         proposal = _equity_recommendation(time_expectation_hours=12.0)
-        start, end = compute_replay_window(
-            proposal, proposal_timestamp=_TS, config=_CONFIG
-        )
+        _, end = compute_replay_window(proposal, proposal_timestamp=_TS, config=_CONFIG)
         assert end >= _TS + timedelta(hours=12.0)
 
     def test_analyst_window_end_includes_entry_window(self) -> None:
         """Entry window duration adds to the total window length."""
         proposal_with_ew = _equity_recommendation(has_entry_window=True, time_expectation_hours=8.0)
-        proposal_without_ew = _equity_recommendation(has_entry_window=False, time_expectation_hours=8.0)
+        proposal_without_ew = _equity_recommendation(
+            has_entry_window=False, time_expectation_hours=8.0
+        )
 
         _, end_with = compute_replay_window(
             proposal_with_ew, proposal_timestamp=_TS, config=_CONFIG
@@ -693,8 +683,12 @@ class TestComputeReplayWindow:
 
     def test_analyst_window_end_includes_time_leg(self) -> None:
         """A time-type invalidation leg extends the window to its deadline."""
-        proposal_with_time_leg = _equity_recommendation(has_time_leg=True, time_expectation_hours=8.0)
-        proposal_without_time_leg = _equity_recommendation(has_time_leg=False, time_expectation_hours=8.0)
+        proposal_with_time_leg = _equity_recommendation(
+            has_time_leg=True, time_expectation_hours=8.0
+        )
+        proposal_without_time_leg = _equity_recommendation(
+            has_time_leg=False, time_expectation_hours=8.0
+        )
 
         _, end_with = compute_replay_window(
             proposal_with_time_leg, proposal_timestamp=_TS, config=_CONFIG
@@ -706,17 +700,13 @@ class TestComputeReplayWindow:
 
     def test_analyst_window_end_greater_than_start(self) -> None:
         proposal = _equity_recommendation(time_expectation_hours=4.0)
-        start, end = compute_replay_window(
-            proposal, proposal_timestamp=_TS, config=_CONFIG
-        )
+        start, end = compute_replay_window(proposal, proposal_timestamp=_TS, config=_CONFIG)
         assert end > start
 
     def test_strategist_close_window_uses_config_hours(self) -> None:
         """Strategist CLOSE uses config.strategist_default_forward_window_hours."""
         proposal = _position_assessment_close()
-        start, end = compute_replay_window(
-            proposal, proposal_timestamp=_TS, config=_CONFIG
-        )
+        start, end = compute_replay_window(proposal, proposal_timestamp=_TS, config=_CONFIG)
         assert start == _TS
         assert end == _TS + timedelta(hours=_CONFIG.strategist_default_forward_window_hours)
 
@@ -727,19 +717,13 @@ class TestComputeReplayWindow:
             strategist_default_forward_window_hours=48,
         )
         proposal = _position_assessment_close()
-        _, end_24 = compute_replay_window(
-            proposal, proposal_timestamp=_TS, config=_CONFIG
-        )
-        _, end_48 = compute_replay_window(
-            proposal, proposal_timestamp=_TS, config=config_48
-        )
+        _, end_24 = compute_replay_window(proposal, proposal_timestamp=_TS, config=_CONFIG)
+        _, end_48 = compute_replay_window(proposal, proposal_timestamp=_TS, config=config_48)
         assert end_48 == end_24 + timedelta(hours=24)
 
     def test_pending_order_cancel_uses_config_hours(self) -> None:
         proposal = _pending_order_assessment_cancel()
-        start, end = compute_replay_window(
-            proposal, proposal_timestamp=_TS, config=_CONFIG
-        )
+        start, end = compute_replay_window(proposal, proposal_timestamp=_TS, config=_CONFIG)
         assert start == _TS
         assert end == _TS + timedelta(hours=_CONFIG.strategist_default_forward_window_hours)
 
@@ -781,9 +765,7 @@ class TestComputeReplayWindow:
                 "action_rationale": "Add to winning position.",
             }
         )
-        _, end = compute_replay_window(
-            proposal, proposal_timestamp=_TS, config=_CONFIG
-        )
+        _, end = compute_replay_window(proposal, proposal_timestamp=_TS, config=_CONFIG)
         # Window end should reach the bracket expiration, not just config default
         default_end = _TS + timedelta(hours=_CONFIG.strategist_default_forward_window_hours)
         assert end >= late_expiration
