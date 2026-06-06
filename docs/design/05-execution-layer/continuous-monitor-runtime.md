@@ -25,6 +25,8 @@ The monitor does not share an executor with the collector. Each NSSM service own
 
 Rotation is daily at midnight; retention is 30 days. The handler is idempotent — a repeat call returns without attaching a duplicate handler — so tests that exercise the supervisor in-process don't accumulate handlers across runs.
 
+`configure_monitor_logging(filename=...)` is parameterized so the isolated safety core (ADR-0004), which shares the helper, can target its own file rather than `monitor.log`. On Windows `TimedRotatingFileHandler` cannot rename a file another process holds open, so two processes rotating the same file raise `WinError 32` at the daily rollover (ALP-868). Each process gets a distinct rotating file: `monitor.log` for `alphamind-monitor`, `safety_core.log` for the safety core (`run`), and `safety_core_watchdog.log` for its out-of-process watchdog (`watchdog`). These parallel the per-service NSSM stdout/stderr naming in `install_safety_core_service.ps1` (which targets `safety_core.out.log` / `safety_core.err.log`) — distinct files sharing the same prefix, not the same paths.
+
 ## Configuration surface
 
 `config/continuous_monitor.yaml` (Class A per the configuration-management taxonomy) is loaded into a frozen Pydantic `ContinuousMonitorConfig` at process start and surfaced on `resolved_config.continuous_monitor`. The current knobs (parent issue ALP-123 § Pre-resolved decision (E)):
