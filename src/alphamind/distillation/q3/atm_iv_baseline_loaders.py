@@ -51,11 +51,13 @@ def _select_atm_iv_by_ts(
     """Return ``{snapshot_ts: (atm_iv, volume_today)}`` for ``ticker``.
 
     The "ATM" contract is selected per ``snapshot_ts`` as the call whose
-    strike is closest to the snapshot's ``underlying_price``; the chosen
-    contract's ``volume_today`` rides along so callers that volume-weight
-    across constituents (the ETF/single-name baseline) and callers that only
-    need the IV series (:func:`_select_atm_iv_history`) share one selector and
-    cannot diverge. Snapshots without an ``implied_volatility`` are skipped.
+    strike is closest to the snapshot's ``underlying_price``. The chosen
+    contract's ``volume_today`` rides along verbatim (``None`` when the
+    snapshot carries no volume); the volume-weighting decision itself is the
+    consumer's, not this selector's. Routing every ATM-IV read through this one
+    selector keeps the bare IV series (:func:`_select_atm_iv_history`) and the
+    volume-carrying series definitionally identical. Snapshots without an
+    ``implied_volatility`` are skipped.
     """
     stmt = (
         select(
