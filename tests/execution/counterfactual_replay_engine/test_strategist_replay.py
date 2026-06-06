@@ -602,7 +602,9 @@ class TestAdjustBracketOption:
         assert result.exit_price == _bs_premium(underlying=90.0, ts=bars[2].period_start)
 
 
-def _stop_only_bracket(*, threshold_usd: float, direction: str = "LTE") -> BracketRecord:
+def _stop_only_bracket(
+    *, threshold_usd: float, direction: Literal["GTE", "LTE"] = "LTE"
+) -> BracketRecord:
     """A bracket carrying only a mechanical PRICE_STOP leg — no TAKE_PROFIT."""
     return BracketRecord(
         bracket_id=BracketId("BR-1"),

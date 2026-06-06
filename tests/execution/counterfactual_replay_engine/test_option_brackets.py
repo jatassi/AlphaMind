@@ -16,7 +16,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from alphamind._kernel.money import price
+from alphamind._kernel.money import money
 from alphamind.execution.counterfactual_replay_engine.enums import ExitLeg
 from alphamind.execution.counterfactual_replay_engine.iv_lookup import (
     IVSnapshotLookupResult,
@@ -160,7 +160,7 @@ def _option_proposal(
 def _entry() -> OptionEntryResult:
     return OptionEntryResult(
         entered=True,
-        entry_price=price(Decimal("3.00")),
+        entry_price=money(Decimal("3.00")),
         entry_timestamp=_TS + timedelta(minutes=15),
         entry_iv_lag_minutes=5.0,
     )

@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Literal
 
-from alphamind._kernel.money import Money, price, signed_money
+from alphamind._kernel.money import Money, money, price, signed_money
 from alphamind.config.models.execution import FeeSchedule, OrderType, PaperHarness
 from alphamind.execution.counterfactual_replay_engine.enums import ExitLeg
 from alphamind.execution.counterfactual_replay_engine.option_replay import (
@@ -109,7 +109,7 @@ def _option_proposal(*, direction: str) -> Any:
 def _entry(premium: str) -> OptionEntryResult:
     return OptionEntryResult(
         entered=True,
-        entry_price=price(Decimal(premium)),
+        entry_price=money(Decimal(premium)),
         entry_timestamp=_TS,
         entry_iv_lag_minutes=5.0,
     )
@@ -119,7 +119,7 @@ def _brackets(premium: str, leg: ExitLeg) -> OptionBracketResult:
     return OptionBracketResult(
         exit_leg=leg,
         exit_underlying_price=170.0,
-        exit_price=price(Decimal(premium)),
+        exit_price=money(Decimal(premium)),
         exit_timestamp=_TS + timedelta(hours=2),
         same_bar_ambiguity=False,
         exit_iv_lag_minutes=4.0,
