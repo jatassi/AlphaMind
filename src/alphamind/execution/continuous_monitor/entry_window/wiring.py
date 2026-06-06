@@ -10,10 +10,12 @@ Composes the watcher entirely from existing primitives — no new infrastructure
   :class:`BrokerCancelClassification`.
 * :class:`AlpacaEntryReplace` — wraps :func:`submit_replace` (cancel-and-replace)
   and maps the broker answer onto :class:`BrokerReplaceClassification` (ALP-740).
-* :func:`make_entry_window_writeback` / :func:`make_entry_window_reprice_writeback`
-  — open a fresh session + :class:`InvocationHandle` and run the terminal
-  ``persist_entry_window_cancel`` / non-terminal ``persist_entry_window_reprice``
-  writebacks, mirroring the breach loop's ``make_submit_envelope`` pattern.
+* :func:`make_entry_window_reprice_writeback` — opens a fresh session +
+  :class:`InvocationHandle` and runs the non-terminal ``persist_entry_window_reprice``
+  writeback, mirroring the breach loop's ``make_submit_envelope`` pattern. The
+  terminal **cancel** has no writeback any more (ALP-863): the canceller broker-
+  cancels and writes nothing — the pipeline projects the resulting
+  ``TERMINAL_ORDER_STATUS`` event and runs the dissolve cascade.
 * :func:`register_entry_window_watcher_task` — assembles the
   :class:`BrokerEntryWindowRepricer` (which delegates the terminal path to a
   :class:`BrokerEntryWindowCanceller`) and registers the ``entry_window`` task.
@@ -43,7 +45,6 @@ from alphamind.execution.broker_adapter.retry import GatewaySubmissionFailed
 from alphamind.execution.continuous_monitor.entry_window.canceller import (
     BrokerCancelClassification,
     BrokerEntryWindowCanceller,
-    CancelWriteback,
     EntryCancelTarget,
     EntryCancelTargetResolver,
 )
@@ -62,7 +63,6 @@ from alphamind.execution.continuous_monitor.greeks_refresh.wiring import (
 from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
 from alphamind.execution.write_paths.phase2 import (
-    persist_entry_window_cancel,
     persist_entry_window_reprice,
 )
 from alphamind.portfolio_state.records.orders import (
@@ -298,30 +298,6 @@ def make_entry_cancel_target_resolver(
     return _resolve
 
 
-def make_entry_window_writeback(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> CancelWriteback:
-    """Return a writeback callable: open a fresh session + handle, run the
-    Phase-2 entry-window cancel writeback, and commit.
-
-    Mirrors the breach loop's ``make_submit_envelope`` between-invocations
-    persistence pattern — the activity-log ``invocation_id`` FK references the
-    most-recently-started invocation.
-    """
-    invocation_id_provider = make_invocation_id_provider(session_factory)
-
-    async def _writeback(entry_order_id: str, cancel_reason: str) -> None:
-        invocation_id = await invocation_id_provider()
-        async with session_factory() as session:
-            handle = InvocationHandle(session=session, invocation_id=invocation_id)
-            await persist_entry_window_cancel(
-                handle, entry_order_id=entry_order_id, cancel_reason=cancel_reason
-            )
-            await session.commit()
-
-    return _writeback
-
-
 def make_reprice_target_resolver(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> RepriceTargetResolver:
@@ -385,7 +361,9 @@ def make_entry_window_reprice_writeback(
     """Return a reprice-writeback callable: open a fresh session + handle, run
     the non-terminal Phase-2 ``persist_entry_window_reprice``, and commit.
 
-    Sibling to :func:`make_entry_window_writeback` for the reprice path.
+    The reprice path keeps a between-invocations writeback (relocated to the
+    pipeline only when ALP-867 lands); the sibling terminal **cancel** path no
+    longer writes from the monitor at all (ALP-863).
     """
     invocation_id_provider = make_invocation_id_provider(session_factory)
 
@@ -434,7 +412,6 @@ def register_entry_window_watcher_task(
         broker_cancel=AlpacaEntryCancel(
             client_factory=client_factory, execution_config=execution_config
         ),
-        writeback=make_entry_window_writeback(session_factory),
     )
     reprice_resolver = make_reprice_target_resolver(session_factory)
     reprice_writeback = make_entry_window_reprice_writeback(session_factory)
@@ -474,7 +451,6 @@ __all__ = [
     "SqlPendingEntryBracketReader",
     "make_entry_cancel_target_resolver",
     "make_entry_window_reprice_writeback",
-    "make_entry_window_writeback",
     "make_reprice_target_resolver",
     "register_entry_window_watcher_task",
 ]

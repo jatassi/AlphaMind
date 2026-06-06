@@ -557,6 +557,19 @@ class SqlPortfolioStateRepository:
             )
 
     def get_portfolio_pnl_inputs(self) -> PortfolioPnLInputs:
+        """Portfolio-cumulative realized P&L, rolled up from the per-position field.
+
+        Deliberately sums ``positions.realized_pnl_to_date_usd`` over CLOSED
+        rows — the per-**position** grain — so positions with **no** thesis link
+        (DVN / manual-trade / broker-fact-with-no-Intent) are included in the
+        portfolio rollup. This is **not** the per-thesis ``thesis_pnl_ledger``
+        (log-derived, ADR-0005 invariant 3): that ledger answers thesis-level
+        attribution and structurally cannot cover non-thesis positions, so the
+        portfolio aggregate reads the per-position field instead. The two are
+        distinct grains, not a duplicated path — see
+        ``docs/design/05-execution-layer/broker-boundary-redesign.md`` § 4
+        invariant 3.
+        """
         with self._sync_session_factory() as session:
             stmt = select(PositionRow.realized_pnl_to_date_usd).where(
                 PositionRow.status == PositionStatus.CLOSED.value
@@ -624,10 +637,12 @@ class SqlPortfolioStateRepository:
 def _aggregate_pnl_inputs(realized_pnls: Sequence[float | None]) -> PortfolioPnLInputs:
     """Aggregate raw realized P/L from CLOSED-position rows.
 
-    Computes the cumulative total cleanly mappable from per-position
-    ``realized_pnl_to_date_usd``. The win-rate / profit-factor / per-window
-    splits remain ``None`` until the feedback-loop story populates a richer
-    aggregation surface.
+    Computes the cumulative total cleanly mappable from per-**position**
+    ``realized_pnl_to_date_usd`` — the rollup spans every CLOSED position,
+    including non-thesis ones, and is **not** derived from the per-thesis
+    ``thesis_pnl_ledger`` (see :meth:`get_portfolio_pnl_inputs`). The win-rate /
+    profit-factor / per-window splits remain ``None`` until the feedback-loop
+    story populates a richer aggregation surface.
     """
     cumulative = sum(pnl for pnl in realized_pnls if pnl is not None)
     return PortfolioPnLInputs(

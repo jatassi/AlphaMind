@@ -32,7 +32,11 @@ from alphamind.execution.account_activities.records import (
     TradeLeg,
 )
 from alphamind.execution.write_paths.thesis_pnl_ledger import rederive_thesis_pnl_ledger
-from alphamind.portfolio_state.records.positions import EquityPositionDetails
+from alphamind.portfolio_state.records.positions import (
+    Direction,
+    EquityPositionDetails,
+    LocateStatus,
+)
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.positions_codec import row_to_record
@@ -51,6 +55,16 @@ from tests.execution.corporate_actions._handler_substrate import (
 # The corporate-actions substrate seeds AAPL CALL, strike 150, exp 2026-09-18.
 _TXN = dt.datetime(2026, 9, 18, 20, 0, 0, tzinfo=dt.UTC)
 _OCC = "AAPL260918C00150000"
+
+
+def _borrow_resolver(_ticker: str) -> float | None:
+    """Invocation-scoped borrow-rate resolver — a flat 12%/yr for every ticker.
+
+    The poll path threads this to the assignment handler so a SHORT equity
+    delivery can stamp its short-only fields; the expiry and LONG-delivery paths
+    forward it but never consult it.
+    """
+    return 12.0
 
 
 async def _seed_open_option(
@@ -96,7 +110,9 @@ async def test_expiry_closes_option_and_books_negative_premium_on_the_log(
 
     ctx, handle = await open_handle(factory)
     try:
-        await integrate_lifecycle_event(handle, _expiry_event())
+        await integrate_lifecycle_event(
+            handle, _expiry_event(), borrow_cost_resolver=_borrow_resolver
+        )
     finally:
         await ctx.__aexit__(None, None, None)
 
@@ -137,9 +153,13 @@ async def test_re_polling_same_activity_does_not_double_book(
 
     ctx, handle = await open_handle(factory)
     try:
-        await integrate_lifecycle_event(handle, _expiry_event())
+        await integrate_lifecycle_event(
+            handle, _expiry_event(), borrow_cost_resolver=_borrow_resolver
+        )
         # Re-poll: same activity_id arrives again in the same transaction.
-        await integrate_lifecycle_event(handle, _expiry_event())
+        await integrate_lifecycle_event(
+            handle, _expiry_event(), borrow_cost_resolver=_borrow_resolver
+        )
     finally:
         await ctx.__aexit__(None, None, None)
 
@@ -197,7 +217,9 @@ async def test_repoll_closes_option_when_opexp_row_exists_but_option_still_open(
     # Re-poll the same expiry: the option is still OPEN, so the booking must run.
     ctx, handle = await open_handle(factory)
     try:
-        await integrate_lifecycle_event(handle, _expiry_event())
+        await integrate_lifecycle_event(
+            handle, _expiry_event(), borrow_cost_resolver=_borrow_resolver
+        )
     finally:
         await ctx.__aexit__(None, None, None)
 
@@ -224,9 +246,13 @@ async def test_repoll_after_clean_expiry_is_a_no_op(
 
     ctx, handle = await open_handle(factory)
     try:
-        await integrate_lifecycle_event(handle, _expiry_event())
+        await integrate_lifecycle_event(
+            handle, _expiry_event(), borrow_cost_resolver=_borrow_resolver
+        )
         # Re-poll after the option already closed: a clean no-op.
-        await integrate_lifecycle_event(handle, _expiry_event())
+        await integrate_lifecycle_event(
+            handle, _expiry_event(), borrow_cost_resolver=_borrow_resolver
+        )
     finally:
         await ctx.__aexit__(None, None, None)
 
@@ -265,7 +291,11 @@ async def test_assignment_opens_equity_at_strike_with_thesis_link(
 
     ctx, handle = await open_handle(factory)
     try:
-        await integrate_lifecycle_event(handle, _assignment_event(LifecycleActivityType.OPASN))
+        await integrate_lifecycle_event(
+            handle,
+            _assignment_event(LifecycleActivityType.OPASN),
+            borrow_cost_resolver=_borrow_resolver,
+        )
     finally:
         await ctx.__aexit__(None, None, None)
 
@@ -281,11 +311,18 @@ async def test_assignment_opens_equity_at_strike_with_thesis_link(
         equity = row_to_record(equities[0])
         assert equity.thesis_id == "thesis-1"
         assert equity.parent_position_id == "pos-1"
+        # A buy-side delivery → LONG equity; the four short-only fields stay None
+        # after the codec round-trip (guards against a LONG row decoding SHORT).
+        assert equity.direction is Direction.LONG
         details = equity.details
         assert isinstance(details, EquityPositionDetails)
         assert details.ticker == "AAPL"
         assert details.share_count == 500.0
         assert details.average_cost_basis_per_share == pytest.approx(150.0)
+        assert details.borrow_rate_pct is None
+        assert details.accrued_borrow_cost_usd is None
+        assert details.locate_status is None
+        assert details.margin_held_usd is None
 
         # Both the OPASN and its paired OPTRD landed in the event log, and BOTH
         # carry the resolved thesis/position attribution (the OPTRD row must not
@@ -318,7 +355,9 @@ async def test_assignment_stamps_equity_side_on_optrd_for_signed_fold(
     ctx, handle = await open_handle(factory)
     try:
         await integrate_lifecycle_event(
-            handle, _assignment_event(LifecycleActivityType.OPASN, side="buy")
+            handle,
+            _assignment_event(LifecycleActivityType.OPASN, side="buy"),
+            borrow_cost_resolver=_borrow_resolver,
         )
     finally:
         await ctx.__aexit__(None, None, None)
@@ -361,6 +400,91 @@ async def test_assignment_stamps_equity_side_on_optrd_for_signed_fold(
     assert ledger_record.cost_basis_usd == money("0")
 
 
+async def test_short_call_assignment_opens_short_equity_then_cover_realizes_pnl(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-862: a short-call assignment books a SHORT equity leg that PERSISTS, then covers.
+
+    A ``sell``-side delivery opens a SHORT equity position. Before this fix the
+    booking built an ``EquityPositionDetails`` with the four short-only fields
+    left ``None``, so ``PositionRecord.__post_init__`` rejected it and the whole
+    assignment aborted — a real broker short with no local Intent. Here the leg
+    persists with its borrow fields stamped from the invocation resolver, and a
+    subsequent buy-to-cover realizes the OPTRD-folded PnL through the derivation.
+    """
+    _engine, factory = db
+    await _seed_open_option(factory, contract_count=5.0, premium_paid_per_contract=250.0)
+
+    ctx, handle = await open_handle(factory)
+    try:
+        await integrate_lifecycle_event(
+            handle,
+            _assignment_event(LifecycleActivityType.OPASN, side="sell"),
+            borrow_cost_resolver=_borrow_resolver,
+        )
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        # The option closed; a SHORT equity leg opened AND persisted (the bug:
+        # the record previously rejected a SHORT leg with None short-only fields).
+        option = await sess.get(PositionRow, "pos-1")
+        assert option is not None
+        assert option.status == "CLOSED"
+        equities = (
+            (await sess.execute(select(PositionRow).where(PositionRow.status == "OPEN")))
+            .scalars()
+            .all()
+        )
+        assert len(equities) == 1
+        equity = row_to_record(equities[0])
+        assert equity.direction is Direction.SHORT
+        details = equity.details
+        assert isinstance(details, EquityPositionDetails)
+        assert details.share_count == pytest.approx(500.0)
+        assert details.average_cost_basis_per_share == pytest.approx(150.0)
+        # The four short-only fields are stamped — the record accepted the leg.
+        assert details.borrow_rate_pct == pytest.approx(12.0)
+        assert details.accrued_borrow_cost_usd == pytest.approx(0.0)
+        assert details.locate_status is LocateStatus.LOCATED
+        assert details.margin_held_usd == pytest.approx(500.0 * 150.0 * 0.50)
+
+        # The OPTRD stamps the short delivery side so the fold opens a -500 lot.
+        events = (await sess.execute(select(BrokerEventLogRow))).scalars().all()
+        by_type = {e.event_type: json.loads(e.raw_payload_json) for e in events}
+        assert by_type["OPTRD"]["equity_side"] == "sell"
+
+        # Seed a buy-to-cover FILL closing the short 500 @ 150: buy 500 @ 140
+        # → realizes (150-140)*500 = +5000 for the short; cover leaves zero basis.
+        sess.add(
+            BrokerEventLogRow(
+                event_key="fill:buy-cover-1",
+                event_type="FILL",
+                thesis_id="thesis-1",
+                invocation_id=INV_ID,
+                position_id="pos-1",
+                raw_payload_json=json.dumps(
+                    {
+                        "fill_price": 140.0,
+                        "fill_quantity": 500.0,
+                        "raw_event_payload": {"order": {"side": "buy"}},
+                    },
+                    sort_keys=True,
+                ),
+                broker_timestamp=_TXN + dt.timedelta(hours=1),
+                captured_at=_TXN + dt.timedelta(hours=1),
+            )
+        )
+        await sess.commit()
+
+    async with factory() as sess:
+        ledger_record = await rederive_thesis_pnl_ledger(sess, ThesisId("thesis-1"), None)
+        await sess.commit()
+    # -1250 (premium) + 5000 (short cover gain) = +3750; basis back to zero.
+    assert ledger_record.realized_pnl_usd == signed_money("3750.00")
+    assert ledger_record.cost_basis_usd == money("0")
+
+
 async def test_exercise_books_strike_pnl_and_opens_equity_leg(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
@@ -370,7 +494,11 @@ async def test_exercise_books_strike_pnl_and_opens_equity_leg(
 
     ctx, handle = await open_handle(factory)
     try:
-        await integrate_lifecycle_event(handle, _assignment_event(LifecycleActivityType.OPEXC))
+        await integrate_lifecycle_event(
+            handle,
+            _assignment_event(LifecycleActivityType.OPEXC),
+            borrow_cost_resolver=_borrow_resolver,
+        )
     finally:
         await ctx.__aexit__(None, None, None)
 
@@ -452,7 +580,11 @@ async def test_repoll_reappends_optrd_after_crash_window(
     # Re-poll the same assignment: the OPTRD must re-append (idempotent OPASN).
     ctx, handle = await open_handle(factory)
     try:
-        await integrate_lifecycle_event(handle, _assignment_event(LifecycleActivityType.OPASN))
+        await integrate_lifecycle_event(
+            handle,
+            _assignment_event(LifecycleActivityType.OPASN),
+            borrow_cost_resolver=_borrow_resolver,
+        )
     finally:
         await ctx.__aexit__(None, None, None)
 
@@ -502,6 +634,6 @@ async def test_assignment_without_paired_optrd_surfaces(
     ctx, handle = await open_handle(factory)
     try:
         with pytest.raises(ValueError, match="no paired OPTRD"):
-            await integrate_lifecycle_event(handle, unpaired)
+            await integrate_lifecycle_event(handle, unpaired, borrow_cost_resolver=_borrow_resolver)
     finally:
         await ctx.__aexit__(None, None, None)

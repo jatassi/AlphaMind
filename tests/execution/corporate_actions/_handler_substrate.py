@@ -455,12 +455,14 @@ def make_active_thesis(thesis_id: str = "thesis-1", position_id: str = "pos-1") 
     )
 
 
-def make_cash_ledger(current_cash_usd: float = 100_000.0) -> CashLedger:
+def make_cash_ledger(
+    current_cash_usd: float = 100_000.0, *, reserved_capital_usd: float = 0.0
+) -> CashLedger:
     return CashLedger(
         current_cash_usd=current_cash_usd,
         settled_cash_usd=current_cash_usd,
-        reserved_capital_usd=0.0,
-        available_buying_power_usd=current_cash_usd,
+        reserved_capital_usd=reserved_capital_usd,
+        available_buying_power_usd=current_cash_usd - reserved_capital_usd,
         margin_held_usd=0.0,
         unsettled_proceeds=(),
         cash_pct_of_portfolio=0.0,
@@ -562,11 +564,16 @@ async def seed_cash_ledger(
     factory: async_sessionmaker[AsyncSession],
     *,
     current_cash_usd: float = 100_000.0,
+    reserved_capital_usd: float = 0.0,
 ) -> None:
     async with factory() as sess:
         sess.add(
             cash_ledger_record_to_row(
-                make_cash_ledger(current_cash_usd=current_cash_usd), last_updated_at=NOW
+                make_cash_ledger(
+                    current_cash_usd=current_cash_usd,
+                    reserved_capital_usd=reserved_capital_usd,
+                ),
+                last_updated_at=NOW,
             )
         )
         await sess.commit()

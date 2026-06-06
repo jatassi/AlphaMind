@@ -15,6 +15,15 @@ calls this writer, so per-thesis PnL cannot be overwritten by a broker snapshot.
 
 Attribution is by ``thesis_id`` alone — the events carry the broker-carried link
 (ADR-0002), so there is no join to a lose-able ``orders`` table.
+
+This ledger is the per-**thesis** realized-PnL surface — it is **not** the
+portfolio-cumulative source. The portfolio rollup is the per-**position**
+``positions.realized_pnl_to_date_usd``, summed over CLOSED positions by
+``get_portfolio_pnl_inputs``, because the ledger structurally cannot cover
+positions with no thesis link (DVN / manual-trade / broker-fact-with-no-Intent).
+The two are distinct grains that fold the same economic events and agree for a
+thesis-linked position; they are not a duplicated path to deduplicate. See
+``docs/design/05-execution-layer/broker-boundary-redesign.md`` § 4 invariant 3.
 """
 
 from __future__ import annotations

@@ -573,6 +573,32 @@ class OpenCommand(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def _validate_options_entry_resting(self) -> OpenCommand:
+        # ALP-866 — an options OPEN submits the entry first, then the
+        # broker-enforced capital floor (ALP-856). A *market* entry can fill at
+        # the broker before/while the floor submits; if the floor then fails,
+        # the FL1 ``_cancel_live_entry`` is a no-op on the already-filled entry,
+        # leaving a live, floorless options position (the husk class the
+        # broker-boundary redesign targets). Constraining the entry to rest
+        # (limit / stop_limit) keeps it cancellable until the floor lands, so a
+        # market options entry is rejected at the command boundary — the single
+        # enforcement chokepoint (broker_dispatch / order_options are unchanged).
+        # The order_options ``market`` branch becomes unreachable for an options
+        # OPEN, but stays live for an options ADD (which carries no capital floor,
+        # so no fill-before-floor race) — it is not dead code. Equity OPENs are
+        # unaffected: the native bracket protects a market equity entry.
+        is_options = isinstance(self.instrument, OptionInstrument | StrategyInstrument)
+        if is_options and self.entry_order.type == "market":
+            raise ValueError(
+                "OpenCommand on an options instrument requires a resting "
+                "entry_order (limit / stop_limit), not market: a market options "
+                "entry can fill before the broker-enforced capital floor lands "
+                "(the fill-before-floor race, ALP-856), and a filled entry cannot "
+                "be cancelled if the floor submit fails"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_floor_below_outlay(self) -> OpenCommand:
         # The broker floor's per-contract stop price is
         # ``(dollar_value - max_loss) / (quantity * multiplier)`` (ALP-856 /

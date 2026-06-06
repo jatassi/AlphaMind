@@ -21,7 +21,12 @@ from alphamind.execution.broker_adapter.queries import ActivitySnapshot
 from alphamind.state.invocation_context.context import InvocationContext, InvocationHandle
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.positions import PositionRow
-from tests.execution.account_activities.test_handlers import _OCC, _TXN, _seed_open_option
+from tests.execution.account_activities.test_handlers import (
+    _OCC,
+    _TXN,
+    _borrow_resolver,
+    _seed_open_option,
+)
 from tests.execution.corporate_actions._handler_substrate import (
     make_invocation_record,
     open_handle,
@@ -94,7 +99,9 @@ async def test_poll_books_expiry_from_broker_stream(
 
     ctx, handle = await open_handle(factory)
     try:
-        result = await poll_account_activities(handle, queries=queries)
+        result = await poll_account_activities(
+            handle, queries=queries, borrow_cost_resolver=_borrow_resolver
+        )
     finally:
         await ctx.__aexit__(None, None, None)
 
@@ -128,7 +135,9 @@ async def test_poll_is_idempotent_across_two_runs(
     for run in range(2):
         ctx, handle = await _open_handle_with_id(factory, f"inv-poll-{run}")
         try:
-            await poll_account_activities(handle, queries=queries)
+            await poll_account_activities(
+                handle, queries=queries, borrow_cost_resolver=_borrow_resolver
+            )
         finally:
             await ctx.__aexit__(None, None, None)
 
