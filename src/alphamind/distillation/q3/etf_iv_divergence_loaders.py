@@ -23,11 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from alphamind.distillation.q3.atm_iv_baseline_loaders import _select_atm_iv_by_ts
-from alphamind.persistence.models import (
-    OptionsContracts,
-    OptionsContractSnapshots,
-    SectorClassification,
-)
+from alphamind.persistence.models import SectorClassification
 
 # Minimum sample count for a defined ``pstdev``. Mirrors the q12-pattern
 # definitional-base sum used elsewhere in q3 to avoid the no-magic-numbers
@@ -45,38 +41,18 @@ def _select_atm_iv_at(
 ) -> float | None:
     """Return the ATM-call IV at exactly ``as_of`` for ``underlying``.
 
-    "ATM" is the call whose strike is closest to the snapshot's
-    ``underlying_price``. Mirrors :func:`_select_atm_iv_history` for a
-    single point.
+    A single-instant view over the canonical :func:`_select_atm_iv_by_ts`
+    selector — "ATM" is the call whose strike is closest to the snapshot's
+    ``underlying_price``. Sharing the selector keeps the divergence numerator's
+    ETF IV and the baseline's ETF IV definitionally identical.
     """
-    stmt = (
-        select(
-            OptionsContractSnapshots.implied_volatility,
-            OptionsContractSnapshots.underlying_price,
-            OptionsContracts.strike_price,
-        )
-        .join(
-            OptionsContracts,
-            OptionsContracts.contract_ticker == OptionsContractSnapshots.contract_ticker,
-        )
-        .where(
-            OptionsContractSnapshots.underlying_ticker == underlying,
-            OptionsContracts.contract_type == "call",
-            OptionsContractSnapshots.snapshot_ts == as_of,
-            OptionsContractSnapshots.implied_volatility.isnot(None),
-        )
-    )
-    rows = session.execute(stmt).all()
-    best_iv: float | None = None
-    best_gap: float | None = None
-    for iv, underlying_price, strike in rows:
-        if iv is None or underlying_price is None or strike is None:
-            continue
-        gap = abs(float(strike) - float(underlying_price))
-        if best_gap is None or gap < best_gap:
-            best_iv = float(iv)
-            best_gap = gap
-    return best_iv
+    observation = _select_atm_iv_by_ts(
+        session,
+        ticker=underlying,
+        range_start=as_of,
+        range_end=as_of,
+    ).get(as_of)
+    return observation[0] if observation is not None else None
 
 
 def _volume_weighted_iv(observations: Iterable[tuple[float, float | None]]) -> float | None:
@@ -109,42 +85,21 @@ def _select_aggregate_single_name_iv(
 
     The weight is ``volume_today`` of the ATM call on each constituent.
     Tickers without a same-day snapshot are skipped. Returns ``None`` when
-    no constituent contributes — the divergence is undefined.
+    no constituent contributes — the divergence is undefined. Selects each
+    constituent's ATM observation through the same :func:`_select_atm_iv_by_ts`
+    selector and the same :func:`_volume_weighted_iv` reduction the trailing
+    baseline uses, so the numerator and its baseline cannot drift.
     """
     observations: list[tuple[float, float | None]] = []
     for ticker in tickers:
-        stmt = (
-            select(
-                OptionsContractSnapshots.implied_volatility,
-                OptionsContractSnapshots.underlying_price,
-                OptionsContractSnapshots.volume_today,
-                OptionsContracts.strike_price,
-            )
-            .join(
-                OptionsContracts,
-                OptionsContracts.contract_ticker == OptionsContractSnapshots.contract_ticker,
-            )
-            .where(
-                OptionsContractSnapshots.underlying_ticker == ticker,
-                OptionsContracts.contract_type == "call",
-                OptionsContractSnapshots.snapshot_ts == as_of,
-                OptionsContractSnapshots.implied_volatility.isnot(None),
-            )
-        )
-        best_iv: float | None = None
-        best_gap: float | None = None
-        best_volume: float | None = None
-        for iv, underlying_price, volume, strike in session.execute(stmt).all():
-            if iv is None or underlying_price is None or strike is None:
-                continue
-            gap = abs(float(strike) - float(underlying_price))
-            if best_gap is None or gap < best_gap:
-                best_iv = float(iv)
-                best_gap = gap
-                best_volume = float(volume) if volume is not None else None
-        if best_iv is None:
-            continue
-        observations.append((best_iv, best_volume))
+        observation = _select_atm_iv_by_ts(
+            session,
+            ticker=ticker,
+            range_start=as_of,
+            range_end=as_of,
+        ).get(as_of)
+        if observation is not None:
+            observations.append(observation)
     return _volume_weighted_iv(observations)
 
 
