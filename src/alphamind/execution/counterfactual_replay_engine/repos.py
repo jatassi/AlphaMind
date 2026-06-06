@@ -10,14 +10,40 @@ In-memory fakes are used in tests.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
 __all__ = [
     "BarRepository",
     "CorporateActionRepository",
+    "OhlcvBar",
     "OptionsSnapshotRepository",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class OhlcvBar:
+    """One underlying OHLCV bar the equity / option simulators walk.
+
+    Mirrors the subset of the ``ohlcv_bars`` columns the trigger walk consumes.
+    The OHLC fields carry the **unadjusted** prices: the replay window is short
+    enough that any corporate action in it is eligibility-excluded
+    (``CORPORATE_ACTION_IN_WINDOW``), so unadjusted prices are the prices a fill
+    would actually have crossed. The SQL-backed implementation (story 08) reads
+    the ``unadj_*`` columns into ``open`` / ``high`` / ``low`` / ``close``.
+
+    Both ``period_start`` and ``period_end`` are tz-aware UTC; the simulator
+    compares bar timestamps against the proposal's tz-aware deadlines.
+    """
+
+    period_start: datetime
+    period_end: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    adj_volume: int
 
 
 class BarRepository(Protocol):
@@ -37,6 +63,23 @@ class BarRepository(Protocol):
         instead; the SQL-backed implementation (story 08) must resolve that to
         the underlying ticker before querying ``ohlcv_bars``. Used to gate
         ``DATA_MISSING``; a ``False`` result records the replay as unevaluable.
+        """
+        ...
+
+    def load_bars(
+        self,
+        *,
+        ticker: str,
+        start: datetime,
+        end: datetime,
+    ) -> tuple[OhlcvBar, ...]:
+        """Return bars over [*start*, *end*] ordered ascending by ``period_start``.
+
+        Uses the finest available timeframe in the underlying ``ohlcv_bars``
+        table (per parent decision (D), 15-minute in production). The simulator
+        (stories 05a, 06, 07) walks the returned sequence; an empty tuple means
+        no bars in range (eligibility's ``has_bars_over_window`` gate has
+        already excluded that case for EVALUATED proposals).
         """
         ...
 

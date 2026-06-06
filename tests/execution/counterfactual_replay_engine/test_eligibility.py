@@ -22,6 +22,7 @@ from alphamind.execution.counterfactual_replay_engine.enums import (
     ReplayStatus,
     UnevaluableReason,
 )
+from alphamind.execution.counterfactual_replay_engine.repos import OhlcvBar
 
 # ---------------------------------------------------------------------------
 # Config fixture
@@ -41,10 +42,17 @@ class _AlwaysHasBars:
     def has_bars_over_window(self, ticker: str, start: datetime, end: datetime) -> bool:
         return True
 
+    def load_bars(self, *, ticker: str, start: datetime, end: datetime) -> tuple[OhlcvBar, ...]:
+        # Eligibility never loads bars; satisfy the widened Protocol (ALP-559).
+        return ()
+
 
 class _NeverHasBars:
     def has_bars_over_window(self, ticker: str, start: datetime, end: datetime) -> bool:
         return False
+
+    def load_bars(self, *, ticker: str, start: datetime, end: datetime) -> tuple[OhlcvBar, ...]:
+        return ()
 
 
 class _AlwaysHasSnapshot:
