@@ -32,11 +32,11 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from alphamind.portfolio_state.events import (
+    ActivityLogEntry,
     EmergencyInvocationRequestedDetail,
     EventGroup,
     EventSource,
     EventType,
-    encode_detail,
 )
 from alphamind.scheduler.control.verbs import (
     CooldownInfo,
@@ -44,8 +44,8 @@ from alphamind.scheduler.control.verbs import (
     UniverseValidationFailedError,
     UniverseValidationReportRecord,
 )
+from alphamind.state.invocation_context.activity_log import activity_log_entry_to_row
 from alphamind.state.invocation_id import mint_invocation_id
-from alphamind.state.tables.activity_log import ActivityLogRow
 from alphamind.state.tables.invocations import InvocationRow
 
 if TYPE_CHECKING:
@@ -182,19 +182,39 @@ class ActivityLogEmergencyTrigger:
         )
         entry_id = _build_operator_console_entry_id(now=now)
         async with self._session_factory() as session:
-            row = ActivityLogRow(
+            # The activity_log row is a context/correlation row: the receiver
+            # mints the requested invocation independently when it picks the
+            # row up. ``invocation_id`` is NOT-NULL with an FK to invocations,
+            # so bind it to the most-recently-started invocation — the same
+            # semantics the monitor's emergency emit uses.
+            invocation_id = (
+                await session.execute(
+                    select(InvocationRow.invocation_id)
+                    .order_by(InvocationRow.start_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if invocation_id is None:
+                msg = (
+                    "cannot queue an operator-console emergency request: no "
+                    "invocations row exists yet to satisfy the activity_log "
+                    "NOT-NULL invocation_id FK (the daemon has not run an "
+                    "invocation since boot)"
+                )
+                raise RuntimeError(msg)
+            entry = ActivityLogEntry(
                 entry_id=entry_id,
-                invocation_id=None,  # not bound to an invocation row yet
-                timestamp=now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                event_type=EventType.EMERGENCY_INVOCATION_REQUESTED.value,
-                event_group=EventGroup.RISK_AND_GUARDRAIL.value,
+                invocation_id=invocation_id,
+                timestamp=now,
+                event_type=EventType.EMERGENCY_INVOCATION_REQUESTED,
+                event_group=EventGroup.RISK_AND_GUARDRAIL,
                 position_id=None,
                 order_id=None,
                 thesis_id=None,
-                source=EventSource.GUARDRAIL_LAYER.value,
-                detail_json=encode_detail(detail),
+                source=EventSource.GUARDRAIL_LAYER,
+                detail=detail,
             )
-            session.add(row)
+            session.add(activity_log_entry_to_row(entry))
             await session.commit()
         log.info(
             "operator-console emergency request queued entry_id=%s reason=%r",
