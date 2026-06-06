@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from alphamind._kernel.ids import EnvelopeId, ReplayId
-from alphamind._kernel.money import Money, Price
+from alphamind._kernel.money import Money
 from alphamind.execution.counterfactual_replay_engine.enums import (
     Confidence,
     ExitLeg,
@@ -44,12 +44,12 @@ class CounterfactualReplayRecord:
     replay_status: ReplayStatus
     unevaluable_reason: UnevaluableReason | None
     entered: bool | None
-    entry_price: Price | None
+    entry_price: Money | None
     entry_timestamp: datetime | None
     entry_slippage: Money | None
     entry_fees: Money | None
     exit_leg: ExitLeg | None
-    exit_price: Price | None
+    exit_price: Money | None
     exit_timestamp: datetime | None
     exit_slippage: Money | None
     exit_fees: Money | None

@@ -1,44 +1,40 @@
 """PM-decision replay queue iterator (ALP-564, story 08 §2).
 
 :func:`iter_pending_replay_proposals` walks the activity log for PM decisions
-that are *due* for counterfactual replay and yields the typed entry, its
+whose verdict is counterfactually replayable and yields the typed entry, its
 ``PMDecisionDetail``, and the :class:`ReplayKind` the verdict implies. The
 driver (``engine.py``) consumes the iterator and replays each proposal.
 
-A PM decision is due when:
+A PM decision is yielded when:
 
 * ``event_type == PM_DECISION``;
 * ``verdict`` is ``REJECT`` (→ :attr:`ReplayKind.REJECTION`) or
   ``APPROVE_WITH_MODIFICATION`` (→ :attr:`ReplayKind.MODIFICATION_ORIGINAL_FORM`);
-* the proposal's evaluation horizon — ``compute_replay_window(...).end`` using
-  ``proposal_timestamp = entry.timestamp`` — has elapsed by ``as_of``;
 * (when ``since`` is given) ``entry.timestamp >= since``.
 
-The proposal timestamp is the PM-decision entry's timestamp (the originating
-Recommendation / assessment carries none); the proposal body is hydrated from
-the entry's ``PMDecisionDetail`` to compute its window.
+The queue does **not** hydrate the proposal body, and so does **not** gate on the
+evaluation horizon: hydration can raise :class:`ProposalHydrationError` on a
+malformed body, and doing it inside this generator would let that error escape
+the driver's per-proposal ``try``/``except`` and abort the whole batch. The
+driver (:func:`~.engine.replay_proposal`) hydrates each yielded entry once inside
+its own protected body and applies the not-yet-due gate there.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from alphamind.execution.counterfactual_replay_engine.eligibility import compute_replay_window
 from alphamind.execution.counterfactual_replay_engine.enums import ReplayKind
-from alphamind.execution.counterfactual_replay_engine.proposal_hydration import (
-    hydrate_originating_proposal,
-)
 from alphamind.portfolio_state.events.types import EventType, PMVerdict
 from alphamind.state.invocation_context.activity_log import activity_log_entry_from_row
 from alphamind.state.tables.activity_log import ActivityLogRow
 
 if TYPE_CHECKING:
-    from alphamind.config.models.replay_engine import CounterfactualReplayEngineConfig
     from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
     from alphamind.portfolio_state.events.pm_decision import PMDecisionDetail
 
@@ -53,18 +49,15 @@ _VERDICT_TO_KIND: dict[PMVerdict, ReplayKind] = {
 def iter_pending_replay_proposals(
     session: Session,
     *,
-    as_of: datetime,
     since: datetime | None = None,
-    config: CounterfactualReplayEngineConfig,
 ) -> Iterator[tuple[ActivityLogEntry, PMDecisionDetail, ReplayKind]]:
-    """Yield ``(entry, detail, replay_kind)`` for every PM decision due by *as_of*.
+    """Yield ``(entry, detail, replay_kind)`` for every replayable-verdict PM decision.
 
     Entries are returned in ascending ``entry_at`` order. Verdicts other than
     REJECT / APPROVE_WITH_MODIFICATION are skipped (their proposal was enacted,
-    so there is nothing counterfactual to replay). The horizon gate hydrates the
-    proposal to compute its replay window; a proposal whose window has not
-    elapsed by *as_of* is left for a later run (the engine is idempotent, so it
-    will be picked up once due).
+    so there is nothing counterfactual to replay). No hydration happens here —
+    the not-yet-due horizon gate is applied by the driver once it has hydrated
+    the proposal inside its protected body (see the module docstring).
     """
     stmt = select(ActivityLogRow).where(ActivityLogRow.event_type == EventType.PM_DECISION.value)
     if since is not None:
@@ -77,21 +70,19 @@ def iter_pending_replay_proposals(
         replay_kind = _VERDICT_TO_KIND.get(detail.verdict)
         if replay_kind is None:
             continue
-        proposal = hydrate_originating_proposal(detail)
-        _, window_end = compute_replay_window(
-            proposal, proposal_timestamp=entry.timestamp, config=config
-        )
-        if window_end > as_of:
-            continue
         yield entry, detail, replay_kind
 
 
 def _to_storage_iso(moment: datetime) -> str:
     """Render *moment* in the ``Z``-suffixed ISO form the activity-log writer uses.
 
-    ``activity_log_entry_to_row`` stores ``entry_at`` as ``isoformat()`` with the
-    ``+00:00`` offset rewritten to ``Z``; the ``since`` comparison is on the
-    stored TEXT, whose lexicographic order matches chronological order, so the
-    bound must be rendered the same way.
+    ``activity_log_entry_to_row`` (``_entry_at_to_iso``) stores ``entry_at`` as
+    ``isoformat()`` with the ``+00:00`` offset rewritten to ``Z``; the ``since``
+    comparison is on the stored TEXT, whose lexicographic order matches
+    chronological order only when both sides share that byte-for-byte format. A
+    naive or non-UTC ``since`` would render with a different (or absent) offset
+    and mis-order the comparison, so coerce to UTC first: a naive bound is
+    assumed UTC, an offset-aware one is converted.
     """
+    moment = moment.replace(tzinfo=UTC) if moment.tzinfo is None else moment.astimezone(UTC)
     return moment.isoformat().replace("+00:00", "Z")

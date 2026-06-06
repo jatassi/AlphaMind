@@ -20,7 +20,6 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-import alphamind.state.invocation_context  # noqa: F401 — break circular import seam
 from alphamind.execution.counterfactual_replay_engine.engine import (
     ReplayBatchResult,
     replay_pending_proposals,
@@ -113,6 +112,23 @@ def _seed_analyst_reject(session: Session, *, entry_id: str, envelope_id: str) -
         verdict=PMVerdict.REJECT,
         source_provenance_json={"source_provenance": "pm_analyst"},
         originating_proposal_json=analyst_equity_recommendation_json(),
+    )
+    add_pm_decision_row(session, entry)
+
+
+def _seed_unhydratable(session: Session, *, entry_id: str, envelope_id: str) -> None:
+    # A REJECT entry whose originating-proposal body is structurally invalid:
+    # hydrate_originating_proposal raises ProposalHydrationError. The queue does
+    # NOT hydrate, so the error surfaces inside replay_proposal — within the
+    # batch's per-proposal try/except — and is counted, not propagated.
+    entry = pm_decision_entry(
+        entry_id=entry_id,
+        invocation_id=_INVOCATION,
+        timestamp=_PROPOSAL_TS,
+        envelope_id=envelope_id,
+        verdict=PMVerdict.REJECT,
+        source_provenance_json={"source_provenance": "pm_analyst"},
+        originating_proposal_json={"not": "a valid recommendation"},
     )
     add_pm_decision_row(session, entry)
 
@@ -236,6 +252,7 @@ class TestBatchDriver:
         assert result.unevaluable_by_reason == {UnevaluableReason.DATA_MISSING.value: 1}
         assert result.error_count == 0
         assert result.skipped_idempotent == 0
+        assert result.skipped_not_due == 0
 
     def test_per_proposal_error_is_counted_not_propagated(self, session: Session) -> None:
         _seed_bars(session, "AAPL")
@@ -250,6 +267,42 @@ class TestBatchDriver:
         assert result.error_count == 1
         assert result.first_error is not None
         assert "ORD-MISSING" in result.first_error
+
+    def test_unhydratable_proposal_is_counted_batch_completes(self, session: Session) -> None:
+        # The hydration error is raised inside replay_proposal (the queue no
+        # longer hydrates), so it is caught by the batch try/except — counted in
+        # error_count, with the valid proposal still evaluated.
+        _seed_bars(session, "AAPL")
+        _seed_unhydratable(session, entry_id="e1", envelope_id="env-bad")
+        _seed_analyst_reject(session, entry_id="e2", envelope_id="env-eval")
+        session.flush()
+
+        result = _run_batch(session)
+
+        assert result.evaluated == 1
+        assert result.error_count == 1
+        assert result.first_error is not None
+
+    def test_not_yet_due_proposal_counted_separately_from_idempotent(
+        self, session: Session
+    ) -> None:
+        # as_of before the 24h analyst horizon: the proposal is not yet due. It
+        # must land in skipped_not_due, NOT skipped_idempotent.
+        _seed_bars(session, "AAPL")
+        _seed_analyst_reject(session, entry_id="e1", envelope_id="env-eval")
+        session.flush()
+
+        result = replay_pending_proposals(
+            session,
+            config=REPLAY_CONFIG,
+            paper_harness_config=_HARNESS,
+            risk_free_rate=_RFR,
+            as_of=_PROPOSAL_TS + timedelta(hours=1),
+        )
+
+        assert result.skipped_not_due == 1
+        assert result.skipped_idempotent == 0
+        assert result.evaluated == 0
 
     def test_unexpected_error_propagates(self, session: Session) -> None:
         # An option proposal that passes eligibility (one bar overlaps the window

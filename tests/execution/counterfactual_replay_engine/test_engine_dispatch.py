@@ -23,7 +23,6 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-import alphamind.state.invocation_context  # noqa: F401 — break circular import seam
 from alphamind._kernel.ids import (
     BracketId,
     EnvelopeId,
@@ -32,13 +31,15 @@ from alphamind._kernel.ids import (
     Symbol,
 )
 from alphamind._kernel.money import money, price
-from alphamind.execution.counterfactual_replay_engine.engine import replay_proposal
+from alphamind.execution.counterfactual_replay_engine.engine import (
+    ProposalReplayOutcome,
+    replay_proposal,
+)
 from alphamind.execution.counterfactual_replay_engine.enums import (
     ReplayKind,
     ReplayStatus,
     UnevaluableReason,
 )
-from alphamind.execution.counterfactual_replay_engine.records import CounterfactualReplayRecord
 from alphamind.persistence.models import (
     AssetUniverse,
     Base,
@@ -345,7 +346,7 @@ def _run(
     entry: ActivityLogEntry,
     detail: PMDecisionDetail,
     kind: ReplayKind,
-) -> CounterfactualReplayRecord | None:
+) -> ProposalReplayOutcome:
     return replay_proposal(
         session,
         entry,
@@ -370,7 +371,7 @@ class TestAnalystEquityDispatch:
         add_pm_decision_row(session, entry)
         session.flush()
 
-        record = _run(session, entry, entry.detail, ReplayKind.REJECTION)
+        record = _run(session, entry, entry.detail, ReplayKind.REJECTION).record
 
         assert record is not None
         assert record.replay_status is ReplayStatus.EVALUATED
@@ -380,7 +381,7 @@ class TestAnalystEquityDispatch:
         stored = load_counterfactual_replays_for_envelope(session, EnvelopeId("env-eq"))
         assert len(stored) == 1
 
-    def test_idempotency_hit_returns_none(self, session: Session) -> None:
+    def test_idempotency_hit_skips_as_idempotent(self, session: Session) -> None:
         _seed_bars(session, "AAPL", hit_high=201.0)
         entry = _pm_entry(
             envelope_id="env-eq",
@@ -392,9 +393,10 @@ class TestAnalystEquityDispatch:
         session.flush()
         first = _run(session, entry, entry.detail, ReplayKind.REJECTION)
         session.flush()
-        assert first is not None
+        assert first.record is not None
         second = _run(session, entry, entry.detail, ReplayKind.REJECTION)
-        assert second is None
+        assert second.record is None
+        assert second.skip_reason == "idempotent"
 
     def test_missing_bars_writes_unevaluable(self, session: Session) -> None:
         _ensure_underlying(session, "AAPL")  # no bars
@@ -406,10 +408,39 @@ class TestAnalystEquityDispatch:
         )
         add_pm_decision_row(session, entry)
         session.flush()
-        record = _run(session, entry, entry.detail, ReplayKind.REJECTION)
+        record = _run(session, entry, entry.detail, ReplayKind.REJECTION).record
         assert record is not None
         assert record.replay_status is ReplayStatus.UNEVALUABLE
         assert record.unevaluable_reason is UnevaluableReason.DATA_MISSING
+
+    def test_not_yet_due_skips_without_eligibility_queries(self, session: Session) -> None:
+        # No bars seeded: were the not-yet-due gate to run AFTER eligibility, the
+        # missing-bars rule would write an UNEVALUABLE record. The gate runs first,
+        # so the proposal is left for a later run with skip_reason "not_due".
+        _ensure_underlying(session, "AAPL")
+        entry = _pm_entry(
+            envelope_id="env-eq",
+            verdict=PMVerdict.REJECT,
+            source_provenance_json={"source_provenance": "pm_analyst"},
+            originating_proposal_json=analyst_equity_recommendation_json(),
+        )
+        add_pm_decision_row(session, entry)
+        session.flush()
+        # as_of is only 1h after the proposal; the 24h analyst window has not elapsed.
+        outcome = replay_proposal(
+            session,
+            entry,
+            entry.detail,
+            ReplayKind.REJECTION,
+            config=REPLAY_CONFIG,
+            paper_harness_config=_HARNESS,
+            risk_free_rate=_RFR,
+            as_of=_PROPOSAL_TS + timedelta(hours=1),
+        )
+        assert outcome.record is None
+        assert outcome.skip_reason == "not_due"
+        # Nothing was persisted.
+        assert len(load_counterfactual_replays_for_envelope(session, EnvelopeId("env-eq"))) == 0
 
 
 class TestAnalystOptionDispatch:
@@ -424,7 +455,7 @@ class TestAnalystOptionDispatch:
         )
         add_pm_decision_row(session, entry)
         session.flush()
-        record = _run(session, entry, entry.detail, ReplayKind.REJECTION)
+        record = _run(session, entry, entry.detail, ReplayKind.REJECTION).record
         assert record is not None
         assert record.replay_status is ReplayStatus.EVALUATED
 
@@ -439,7 +470,7 @@ class TestAnalystOptionDispatch:
         )
         add_pm_decision_row(session, entry)
         session.flush()
-        record = _run(session, entry, entry.detail, ReplayKind.REJECTION)
+        record = _run(session, entry, entry.detail, ReplayKind.REJECTION).record
         assert record is not None
         assert record.replay_status is ReplayStatus.UNEVALUABLE
         assert record.unevaluable_reason is UnevaluableReason.DATA_MISSING
@@ -461,7 +492,7 @@ class TestStrategistDispatch:
         )
         add_pm_decision_row(session, entry)
         session.flush()
-        record = _run(session, entry, entry.detail, ReplayKind.REJECTION)
+        record = _run(session, entry, entry.detail, ReplayKind.REJECTION).record
         assert record is not None
         assert record.replay_status is ReplayStatus.EVALUATED
         assert record.realized_pl is not None
@@ -487,6 +518,6 @@ class TestPendingOrderDispatch:
         )
         add_pm_decision_row(session, entry)
         session.flush()
-        record = _run(session, entry, entry.detail, ReplayKind.REJECTION)
+        record = _run(session, entry, entry.detail, ReplayKind.REJECTION).record
         assert record is not None
         assert record.replay_status is ReplayStatus.EVALUATED

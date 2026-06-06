@@ -16,7 +16,7 @@ pending-order cancel/modify replay would falsely read ``DATA_MISSING``.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -34,6 +34,26 @@ __all__ = ["SqlBarRepository", "SqlCorporateActionRepository"]
 
 _TIMEFRAME = "15min"
 """The finest production timeframe (parent decision (D)); the simulators walk it."""
+
+_BAR_INTERVAL = timedelta(minutes=15)
+"""The 15-minute bar period; ``start`` is floored to this boundary to find its bar."""
+
+
+def _floor_to_bar_start(moment: datetime) -> datetime:
+    """Floor *moment* to the 15-minute bar boundary that contains it.
+
+    The proposal-containing bar's ``period_start`` is the largest 15-minute
+    boundary ``<= moment``; flooring *moment* to it lets the load query select
+    that bar by ``period_start`` directly, independent of how ``period_end`` is
+    stored (the production polygon collector writes ``period_end == period_start``,
+    so an overlap predicate on ``period_end`` would drop the containing bar).
+    """
+    discard = timedelta(
+        minutes=moment.minute % 15,
+        seconds=moment.second,
+        microseconds=moment.microsecond,
+    )
+    return moment - discard
 
 
 def _parse_ts(raw: str) -> datetime:
@@ -113,14 +133,21 @@ class SqlBarRepository:
         """Return the 15-minute bars over [*start*, *end*] ascending by ``period_start``.
 
         The first returned bar is the one whose period *contains* *start*
-        (``period_start <= start < period_end``), not the first bar strictly
-        after *start*. The equity market-order entry simulator (story 05a) fills
-        at ``bars[1].open`` and documents ``bars[0]`` as the proposal-containing
-        bar (``window_start`` = the proposal timestamp); returning only bars
-        strictly after the proposal would put every market entry off by one bar.
-        Selecting on ``period_end > start`` (overlap) rather than
-        ``period_start >= start`` (strict-after) yields the proposal-containing
-        bar as ``bars[0]``.
+        (``period_start <= start < period_start + 15min``), not the first bar
+        strictly after *start*. The equity market-order entry simulator (story
+        05a) fills at ``bars[1].open`` and documents ``bars[0]`` as the
+        proposal-containing bar (``window_start`` = the proposal timestamp);
+        returning only bars strictly after the proposal would put every market
+        entry off by one bar.
+
+        The containing bar is selected by ``period_start`` alone: *start* is
+        floored to its 15-minute boundary, and the filter is
+        ``floored_start <= period_start <= end``. A ``period_end``-overlap
+        predicate cannot be used — the production polygon collector
+        (:mod:`alphamind.data_sources.polygon.equity`) writes
+        ``period_end == period_start`` for every bar, so ``period_end > start``
+        would degenerate to ``period_start > start`` and drop the
+        proposal-containing bar in prod.
 
         The ``unadj_*`` columns map onto the :class:`OhlcvBar` OHLC fields per
         that record's contract (the short replay window is corporate-action-free
@@ -128,12 +155,13 @@ class SqlBarRepository:
         *ticker* may be an underlying or a ``position_id`` (resolved first).
         """
         resolved = _resolve_underlying(self._session, ticker)
+        floored_start = _floor_to_bar_start(start)
         stmt = (
             select(OhlcvBars)
             .where(
                 OhlcvBars.ticker == resolved,
                 OhlcvBars.timeframe == _TIMEFRAME,
-                OhlcvBars.period_end > start.isoformat(),
+                OhlcvBars.period_start >= floored_start.isoformat(),
                 OhlcvBars.period_start <= end.isoformat(),
             )
             .order_by(OhlcvBars.period_start.asc())

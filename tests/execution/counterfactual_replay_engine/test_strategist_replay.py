@@ -18,7 +18,6 @@ from typing import Any, Literal
 
 import pytest
 
-import alphamind.state.invocation_context  # noqa: F401 — break state.repository circular import
 from alphamind._kernel.ids import BracketId, OrderId, PositionId, Symbol
 from alphamind._kernel.money import Money, money, price
 from alphamind.config.models.execution import FeeSchedule, OrderType, PaperHarness

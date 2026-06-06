@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 import pytest
 
 from alphamind._kernel.ids import EnvelopeId, ReplayId
-from alphamind._kernel.money import money, price, signed_money
+from alphamind._kernel.money import money, signed_money
 from alphamind.execution.counterfactual_replay_engine.enums import (
     Confidence,
     ExitLeg,
@@ -39,12 +39,12 @@ def _evaluated_entered() -> CounterfactualReplayRecord:
         replay_status=ReplayStatus.EVALUATED,
         unevaluable_reason=None,
         entered=True,
-        entry_price=price("100.00"),
+        entry_price=money("100.00"),
         entry_timestamp=_ENTRY_TS,
         entry_slippage=money("0.05"),
         entry_fees=money("0.01"),
         exit_leg=ExitLeg.TARGET_HIT,
-        exit_price=price("110.00"),
+        exit_price=money("110.00"),
         exit_timestamp=_EXIT_TS,
         exit_slippage=money("0.05"),
         exit_fees=money("0.01"),

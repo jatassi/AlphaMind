@@ -12,6 +12,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy.orm import Session
+
 from alphamind.config.models.execution import FeeSchedule, OrderType, PaperHarness
 from alphamind.config.models.replay_engine import CounterfactualReplayEngineConfig
 from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
@@ -189,7 +191,7 @@ def pm_decision_entry(
     )
 
 
-def seed_invocation(session: object, invocation_id: str) -> None:
+def seed_invocation(session: Session, invocation_id: str) -> None:
     """Seed the ``process_lifetimes`` + ``invocations`` FK parents for *invocation_id*.
 
     The activity_log → invocations FK is non-deferrable, so the invocation row
@@ -200,16 +202,16 @@ def seed_invocation(session: object, invocation_id: str) -> None:
     plr = stub_process_lifetime_row()
     # The process_lifetime parent is shared across invocations; merge so a second
     # seed_invocation call in the same session is a no-op rather than a PK clash.
-    session.merge(plr)  # type: ignore[attr-defined]
-    session.flush()  # type: ignore[attr-defined]
-    session.add(stub_invocation_row(invocation_id))  # type: ignore[attr-defined]
-    session.flush()  # type: ignore[attr-defined]
+    session.merge(plr)
+    session.flush()
+    session.add(stub_invocation_row(invocation_id))
+    session.flush()
 
 
-def add_pm_decision_row(session: object, entry: ActivityLogEntry) -> None:
+def add_pm_decision_row(session: Session, entry: ActivityLogEntry) -> None:
     """Persist a PM_DECISION entry as an ``ActivityLogRow``.
 
     The activity_log → invocations FK is satisfied by seeding the invocation row
     first (see :func:`seed_invocation`); callers do that once per invocation_id.
     """
-    session.add(activity_log_entry_to_row(entry))  # type: ignore[attr-defined]
+    session.add(activity_log_entry_to_row(entry))

@@ -23,7 +23,7 @@ from datetime import datetime
 from typing import Any
 
 from alphamind._kernel.ids import EnvelopeId, ReplayId
-from alphamind._kernel.money import Money, Price, money, price, signed_money
+from alphamind._kernel.money import Money, money, signed_money
 from alphamind.execution.counterfactual_replay_engine.enums import (
     Confidence,
     ExitLeg,
@@ -90,13 +90,11 @@ def decode_counterfactual_replay(row: Any) -> CounterfactualReplayRecord:
 
     # DecimalText columns hand back ``Decimal``; rewrap through the kernel
     # boundary constructors (matching fill_records_codec) so validation runs
-    # at the read boundary: ``price`` (strictly positive) for fill prices,
-    # ``money`` (non-negative) for fees, and ``signed_money`` for the
-    # sign-carrying quantities (slippage, realized P/L).
-    def _price(key: str) -> Price | None:
-        val = get(key)
-        return price(val) if val is not None else None
-
+    # at the read boundary: ``money`` (non-negative, may be zero) for the
+    # entry/exit premium-or-price fields and fees — an option premium is a
+    # legitimate ``Money(0)`` at/after expiry, so the strictly-positive ``price``
+    # constructor must not gate them — and ``signed_money`` for the sign-carrying
+    # quantities (slippage, realized P/L).
     def _money(key: str) -> Money | None:
         val = get(key)
         return money(val) if val is not None else None
@@ -127,12 +125,12 @@ def decode_counterfactual_replay(row: Any) -> CounterfactualReplayRecord:
             else None
         ),
         entered=get("entered"),
-        entry_price=_price("entry_price"),
+        entry_price=_money("entry_price"),
         entry_timestamp=_dt_from_iso(get("entry_timestamp")),
         entry_slippage=_signed_money("entry_slippage"),
         entry_fees=_money("entry_fees"),
         exit_leg=ExitLeg(exit_leg_raw) if exit_leg_raw is not None else None,
-        exit_price=_price("exit_price"),
+        exit_price=_money("exit_price"),
         exit_timestamp=_dt_from_iso(get("exit_timestamp")),
         exit_slippage=_signed_money("exit_slippage"),
         exit_fees=_money("exit_fees"),

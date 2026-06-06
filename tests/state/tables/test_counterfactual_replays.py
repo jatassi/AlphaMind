@@ -24,7 +24,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import EnvelopeId, ReplayId
-from alphamind._kernel.money import Money, money, price
+from alphamind._kernel.money import Money, money
 from alphamind.execution.counterfactual_replay_engine.enums import (
     Confidence,
     ExitLeg,
@@ -88,12 +88,12 @@ def _evaluated_equity_record(
         replay_status=ReplayStatus.EVALUATED,
         unevaluable_reason=None,
         entered=True,
-        entry_price=price(Decimal("100.50")),
+        entry_price=money(Decimal("100.50")),
         entry_timestamp=_TS,
         entry_slippage=money(Decimal("0.05")),
         entry_fees=money(Decimal("0.10")),
         exit_leg=ExitLeg.TARGET_HIT,
-        exit_price=price(Decimal("110.00")),
+        exit_price=money(Decimal("110.00")),
         exit_timestamp=_TS2,
         exit_slippage=money(Decimal("0.08")),
         exit_fees=money(Decimal("0.12")),
@@ -118,17 +118,54 @@ def _evaluated_strategist_close_record(
         replay_status=ReplayStatus.EVALUATED,
         unevaluable_reason=None,
         entered=True,
-        entry_price=price(Decimal("200.00")),
+        entry_price=money(Decimal("200.00")),
         entry_timestamp=_TS,
         entry_slippage=money(Decimal("0.15")),
         entry_fees=money(Decimal("0.20")),
         exit_leg=ExitLeg.STRATEGIST_CLOSE_AT_PROPOSAL,
-        exit_price=price(Decimal("195.00")),
+        exit_price=money(Decimal("195.00")),
         exit_timestamp=_TS2,
         exit_slippage=money(Decimal("0.12")),
         exit_fees=money(Decimal("0.18")),
         realized_pl=Money(Decimal("-5.65")),
         confidence=Confidence.MEDIUM,
+        replay_timestamp=_TS3,
+        replay_data_window_start=_TS,
+        replay_data_window_end=_TS2,
+        replay_engine_version="v2.0.0",
+    )
+
+
+def _zero_premium_option_record(
+    replay_id: str = "rpl-zero",
+    envelope_id: str = "ENV-REC-ZERO",
+) -> CounterfactualReplayRecord:
+    """Evaluated option whose exit premium is ``Money(0)`` — worthless OTM at expiry.
+
+    ``bs_price`` returns ``0.0`` for an option that finished out-of-the-money, so
+    ``option_replay`` records a legitimate ``money(0)`` exit premium. The record's
+    ``exit_price`` is :class:`Money`, not :class:`Price`, precisely so this maps
+    and round-trips through the codec without the strictly-positive ``price``
+    constructor rejecting the zero.
+    """
+    return CounterfactualReplayRecord(
+        replay_id=ReplayId(replay_id),
+        pm_decision_envelope_id=EnvelopeId(envelope_id),
+        replay_kind=ReplayKind.REJECTION,
+        replay_status=ReplayStatus.EVALUATED,
+        unevaluable_reason=None,
+        entered=True,
+        entry_price=money(Decimal("1.25")),
+        entry_timestamp=_TS,
+        entry_slippage=money(Decimal("0.01")),
+        entry_fees=money(Decimal("0.02")),
+        exit_leg=ExitLeg.TIME_STOP_FIRED,
+        exit_price=money(Decimal(0)),
+        exit_timestamp=_TS2,
+        exit_slippage=money(Decimal(0)),
+        exit_fees=money(Decimal(0)),
+        realized_pl=Money(Decimal("-1.28")),
+        confidence=Confidence.HIGH,
         replay_timestamp=_TS3,
         replay_data_window_start=_TS,
         replay_data_window_end=_TS2,
@@ -324,6 +361,20 @@ class TestCodecRoundTrips:
         decoded = decode_counterfactual_replay(encoded)
         assert decoded == record
 
+    def test_zero_premium_option_exit_round_trip(self) -> None:
+        """A worthless ``Money(0)`` option exit premium maps + round-trips, no crash.
+
+        Regression: ``exit_price`` typed ``Price | None`` + decoded via the
+        strictly-positive ``price`` constructor crashed every option replay that
+        finished OTM at expiry (``bs_price`` → ``0.0`` → ``money(0)``).
+        """
+        record = _zero_premium_option_record()
+        encoded = encode_counterfactual_replay(record)
+        assert encoded["exit_price"] == Decimal(0)
+        decoded = decode_counterfactual_replay(encoded)
+        assert decoded == record
+        assert decoded.exit_price == money(Decimal(0))
+
     def test_unevaluable_round_trip(self) -> None:
         record = _unevaluable_record()
         encoded = encode_counterfactual_replay(record)
@@ -363,12 +414,12 @@ class TestCodecRoundTrips:
                 replay_status=ReplayStatus.EVALUATED,
                 unevaluable_reason=None,
                 entered=True,
-                entry_price=price(Decimal("100.00")),
+                entry_price=money(Decimal("100.00")),
                 entry_timestamp=_TS,
                 entry_slippage=money(Decimal("0.01")),
                 entry_fees=money(Decimal("0.02")),
                 exit_leg=leg,
-                exit_price=price(Decimal("105.00")),
+                exit_price=money(Decimal("105.00")),
                 exit_timestamp=_TS2,
                 exit_slippage=money(Decimal("0.01")),
                 exit_fees=money(Decimal("0.02")),

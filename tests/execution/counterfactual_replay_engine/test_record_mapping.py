@@ -214,7 +214,7 @@ class TestOptionMapping:
         )
         assert record.replay_status is ReplayStatus.EVALUATED
         assert record.entered is True
-        assert record.entry_price == price("5.00")
+        assert record.entry_price == money("5.00")
         assert record.realized_pl == signed_money("294.86")
         assert record.confidence is Confidence.HIGH
 
@@ -243,7 +243,7 @@ class TestStrategistMapping:
         )
         assert record.replay_status is ReplayStatus.EVALUATED
         assert record.exit_leg is ExitLeg.STRATEGIST_CLOSE_AT_PROPOSAL
-        assert record.entry_price == price("100.00")
+        assert record.entry_price == money("100.00")
         assert record.realized_pl == signed_money("499.94")
 
     def test_data_missing_maps_to_unevaluable(self) -> None:

@@ -4,12 +4,13 @@ The imperative shell that composes the already-built pure replay primitives
 against a production SQLAlchemy ``Session``:
 
 * :func:`replay_proposal` — replays one PM decision end-to-end (idempotency →
-  hydrate → eligibility → route → map → persist), returning the written
-  ``CounterfactualReplayRecord`` or ``None`` on an idempotency hit.
-* :func:`replay_pending_proposals` — walks the due-proposal queue, replays each,
-  folds per-reason counts into a frozen :class:`ReplayBatchResult`, and catches
-  the three typed per-proposal errors so one malformed proposal never aborts the
-  batch.
+  hydrate → not-yet-due gate → eligibility → route → map → persist), returning a
+  :class:`ProposalReplayOutcome` that carries the written record or the reason it
+  was skipped (idempotency hit, or evaluation horizon not yet elapsed).
+* :func:`replay_pending_proposals` — walks the replayable-verdict queue, replays
+  each, folds per-reason counts into a frozen :class:`ReplayBatchResult`, and
+  catches the three typed per-proposal errors so one malformed proposal never
+  aborts the batch.
 
 The driver has no I/O concern beyond the session and the config: ADV /
 realized-volatility are passed as ``None`` (the paper-harness primitive degrades
@@ -30,7 +31,10 @@ from sqlalchemy.orm import Session
 
 from alphamind.decision.analyst.models import InstrumentOption, Recommendation
 from alphamind.decision.strategist.models import PendingOrderAssessment, PositionAssessment
-from alphamind.execution.counterfactual_replay_engine.eligibility import check_eligibility
+from alphamind.execution.counterfactual_replay_engine.eligibility import (
+    check_eligibility,
+    compute_replay_window,
+)
 from alphamind.execution.counterfactual_replay_engine.enums import ReplayKind, ReplayStatus
 from alphamind.execution.counterfactual_replay_engine.equity_replay import replay_equity_proposal
 from alphamind.execution.counterfactual_replay_engine.iv_lookup import (
@@ -85,10 +89,15 @@ if TYPE_CHECKING:
 
 __all__ = [
     "OriginatingProposalLookupError",
+    "ProposalReplayOutcome",
     "ReplayBatchResult",
     "replay_pending_proposals",
     "replay_proposal",
 ]
+
+# replay_proposal skip reasons — distinguishing them keeps the batch counters
+# accurate (an already-recorded replay vs one whose horizon has not yet elapsed).
+SkipReason = Literal["idempotent", "not_due"]
 
 # 15-minute bars: consecutive bars are 900s apart. A larger gap is a coverage hole.
 _BAR_INTERVAL_SECONDS = 900.0
@@ -120,18 +129,38 @@ class _ReplayInputs:
 
 
 @dataclass(frozen=True, slots=True)
+class ProposalReplayOutcome:
+    """The outcome of one :func:`replay_proposal` call.
+
+    Exactly one of the two is set: ``record`` carries the written
+    ``CounterfactualReplayRecord`` (EVALUATED or UNEVALUABLE), or ``skip_reason``
+    names why nothing was written — ``"idempotent"`` (the ``(envelope, kind)``
+    replay already exists) or ``"not_due"`` (the proposal's evaluation horizon has
+    not elapsed by ``as_of``, so a later run will pick it up). The batch driver
+    reads ``skip_reason`` to keep its skip counters distinct.
+    """
+
+    record: CounterfactualReplayRecord | None
+    skip_reason: SkipReason | None
+
+
+@dataclass(frozen=True, slots=True)
 class ReplayBatchResult:
     """The roll-up a :func:`replay_pending_proposals` run returns.
 
     ``unevaluable_by_reason`` keys are the :class:`UnevaluableReason` *values*
-    (the persisted strings). ``error_count`` / ``first_error`` capture the typed
-    per-proposal failures the batch swallowed (a malformed proposal must not
-    abort the run); ``first_error`` is the message of the first one for triage.
+    (the persisted strings). ``skipped_idempotent`` counts replays already
+    recorded; ``skipped_not_due`` counts proposals whose evaluation horizon has
+    not yet elapsed (left for a later run). ``error_count`` / ``first_error``
+    capture the typed per-proposal failures the batch swallowed (a malformed
+    proposal must not abort the run); ``first_error`` is the message of the first
+    one for triage.
     """
 
     evaluated: int
     unevaluable_by_reason: dict[str, int]
     skipped_idempotent: int
+    skipped_not_due: int
     error_count: int
     first_error: str | None
 
@@ -146,21 +175,26 @@ def replay_proposal(
     paper_harness_config: PaperHarness,
     risk_free_rate: float,
     as_of: datetime,
-) -> CounterfactualReplayRecord | None:
+) -> ProposalReplayOutcome:
     """Replay one PM decision and persist a ``CounterfactualReplayRecord``.
 
-    Returns ``None`` when ``(envelope_id, replay_kind)`` is already recorded
-    (idempotency) or when the proposal's evaluation horizon has not elapsed by
-    ``as_of`` (not yet due). Otherwise hydrates the proposal, runs the Step-1
-    eligibility gate (writing an UNEVALUABLE record and returning on a fail), then
-    routes to the equity / option / strategist replay path, maps the result to a
-    record, persists it, and returns it. The proposal timestamp threaded into
-    eligibility + window + position-state is ``entry.timestamp`` (the proposal
-    carries none); ``as_of`` is the batch "now" the horizon is gated against.
+    Returns a :class:`ProposalReplayOutcome`. It carries ``skip_reason
+    == "idempotent"`` when ``(envelope_id, replay_kind)`` is already recorded,
+    and ``skip_reason == "not_due"`` when the proposal's evaluation horizon has
+    not elapsed by ``as_of`` — the not-yet-due gate runs **before** the eligibility
+    bar/IV/CA queries so an un-due proposal does not pay for them. Otherwise it
+    carries the written ``record``: the proposal is hydrated once here (the queue
+    yields un-hydrated entries so a malformed body's ``ProposalHydrationError``
+    surfaces inside the batch's per-proposal ``try``/``except`` rather than
+    aborting it), the Step-1 eligibility gate runs (writing an UNEVALUABLE record
+    on a fail), then the equity / option / strategist replay path runs, maps to a
+    record, and persists it. The proposal timestamp threaded into window +
+    eligibility + position-state is ``entry.timestamp`` (the proposal carries
+    none); ``as_of`` is the "now" the horizon is gated against.
     """
     envelope_id = _envelope_id(detail)
     if _already_recorded(session, envelope_id, replay_kind):
-        return None
+        return ProposalReplayOutcome(record=None, skip_reason="idempotent")
 
     inputs = _ReplayInputs(
         config=config,
@@ -169,6 +203,17 @@ def replay_proposal(
         as_of=as_of,
     )
     proposal = hydrate_originating_proposal(detail)
+
+    # Not-yet-due gate, before the expensive eligibility queries. The window is
+    # pure over the hydrated proposal; a proposal whose horizon has not elapsed by
+    # ``as_of`` is left for a later run (the engine is idempotent) rather than
+    # writing a half-formed counterfactual the operator would have to purge.
+    _, due_window_end = compute_replay_window(
+        proposal, proposal_timestamp=entry.timestamp, config=config
+    )
+    if due_window_end > inputs.as_of:
+        return ProposalReplayOutcome(record=None, skip_reason="not_due")
+
     bar_repo = SqlBarRepository(session)
     options_repo = SqlOptionsSnapshotRepository(session)
     corporate_action_repo = SqlCorporateActionRepository(session)
@@ -183,17 +228,11 @@ def replay_proposal(
     )
     if status is ReplayStatus.UNEVALUABLE:
         assert reason is not None
-        return write_unevaluable_record(session, envelope_id, replay_kind, reason)
+        record = write_unevaluable_record(session, envelope_id, replay_kind, reason)
+        return ProposalReplayOutcome(record=record, skip_reason=None)
 
     assert window_start is not None
     assert window_end is not None
-    # The evaluation horizon must have elapsed by ``as_of``. The queue gates this
-    # for batch runs, but a direct (CLI single-proposal) call must not replay an
-    # un-settled window — skip it, same as an idempotency hit, rather than write a
-    # half-formed counterfactual the operator would have to purge.
-    if window_end > inputs.as_of:
-        return None
-
     bars = bar_repo.load_bars(ticker=_repo_key(proposal), start=window_start, end=window_end)
     ctx = MappingContext(
         envelope_id=envelope_id,
@@ -215,7 +254,7 @@ def replay_proposal(
         proposal_timestamp=entry.timestamp,
     )
     insert_counterfactual_replay(session, record)
-    return record
+    return ProposalReplayOutcome(record=record, skip_reason=None)
 
 
 def replay_pending_proposals(
@@ -227,25 +266,28 @@ def replay_pending_proposals(
     as_of: datetime,
     since: datetime | None = None,
 ) -> ReplayBatchResult:
-    """Replay every due PM decision, accumulating per-reason counts.
+    """Replay every replayable-verdict PM decision, accumulating per-reason counts.
 
-    Per-proposal :class:`ProposalHydrationError`, :class:`PositionStateNotFoundError`,
-    and :class:`OriginatingProposalLookupError` are caught, counted, and skipped
-    so one malformed proposal never aborts the batch (design § Activation). Any
-    other exception propagates — it signals infrastructure failure, not a
-    per-proposal contract violation.
+    The queue yields verdict + ``since``-filtered entries without hydrating them;
+    each is hydrated once inside :func:`replay_proposal`'s protected body, so a
+    malformed proposal's :class:`ProposalHydrationError` is caught here (with
+    :class:`PositionStateNotFoundError` and :class:`OriginatingProposalLookupError`)
+    and counted in ``error_count`` rather than aborting the batch (design
+    § Activation). A not-yet-due proposal is counted in ``skipped_not_due`` (its
+    horizon has not elapsed by ``as_of``); an already-recorded one in
+    ``skipped_idempotent``. Any other exception propagates — it signals
+    infrastructure failure, not a per-proposal contract violation.
     """
     evaluated = 0
     unevaluable_by_reason: dict[str, int] = {}
     skipped_idempotent = 0
+    skipped_not_due = 0
     error_count = 0
     first_error: str | None = None
 
-    for entry, detail, replay_kind in iter_pending_replay_proposals(
-        session, as_of=as_of, since=since, config=config
-    ):
+    for entry, detail, replay_kind in iter_pending_replay_proposals(session, since=since):
         try:
-            record = replay_proposal(
+            outcome = replay_proposal(
                 session,
                 entry,
                 detail,
@@ -265,8 +307,12 @@ def replay_pending_proposals(
                 first_error = str(exc)
             continue
 
+        record = outcome.record
         if record is None:
-            skipped_idempotent += 1
+            if outcome.skip_reason == "not_due":
+                skipped_not_due += 1
+            else:
+                skipped_idempotent += 1
         elif record.replay_status is ReplayStatus.UNEVALUABLE:
             assert record.unevaluable_reason is not None
             key = record.unevaluable_reason.value
@@ -278,6 +324,7 @@ def replay_pending_proposals(
         evaluated=evaluated,
         unevaluable_by_reason=unevaluable_by_reason,
         skipped_idempotent=skipped_idempotent,
+        skipped_not_due=skipped_not_due,
         error_count=error_count,
         first_error=first_error,
     )

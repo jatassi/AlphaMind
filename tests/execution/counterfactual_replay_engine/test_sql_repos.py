@@ -24,7 +24,6 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-import alphamind.state.invocation_context  # noqa: F401 — break circular import seam
 from alphamind._kernel.ids import PositionId, Symbol
 from alphamind._kernel.money import money, price
 from alphamind.execution.counterfactual_replay_engine.sql_repos import (
@@ -98,6 +97,19 @@ def _bar(ticker: str, period_start: datetime, *, open_: float) -> OhlcvBars:
     )
 
 
+def _prod_bar(ticker: str, period_start: datetime, *, open_: float) -> OhlcvBars:
+    """A bar shaped like the production polygon collector writes: ``period_end == period_start``.
+
+    The collector (``data_sources.polygon.equity``) writes ``period_end =
+    period_start`` for every 15-minute bar, so a ``period_end``-overlap predicate
+    degenerates and drops the proposal-containing bar. Seeding with this shape
+    exercises ``load_bars`` against the real on-disk format.
+    """
+    bar = _bar(ticker, period_start, open_=open_)
+    bar.period_end = bar.period_start
+    return bar
+
+
 def _equity_position(session: Session, *, position_id: str, ticker: str) -> None:
     record = PositionRecord(
         position_id=PositionId(position_id),
@@ -168,6 +180,27 @@ class TestSqlBarRepository:
         # unadj_* columns map onto the OHLC fields (adj_* are decoys).
         assert bars[0].open == 100.0
         assert bars[0].adj_volume == 10_000
+
+    def test_load_bars_containing_bar_first_with_prod_period_end(self, session: Session) -> None:
+        # Production shape: period_end == period_start. A period_end-overlap
+        # predicate degenerates to period_start > start and DROPS the
+        # proposal-containing 14:00 bar, putting every market entry one bar late.
+        _ensure_underlying(session, "AAPL")
+        session.add(_prod_bar("AAPL", datetime(2026, 6, 1, 13, 45, tzinfo=UTC), open_=99.0))
+        session.add(_prod_bar("AAPL", datetime(2026, 6, 1, 14, 0, tzinfo=UTC), open_=100.0))
+        session.add(_prod_bar("AAPL", datetime(2026, 6, 1, 14, 15, tzinfo=UTC), open_=101.0))
+        session.flush()
+
+        # _WINDOW_START is 14:07 (mid the 14:00 bar).
+        bars = SqlBarRepository(session).load_bars(
+            ticker="AAPL", start=_WINDOW_START, end=_WINDOW_END
+        )
+
+        # bars[0] is the proposal-containing 14:00 bar, NOT the 13:45 bar and
+        # NOT the strictly-after 14:15 bar — even though period_end == period_start.
+        assert bars[0].period_start == datetime(2026, 6, 1, 14, 0, tzinfo=UTC)
+        assert bars[0].open == 100.0
+        assert bars[1].period_start == datetime(2026, 6, 1, 14, 15, tzinfo=UTC)
 
     def test_has_bars_over_window_true_for_underlying(self, session: Session) -> None:
         _ensure_underlying(session, "AAPL")

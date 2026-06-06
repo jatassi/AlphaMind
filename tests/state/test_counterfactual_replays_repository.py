@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 import alphamind.state.invocation_context  # noqa: F401 — break circular import seam
 from alphamind._kernel.ids import EnvelopeId, ReplayId
-from alphamind._kernel.money import Money, money, price
+from alphamind._kernel.money import Money, money
 from alphamind.execution.counterfactual_replay_engine.enums import (
     Confidence,
     ExitLeg,
@@ -59,12 +59,12 @@ def _evaluated_record(
         replay_status=ReplayStatus.EVALUATED,
         unevaluable_reason=None,
         entered=True,
-        entry_price=price(Decimal("100.00")),
+        entry_price=money(Decimal("100.00")),
         entry_timestamp=_TS,
         entry_slippage=money(Decimal("0.05")),
         entry_fees=money(Decimal("0.10")),
         exit_leg=ExitLeg.TARGET_HIT,
-        exit_price=price(Decimal("110.00")),
+        exit_price=money(Decimal("110.00")),
         exit_timestamp=_TS2,
         exit_slippage=money(Decimal("0.08")),
         exit_fees=money(Decimal("0.12")),

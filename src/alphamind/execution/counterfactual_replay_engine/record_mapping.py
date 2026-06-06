@@ -20,11 +20,11 @@ functions produce conforming inputs):
 * **EVALUATED** — ``confidence`` is stamped and ``replay_engine_version`` is the
   ``"v2"`` constant from :mod:`.confidence`.
 
-Option premium fields on the result are :class:`Money` (a worthless option is a
-legitimate zero premium); the record's ``entry_price`` / ``exit_price`` are
-:class:`Price`. The conversion uses :func:`price`, matching the codec's decode
-(``price(...)``); an option's entry premium is BS-positive, so the conversion is
-safe in practice.
+The record's ``entry_price`` / ``exit_price`` are :class:`Money` (non-negative,
+may be zero). Option premium fields on the result are already :class:`Money` (a
+worthless option at/after expiry is a legitimate zero premium) and pass straight
+through; the equity result's :class:`Price` fields are widened to :class:`Money`
+(a price is a non-negative money) via :func:`money`.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 from alphamind._kernel.ids import EnvelopeId, ReplayId
-from alphamind._kernel.money import Money, Price, price
+from alphamind._kernel.money import Money, Price, money
 from alphamind.execution.counterfactual_replay_engine.confidence import (
     ConfidenceSignals,
     classify_confidence,
@@ -129,27 +129,28 @@ def unevaluable_record(
     )
 
 
-def _money_to_price(value: Money | None) -> Price | None:
-    """Re-wrap a :class:`Money` premium as :class:`Price` for the record fields."""
-    return None if value is None else price(value)
+def _price_to_money(value: Price | None) -> Money | None:
+    """Widen an equity :class:`Price` field to :class:`Money` (a price is non-negative)."""
+    return None if value is None else money(value)
 
 
 @dataclass(frozen=True, slots=True)
 class _EvaluatedOutcome:
     """The entry/exit outcome fields shared by all three result shapes.
 
-    Each public mapping function normalises its native result (widening the
-    option / strategist :class:`Money` premiums to :class:`Price`) into this one
-    shape so :func:`_evaluated_record` builds the record from a single bundle.
+    Each public mapping function normalises its native result into this one
+    shape — the option / strategist :class:`Money` premiums pass through, the
+    equity :class:`Price` fields are widened to :class:`Money` — so
+    :func:`_evaluated_record` builds the record from a single bundle.
     """
 
     entered: bool
-    entry_price: Price | None
+    entry_price: Money | None
     entry_timestamp: datetime | None
     entry_slippage: Money | None
     entry_fees: Money | None
     exit_leg: ExitLeg | None
-    exit_price: Price | None
+    exit_price: Money | None
     exit_timestamp: datetime | None
     exit_slippage: Money | None
     exit_fees: Money | None
@@ -204,12 +205,12 @@ def record_from_equity_result(
     )
     outcome = _EvaluatedOutcome(
         entered=result.entered,
-        entry_price=result.entry_price,
+        entry_price=_price_to_money(result.entry_price),
         entry_timestamp=result.entry_timestamp,
         entry_slippage=result.entry_slippage,
         entry_fees=result.entry_fees,
         exit_leg=result.exit_leg,
-        exit_price=result.exit_price,
+        exit_price=_price_to_money(result.exit_price),
         exit_timestamp=result.exit_timestamp,
         exit_slippage=result.exit_slippage,
         exit_fees=result.exit_fees,
@@ -248,12 +249,12 @@ def record_from_option_result(
     )
     outcome = _EvaluatedOutcome(
         entered=result.entered,
-        entry_price=_money_to_price(result.entry_price),
+        entry_price=result.entry_price,
         entry_timestamp=result.entry_timestamp,
         entry_slippage=result.entry_slippage,
         entry_fees=result.entry_fees,
         exit_leg=result.exit_leg,
-        exit_price=_money_to_price(result.exit_price),
+        exit_price=result.exit_price,
         exit_timestamp=result.exit_timestamp,
         exit_slippage=result.exit_slippage,
         exit_fees=result.exit_fees,
@@ -295,12 +296,12 @@ def record_from_strategist_result(
     )
     outcome = _EvaluatedOutcome(
         entered=result.entered,
-        entry_price=_money_to_price(result.entry_price),
+        entry_price=result.entry_price,
         entry_timestamp=result.entry_timestamp,
         entry_slippage=result.entry_slippage,
         entry_fees=result.entry_fees,
         exit_leg=result.exit_leg,
-        exit_price=_money_to_price(result.exit_price),
+        exit_price=result.exit_price,
         exit_timestamp=result.exit_timestamp,
         exit_slippage=result.exit_slippage,
         exit_fees=result.exit_fees,
