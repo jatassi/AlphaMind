@@ -304,6 +304,49 @@ class TestLoadPositionStateAt:
         assert snap.average_cost_basis == price("110")
         assert snap.opened_at == _T0
 
+    def test_pre_as_of_reduce_does_not_pollute_basis(self, session: Session) -> None:
+        # Entry 100@100 then a partial REDUCE of 40 @ an exit price of 130, both
+        # before as_of. The reduce lands in execution_history as a positive 40,
+        # so a naive fold would overstate net (100+40=140) and pollute the basis
+        # with the 130 exit price. The corrected fold nets the reduce out (60 net)
+        # and keeps the basis at the entry-only weighted average (100).
+        record = _equity_position(
+            position_id="POS-REDUCE",
+            direction=Direction.LONG,
+            share_count=60.0,  # current net after the reduce: 100 - 40
+            avg_cost=100.0,
+            fills=(_equity_fill(_T0, 100.0, 100.0), _equity_fill(_T1, 130.0, 40.0)),
+        )
+        _persist_position(session, record)
+        session.flush()
+
+        snap = load_position_state_at(session, position_id=PositionId("POS-REDUCE"), as_of=_AS_OF)
+
+        assert snap.net_quantity_as_of == 60.0
+        assert snap.average_cost_basis == price("100")
+        assert snap.opened_at == _T0
+
+    def test_short_pre_as_of_reduce_nets_signed(self, session: Session) -> None:
+        # SHORT entry 30 @ 50, then a partial cover (reduce) of 10 @ 45, both
+        # before as_of. Net must be signed negative (-20) and the basis must stay
+        # at the entry premium (50), uncontaminated by the 45 cover price.
+        record = _equity_position(
+            position_id="POS-SHORT-REDUCE",
+            direction=Direction.SHORT,
+            share_count=20.0,  # current net after the cover: 30 - 10
+            avg_cost=50.0,
+            fills=(_equity_fill(_T0, 50.0, 30.0), _equity_fill(_T1, 45.0, 10.0)),
+        )
+        _persist_position(session, record)
+        session.flush()
+
+        snap = load_position_state_at(
+            session, position_id=PositionId("POS-SHORT-REDUCE"), as_of=_AS_OF
+        )
+
+        assert snap.net_quantity_as_of == -20.0
+        assert snap.average_cost_basis == price("50")
+
     def test_fill_after_as_of_is_excluded(self, session: Session) -> None:
         # Second fill is AFTER as_of → only the first 50@100 counts.
         record = _equity_position(

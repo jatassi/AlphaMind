@@ -25,8 +25,9 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Literal
+from zoneinfo import ZoneInfo
 
-from alphamind._kernel.money import DECIMAL_ZERO, Money, Price, money, price, signed_money
+from alphamind._kernel.money import DECIMAL_ZERO, Money, money, price, signed_money
 from alphamind.config.models.execution import OrderType, PaperHarness
 from alphamind.decision.analyst.models import InstrumentOption, Recommendation
 from alphamind.execution.counterfactual_replay_engine.enums import ExitLeg
@@ -65,6 +66,10 @@ _MIN_BARS_FOR_ENTRY = 2
 # Seconds per calendar year (365.25 days), matching the design's TTE formula.
 _SECONDS_PER_YEAR = 365.25 * 86400
 
+# US equity options expire at 16:00 in the exchange's local zone; the zone
+# carries the EST/EDT rule so the UTC instant is DST-correct per date.
+_EXCHANGE_ZONE = ZoneInfo("America/New_York")
+
 
 # ---------------------------------------------------------------------------
 # Step 1 — BS pricing wrapper
@@ -80,19 +85,27 @@ def price_option_at_underlying_bar(
     bar_timestamp: datetime,
     implied_volatility: float,
     risk_free_rate: float,
-) -> Price:
+) -> Money:
     """Black-Scholes option premium given the underlying bar open (design §1).
 
     ``time_to_expiration_years`` is the calendar gap between *bar_timestamp* and
-    the expiration (midnight UTC on the expiration date), expressed in years of
-    365.25 days. The premium is returned as a :class:`Price`. The conservative
-    delta buffer used at OPEN/ADD validation is intentionally disabled — replay
-    estimates outcomes; it does not gate decisions.
+    the expiration instant — **16:00 America/New_York** (US equity-option
+    expiry), converted to UTC so DST is handled — expressed in years of 365.25
+    days. Anchoring on the close-of-trade instant rather than midnight UTC keeps
+    TTE positive for an expiry-day intraday bar (midnight UTC would land
+    ~7-8 hours *before* a morning bar and yield a spurious negative TTE).
+
+    The premium is returned as :class:`Money` (non-negative, may be zero): a
+    worthless option — OTM at or after expiry, where ``bs_price`` returns the
+    ``0.0`` intrinsic value — is a legitimate premium, not a pricing error, so
+    it must not pass through the strictly-positive :func:`price` constructor.
+    The conservative delta buffer used at OPEN/ADD validation is intentionally
+    disabled — replay estimates outcomes; it does not gate decisions.
 
     This signature is part of the cross-story contract (story 07 imports it);
-    keep it stable.
+    keep the keyword parameters stable.
     """
-    expiration_dt_utc = datetime(expiration.year, expiration.month, expiration.day, tzinfo=UTC)
+    expiration_dt_utc = _expiration_instant_utc(expiration)
     tte = (expiration_dt_utc - bar_timestamp).total_seconds() / _SECONDS_PER_YEAR
     premium = bs_price(
         spot=underlying_open,
@@ -102,7 +115,20 @@ def price_option_at_underlying_bar(
         implied_volatility=implied_volatility,
         contract_type=ContractType(contract_type.upper()),
     )
-    return price(Decimal(str(premium)))
+    return money(Decimal(str(premium)))
+
+
+def _expiration_instant_utc(expiration: date) -> datetime:
+    """The 16:00 America/New_York expiry instant for *expiration*, in UTC.
+
+    US equity options expire at 16:00 ET on the expiration date. Building the
+    instant in the exchange zone and converting to UTC picks up the right
+    EST/EDT offset for the date (no hardcoded ±5h/±4h).
+    """
+    expiry_et = datetime(
+        expiration.year, expiration.month, expiration.day, 16, 0, tzinfo=_EXCHANGE_ZONE
+    )
+    return expiry_et.astimezone(UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -123,10 +149,13 @@ class OptionEntryResult:
 
     ``entry_iv_lag_minutes`` carries the entry snapshot's lag for the
     confidence classifier (story 05b).
+
+    ``entry_price`` is the BS-derived premium as :class:`Money` (non-negative,
+    may be zero — a worthless contract is a legitimate premium).
     """
 
     entered: bool
-    entry_price: Price
+    entry_price: Money
     entry_timestamp: datetime
     entry_iv_lag_minutes: float
 
@@ -219,7 +248,7 @@ class OptionBracketResult:
 
     exit_leg: ExitLeg
     exit_underlying_price: float
-    exit_price: Price | None
+    exit_price: Money | None
     exit_timestamp: datetime
     same_bar_ambiguity: bool
     exit_iv_lag_minutes: float | None
@@ -249,9 +278,13 @@ def simulate_option_brackets(
     instrument = proposal.instrument
     assert isinstance(instrument, InstrumentOption)
 
+    # The equity walker reads only ``entered`` + ``entry_timestamp`` (and the
+    # proposal's underlying levels) to find the trigger bar; it never reads the
+    # entry price, so the option premium (``Money``, possibly zero) is not
+    # threaded into this throwaway equity entry.
     equity_entry = EquityEntryResult(
         entered=entry.entered,
-        entry_price=entry.entry_price,
+        entry_price=None,
         entry_timestamp=entry.entry_timestamp,
     )
     walk: EquityBracketResult = simulate_equity_brackets(proposal, equity_entry, bars)
@@ -401,7 +434,7 @@ def compute_option_pl(
 
 def _side_drag(
     *,
-    fill_price: Price,
+    fill_price: Money,
     order_type: OrderType,
     side: Literal["buy", "sell"],
     quantity: float,
@@ -415,9 +448,15 @@ def _side_drag(
     ``fees = estimated_regulatory_fees_usd``. The harness handles options via
     its 100-share multiplier branch (``adv_shares=adv_contracts``). A ``None``
     estimate (missing ADV / realized vol) records both as zero (design Step 4).
+
+    A worthless ($0) premium carries no estimable transaction drag — there is no
+    spread to cross and the harness's per-share-drag adjustment would drive the
+    fill price negative — so both components record as zero.
     """
+    if fill_price <= DECIMAL_ZERO:
+        return money(DECIMAL_ZERO), money(DECIMAL_ZERO)
     estimate = compute_live_execution_estimate(
-        fill_price=fill_price,
+        fill_price=price(fill_price),
         fill_quantity=quantity,
         instrument_type=InstrumentType.OPTIONS,
         side=side,
@@ -448,29 +487,36 @@ class OptionReplayResult:
     classifier (story 05b) reads.
 
     Option entries always fire (Step 2), so ``entered`` is always ``True`` and
-    there is no equity-style window-expired branch. ``realized_pl is None`` is
-    the data-missing sentinel: the per-contract IV snapshot was unavailable at
-    the entry or exit timestamp, so the BS fill estimate could not be derived.
-    The engine driver maps that to ``DATA_MISSING``. On the sentinel,
-    ``exit_price``, ``exit_slippage``, ``exit_fees``, and ``exit_iv_lag_minutes``
-    are also ``None``; ``entry_iv_lag_minutes`` is ``None`` only when the entry
-    snapshot itself was missing.
+    there is no equity-style window-expired branch. ``data_missing`` is the
+    explicit IV-miss flag: ``True`` only on the data-missing sentinel (a
+    per-contract IV snapshot was unavailable at the entry or exit timestamp, so
+    the BS fill estimate could not be derived), which the engine driver maps to
+    ``DATA_MISSING``. On the sentinel ``exit_leg`` is ``None`` and ``entry_price``
+    / ``exit_price`` / ``exit_slippage`` / ``exit_fees`` / ``exit_iv_lag_minutes``
+    are ``None`` so no consumer reads a fabricated exit leg or premium; only the
+    underlying-trigger diagnostics and ``entry_iv_lag_minutes`` (when the entry
+    snapshot was present) survive. ``realized_pl is None`` continues to mark the
+    sentinel for the legacy driver path.
+
+    The premium fields (``entry_price`` / ``exit_price``) are :class:`Money`
+    (non-negative, may be zero) since a worthless option is a legitimate premium.
     """
 
     entered: bool
-    entry_price: Price | None
+    entry_price: Money | None
     entry_timestamp: datetime | None
     entry_slippage: Money | None
     entry_fees: Money | None
     entry_iv_lag_minutes: float | None
-    exit_leg: ExitLeg
+    exit_leg: ExitLeg | None
     exit_underlying_price: float | None
-    exit_price: Price | None
+    exit_price: Money | None
     exit_timestamp: datetime | None
     exit_slippage: Money | None
     exit_fees: Money | None
     exit_iv_lag_minutes: float | None
     realized_pl: Money | None
+    data_missing: bool
     same_bar_ambiguity: bool
 
 
@@ -543,6 +589,7 @@ def replay_option_proposal(
         exit_fees=pl.exit_fees,
         exit_iv_lag_minutes=brackets.exit_iv_lag_minutes,
         realized_pl=pl.realized_pl,
+        data_missing=False,
         same_bar_ambiguity=brackets.same_bar_ambiguity,
     )
 
@@ -550,17 +597,20 @@ def replay_option_proposal(
 def _data_missing_sentinel(
     *,
     entry_iv_lag_minutes: float | None,
-    exit_leg: ExitLeg = ExitLeg.TARGET_HIT,
+    exit_leg: ExitLeg | None = None,
     exit_underlying_price: float | None = None,
     exit_timestamp: datetime | None = None,
     same_bar_ambiguity: bool = False,
 ) -> OptionReplayResult:
-    """Build the data-missing sentinel ``OptionReplayResult`` (``realized_pl=None``).
+    """Build the data-missing sentinel ``OptionReplayResult`` (``data_missing=True``).
 
-    The engine driver (story 08) reads ``realized_pl is None`` as the
-    ``DATA_MISSING`` signal and discards the partial entry/exit fields; the
-    surviving ``entry_iv_lag_minutes`` (when the entry snapshot was present) and
-    the underlying-trigger fields are diagnostic only.
+    The engine driver (story 08) reads ``data_missing`` as the ``DATA_MISSING``
+    signal and discards the partial entry/exit fields. ``exit_leg`` is ``None``
+    on the entry-side miss (no exit was reached) and carries the genuinely
+    identified underlying-trigger leg on the exit-side miss — no fabricated
+    ``TARGET_HIT``. The surviving ``entry_iv_lag_minutes`` (when the entry
+    snapshot was present) and the underlying-trigger fields are diagnostic only;
+    ``realized_pl is None`` continues to mark the sentinel for the legacy path.
     """
     return OptionReplayResult(
         entered=True,
@@ -577,5 +627,6 @@ def _data_missing_sentinel(
         exit_fees=None,
         exit_iv_lag_minutes=None,
         realized_pl=None,
+        data_missing=True,
         same_bar_ambiguity=same_bar_ambiguity,
     )

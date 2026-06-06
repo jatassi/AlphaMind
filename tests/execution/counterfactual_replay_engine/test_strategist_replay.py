@@ -19,8 +19,8 @@ from typing import Any, Literal
 import pytest
 
 import alphamind.state.invocation_context  # noqa: F401 — break state.repository circular import
-from alphamind._kernel.ids import PositionId, Symbol
-from alphamind._kernel.money import Money, Price, money, price
+from alphamind._kernel.ids import BracketId, OrderId, PositionId, Symbol
+from alphamind._kernel.money import Money, money, price
 from alphamind.config.models.execution import FeeSchedule, OrderType, PaperHarness
 from alphamind.decision.analyst.models import Recommendation
 from alphamind.decision.strategist.models import PendingOrderAssessment, PositionAssessment
@@ -38,6 +38,15 @@ from alphamind.execution.counterfactual_replay_engine.strategist_replay import (
 )
 from alphamind.execution.paper_evaluation_harness.harness import (
     compute_live_execution_estimate,
+)
+from alphamind.portfolio_state.records.orders import (
+    BracketLeg,
+    BracketLegEnforcement,
+    BracketLegStatus,
+    BracketLegType,
+    BracketRecord,
+    BracketStatus,
+    PriceTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -236,7 +245,7 @@ def _position_assessment(
     return PositionAssessment.model_validate(body)
 
 
-def _bs_premium(*, underlying: float, ts: datetime, strike: float = 100.0) -> Price:
+def _bs_premium(*, underlying: float, ts: datetime, strike: float = 100.0) -> Money:
     """The exit premium the close path should derive for the test option."""
     return price_option_at_underlying_bar(
         underlying_open=underlying,
@@ -451,7 +460,13 @@ class TestCloseOption:
             realized_volatility=_RVOL,
         )
 
+        # The IV-miss sentinel is explicitly flagged and carries no fabricated
+        # outcome: no entered=True, no exit leg, no exit premium.
+        assert result.data_missing is True
         assert result.realized_pl is None
+        assert result.entered is False
+        assert result.exit_leg is None
+        assert result.entry_price is None
         assert result.exit_price is None
 
 
@@ -492,12 +507,19 @@ def _adjust_bracket_assessment(
     *,
     new_target: str | None = None,
     new_stop: str | None = None,
+    thesis_only: bool = False,
 ) -> PositionAssessment:
     params: dict[str, Any] = {"action": "adjust-bracket"}
     if new_target is not None:
         params["new_target_level"] = {"price": new_target, "order_type": "limit"}
     if new_stop is not None:
         params["new_stop_level"] = {"trigger_price": new_stop, "order_type": "stop"}
+    if thesis_only:
+        # A thesis/event-only adjust: no price/stop/time level — the schema's
+        # "at least one" requirement is met by a thesis-component update.
+        params["thesis_component_updates"] = [
+            {"component_type": "invalidation_rationale", "narrative": "Thesis softened."}
+        ]
     return _position_assessment(
         action="adjust-bracket",
         params=params,
@@ -578,6 +600,169 @@ class TestAdjustBracketOption:
         # Exit premium BS-priced at the stop's underlying level (90).
         assert result.exit_price is not None
         assert result.exit_price == _bs_premium(underlying=90.0, ts=bars[2].period_start)
+
+
+def _stop_only_bracket(*, threshold_usd: float, direction: str = "LTE") -> BracketRecord:
+    """A bracket carrying only a mechanical PRICE_STOP leg — no TAKE_PROFIT."""
+    return BracketRecord(
+        bracket_id=BracketId("BR-1"),
+        position_id=PositionId("POS-1"),
+        status=BracketStatus.ACTIVE,
+        entry_order_id=OrderId("ORD-1"),
+        protective_legs=(
+            BracketLeg(
+                leg_id="L1",
+                leg_type=BracketLegType.PRICE_STOP,
+                order_id=None,
+                trigger=PriceTrigger(
+                    underlying_ticker=Symbol("AAPL"),
+                    threshold_usd=threshold_usd,
+                    direction=direction,
+                ),
+                enforcement=BracketLegEnforcement.MECHANICAL,
+                status=BracketLegStatus.ACTIVE,
+            ),
+        ),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
+    )
+
+
+class TestAdjustBracketStopOnly:
+    def test_targetless_adjust_on_stop_only_position_is_evaluable(self) -> None:
+        # Thesis/event-only ADJUST-BRACKET: no new_target_level, and the position
+        # carries only a PRICE_STOP leg (no TAKE_PROFIT). Per the spec it must
+        # still be evaluable — the walk runs on the stop / window only — not crash
+        # on a missing target. The stop at 95 fires when the bar dips to 90.
+        snap = PositionStateSnapshot(
+            position_id=PositionId("POS-1"),
+            details=EquityPositionDetails(
+                ticker=Symbol("AAPL"), share_count=50.0, average_cost_basis_per_share=100.0
+            ),
+            direction=Direction.LONG,
+            net_quantity_as_of=50.0,
+            average_cost_basis=price("100"),
+            open_brackets=(_stop_only_bracket(threshold_usd=95.0),),
+            opened_at=_OPENED_AT,
+        )
+        bars = _bars_hitting_low(base=98.0, spike_low=90.0)
+
+        result = replay_strategist_proposal(
+            _adjust_bracket_assessment(thesis_only=True),  # no new target, no new stop
+            snap,
+            bars,
+            iv_repo=_FakeIVRepo(),
+            paper_harness_config=_CONFIG,
+            risk_free_rate=_RFR,
+            adv=_ADV,
+            realized_volatility=_RVOL,
+        )
+
+        assert result.exit_leg is ExitLeg.STOP_HIT
+        assert result.exit_price == money("95")
+
+    def test_targetless_stopless_adjust_resolves_at_window_end(self) -> None:
+        # Neither a target nor any stop leg: the only resolution is the window
+        # end (the synthetic far-out time leg). The walk must reach a TIME_STOP
+        # result rather than raising on the absent target.
+        snap = PositionStateSnapshot(
+            position_id=PositionId("POS-1"),
+            details=EquityPositionDetails(
+                ticker=Symbol("AAPL"), share_count=50.0, average_cost_basis_per_share=100.0
+            ),
+            direction=Direction.LONG,
+            net_quantity_as_of=50.0,
+            average_cost_basis=price("100"),
+            open_brackets=(),
+            opened_at=_OPENED_AT,
+        )
+        bars = _flat_bars(105.0)
+
+        result = replay_strategist_proposal(
+            _adjust_bracket_assessment(thesis_only=True),
+            snap,
+            bars,
+            iv_repo=_FakeIVRepo(),
+            paper_harness_config=_CONFIG,
+            risk_free_rate=_RFR,
+            adv=_ADV,
+            realized_volatility=_RVOL,
+        )
+
+        assert result.exit_leg is ExitLeg.TIME_STOP_FIRED
+        assert result.entered is True
+
+
+class TestNaiveOpenedAt:
+    def test_adjust_bracket_with_naive_opened_at_does_not_crash(self) -> None:
+        # PositionStateSnapshot.opened_at carries no tz guarantee. A naive
+        # opened_at flows into GuardrailValidationResult.checked_at (and the
+        # synthetic far-out time leg), which require tz-aware UTC — so the
+        # synthesis must coerce it rather than raise a ValidationError.
+        naive_opened_at = datetime(2026, 5, 28, 14, 0)  # noqa: DTZ001 — tz-naive on purpose
+        snap = PositionStateSnapshot(
+            position_id=PositionId("POS-1"),
+            details=EquityPositionDetails(
+                ticker=Symbol("AAPL"), share_count=50.0, average_cost_basis_per_share=100.0
+            ),
+            direction=Direction.LONG,
+            net_quantity_as_of=50.0,
+            average_cost_basis=price("100"),
+            open_brackets=(),
+            opened_at=naive_opened_at,
+        )
+        bars = _bars_hitting_high(base=105.0, spike_high=116.0)
+
+        result = replay_strategist_proposal(
+            _adjust_bracket_assessment(new_target="115.00", new_stop="95.00"),
+            snap,
+            bars,
+            iv_repo=_FakeIVRepo(),
+            paper_harness_config=_CONFIG,
+            risk_free_rate=_RFR,
+            adv=_ADV,
+            realized_volatility=_RVOL,
+        )
+
+        assert result.exit_leg is ExitLeg.TARGET_HIT
+        assert result.exit_price == money("115")
+
+    def test_add_with_naive_opened_at_does_not_crash(self) -> None:
+        naive_opened_at = datetime(2026, 5, 28, 14, 0)  # noqa: DTZ001 — tz-naive on purpose
+        snap = PositionStateSnapshot(
+            position_id=PositionId("POS-1"),
+            details=EquityPositionDetails(
+                ticker=Symbol("AAPL"), share_count=50.0, average_cost_basis_per_share=100.0
+            ),
+            direction=Direction.LONG,
+            net_quantity_as_of=50.0,
+            average_cost_basis=price("100"),
+            open_brackets=(_stop_only_bracket(threshold_usd=95.0),),
+            opened_at=naive_opened_at,
+        )
+        bars = _bars_hitting_high(base=105.0, spike_high=130.0)
+        add = _add_assessment(
+            additional_quantity=10.0,
+            entry_order={"type": "market"},
+            bracket_adjustment={
+                "action": "adjust-bracket",
+                "new_target_level": {"price": "120.00", "order_type": "limit"},
+            },
+        )
+
+        result = replay_strategist_proposal(
+            add,
+            snap,
+            bars,
+            iv_repo=_FakeIVRepo(),
+            paper_harness_config=_CONFIG,
+            risk_free_rate=_RFR,
+            adv=_ADV,
+            realized_volatility=_RVOL,
+        )
+
+        assert result.exit_leg is ExitLeg.TARGET_HIT
+        assert result.entered is True
 
 
 def _add_assessment(

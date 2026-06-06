@@ -34,11 +34,12 @@ translation is the only strategist-specific seam.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Literal
 
 from alphamind._kernel.ids import Symbol
+from alphamind._kernel.ids import recommendation_id as _recommendation_id_constructor
 from alphamind._kernel.money import DECIMAL_ZERO, Money, Price, money, price, signed_money
 from alphamind.config.models.execution import OrderType, PaperHarness
 from alphamind.decision.analyst.models import (
@@ -48,6 +49,7 @@ from alphamind.decision.analyst.models import (
     InstrumentOption,
     InvalidationLeg,
     InvalidationRationale,
+    OrderParameters,
     PositionSize,
     PriceCondition,
     Recommendation,
@@ -123,6 +125,13 @@ _MIN_BARS_FOR_CLOSE = 2
 
 _EQUITY_MULTIPLIER = Decimal(1)
 
+# Unreachable target prices for a target-less ADJUST-BRACKET (stop-only position):
+# a long target the bar high never reaches, and a short target (strictly positive,
+# so ``price`` accepts it) the bar low never reaches. The walk then resolves on
+# the stop / time legs or the window end.
+_UNREACHABLE_HIGH_TARGET = Decimal("1e12")
+_UNREACHABLE_LOW_TARGET = Decimal("0.0001")
+
 # entry_order.type → the paper harness's OrderType for a fresh ADD fill.
 # stop_limit maps to the harness's stop coefficient (its only stop-like member),
 # matching the analyst entry mapping.
@@ -169,22 +178,30 @@ class StrategistActionResult:
     fields ``None``). For CLOSE / REDUCE / ADJUST-BRACKET the entry side
     represents the already-open position, so ``entry_slippage`` / ``entry_fees``
     are zero (the entry drag was already realized in the actual trade and is not
-    re-charged). ``realized_pl`` is signed (losses negative); ``None`` is the
+    re-charged). ``realized_pl`` is signed (losses negative).
+
+    ``data_missing`` is the explicit IV-miss flag: ``True`` only on the
     data-missing sentinel (a per-contract IV snapshot was unavailable), which the
-    driver maps to ``DATA_MISSING``.
+    driver maps to ``DATA_MISSING``. On that sentinel ``entered`` is ``False``,
+    ``exit_leg`` is ``None``, and every entry / exit field is ``None`` so no
+    consumer reads a fabricated ``entered=True`` or exit leg. ``realized_pl is
+    None`` continues to mark the sentinel for the legacy driver path. The price
+    fields are :class:`Money` (non-negative, may be zero) so a worthless option
+    premium is representable.
     """
 
     entered: bool
-    entry_price: Price | None
+    entry_price: Money | None
     entry_timestamp: datetime | None
     entry_slippage: Money | None
     entry_fees: Money | None
-    exit_leg: ExitLeg
-    exit_price: Price | None
+    exit_leg: ExitLeg | None
+    exit_price: Money | None
     exit_timestamp: datetime | None
     exit_slippage: Money | None
     exit_fees: Money | None
     realized_pl: Money | None
+    data_missing: bool
     same_bar_ambiguity: bool
 
 
@@ -316,7 +333,7 @@ def _replay_close_or_reduce(
 
     return StrategistActionResult(
         entered=True,
-        entry_price=state.average_cost_basis,
+        entry_price=money(state.average_cost_basis),
         entry_timestamp=state.opened_at,
         entry_slippage=money(DECIMAL_ZERO),
         entry_fees=money(DECIMAL_ZERO),
@@ -326,6 +343,7 @@ def _replay_close_or_reduce(
         exit_slippage=exit_slippage,
         exit_fees=exit_fees,
         realized_pl=signed_money(realized),
+        data_missing=False,
         same_bar_ambiguity=False,
     )
 
@@ -337,8 +355,9 @@ def _exit_price_for_close(
     exit_timestamp: datetime,
     iv_repo: OptionsSnapshotRepository,
     risk_free_rate: float,
-) -> Price | None:
-    """Resolve the close fill price.
+) -> Money | None:
+    """Resolve the close fill price as :class:`Money` (a worthless option premium
+    may be zero).
 
     Equity → the underlying bar open. Option → the BS-derived premium at the
     exit-timestamp IV snapshot (``None`` when the snapshot is missing — the
@@ -346,7 +365,7 @@ def _exit_price_for_close(
     """
     details = state.details
     if not isinstance(details, OptionsPositionDetails):
-        return price(str(exit_underlying_price))
+        return money(str(exit_underlying_price))
 
     contract_ticker = iv_repo.resolve_contract_ticker(
         underlying=details.underlying_ticker,
@@ -374,7 +393,7 @@ def _contract_type_literal(details: OptionsPositionDetails) -> Literal["call", "
 
 def _side_drag(
     *,
-    fill_price: Price,
+    fill_price: Money,
     order_type: OrderType,
     side: Literal["buy", "sell"],
     quantity: float,
@@ -387,9 +406,15 @@ def _side_drag(
     ``fees = estimated_regulatory_fees_usd``. A ``None`` harness estimate
     (missing ADV / realized vol) records both as zero (design Step 4). ``adv``
     is shares for equity, contracts for options.
+
+    A worthless ($0) premium carries no estimable transaction drag — there is no
+    spread to cross and the harness's per-share adjustment would drive the fill
+    price negative — so both components record as zero.
     """
+    if fill_price <= DECIMAL_ZERO:
+        return money(DECIMAL_ZERO), money(DECIMAL_ZERO)
     estimate = compute_live_execution_estimate(
-        fill_price=fill_price,
+        fill_price=price(fill_price),
         fill_quantity=quantity,
         instrument_type=instrument_type,
         side=side,
@@ -404,27 +429,28 @@ def _side_drag(
     return slippage, estimate.estimated_regulatory_fees_usd
 
 
-def _data_missing_sentinel(
-    *,
-    exit_leg: ExitLeg = ExitLeg.STRATEGIST_CLOSE_AT_PROPOSAL,
-) -> StrategistActionResult:
-    """Build the data-missing sentinel (``realized_pl=None``) for the driver.
+def _data_missing_sentinel() -> StrategistActionResult:
+    """Build the data-missing sentinel (``data_missing=True``) for the driver.
 
-    ``realized_pl is None`` is the signal the driver maps to ``DATA_MISSING``;
-    ``exit_leg`` is diagnostic only on the sentinel.
+    A missing per-contract IV snapshot means the proposal could not be evaluated
+    at all, so the sentinel carries no fabricated outcome: ``entered`` is
+    ``False``, ``exit_leg`` is ``None``, and every entry / exit field is ``None``.
+    The driver reads ``data_missing`` (``realized_pl is None`` for the legacy
+    path) as the ``DATA_MISSING`` signal.
     """
     return StrategistActionResult(
-        entered=True,
+        entered=False,
         entry_price=None,
         entry_timestamp=None,
         entry_slippage=None,
         entry_fees=None,
-        exit_leg=exit_leg,
+        exit_leg=None,
         exit_price=None,
         exit_timestamp=None,
         exit_slippage=None,
         exit_fees=None,
         realized_pl=None,
+        data_missing=True,
         same_bar_ambiguity=False,
     )
 
@@ -470,7 +496,7 @@ def _replay_adjust_bracket(
     if isinstance(state.details, OptionsPositionDetails):
         option_entry = OptionEntryResult(
             entered=True,
-            entry_price=state.average_cost_basis,
+            entry_price=money(state.average_cost_basis),
             entry_timestamp=entry_timestamp,
             entry_iv_lag_minutes=0.0,
         )
@@ -488,18 +514,21 @@ def _replay_adjust_bracket(
     return _result_from_equity_walk(equity_walk, state, quantity=quantity, harness=harness)
 
 
-def _resolve_target(params: AdjustBracketParameters, state: PositionStateSnapshot) -> Decimal:
-    """Proposed target, else the existing TAKE_PROFIT level."""
+def _resolve_target(
+    params: AdjustBracketParameters, state: PositionStateSnapshot
+) -> Decimal | None:
+    """Proposed target, else the existing TAKE_PROFIT level, else ``None``.
+
+    A thesis/event-only ADJUST-BRACKET on a stop-only position carries no target
+    and the position has no TAKE_PROFIT leg — per the spec ("missing levels fall
+    back to the position's existing brackets") that proposal is still evaluable:
+    the walk runs on the stop / time legs only. ``None`` signals "no target leg"
+    to the synthesizer, which substitutes an unreachable target so the walk
+    resolves via the stop, the time leg, or the window end.
+    """
     if params.new_target_level is not None:
         return Decimal(params.new_target_level.price)
-    existing = _existing_level(state, BracketLegType.TAKE_PROFIT)
-    if existing is not None:
-        return existing
-    msg = (
-        "adjust-bracket replay needs a target level: the proposal set no "
-        "new_target_level and the position has no existing TAKE_PROFIT leg"
-    )
-    raise ValueError(msg)
+    return _existing_level(state, BracketLegType.TAKE_PROFIT)
 
 
 def _resolve_stop(params: AdjustBracketParameters, state: PositionStateSnapshot) -> Decimal | None:
@@ -665,8 +694,10 @@ def _result_from_equity_walk(
 
     assert walk.exit_price is not None
     assert walk.exit_timestamp is not None
-    entry_price = entry.entry_price if entry is not None else state.average_cost_basis
-    assert entry_price is not None
+    raw_entry_price = entry.entry_price if entry is not None else state.average_cost_basis
+    assert raw_entry_price is not None
+    entry_price = money(raw_entry_price)
+    exit_price = money(walk.exit_price)
     entry_timestamp = entry.entry_timestamp if entry is not None else state.opened_at
 
     entry_slippage, entry_fees = _entry_drag(
@@ -680,7 +711,7 @@ def _result_from_equity_walk(
     )
     exit_side: Literal["buy", "sell"] = "sell" if state.direction is Direction.LONG else "buy"
     exit_slippage, exit_fees = _side_drag(
-        fill_price=walk.exit_price,
+        fill_price=exit_price,
         order_type=_EXIT_ORDER_TYPE[walk.exit_leg],
         side=exit_side,
         quantity=quantity,
@@ -690,7 +721,7 @@ def _result_from_equity_walk(
     realized = _compose_pl(
         state,
         entry_price=entry_price,
-        exit_price=walk.exit_price,
+        exit_price=exit_price,
         quantity=quantity,
         multiplier=_EQUITY_MULTIPLIER,
         entry_drag=(entry_slippage, entry_fees),
@@ -703,11 +734,12 @@ def _result_from_equity_walk(
         entry_slippage=entry_slippage,
         entry_fees=entry_fees,
         exit_leg=walk.exit_leg,
-        exit_price=walk.exit_price,
+        exit_price=exit_price,
         exit_timestamp=walk.exit_timestamp,
         exit_slippage=exit_slippage,
         exit_fees=exit_fees,
         realized_pl=signed_money(realized),
+        data_missing=False,
         same_bar_ambiguity=walk.same_bar_ambiguity,
     )
 
@@ -726,11 +758,11 @@ def _result_from_option_walk(
     sentinel the driver maps to ``DATA_MISSING``.
     """
     if walk.exit_price is None:
-        return _data_missing_sentinel(exit_leg=walk.exit_leg)
+        return _data_missing_sentinel()
 
     assert isinstance(state.details, OptionsPositionDetails)
     multiplier = Decimal(str(state.details.contract_multiplier))
-    entry_price = entry.entry_price if entry is not None else state.average_cost_basis
+    entry_price = entry.entry_price if entry is not None else money(state.average_cost_basis)
     entry_timestamp = entry.entry_timestamp if entry is not None else state.opened_at
 
     entry_slippage, entry_fees = _entry_drag(
@@ -772,6 +804,7 @@ def _result_from_option_walk(
         exit_slippage=exit_slippage,
         exit_fees=exit_fees,
         realized_pl=signed_money(realized),
+        data_missing=False,
         same_bar_ambiguity=walk.same_bar_ambiguity,
     )
 
@@ -779,7 +812,7 @@ def _result_from_option_walk(
 def _entry_drag(
     state: PositionStateSnapshot,
     *,
-    entry_price: Price,
+    entry_price: Money,
     quantity: float,
     order_type: OrderType,
     instrument_type: InstrumentType,
@@ -808,8 +841,8 @@ def _entry_drag(
 def _compose_pl(
     state: PositionStateSnapshot,
     *,
-    entry_price: Price,
-    exit_price: Price,
+    entry_price: Money,
+    exit_price: Money,
     quantity: float,
     multiplier: Decimal,
     entry_drag: tuple[Money, Money],
@@ -841,6 +874,7 @@ def _entry_window_expired() -> StrategistActionResult:
         exit_slippage=None,
         exit_fees=None,
         realized_pl=None,
+        data_missing=False,
         same_bar_ambiguity=False,
     )
 
@@ -849,7 +883,7 @@ def _synthesize_recommendation(
     state: PositionStateSnapshot,
     *,
     quantity: float,
-    target_price: Decimal,
+    target_price: Decimal | None,
     stop_price: Decimal | None,
     time_deadline: datetime | None,
     entry_order: EntryOrder | None = None,
@@ -863,13 +897,18 @@ def _synthesize_recommendation(
     legs, the entry order, and the sizing quantity. The remaining
     ``Recommendation`` fields are filled with inert placeholders the walkers
     never inspect.
+
+    A ``target_price`` of ``None`` (a target-less ADJUST-BRACKET on a stop-only
+    position) substitutes an unreachable target so the walk resolves on the stop
+    / time legs alone — see :func:`_unreachable_target_price`.
     """
     instrument = _synthesize_instrument(state)
     invalidation_legs, invalidation_rationale = _synthesize_invalidation(
         state, stop_price=stop_price, time_deadline=time_deadline
     )
+    target = target_price if target_price is not None else _unreachable_target_price(state)
     return Recommendation(
-        recommendation_id="REC-0",  # type: ignore[arg-type]
+        recommendation_id=_recommendation_id_constructor("REC-0"),
         instrument=instrument,
         underlying=_underlying_symbol(state),
         sector="tech",
@@ -882,7 +921,7 @@ def _synthesize_recommendation(
         ),
         target=Target(
             target_type="absolute_price",
-            price=price(target_price),
+            price=price(target),
             dollar_pl_target=signed_money(DECIMAL_ZERO),
         ),
         invalidation_legs=invalidation_legs,
@@ -890,7 +929,7 @@ def _synthesize_recommendation(
         guardrail_validation_result=GuardrailValidationResult(
             overall="PASS",
             per_rule=(),
-            checked_at=state.opened_at,
+            checked_at=_as_utc(state.opened_at),
         ),
         thesis_narrative="synthetic",
         target_rationale="synthetic",
@@ -898,6 +937,33 @@ def _synthesize_recommendation(
         position_size_rationale="synthetic",
         counterarguments_acknowledged="synthetic",
     )
+
+
+def _unreachable_target_price(state: PositionStateSnapshot) -> Decimal:
+    """A target the underlying-bar walk can never hit, so a target-less
+    ADJUST-BRACKET resolves on the stop / time legs (or the window end) instead.
+
+    The equity walker fires the target on ``bar.high >= target`` (long) or
+    ``bar.low <= target`` (short). A far-above price is unreachable for a long;
+    a near-zero (strictly positive, so :func:`price` accepts it) price is
+    unreachable for a short, since a traded bar low never reaches it.
+    """
+    if state.direction is Direction.SHORT:
+        return _UNREACHABLE_LOW_TARGET
+    return _UNREACHABLE_HIGH_TARGET
+
+
+def _as_utc(moment: datetime) -> datetime:
+    """Coerce a possibly tz-naive timestamp to tz-aware UTC.
+
+    ``PositionStateSnapshot.opened_at`` carries no tz guarantee, but
+    :class:`GuardrailValidationResult` (and the persisted replay record) require
+    tz-aware UTC. A naive timestamp is assumed to already be in UTC (the system
+    clock and stored fill timestamps are UTC); an aware one is converted.
+    """
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=UTC)
+    return moment.astimezone(UTC)
 
 
 def _synthesize_instrument(
@@ -946,7 +1012,7 @@ def _synthesize_invalidation(
                     comparator=comparator,
                     trigger_price=price(stop_price),
                 ),
-                order_parameters={"order_type": "stop"},  # type: ignore[arg-type]
+                order_parameters=OrderParameters(order_type="stop"),
             )
         )
     if time_deadline is not None:
@@ -956,7 +1022,7 @@ def _synthesize_invalidation(
                 type="time",
                 is_hard=True,
                 condition=TimeCondition(deadline=time_deadline),
-                order_parameters={"order_type": "market"},  # type: ignore[arg-type]
+                order_parameters=OrderParameters(order_type="market"),
             )
         )
     if not legs:
@@ -966,7 +1032,7 @@ def _synthesize_invalidation(
                 type="time",
                 is_hard=True,
                 condition=TimeCondition(deadline=_window_end_deadline(state)),
-                order_parameters={"order_type": "market"},  # type: ignore[arg-type]
+                order_parameters=OrderParameters(order_type="market"),
             )
         )
     rationale = tuple(
@@ -981,7 +1047,7 @@ def _window_end_deadline(state: PositionStateSnapshot) -> datetime:
     The walker's end-of-window fallback resolves the exit; this leg exists only
     to satisfy the analyst schema's "at least one hard leg" requirement.
     """
-    return state.opened_at + timedelta(days=3650)
+    return _as_utc(state.opened_at) + timedelta(days=3650)
 
 
 def _underlying_symbol(state: PositionStateSnapshot) -> Symbol:
@@ -1102,18 +1168,22 @@ def _replay_pending_entry(
 
 
 def _from_equity_replay_result(result: EquityReplayResult) -> StrategistActionResult:
+    # Equity prices are strictly positive ``Price``; the unified result carries
+    # ``Money`` (to admit a worthless option premium), so widen here. Equity has
+    # no IV dependency, so it is never data-missing.
     return StrategistActionResult(
         entered=result.entered,
-        entry_price=result.entry_price,
+        entry_price=_money_or_none(result.entry_price),
         entry_timestamp=result.entry_timestamp,
         entry_slippage=result.entry_slippage,
         entry_fees=result.entry_fees,
         exit_leg=result.exit_leg,
-        exit_price=result.exit_price,
+        exit_price=_money_or_none(result.exit_price),
         exit_timestamp=result.exit_timestamp,
         exit_slippage=result.exit_slippage,
         exit_fees=result.exit_fees,
         realized_pl=result.realized_pl,
+        data_missing=False,
         same_bar_ambiguity=result.same_bar_ambiguity,
     )
 
@@ -1131,5 +1201,13 @@ def _from_option_replay_result(result: OptionReplayResult) -> StrategistActionRe
         exit_slippage=result.exit_slippage,
         exit_fees=result.exit_fees,
         realized_pl=result.realized_pl,
+        data_missing=result.data_missing,
         same_bar_ambiguity=result.same_bar_ambiguity,
     )
+
+
+def _money_or_none(value: Price | None) -> Money | None:
+    """Re-wrap an equity ``Price`` as ``Money`` (non-negative) or pass ``None``
+    through, widening the equity price fields onto the unified ``Money``-typed
+    result."""
+    return None if value is None else money(value)

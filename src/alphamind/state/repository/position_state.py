@@ -9,8 +9,9 @@ state is reconstructed here from the existing position / fill / bracket records
 :func:`load_position_state_at` loads the :class:`PositionRecord` (and its
 :class:`BracketRecord`s) for a position, then folds the fills with
 ``fill_timestamp <= as_of`` into a frozen :class:`PositionStateSnapshot`: a
-signed ``net_quantity_as_of`` and a quantity-weighted ``average_cost_basis``.
-When no add / reduce occurred before ``as_of`` these equal the position's
+signed ``net_quantity_as_of`` and an entry-weighted ``average_cost_basis``.
+Reduce / close fills net the quantity down but never contaminate the cost
+basis. When no add / reduce occurred before ``as_of`` these equal the position's
 current ``details`` values. A multi-leg strategy position is out of scope and
 raises :class:`PositionStateNotFoundError` (the eligibility check, story 04,
 should already have excluded it); so does a missing position or one with no fill
@@ -54,6 +55,11 @@ __all__ = [
 ]
 
 
+# Fractional-share / fractional-contract fills make exact Decimal equality on
+# the reduce-magnitude tally brittle; treat sub-milli quantities as zero.
+_QUANTITY_EPSILON = Decimal("0.001")
+
+
 class PositionStateNotFoundError(Exception):
     """The position has no replayable state at the requested ``as_of``.
 
@@ -68,11 +74,13 @@ class PositionStateNotFoundError(Exception):
 class PositionStateSnapshot:
     """The position's reconstructed state at the strategist-proposal timestamp.
 
-    ``net_quantity_as_of`` is signed (positive long, negative short) and
-    ``average_cost_basis`` is the quantity-weighted entry price (per share for
-    equity, per contract for options) across the fills at or before ``as_of``.
-    ``open_brackets`` is the position's bracket set the ADJUST-BRACKET / ADD
-    walks read; ``opened_at`` is the first such fill's timestamp.
+    ``net_quantity_as_of`` is signed (positive long, negative short) and folds
+    reduce / close fills back out; ``average_cost_basis`` is the quantity-weighted
+    entry price (per share for equity, per contract for options) across the
+    entry / add fills at or before ``as_of`` — reduce / close exit prices never
+    enter the average. ``open_brackets`` is the position's bracket set the
+    ADJUST-BRACKET / ADD walks read; ``opened_at`` is the first entry fill's
+    timestamp.
     """
 
     position_id: PositionId
@@ -94,7 +102,8 @@ def load_position_state_at(
 
     Loads the :class:`PositionRecord` and its open :class:`BracketRecord`s, then
     folds the fills with ``fill_timestamp <= as_of`` into a signed
-    ``net_quantity_as_of`` and a quantity-weighted ``average_cost_basis``.
+    ``net_quantity_as_of`` (reduces netted out) and an entry-weighted
+    ``average_cost_basis`` (entry / add fills only).
 
     Raises :class:`PositionStateNotFoundError` when the position is missing, is a
     multi-leg strategy (out of scope), or has no fill at or before *as_of*.
@@ -145,30 +154,93 @@ def _fold_fills(
     *,
     as_of: datetime,
 ) -> tuple[float, Price | None, datetime | None]:
-    """Fold fills at or before *as_of* into (gross quantity, weighted basis, first ts).
+    """Fold fills at or before *as_of* into (net quantity, entry basis, first ts).
 
-    ``gross_quantity`` is the unsigned sum of ``fill_quantity``; the caller
-    applies the position-direction sign. ``weighted_basis`` is
-    ``Σ(fill_price * fill_quantity) / Σ fill_quantity`` over the same fills.
+    ``execution_history`` carries every fill — entry, add, reduce, and close —
+    each as a positive ``fill_quantity`` with no stored side (the write path
+    derives the side from the order at write time but the persisted
+    :class:`~alphamind.portfolio_state.records.positions.PositionFill` keeps only
+    the magnitude). A reduce/close fill therefore looks identical to an add in
+    isolation, so this fold reconstructs each fill's side before folding:
+
+    * **net_quantity** is the running quantity in the position's direction —
+      entry/add fills grow it, reduce/close fills shrink it. The caller applies
+      the position-direction sign.
+    * **entry basis** is ``Σ(fill_price * qty) / Σ qty`` over entry/add fills
+      only; reduce/close exit prices never contaminate the cost basis.
+
+    Side reconstruction uses the position's current net as a terminal anchor.
+    The total reduce magnitude over the whole life is
+    ``(sum|fill| - |current_net|) / 2`` (entries minus reduces equals the current
+    net; entries plus reduces equals the gross). Reduces are assigned to the
+    *latest* fills — the open → add → reduce/close lifecycle the strategist
+    replay measures against — so a partial reduce before ``as_of`` nets out
+    correctly and leaves the entry basis untouched.
+
     Returns ``(0.0, None, None)`` when no fill qualifies — the caller treats a
     ``None`` first-timestamp as "position not open at as_of".
     """
-    gross_quantity = Decimal(0)
-    weighted_cost = Decimal(0)
+    reduce_timestamps = _reduce_fill_timestamps(record)
+
+    net_quantity = Decimal(0)
+    entry_quantity = Decimal(0)
+    weighted_entry_cost = Decimal(0)
     opened_at: datetime | None = None
-    for fill in record.execution_history:
+    for index, fill in enumerate(record.execution_history):
         if fill.fill_timestamp > as_of:
+            continue
+        qty = Decimal(str(fill.fill_quantity))
+        if index in reduce_timestamps:
+            net_quantity -= qty
             continue
         if opened_at is None or fill.fill_timestamp < opened_at:
             opened_at = fill.fill_timestamp
-        qty = Decimal(str(fill.fill_quantity))
-        gross_quantity += qty
-        weighted_cost += Decimal(fill.fill_price) * qty
+        net_quantity += qty
+        entry_quantity += qty
+        weighted_entry_cost += Decimal(fill.fill_price) * qty
 
-    if opened_at is None or gross_quantity == 0:
+    if opened_at is None or entry_quantity == 0:
         return 0.0, None, None
-    average_cost_basis = price(weighted_cost / gross_quantity)
-    return float(gross_quantity), average_cost_basis, opened_at
+    average_cost_basis = price(weighted_entry_cost / entry_quantity)
+    return float(net_quantity), average_cost_basis, opened_at
+
+
+def _reduce_fill_timestamps(record: PositionRecord) -> frozenset[int]:
+    """Return the indices of the reduce/close fills in ``execution_history``.
+
+    Entries minus reduces equal the position's current net quantity, so the
+    total reduce magnitude over the position's whole life is
+    ``(gross - |current_net|) / 2``. With no per-fill side stored, that reduce
+    magnitude is attributed to the *latest* fills (the open → add → reduce/close
+    lifecycle): walking the history newest-first, each fill is a reduce until the
+    attributed reduce magnitude is exhausted. The remaining (earlier) fills are
+    entries/adds.
+    """
+    history = record.execution_history
+    if not history:
+        return frozenset()
+    gross = sum((Decimal(str(f.fill_quantity)) for f in history), Decimal(0))
+    current_net = Decimal(str(_current_net_quantity(record)))
+    reduce_remaining = (gross - abs(current_net)) / 2
+    if reduce_remaining <= _QUANTITY_EPSILON:
+        return frozenset()
+
+    reduce_indices: set[int] = set()
+    for index in range(len(history) - 1, -1, -1):
+        if reduce_remaining <= _QUANTITY_EPSILON:
+            break
+        reduce_indices.add(index)
+        reduce_remaining -= Decimal(str(history[index].fill_quantity))
+    return frozenset(reduce_indices)
+
+
+def _current_net_quantity(record: PositionRecord) -> float:
+    """The position's current net quantity (shares for equity, contracts for options)."""
+    details = record.details
+    if isinstance(details, EquityPositionDetails):
+        return details.share_count
+    assert isinstance(details, OptionsPositionDetails)  # strategy payloads are excluded upstream
+    return details.contract_count
 
 
 def _load_open_brackets(

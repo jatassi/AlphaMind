@@ -226,14 +226,18 @@ def test_exit_iv_miss_yields_data_missing_sentinel() -> None:
         realized_volatility=_RVOL,
     )
 
+    assert result.data_missing is True
     assert result.realized_pl is None
     assert result.exit_price is None
     assert result.entry_iv_lag_minutes == 6.0
+    # The underlying trigger was identified before the exit IV miss, so the leg
+    # is a genuine diagnostic — not a fabricated default.
+    assert result.exit_leg is ExitLeg.TARGET_HIT
 
 
 def test_entry_iv_miss_yields_data_missing_sentinel() -> None:
     # IV missing at the entry bar: the driver gates before simulating, so even
-    # the entry IV lag is None. No fabricated IV, no crash.
+    # the entry IV lag is None. No fabricated IV, no crash, no fabricated exit leg.
     proposal = _long_call()
     bars = _bars_target_on_bar4()
 
@@ -247,6 +251,72 @@ def test_entry_iv_miss_yields_data_missing_sentinel() -> None:
         realized_volatility=_RVOL,
     )
 
+    assert result.data_missing is True
     assert result.realized_pl is None
     assert result.entry_price is None
     assert result.entry_iv_lag_minutes is None
+    assert result.exit_leg is None  # no exit was reached → no fabricated TARGET_HIT
+
+
+def test_otm_call_at_expiry_does_not_crash() -> None:
+    # An OTM long call that expires worthless: the exit bar is on the expiry day
+    # after the 16:00 ET close (tte <= 0), so the BS exit premium is $0. The
+    # replay must produce a zero-premium exit (Money), not crash on price().
+    proposal = _expiring_otm_long_call()
+    bars = _expiry_day_bars()
+
+    result = replay_option_proposal(
+        proposal,
+        bars,
+        iv_repo=_FakeIvRepo(),
+        paper_harness_config=_CONFIG,
+        risk_free_rate=_RFR,
+        adv_contracts=_ADV_CONTRACTS,
+        realized_volatility=_RVOL,
+    )
+
+    assert result.data_missing is False
+    assert result.exit_price is not None
+    from alphamind._kernel.money import money
+
+    assert result.exit_price == money("0")  # worthless OTM call at expiry
+    assert result.realized_pl is not None  # P/L still composes (loses the premium)
+
+
+def _expiring_otm_long_call() -> Any:
+    from alphamind.decision.analyst.models import Recommendation
+
+    body = _long_call().model_dump()
+    # Expire on the bar date; strike far above spot so the call ends OTM.
+    body["instrument"]["expiration"] = date(2026, 1, 10).isoformat()
+    body["instrument"]["strike"] = "250.00"
+    body["target"]["price"] = "300.00"  # never hit; resolves via time/window
+    body["invalidation_legs"][0]["condition"]["trigger_price"] = "100.00"
+    return Recommendation.model_validate(body)
+
+
+def _expiry_day_bars() -> tuple[OhlcvBar, ...]:
+    # Proposal at 14:00 UTC (09:00 ET); fill at 14:15; later bars push past the
+    # 16:00 ET (21:00 UTC) expiry close, where the OTM call is worthless.
+    base = datetime(2026, 1, 10, 14, 0, tzinfo=UTC)
+
+    def _b(offset_min: int, price_level: float) -> OhlcvBar:
+        start = base + timedelta(minutes=offset_min)
+        return OhlcvBar(
+            period_start=start,
+            period_end=start + timedelta(minutes=15),
+            open=price_level,
+            high=price_level,
+            low=price_level,
+            close=price_level,
+            adj_volume=200_000,
+        )
+
+    # Span the trading day into the post-close window so the time-stop resolves
+    # the exit at a bar with tte <= 0.
+    return (
+        _b(0, 150.0),
+        _b(15, 150.0),
+        _b(60, 150.0),
+        _b(7 * 60 + 30, 150.0),  # 21:30 UTC = 16:30 ET, past the expiry close
+    )
