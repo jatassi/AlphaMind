@@ -31,6 +31,7 @@ pipeline, ADR-0005).
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -50,6 +51,14 @@ from alphamind.execution.account_activities.records import (
 )
 from alphamind.execution.corporate_actions.handlers._shared import _persist_position_update
 from alphamind.execution.write_paths.broker_event_persistence import append_broker_event
+from alphamind.portfolio_state.events.activity_log import (
+    EVENT_TYPE_TO_GROUP,
+    ActivityLogEntry,
+    EventSource,
+    EventType,
+    PositionClosedDetail,
+    PositionExitMethod,
+)
 from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
     InstrumentType,
@@ -58,6 +67,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
     alpaca_occ_symbol,
 )
+from alphamind.state.invocation_context.activity_log import append_activity_log_entry
 from alphamind.state.invocation_context.context import InvocationHandle
 from alphamind.state.records_broker_event_log import (
     BrokerEventRecord,
@@ -67,6 +77,7 @@ from alphamind.state.records_broker_event_log import (
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.positions_codec import record_to_row, row_to_record
+from alphamind.state.tables.theses import ThesisRow
 
 
 def event_key_for(activity_id: str) -> str:
@@ -157,6 +168,46 @@ async def _persist_booking(
     await handle.session.flush()
 
 
+def _emit_position_closed(
+    handle: InvocationHandle,
+    *,
+    option_record: PositionRecord,
+    exit_method: PositionExitMethod,
+    realized_pnl_usd: Money,
+    timestamp: datetime,
+) -> None:
+    """Append one POSITION_CLOSED activity-log entry for the closed option.
+
+    The closed-position thesis resolver reads the exit method (and, for an
+    expiry, resolves the thesis) off this entry — without it the option-close
+    path leaves the thesis ``ACTIVE`` indefinitely. Built inline (mirroring the
+    resolver's ``_emit_thesis_resolved``) rather than via the corporate-actions
+    private ``_emit``. ``exit_price`` is the sanctioned 0 placeholder (no market
+    sale — the option expired worthless or converted at strike), and
+    ``thesis_resolution_category`` is the empty non-load-bearing hint (the
+    resolver computes the real category) — both matching the equity
+    ``fill_collection`` close convention.
+    """
+    entry = ActivityLogEntry(
+        entry_id=f"{handle.invocation_id}-{EventType.POSITION_CLOSED.value}-{uuid.uuid4().hex}",
+        invocation_id=handle.invocation_id,
+        timestamp=timestamp,
+        event_type=EventType.POSITION_CLOSED,
+        event_group=EVENT_TYPE_TO_GROUP[EventType.POSITION_CLOSED],
+        position_id=str(option_record.position_id),
+        order_id=None,
+        thesis_id=str(option_record.thesis_id) if option_record.thesis_id is not None else None,
+        source=EventSource.ACCOUNT_ACTIVITIES_PROCESSOR,
+        detail=PositionClosedDetail(
+            exit_method=exit_method,
+            exit_price=Money(Decimal(0)),
+            realized_pnl_usd=realized_pnl_usd,
+            thesis_resolution_category="",
+        ),
+    )
+    append_activity_log_entry(handle, entry)
+
+
 async def _already_booked(handle: InvocationHandle, event_key: str) -> bool:
     """Whether *event_key* is already in ``broker_event_log`` (a re-poll no-op).
 
@@ -217,6 +268,17 @@ async def handle_expiry(handle: InvocationHandle, event: LifecycleEvent) -> None
         broker_timestamp=event.transaction_time,
     )
     await _persist_booking(handle, option_row=option_row, result=result)
+    # Emit POSITION_CLOSED so the closed-position thesis resolver can resolve the
+    # thesis at option-close (the option is the entire trade for an OTM expiry).
+    # The emit rides the booking path — a later re-poll resolves ``found is None``
+    # above and never reaches here, so the entry lands exactly once.
+    _emit_position_closed(
+        handle,
+        option_record=option_record,
+        exit_method=PositionExitMethod.OPTION_EXPIRY,
+        realized_pnl_usd=result.realized_pnl_usd,
+        timestamp=event.transaction_time,
+    )
 
 
 async def handle_assignment_or_exercise(

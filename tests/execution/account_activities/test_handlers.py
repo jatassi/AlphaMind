@@ -32,14 +32,23 @@ from alphamind.execution.account_activities.records import (
     TradeLeg,
 )
 from alphamind.execution.write_paths.thesis_pnl_ledger import rederive_thesis_pnl_ledger
+from alphamind.portfolio_state.events.activity_log import (
+    EventSource,
+    EventType,
+    PositionClosedDetail,
+    PositionExitMethod,
+)
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
     LocateStatus,
 )
+from alphamind.state.invocation_context.activity_log import activity_log_entry_from_row
+from alphamind.state.tables.activity_log import ActivityLogRow
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.positions_codec import row_to_record
+from alphamind.state.tables.theses import ThesisRow
 from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
 from tests.execution.corporate_actions._handler_substrate import (
     INV_ID,
@@ -262,6 +271,94 @@ async def test_repoll_after_clean_expiry_is_a_no_op(
         assert pos.status == "CLOSED"
         events = (await sess.execute(select(BrokerEventLogRow))).scalars().all()
         assert len(events) == 1
+
+
+async def _position_closed_details(
+    sess: AsyncSession, position_id: str
+) -> list[PositionClosedDetail]:
+    """The decoded POSITION_CLOSED detail payloads for *position_id*, if any."""
+    rows = (
+        (
+            await sess.execute(
+                select(ActivityLogRow).where(
+                    ActivityLogRow.position_id == position_id,
+                    ActivityLogRow.event_type == EventType.POSITION_CLOSED.value,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    details: list[PositionClosedDetail] = []
+    for row in rows:
+        detail = activity_log_entry_from_row(row).detail
+        assert isinstance(detail, PositionClosedDetail)
+        details.append(detail)
+    return details
+
+
+async def test_expiry_emits_position_closed_with_option_expiry_exit_method(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """AC4: ``handle_expiry`` appends one POSITION_CLOSED for the option with
+    ``exit_method=OPTION_EXPIRY`` and ``source=ACCOUNT_ACTIVITIES_PROCESSOR`` —
+    the entry the closed-position thesis resolver reads the exit method from."""
+    _engine, factory = db
+    await _seed_open_option(factory, contract_count=5.0, premium_paid_per_contract=250.0)
+
+    ctx, handle = await open_handle(factory)
+    try:
+        await integrate_lifecycle_event(
+            handle, _expiry_event(), borrow_cost_resolver=_borrow_resolver
+        )
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.position_id == "pos-1",
+                        ActivityLogRow.event_type == EventType.POSITION_CLOSED.value,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 1
+        entry = activity_log_entry_from_row(rows[0])
+        assert entry.source is EventSource.ACCOUNT_ACTIVITIES_PROCESSOR
+        assert entry.thesis_id == "thesis-1"
+        detail = entry.detail
+        assert isinstance(detail, PositionClosedDetail)
+        assert detail.exit_method is PositionExitMethod.OPTION_EXPIRY
+        # -premium realized P/L rides the entry as signed Money.
+        assert signed_money(detail.realized_pnl_usd) == signed_money("-1250.00")
+
+
+async def test_expiry_emits_position_closed_exactly_once_across_repoll(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """The emit runs once on the booking path; a re-poll (option already CLOSED)
+    resolves ``found is None`` before it, so no second POSITION_CLOSED lands."""
+    _engine, factory = db
+    await _seed_open_option(factory, contract_count=5.0, premium_paid_per_contract=250.0)
+
+    ctx, handle = await open_handle(factory)
+    try:
+        await integrate_lifecycle_event(
+            handle, _expiry_event(), borrow_cost_resolver=_borrow_resolver
+        )
+        await integrate_lifecycle_event(
+            handle, _expiry_event(), borrow_cost_resolver=_borrow_resolver
+        )
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        assert len(await _position_closed_details(sess, "pos-1")) == 1
 
 
 def _assignment_event(activity_type: LifecycleActivityType, *, side: str = "buy") -> LifecycleEvent:
