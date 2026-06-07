@@ -312,3 +312,49 @@ class TestAnalystConvictionDistribution:
         assert _compute("analyst_conviction_rate__1", dataset).value == 0.0
         assert _compute("analyst_conviction_rate__3", dataset).value == 0.0
         assert _compute("analyst_conviction_rate__4", dataset).value == 0.0
+
+
+def _strategist_log() -> tuple[ActivityLogEntry, ...]:
+    return (
+        _pm_entry(
+            verdict=PMVerdict.APPROVE,
+            source_provenance="pm_strategist",
+            recommendation_type="position_assessment",
+            originating_proposal_json=_strategist_assessment(
+                thesis_status="on-track", recommended_action="hold", prior_status="at-risk"
+            ),
+        ),
+        _pm_entry(
+            verdict=PMVerdict.APPROVE,
+            source_provenance="pm_strategist",
+            recommendation_type="position_assessment",
+            originating_proposal_json=_strategist_assessment(
+                thesis_status="at-risk", recommended_action="reduce", prior_status="on-track"
+            ),
+        ),
+        _pm_entry(
+            verdict=PMVerdict.APPROVE,
+            source_provenance="pm_strategist",
+            recommendation_type="position_assessment",
+            originating_proposal_json=_strategist_assessment(
+                thesis_status="at-risk", recommended_action="hold", prior_status="at-risk"
+            ),
+        ),
+    )
+
+
+class TestStrategistDistributions:
+    def test_status_distribution(self) -> None:
+        dataset = _dataset(_strategist_log())
+        assert _compute("strategist_status_rate__at_risk", dataset).value == 2 / 3
+        on_track = _compute("strategist_status_rate__on_track", dataset)
+        assert on_track.value == 1 / 3
+        assert on_track.sample_size == 3
+        assert _compute("strategist_status_rate__invalidated", dataset).value == 0.0
+
+    def test_action_distribution_uses_snake_case_bins(self) -> None:
+        dataset = _dataset(_strategist_log())
+        assert _compute("strategist_action_rate__hold", dataset).value == 2 / 3
+        assert _compute("strategist_action_rate__reduce", dataset).value == 1 / 3
+        # adjust-bracket wire value maps to an adjust_bracket snake_case bin id.
+        assert _compute("strategist_action_rate__adjust_bracket", dataset).value == 0.0

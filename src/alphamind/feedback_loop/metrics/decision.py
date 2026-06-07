@@ -346,4 +346,71 @@ _ANALYST_METRICS: tuple[Metric, ...] = _distribution_metrics(
 )
 
 
-METRICS: tuple[Metric, ...] = _PM_METRICS + _ANALYST_METRICS
+# ---------------------------------------------------------------------------
+# Strategist metrics
+# ---------------------------------------------------------------------------
+
+# Strategist wire vocabularies are lowercase-hyphenated (``on-track``,
+# ``adjust-bracket``); the metric-id suffix is the snake_case form. Hard-coded here
+# rather than imported from ``decision.strategist.models`` because that module pulls in
+# sqlalchemy transitively, which the metric-core purity contract forbids.
+_STATUS_BINS: tuple[tuple[str, str], ...] = (
+    ("on_track", "on-track"),
+    ("partially_realized", "partially-realized"),
+    ("at_risk", "at-risk"),
+    ("stale", "stale"),
+    ("invalidated", "invalidated"),
+)
+_ACTION_BINS: tuple[tuple[str, str], ...] = (
+    ("hold", "hold"),
+    ("reduce", "reduce"),
+    ("close", "close"),
+    ("adjust_bracket", "adjust-bracket"),
+    ("add", "add"),
+)
+
+#: Strategist statuses that are not ``on-track`` — the denominator for the
+#: hold-on-non-on-track rate.
+_NON_ON_TRACK_STATUSES: frozenset[str] = frozenset({"at-risk", "stale"})
+
+
+def _strategist_assessments(dataset: WindowDataset) -> tuple[dict[str, object], ...]:
+    """Originating-proposal bodies of ``pm_strategist`` envelopes in the window."""
+    return tuple(
+        d.originating_proposal_json
+        for d in _pm_decisions(dataset)
+        if d.source_provenance_json.get("source_provenance") == "pm_strategist"
+    )
+
+
+def _strategist_field(dataset: WindowDataset, field: str) -> tuple[str, ...]:
+    return tuple(
+        str(value)
+        for assessment in _strategist_assessments(dataset)
+        if isinstance((value := assessment.get(field)), str)
+    )
+
+
+def _strategist_statuses(dataset: WindowDataset) -> tuple[str, ...]:
+    return _strategist_field(dataset, "thesis_status")
+
+
+def _strategist_actions(dataset: WindowDataset) -> tuple[str, ...]:
+    return _strategist_field(dataset, "recommended_action")
+
+
+_STRATEGIST_METRICS: tuple[Metric, ...] = (
+    *_distribution_metrics(
+        id_prefix="strategist_status_rate",
+        bins=_STATUS_BINS,
+        population=_strategist_statuses,
+    ),
+    *_distribution_metrics(
+        id_prefix="strategist_action_rate",
+        bins=_ACTION_BINS,
+        population=_strategist_actions,
+    ),
+)
+
+
+METRICS: tuple[Metric, ...] = _PM_METRICS + _ANALYST_METRICS + _STRATEGIST_METRICS
