@@ -269,6 +269,9 @@ async def test_assignment_thesis_defers_to_equity_close_then_resolves(
         equity_row = await session.get(PositionRow, equity_position_id)
         assert equity_row is not None
         equity_row.status = "CLOSED"
+        # A real equity close stamps the position-level realized P/L (the
+        # +5000 the sell fill realizes); a CLOSED PositionRecord requires it.
+        equity_row.realized_pnl_to_date_usd = 5000.0
         equity_close_entry = ActivityLogEntry(
             entry_id=f"{INV_ID}-POSITION_CLOSED-{uuid.uuid4().hex}",
             invocation_id=INV_ID,
