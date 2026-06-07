@@ -29,9 +29,24 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import alphamind.state.tables  # noqa: F401 — register all tables on Base.metadata
 from alphamind.analysis import _harness_core as core
 from alphamind.analysis._shared import TokensUsed
+from alphamind.persistence.models import Base
+from alphamind.persistence.session import (
+    make_async_engine,
+    make_async_session_factory,
+    make_engine,
+    make_session_factory,
+)
+from alphamind.state.repository.agent_calls_queries import read_agent_calls_for_invocation
+from alphamind.state.tables.agent_calls import AgentCallErrorClass
+from tests.state._fk_substrate import stub_invocation_row, stub_process_lifetime_row
+
+_INV_CAP = "inv-capdrain-001"
+_PLT_CAP = "plt-capdrain"
 
 # Canonical test invocation timestamp; date partition is "2026-05-01".
 _AS_OF = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
@@ -1325,3 +1340,152 @@ async def test_sdk_call_semaphore_admits_analysis_layer_fanout(
                 semaphore.release()
             else:
                 task.cancel()
+
+
+# ---------------------------------------------------------------------------
+# capture_agent_call drain outcome fidelity (ALP-909 C1)
+#
+# A call that the harness stamped ``success=True`` but which then failed
+# (HarnessFailure or any other exception) must persist ``success=False`` —
+# the row must faithfully reflect the call's true terminal outcome.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+async def capture_factory(
+    tmp_path: Path,
+) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """On-disk SQLite with the invocation FK target seeded (capture-drain tests)."""
+    db_path = tmp_path / "capdrain.db"
+    sync_engine = make_engine(str(db_path))
+    Base.metadata.create_all(sync_engine)
+    with make_session_factory(sync_engine)() as sess:
+        sess.add(stub_process_lifetime_row(_PLT_CAP))
+        sess.flush()
+        sess.add(stub_invocation_row(_INV_CAP, process_lifetime_id=_PLT_CAP))
+        sess.commit()
+    sync_engine.dispose()
+
+    async_engine = make_async_engine(str(db_path))
+    yield make_async_session_factory(async_engine)
+    await async_engine.dispose()
+
+
+def _stamped_diag(model: str = "claude-sonnet") -> core.DiagState:
+    """A DiagState the harness body has stamped ``success=True`` (no archive)."""
+    diag = core.DiagState(
+        agent_name="demo_agent",
+        invocation_id=_INV_CAP,
+        prompt_text="PROMPT",
+        user_message="USER",
+        model=model,
+        archive_root=None,
+        prompt_path="prompts/demo.md",
+    )
+    return diag
+
+
+async def _persisted_rows(
+    factory: async_sessionmaker[AsyncSession],
+) -> tuple[Any, ...]:
+    async with factory() as session:
+        return await read_agent_calls_for_invocation(session, _INV_CAP)
+
+
+async def test_capture_drains_success_true_on_clean_exit(
+    tmp_path: Path, capture_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """A clean body whose stamp said success persists ``success=True`` (baseline)."""
+    diag = _stamped_diag()
+    provenance_root = tmp_path / "prov"
+    async with capture_factory() as session:
+        async with core.capture_agent_call(
+            diag, telemetry_session=session, provenance_root=provenance_root
+        ):
+            diag.write(success=True, wall_clock_seconds=1.0, stop_reason="end_turn")
+        await session.commit()
+
+    rows = await _persisted_rows(capture_factory)
+    assert len(rows) == 1
+    assert rows[0].success is True
+    assert rows[0].error_class is None
+
+
+async def test_capture_drains_success_false_on_harness_failure_after_stamp(
+    tmp_path: Path, capture_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """A HarnessFailure raised after a success stamp persists ``success=False``."""
+    diag = _stamped_diag()
+    provenance_root = tmp_path / "prov"
+    async with capture_factory() as session:
+        with pytest.raises(core.TimeoutFailure):
+            async with core.capture_agent_call(
+                diag, telemetry_session=session, provenance_root=provenance_root
+            ):
+                diag.write(success=True, wall_clock_seconds=1.0, stop_reason="end_turn")
+                raise core.TimeoutFailure(
+                    "stalled", agent_name="demo_agent", invocation_id=_INV_CAP
+                )
+        await session.commit()
+
+    rows = await _persisted_rows(capture_factory)
+    assert len(rows) == 1
+    assert rows[0].success is False
+    assert rows[0].error_class == AgentCallErrorClass.timeout.value
+
+
+async def test_capture_drains_internal_error_on_non_harness_failure_after_stamp(
+    tmp_path: Path, capture_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """A non-HarnessFailure escape persists success=False, error_class=internal_error,
+    error_message=str(exc); the original exception propagates unchanged (ALP-909 C1)."""
+    diag = _stamped_diag()
+    provenance_root = tmp_path / "prov"
+    async with capture_factory() as session:
+        with pytest.raises(RuntimeError, match="boom"):
+            async with core.capture_agent_call(
+                diag, telemetry_session=session, provenance_root=provenance_root
+            ):
+                diag.write(success=True, wall_clock_seconds=1.0, stop_reason="end_turn")
+                raise RuntimeError("boom")
+        await session.commit()
+
+    rows = await _persisted_rows(capture_factory)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.success is False
+    assert row.error_class == AgentCallErrorClass.internal_error.value
+    assert row.error_message == "boom"
+
+
+async def test_capture_persists_no_row_when_exception_before_stamp(
+    tmp_path: Path, capture_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """An exception raised before any terminal write produces no row (no-op preserved)."""
+    diag = _stamped_diag()
+    provenance_root = tmp_path / "prov"
+    async with capture_factory() as session:
+        with pytest.raises(RuntimeError):
+            async with core.capture_agent_call(
+                diag, telemetry_session=session, provenance_root=provenance_root
+            ):
+                raise RuntimeError("before any stamp")
+        await session.commit()
+
+    rows = await _persisted_rows(capture_factory)
+    assert rows == ()
+
+
+async def test_capture_build_internal_error_override_in_functional_core() -> None:
+    """``build_capture_from_diag`` overrides the stamped success when an unexpected
+    exception escaped after the stamp (the C1 signal threaded into the core)."""
+    from alphamind.analysis._agent_call_capture import build_capture_from_diag
+
+    diag = _stamped_diag()
+    diag.write(success=True, wall_clock_seconds=0.5, stop_reason="end_turn")
+
+    capture = build_capture_from_diag(diag, internal_error=RuntimeError("kaboom"))
+    assert capture is not None
+    assert capture.success is False
+    assert capture.error_class is AgentCallErrorClass.internal_error
+    assert capture.error_message == "kaboom"

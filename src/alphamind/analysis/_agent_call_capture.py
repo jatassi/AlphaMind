@@ -284,7 +284,10 @@ class CaptureSignals(Protocol):
 
 
 def build_capture_from_diag(
-    diag: CaptureSignals, *, error: HarnessFailure | None = None
+    diag: CaptureSignals,
+    *,
+    error: HarnessFailure | None = None,
+    internal_error: BaseException | None = None,
 ) -> AgentCallCapture | None:
     """Assemble the single aggregated capture for *diag*, or ``None``.
 
@@ -292,14 +295,34 @@ def build_capture_from_diag(
     (``agent_call_id`` unset or ``last_success`` ``None``). The accumulated
     ``tokens_used`` / ``attempt_number`` / outcome reflect every constituent
     API call (tool loop + below-boundary retries), so the result is exactly
-    one aggregated record per agent call. *error* is the raised
-    :class:`HarnessFailure` on a failure path; its subclass selects the
-    persisted ``error_class``.
+    one aggregated record per agent call.
+
+    Failure overrides the stamped outcome so a row always reflects the call's
+    true terminal result (ALP-909 C1): if *error* (a :class:`HarnessFailure`)
+    or *internal_error* (any other exception that escaped the wrapped body) is
+    present, ``success`` is forced ``False`` regardless of what the harness
+    stamped. *error*'s subclass selects the persisted ``error_class`` via
+    :func:`error_class_for_failure`; *internal_error* records ``internal_error``
+    with ``str(exc)`` as the message. The two are mutually exclusive at the
+    call site (a HarnessFailure is caught as *error*; anything else as
+    *internal_error*).
     """
     if diag.agent_call_id is None or diag.last_success is None:
         return None
     wall_clock_seconds = diag.last_wall_clock_seconds or 0.0
     prompt_path = diag.prompt_path or ""
+    if error is not None:
+        success = False
+        error_class: AgentCallErrorClass | None = error_class_for_failure(error)
+        error_message: str | None = str(error)
+    elif internal_error is not None:
+        success = False
+        error_class = AgentCallErrorClass.internal_error
+        error_message = str(internal_error)
+    else:
+        success = diag.last_success
+        error_class = None
+        error_message = None
     return AgentCallCapture(
         agent_call_id=diag.agent_call_id,
         invocation_id=diag.invocation_id,
@@ -320,9 +343,9 @@ def build_capture_from_diag(
         cache_write_tokens=diag.tokens_used.cache_write_tokens,
         wall_clock_ms=int(wall_clock_seconds * 1000),
         stop_reason=diag.last_stop_reason or "",
-        success=diag.last_success,
-        error_class=error_class_for_failure(error) if error is not None else None,
-        error_message=str(error) if error is not None else None,
+        success=success,
+        error_class=error_class,
+        error_message=error_message,
     )
 
 

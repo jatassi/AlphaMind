@@ -578,19 +578,40 @@ async def capture_agent_call(
     Capture must never break the call it observes: a persistence error is
     swallowed (the harness result / failure propagates regardless), mirroring
     the diagnostic writer's "diagnostics never break the call" contract.
+
+    Outcome fidelity (ALP-909 C1): any exception escaping the wrapped body —
+    a :class:`HarnessFailure` or otherwise — drains a row with ``success=False``,
+    so a call that failed after the harness stamped ``success=True`` never
+    persists a success row. A :class:`HarnessFailure` classifies via its
+    subclass; any other exception records ``internal_error`` with ``str(exc)``
+    and re-raises unchanged (capture never alters propagation). A clean exit —
+    or an exception raised before any terminal ``write`` — is unaffected: the
+    former drains the stamped success, the latter produces no row.
     """
     if telemetry_session is None or provenance_root is None:
         yield
         return
     error: HarnessFailure | None = None
+    internal_error: BaseException | None = None
     try:
         yield
     except HarnessFailure as exc:
         error = exc
         raise
+    except Exception as exc:
+        # A non-HarnessFailure escaping after the success stamp is an internal
+        # error — record it as such and re-raise unchanged. ``GeneratorExit`` /
+        # ``BaseException`` (cancellation, benign generator close) are NOT
+        # caught, so a normal teardown is not misclassified as a failure.
+        internal_error = exc
+        raise
     finally:
         await _drain_capture(
-            diag, telemetry_session=telemetry_session, provenance_root=provenance_root, error=error
+            diag,
+            telemetry_session=telemetry_session,
+            provenance_root=provenance_root,
+            error=error,
+            internal_error=internal_error,
         )
 
 
@@ -600,6 +621,7 @@ async def _drain_capture(
     telemetry_session: AsyncSession,
     provenance_root: Path,
     error: HarnessFailure | None,
+    internal_error: BaseException | None = None,
 ) -> None:
     """Build + persist *diag*'s capture; swallow persistence errors."""
     from alphamind.analysis._agent_call_capture import (
@@ -607,7 +629,7 @@ async def _drain_capture(
         persist_agent_call,
     )
 
-    capture = build_capture_from_diag(diag, error=error)
+    capture = build_capture_from_diag(diag, error=error, internal_error=internal_error)
     if capture is None:
         return
     try:
