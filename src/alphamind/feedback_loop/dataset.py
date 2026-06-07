@@ -48,7 +48,10 @@ from alphamind.portfolio_state.records.theses import (
 from alphamind.state.repository.activity_log_queries import read_recent_pm_decision_log
 from alphamind.state.repository.agent_calls_queries import read_agent_calls_in_window
 from alphamind.state.repository.outcome_queries import read_resolved_theses_in_window
-from alphamind.state.repository.validation_queries import read_pending_validations
+from alphamind.state.repository.validation_queries import (
+    read_pending_validations,
+    read_validations_superseded_in_window,
+)
 from alphamind.state.tables.thesis_components import ThesisComponentRow
 
 if TYPE_CHECKING:
@@ -199,6 +202,9 @@ class WindowDataset:
       decisions outside the window or omit in-window decisions beyond that depth.
     * ``validations`` — all currently-pending validations (point-in-time), **not**
       window-bounded.
+    * ``superseded_validations`` — validations whose ``superseded_at`` falls in
+      ``[start, end)`` (the only window-bounded validation view): the supersessions
+      that landed during the window, for the ``validation_superseded`` shift detector.
 
     A metric needing a strict per-window slice of ``pm_decision_log`` / ``validations``
     must filter by timestamp itself.
@@ -209,6 +215,7 @@ class WindowDataset:
     agent_calls: tuple[AgentCallRecord, ...]
     pm_decision_log: tuple[ActivityLogEntry, ...]
     validations: tuple[ValidationRecord, ...]
+    superseded_validations: tuple[ValidationRecord, ...] = ()
     # Pre-declared extension sub-bundles — empty until 06d / 06e fill them.
     refs: RefsBundle = field(default_factory=RefsBundle)
     replays: ReplaysBundle = field(default_factory=ReplaysBundle)
@@ -426,6 +433,8 @@ async def load_window(
     * ``agent_calls`` whose owning invocation started in ``[start, end)``.
     * the recent PM-decision activity-log sliding window.
     * pending validation contracts (the validation-discipline read surface).
+    * validations superseded within ``[start, end)`` (the digest's
+      ``validation_superseded`` shift surface).
     * the resolved-thesis ``outcomes`` sub-bundle, stamped with *config*'s
       sample-size thresholds (the packaged defaults when *config* is omitted).
     * the ``refs`` / ``replays`` extension sub-bundles via their hooks (empty
@@ -440,6 +449,9 @@ async def load_window(
     validations = await session.run_sync(
         lambda sync_session: read_pending_validations(sync_session)
     )
+    superseded_validations = await session.run_sync(
+        lambda sync_session: read_validations_superseded_in_window(sync_session, start, end)
+    )
     refs = await _load_refs(session, start, end)
     replays = await _load_replays(session, start, end)
     outcomes = await _load_outcomes(session, start, end, config)
@@ -449,6 +461,7 @@ async def load_window(
         agent_calls=agent_calls,
         pm_decision_log=pm_decision_log,
         validations=validations,
+        superseded_validations=superseded_validations,
         refs=refs,
         replays=replays,
         outcomes=outcomes,

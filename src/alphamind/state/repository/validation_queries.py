@@ -180,6 +180,38 @@ def read_pending_validations(
     return tuple(validation_row_to_record(row) for row in rows)
 
 
+def read_validations_superseded_in_window(
+    session: Session,
+    start: datetime,
+    end: datetime,
+) -> tuple[ValidationRecord, ...]:
+    """Return validations auto-superseded within ``[start, end)``.
+
+    A validation is in-window-superseded when its ``superseded_at`` is non-null and
+    falls in ``[start, end)`` (start inclusive, end exclusive). Used by the weekly
+    digest's ``validation_superseded`` notable-shift detector, which flags
+    supersessions that landed during the digest week. Results are ordered by
+    ``superseded_at`` ascending.
+
+    ``superseded_at`` is stored as an ISO-8601 ``Z`` string (UTC); the bounds are
+    encoded the same way so the comparison is a lexicographic range over the
+    canonical timestamp text.
+    """
+    start_iso = datetime_to_iso_z(start, field_name="start")
+    end_iso = datetime_to_iso_z(end, field_name="end")
+    stmt = (
+        select(ValidationsRow)
+        .where(
+            ValidationsRow.superseded_at.is_not(None),
+            ValidationsRow.superseded_at >= start_iso,
+            ValidationsRow.superseded_at < end_iso,
+        )
+        .order_by(ValidationsRow.superseded_at.asc())
+    )
+    rows = session.execute(stmt).scalars().all()
+    return tuple(validation_row_to_record(row) for row in rows)
+
+
 def read_outcomes_by_artifact(
     session: Session,
     edited_artifact: str,
@@ -291,5 +323,6 @@ __all__ = [
     "read_pending_validations",
     "read_unresolved_optional_pending_rollbacks",
     "read_validation",
+    "read_validations_superseded_in_window",
     "rollback_followup_identifier",
 ]
