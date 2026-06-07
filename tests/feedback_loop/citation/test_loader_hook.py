@@ -127,6 +127,40 @@ class TestRefsHook:
         dataset = await load_window(sess, _WINDOW_START, _WINDOW_END)
         assert dataset.refs.citations == ()
 
+    async def test_in_window_agent_calls_read_once_per_load_window(
+        self, session: tuple[AsyncSession, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The windowed agent-call read is shared between load_window's own bundle and
+        # the refs hook; it must hit the DB exactly once per load_window (ALP-912 E).
+        sess, root = session
+        synth_payload = {
+            "synthesis_text": "see [SA-TECH-1]",
+            "retrieval_store": {"entries": {"SA-TECH-1": "..."}, "freshness_by_source": {}},
+        }
+        ref = _write_output(root / "synth", synth_payload)
+        await insert_agent_call(sess, _agent_call("synth", "synthesizer", ref))
+        await sess.commit()
+
+        from alphamind.state.repository import agent_calls_queries
+
+        real_read = agent_calls_queries.read_agent_calls_in_window
+        calls = 0
+
+        async def _counting_read(*args: object, **kwargs: object) -> object:
+            nonlocal calls
+            calls += 1
+            return await real_read(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(
+            "alphamind.feedback_loop.dataset.read_agent_calls_in_window", _counting_read
+        )
+
+        dataset = await load_window(sess, _WINDOW_START, _WINDOW_END)
+        assert calls == 1
+        # The single read still feeds both the agent_calls bundle and the refs hook.
+        assert {c.agent_call_id for c in dataset.agent_calls} == {"synth"}
+        assert {c.ref.ref_id for c in dataset.refs.citations} == {"SA-TECH-1"}
+
     async def test_decision_citations_and_thesis_resolution_join(
         self, session: tuple[AsyncSession, Path]
     ) -> None:

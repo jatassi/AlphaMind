@@ -228,17 +228,17 @@ class WindowDataset:
 # ---------------------------------------------------------------------------
 
 
-async def _load_refs(session: AsyncSession, start: datetime, end: datetime) -> RefsBundle:
+async def _load_refs(session: AsyncSession, agent_calls: tuple[AgentCallRecord, ...]) -> RefsBundle:
     """Citation-reference sub-bundle loader hook (story 06d / ALP-886).
 
-    The imperative shell for the citation chain: reads each in-window agent
-    call's ``output.json`` provenance artifact, extracts the cited upstream refs
-    per layer (synthesizer brief vs. decision-layer narratives), joins to the
-    resolved thesis components, and delegates the pure assembly to
-    :func:`~alphamind.feedback_loop.citation.parser.assemble_chains`. The file
-    read is the sole impurity; parsing and chain assembly are pure.
+    The imperative shell for the citation chain: over the window's already-loaded
+    *agent_calls* (read once by :func:`load_window`), reads each call's
+    ``output.json`` provenance artifact, extracts the cited upstream refs per layer
+    (synthesizer brief vs. decision-layer narratives), joins to the resolved thesis
+    components via *session*, and delegates the pure assembly to
+    :func:`~alphamind.feedback_loop.citation.parser.assemble_chains`. The file read
+    is the sole impurity; parsing and chain assembly are pure.
     """
-    agent_calls = await read_agent_calls_in_window(session, start, end)
     synthesis_text = ""
     universe: set[str] = set()
     decision_citations: set[str] = set()
@@ -452,7 +452,7 @@ async def load_window(
     superseded_validations = await session.run_sync(
         lambda sync_session: read_validations_superseded_in_window(sync_session, start, end)
     )
-    refs = await _load_refs(session, start, end)
+    refs = await _load_refs(session, agent_calls)
     replays = await _load_replays(session, start, end)
     outcomes = await _load_outcomes(session, start, end, config)
     return WindowDataset(
