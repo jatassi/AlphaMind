@@ -9,7 +9,7 @@ FK to ``invocations.invocation_id`` with ``ON DELETE RESTRICT`` — invocation
 rows are the provenance root; deleting an invocation that has agent call rows
 is prevented at the DB level.
 
-``error_class`` is a closed ``StrEnum`` with five members (see
+``error_class`` is a closed ``StrEnum`` with seven members (see
 ``AgentCallErrorClass``). A CHECK constraint enforces the same vocabulary at
 the storage layer so a future direct-SQL writer faces the same fail-closed
 guarantee.
@@ -34,6 +34,15 @@ class AgentCallErrorClass(StrEnum):
     """Closed set of error classes for a failed agent call.
 
     Null on success — ``error_class`` is only populated when ``success`` is False.
+
+    ``tool_use_error`` is reserved: the harness taxonomy has no tool-use-specific
+    failure today, so no producer routes to it. It is retained in the vocabulary
+    (and the frozen CHECK) so a future tool-use failure class can map to it
+    without a migration. ``empty_response`` is produced by an empty-response
+    transient that exhausted its retry budget (synthesizer); ``internal_error``
+    is produced when a non-:class:`HarnessFailure` exception escapes the capture
+    body after the call was already stamped (see ``_agent_call_capture`` /
+    ``_harness_core``).
     """
 
     timeout = "timeout"
@@ -41,6 +50,8 @@ class AgentCallErrorClass(StrEnum):
     context_overflow = "context_overflow"
     model_api_error = "model_api_error"
     tool_use_error = "tool_use_error"
+    empty_response = "empty_response"
+    internal_error = "internal_error"
 
 
 _ERROR_CLASS_VALUES: tuple[str, ...] = tuple(m.value for m in AgentCallErrorClass)

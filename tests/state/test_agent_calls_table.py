@@ -246,6 +246,70 @@ class TestRoundTrip:
 
 
 # ---------------------------------------------------------------------------
+# Cycle 1b — error_class vocabulary (ALP-909 C4): empty_response + internal_error
+# ---------------------------------------------------------------------------
+
+
+class TestErrorClassVocabulary:
+    def test_exposes_empty_response_and_internal_error(self) -> None:
+        """The two ALP-909 members are present alongside the original five."""
+        assert {m.value for m in AgentCallErrorClass} == {
+            "timeout",
+            "malformed_output",
+            "context_overflow",
+            "model_api_error",
+            "tool_use_error",
+            "empty_response",
+            "internal_error",
+        }
+
+    def test_check_admits_empty_response_row(self, session: Session) -> None:
+        """A row with ``error_class='empty_response'`` is accepted by the CHECK."""
+        session.add(stub_process_lifetime_row())
+        session.flush()
+        session.add(stub_invocation_row(_INV_MID))
+        session.flush()
+
+        row = AgentCallsRow(
+            **record_to_row(
+                _make_failed_record(
+                    agent_call_id="call-empty",
+                    invocation_id=_INV_MID,
+                )
+            )
+        )
+        row.error_class = AgentCallErrorClass.empty_response.value
+        session.add(row)
+        session.flush()  # would raise IntegrityError if the CHECK rejected it
+
+        from sqlalchemy import select
+
+        fetched = session.execute(
+            select(AgentCallsRow).where(AgentCallsRow.agent_call_id == "call-empty")
+        ).scalar_one()
+        assert fetched.error_class == "empty_response"
+
+    def test_check_rejects_out_of_vocabulary_value(self, session: Session) -> None:
+        """A value outside the seven-member vocabulary trips the CHECK constraint."""
+        from sqlalchemy.exc import IntegrityError
+
+        session.add(stub_process_lifetime_row())
+        session.flush()
+        session.add(stub_invocation_row(_INV_MID))
+        session.flush()
+
+        row = AgentCallsRow(
+            **record_to_row(
+                _make_failed_record(agent_call_id="call-bogus", invocation_id=_INV_MID)
+            )
+        )
+        row.error_class = "not_a_real_class"
+        session.add(row)
+        with pytest.raises(IntegrityError):
+            session.flush()
+
+
+# ---------------------------------------------------------------------------
 # Cycle 2 — insert_agent_call + read_agent_calls_for_invocation
 # ---------------------------------------------------------------------------
 
