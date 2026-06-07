@@ -146,6 +146,12 @@ class DiagWriter(Protocol):
     the per-harness metadata shape while keeping the failure-path flush
     and the ``agent_response`` model-name emission consistent across the
     seven harnesses.
+
+    The agent_calls capture (ALP-880) rides the same ``write`` funnel: each
+    ``write`` stamps the terminal outcome onto the diag, and the harness body
+    wrapped in :func:`capture_agent_call` drains the one aggregated capture on
+    exit. The richer ``CaptureSignals`` Protocol in
+    :mod:`alphamind.analysis._agent_call_capture` describes that surface.
     """
 
     model: str
