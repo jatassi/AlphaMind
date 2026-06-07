@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from sqlalchemy.orm import Session
@@ -126,8 +127,8 @@ def _followup_decision(
 
 
 @pytest.fixture()
-def session(tmp_path: object) -> Iterator[Session]:
-    db_path = tmp_path / "rollback_pull.db"  # type: ignore[attr-defined]
+def session(tmp_path: Path) -> Iterator[Session]:
+    db_path = tmp_path / "rollback_pull.db"
     engine = make_engine(str(db_path))
     Base.metadata.create_all(engine)
     with make_session_factory(engine)() as sess:

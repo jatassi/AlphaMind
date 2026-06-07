@@ -19,6 +19,7 @@ import alphamind.state.tables  # noqa: F401 — register all tables on Base.meta
 from alphamind.feedback_loop.dataset import WindowDataset
 from alphamind.feedback_loop.retrospective.records import (
     DecisionType,
+    ReportId,
     RetrospectiveDecisionRecord,
     RetrospectiveReportRecord,
     Verdict,
@@ -90,23 +91,14 @@ class TestSaveReport:
     def test_report_file_ref_is_canonical_relative_path(
         self, session: Session, tmp_path: Path
     ) -> None:
-        record = save_report(
-            session, _window(), "# r\n", data_root=tmp_path, now=lambda: _NOW
-        )
-        assert (
-            record.report_file_ref
-            == f"data/retrospective_reports/{record.report_id}/report.md"
-        )
+        record = save_report(session, _window(), "# r\n", data_root=tmp_path, now=lambda: _NOW)
+        assert record.report_file_ref == f"data/retrospective_reports/{record.report_id}/report.md"
 
     def test_session_id_is_nullable(self, session: Session, tmp_path: Path) -> None:
-        record = save_report(
-            session, _window(), "# r\n", data_root=tmp_path, now=lambda: _NOW
-        )
+        record = save_report(session, _window(), "# r\n", data_root=tmp_path, now=lambda: _NOW)
         assert record.generated_by_session_id is None
 
-    def test_session_id_persists_when_supplied(
-        self, session: Session, tmp_path: Path
-    ) -> None:
+    def test_session_id_persists_when_supplied(self, session: Session, tmp_path: Path) -> None:
         record = save_report(
             session,
             _window(),
@@ -126,17 +118,13 @@ class TestSaveReport:
         assert r1.report_id != r2.report_id
 
     def test_returns_record_type(self, session: Session, tmp_path: Path) -> None:
-        record = save_report(
-            session, _window(), "# r\n", data_root=tmp_path, now=lambda: _NOW
-        )
+        record = save_report(session, _window(), "# r\n", data_root=tmp_path, now=lambda: _NOW)
         assert isinstance(record, RetrospectiveReportRecord)
 
 
 class TestCaptureDecision:
-    def _saved_report(self, session: Session, tmp_path: Path) -> str:
-        record = save_report(
-            session, _window(), "# r\n", data_root=tmp_path, now=lambda: _NOW
-        )
+    def _saved_report(self, session: Session, tmp_path: Path) -> ReportId:
+        record = save_report(session, _window(), "# r\n", data_root=tmp_path, now=lambda: _NOW)
         session.flush()
         return record.report_id
 
