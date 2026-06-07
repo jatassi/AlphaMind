@@ -75,9 +75,7 @@ class TestSectionAssembly:
         assert pulse.prior.value == 0.2
         assert pulse.delta == pytest.approx(0.3)
 
-    def test_anti_pattern_bar_group_has_one_cell_per_canonical_pattern(
-        self, digest_config
-    ) -> None:  # type: ignore[no-untyped-def]
+    def test_anti_pattern_bar_group_has_one_cell_per_canonical_pattern(self, digest_config) -> None:  # type: ignore[no-untyped-def]
         digest = generate_digest(fx.week_sequence(4), digest_config)
         assert len(digest.pulse.anti_pattern_frequencies) == 5
 
@@ -127,9 +125,7 @@ class TestDeterminism:
         fx.install_metrics(
             monkeypatch,
             (
-                fx.per_week_metric(
-                    "outcome_win_rate", {label: 0.6 for label in labels}
-                ),
+                fx.per_week_metric("outcome_win_rate", {label: 0.6 for label in labels}),
                 fx.constant_metric("pm_modification_rate", 0.1),
             ),
         )

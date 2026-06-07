@@ -22,6 +22,7 @@ from alphamind.config.models.digest import (
     ValidationWindowEnd,
 )
 from alphamind.feedback_loop.citation.parser import CitationSource
+from alphamind.feedback_loop.dataset import WindowDataset
 from alphamind.feedback_loop.digest.shifts import (
     detect_anti_pattern_spike,
     detect_citation_chain_shift,
@@ -31,13 +32,13 @@ from alphamind.feedback_loop.digest.shifts import (
     detect_validation_superseded,
     detect_validation_window_end,
 )
-from alphamind.feedback_loop.validation.records import SupersededReason
+from alphamind.feedback_loop.validation.records import SupersededReason, ValidationRecord
 from tests.feedback_loop.digest import _fixtures as fx
 
 _MONDAY = datetime(2026, 3, 30, tzinfo=UTC)  # the base current-week Monday
 
 
-def _weeks(count: int) -> list[tuple[str, object]]:
+def _weeks(count: int) -> list[tuple[str, WindowDataset]]:
     return fx.week_sequence(count, base=_MONDAY)
 
 
@@ -263,7 +264,7 @@ class TestSourceSignalSurvivalDrop:
 class TestValidationWindowEnd:
     _CONFIG = ValidationWindowEnd(days_before_due=7)
 
-    def _current_with(self, *, due_at: datetime):  # type: ignore[no-untyped-def]
+    def _current_with(self, *, due_at: datetime) -> list[tuple[str, WindowDataset]]:
         val = fx.validation(validation_id="val-1", evaluation_due_at=due_at)
         current = fx.dataset(monday=_MONDAY, validations=(val,))
         return [*fx.week_sequence(2, base=_MONDAY), (_MONDAY.date().isoformat(), current)]
@@ -293,7 +294,9 @@ class TestValidationWindowEnd:
 
 
 class TestValidationSuperseded:
-    def _current_with_superseded(self, supers: tuple):  # type: ignore[no-untyped-def]
+    def _current_with_superseded(
+        self, supers: tuple[ValidationRecord, ...]
+    ) -> list[tuple[str, WindowDataset]]:
         current = fx.dataset(monday=_MONDAY, superseded_validations=supers)
         return [*fx.week_sequence(2, base=_MONDAY), (_MONDAY.date().isoformat(), current)]
 

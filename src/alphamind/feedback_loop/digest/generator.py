@@ -273,8 +273,7 @@ class Trajectory:
 
 def _sparkline(weeks: Sequence[WeekInput], metric_id: MetricId) -> Sparkline:
     points = tuple(
-        TrajectoryPoint(week=label, cell=_read_cell(dataset, metric_id))
-        for label, dataset in weeks
+        TrajectoryPoint(week=label, cell=_read_cell(dataset, metric_id)) for label, dataset in weeks
     )
     return Sparkline(metric_id=metric_id, points=points)
 

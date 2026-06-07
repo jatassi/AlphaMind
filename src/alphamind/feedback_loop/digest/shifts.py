@@ -98,9 +98,7 @@ def _metric_value(dataset: WindowDataset, metric_id: MetricId) -> float | None:
     return metric.compute(dataset, UNCONDITIONED).value
 
 
-def _baseline_weeks(
-    weeks: Sequence[WeekInput], baseline_window_weeks: int
-) -> Sequence[WeekInput]:
+def _baseline_weeks(weeks: Sequence[WeekInput], baseline_window_weeks: int) -> Sequence[WeekInput]:
     """The trailing ``baseline_window_weeks`` *before* the current week.
 
     The current week is ``weeks[-1]``; the baseline is the ``baseline_window_weeks``
@@ -394,9 +392,7 @@ def detect_validation_superseded(
 # ---------------------------------------------------------------------------
 
 
-def detect_shifts(
-    weeks: Sequence[WeekInput], config: DigestConfig
-) -> tuple[ShiftFinding, ...]:
+def detect_shifts(weeks: Sequence[WeekInput], config: DigestConfig) -> tuple[ShiftFinding, ...]:
     """Run all seven detectors over the current week and return every finding.
 
     Findings are emitted in detector order (the § Section 5 listing order); within a

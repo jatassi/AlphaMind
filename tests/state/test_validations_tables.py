@@ -48,6 +48,7 @@ from alphamind.state.repository.validation_queries import (
     read_outcomes_by_artifact,
     read_pending_validations,
     read_validation,
+    read_validations_superseded_in_window,
 )
 from alphamind.state.tables.validation_outcomes import ValidationOutcomesRow
 from alphamind.state.tables.validations import ValidationsRow
@@ -438,6 +439,83 @@ class TestReadPendingValidations:
 
     def test_returns_empty_when_no_validations(self, session: Session) -> None:
         assert read_pending_validations(session) == ()
+
+
+# ---------------------------------------------------------------------------
+# read_validations_superseded_in_window
+# ---------------------------------------------------------------------------
+
+
+class TestReadValidationsSupersededInWindow:
+    _WINDOW_START = datetime(2026, 6, 1, tzinfo=UTC)
+    _WINDOW_END = datetime(2026, 6, 8, tzinfo=UTC)
+
+    def test_returns_only_supersessions_in_window(self, session: Session) -> None:
+        """Only validations whose ``superseded_at`` falls in ``[start, end)`` return."""
+        insert_validation(  # superseded inside the window
+            session,
+            _make_validation(
+                _VAL_ID_1,
+                superseded_at=datetime(2026, 6, 5, 9, 0, tzinfo=UTC),
+                superseded_reason=SupersededReason.REGIME_TRANSITION,
+            ),
+        )
+        insert_validation(  # superseded before the window
+            session,
+            _make_validation(
+                _VAL_ID_2,
+                superseded_at=datetime(2026, 5, 20, 9, 0, tzinfo=UTC),
+                superseded_reason=SupersededReason.MODEL_VERSION_CHANGE,
+            ),
+        )
+        insert_validation(session, _make_validation(_VAL_ID_3))  # never superseded
+        session.flush()
+
+        result = read_validations_superseded_in_window(
+            session, self._WINDOW_START, self._WINDOW_END
+        )
+        assert {r.validation_id for r in result} == {_VAL_ID_1}
+        assert result[0].superseded_reason is SupersededReason.REGIME_TRANSITION
+
+    def test_end_is_exclusive(self, session: Session) -> None:
+        """A supersession exactly at ``end`` is excluded (end-exclusive)."""
+        insert_validation(
+            session,
+            _make_validation(
+                _VAL_ID_1,
+                superseded_at=self._WINDOW_END,
+                superseded_reason=SupersededReason.REGIME_TRANSITION,
+            ),
+        )
+        session.flush()
+        assert (
+            read_validations_superseded_in_window(session, self._WINDOW_START, self._WINDOW_END)
+            == ()
+        )
+
+    def test_start_is_inclusive(self, session: Session) -> None:
+        """A supersession exactly at ``start`` is included (start-inclusive)."""
+        insert_validation(
+            session,
+            _make_validation(
+                _VAL_ID_1,
+                superseded_at=self._WINDOW_START,
+                superseded_reason=SupersededReason.CONCURRENT_EDIT_ON_WATCHED_ARTIFACT,
+            ),
+        )
+        session.flush()
+        result = read_validations_superseded_in_window(
+            session, self._WINDOW_START, self._WINDOW_END
+        )
+        assert {r.validation_id for r in result} == {_VAL_ID_1}
+
+    def test_empty_when_no_supersessions(self, session: Session) -> None:
+        insert_validation(session, _make_validation(_VAL_ID_1))
+        session.flush()
+        assert (
+            read_validations_superseded_in_window(session, self._WINDOW_START, self._WINDOW_END)
+            == ()
+        )
 
 
 # ---------------------------------------------------------------------------
