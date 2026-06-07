@@ -981,12 +981,13 @@ def _build_acknowledgment(
 
     For OPEN the acknowledgment carries the same ``POS-{ticker}-{suffix}`` and
     ``ORD-{ticker}-entry-{suffix}`` identifiers Phase 2's
-    :func:`alphamind.execution.write_paths.phase2.open._new_open_ids`
+    :func:`alphamind.execution.write_paths.command_execution.open._new_open_ids`
     mints from the matching ``command_id`` — so the LLM sees the identifiers
     that will land on the persisted rows. For ADD the ``position_id`` is
     already supplied by the command; the ``order_id`` mirrors the
-    ``ORD-ADD-{position_id}-{suffix}`` shape Phase 2's add path uses for the
-    primary entry order (see :func:`alphamind.execution.write_paths.phase2.add._add_order_id`).
+    ``ORD-ADD-{position_id}-{suffix}`` shape the command_execution add path
+    uses for the primary entry order (see
+    :func:`alphamind.execution.write_paths.command_execution.add._add_order_id`).
     Broker routing (story 03e / ALP-390), when wired, swaps the ``order_id``
     for the broker's real ``alpaca_order_id`` via
     :func:`alphamind.decision.portfolio_manager.submit_envelope.dispatch._with_real_order_id`.

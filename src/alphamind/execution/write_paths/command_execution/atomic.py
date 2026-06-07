@@ -53,17 +53,20 @@ from alphamind.commands.pm_envelope import PMEnvelope
 from alphamind.commands.submission_results import SubmissionResult
 from alphamind.execution.broker_adapter import derive_capital_floor_client_order_id
 from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
-from alphamind.execution.write_paths.phase2 import (
+from alphamind.execution.write_paths.command_execution import (
     _dispatch_command_writeback,
     _emit_pm_decision,
     persist_command_abandoned,
 )
-from alphamind.execution.write_paths.phase2._shared import _instrument_ticker_key
-from alphamind.execution.write_paths.phase2.add import _add_order_id
-from alphamind.execution.write_paths.phase2.adjust import _adjust_replacement_order_id
-from alphamind.execution.write_paths.phase2.cancel import _writeback_cancel
-from alphamind.execution.write_paths.phase2.close import _close_order_id
-from alphamind.execution.write_paths.phase2.open import _capital_floor_order_id, _new_open_ids
+from alphamind.execution.write_paths.command_execution._shared import _instrument_ticker_key
+from alphamind.execution.write_paths.command_execution.add import _add_order_id
+from alphamind.execution.write_paths.command_execution.adjust import _adjust_replacement_order_id
+from alphamind.execution.write_paths.command_execution.cancel import _writeback_cancel
+from alphamind.execution.write_paths.command_execution.close import _close_order_id
+from alphamind.execution.write_paths.command_execution.open import (
+    _capital_floor_order_id,
+    _new_open_ids,
+)
 from alphamind.persistence.session import begin_write_immediate
 from alphamind.portfolio_state.records.orders import OrderRole, OrderStatus
 from alphamind.state.invocation_context.context import InvocationHandle
@@ -453,7 +456,7 @@ async def finalize_broker_envelope(
     The order rows + capital are already durably committed per command by
     :func:`precommit_command` / :func:`backfill_command_broker_ids`; this writes
     only the once-per-envelope ``pm_decision`` and one ``command_abandoned`` per
-    broker-rejected command. The ``phase2_completed_at`` stamp is NOT emitted here
+    broker-rejected command. The ``command_execution_completed_at`` stamp is NOT emitted here
     — it is the orchestrator's single authoritative phase-2 completion stamp,
     guarded by :func:`invocation_has_pending_submit_strand` (ALP-836). Stamping
     here too would be both redundant and ineffective (the orchestrator's
@@ -509,7 +512,7 @@ async def invocation_has_pending_submit_strand(
     ``alpaca_order_id`` backfill was lost — a live broker order whose local row
     never got its broker id (the GS-husk signature, now made impossible to LOSE
     by atomicity but still detectable if the backfill commit itself was lost).
-    The orchestrator withholds the ``phase2_completed_at`` stamp when this returns
+    The orchestrator withholds the ``command_execution_completed_at`` stamp when this returns
     ``True``, leaving the invocation visibly incomplete as a signal that manual or
     automated recovery is required (``backfill_pending_submit_orders`` is removed;
     there is no automatic reconcile-path that backfills a PENDING_SUBMIT row).
@@ -531,7 +534,8 @@ async def invocation_has_pending_submit_strand(
             logger.error(
                 "phase2 integrity: order %s (client_order_id=%s) stuck in PENDING_SUBMIT — "
                 "a lost post-submit backfill; the floor is live at broker with no local "
-                "alpaca_order_id; withholding phase2_completed_at — operator recovery required",
+                "alpaca_order_id; withholding command_execution_completed_at — "
+                "operator recovery required",
                 order_id,
                 client_order_id,
             )

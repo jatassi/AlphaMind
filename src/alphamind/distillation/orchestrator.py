@@ -1070,7 +1070,7 @@ async def _run_phase_2(
     )
     # ALP-530 — populate the per-ticker realized-vol substrate from the
     # per-ticker close-price series Q1 already loaded. Synchronous under
-    # the shared Session so downstream consumers (Phase 1 attribution,
+    # the shared Session so downstream consumers (fill_collection attribution,
     # continuous-monitor refresh) see the rows from this invocation
     # onward.
     rows_persisted = await asyncio.to_thread(

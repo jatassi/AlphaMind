@@ -29,7 +29,7 @@ from alphamind._kernel.ids import AlpacaOrderId, BracketId, OrderId, PositionId,
 from alphamind._kernel.money import money, price
 from alphamind.execution.broker_adapter.queries import PositionSnapshot, TradeAccountSnapshot
 from alphamind.execution.write_paths.entry_reprice_sync import entry_reprice_event_record
-from alphamind.execution.write_paths.phase1 import rederive_thesis_ledgers
+from alphamind.execution.write_paths.fill_collection import rederive_thesis_ledgers
 from alphamind.execution.write_paths.projection_rebuild import (
     BrokerFactNoIntent,
     OrderStatusProjection,

@@ -589,7 +589,8 @@ def _make_snapshot(**overrides: object) -> PortfolioStateSnapshot:
     """Build a valid PortfolioStateSnapshot with at least 2 open, 1 pending, 1 thesis, 1 order.
 
     Reconciled from drifted copies: supports the kw overrides used across files
-    (open_positions=, pending_positions=, fill_collection_committed_at=, snapshot_assembled_at= etc).
+    (open_positions=, pending_positions=, fill_collection_committed_at=,
+    snapshot_assembled_at= etc).
     Bare call yields rich data (for snapshot.py); explicit () for positions yields minimal-ish
     (for freshness no-pos cases).
     """

@@ -586,8 +586,8 @@ async def _cancel_pending_protective_orders(
     entry-CANCEL teardown (``abandon_command`` → ``_writeback_cancel``) the
     bracket dissolves, so the floor must clear too: left ``PENDING_SUBMIT`` its
     ``inv-{id}.`` ``client_order_id`` keeps
-    :func:`alphamind.execution.write_paths.phase2.atomic.invocation_has_pending_submit_strand`
-    True forever → ``phase2_completed_at`` withheld with no recovery (FL3 /
+    :func:`alphamind.execution.write_paths.command_execution.atomic.invocation_has_pending_submit_strand`
+    True forever → ``command_execution_completed_at`` withheld with no recovery (FL3 /
     ALP-856). The floor reserves no capital (release none); cancelling the row
     clears the strand. A non-floor ``PENDING_SUBMIT`` row is a legitimately
     in-flight order and is NOT swept (only the floor leg is scoped in).

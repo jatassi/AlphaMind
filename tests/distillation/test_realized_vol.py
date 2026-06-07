@@ -2,7 +2,7 @@
 
 Covers the pure compute function, the per-invocation persister, and the
 read function. The wiring-site tests live alongside their respective
-modules (``tests/scheduler/test_phase1_inputs.py`` and
+modules (``tests/scheduler/test_fill_collection_inputs.py`` and
 ``tests/execution/continuous_monitor/test_paper_enrichment_wiring.py``).
 """
 

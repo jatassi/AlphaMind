@@ -52,7 +52,7 @@ class DebugE2ESettings:
     field in turn:
 
     * ``account_queries`` / ``ca_queries`` / ``quote_source`` substitute the
-      Alpaca-backed broker-adapter classes ``gather_phase1_inputs`` would
+      Alpaca-backed broker-adapter classes ``gather_fill_collection_inputs`` would
       otherwise construct. ``quote_source`` (ALP-753) is the log-only batch
       quote source: it returns no live quotes so the active-universe reference
       layer falls back to the seeded bars, keeping the debug-e2e run offline and

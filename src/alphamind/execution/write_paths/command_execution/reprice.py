@@ -8,7 +8,7 @@ accepted thesis still gets a fill. The broker round-trip is a cancel-and-replace
 (:func:`submit_replace`), which yields a fresh Alpaca order id.
 
 This module owns the OMS-state side of that reprice. In deliberate contrast with
-:func:`alphamind.execution.write_paths.phase2.cancel.persist_entry_window_cancel`
+:func:`alphamind.execution.write_paths.command_execution.cancel.persist_entry_window_cancel`
 — which is *terminal* (CANCELs the entry, DISSOLVEs the bracket, RELEASEs the
 full reserved capital, RESOLVEs the thesis ``CANCELLED_NEVER_ENTERED``) — a
 reprice is *non-terminal*:
@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 
 from alphamind._kernel.ids import AlpacaOrderId
 from alphamind._kernel.money import Price, money
-from alphamind.execution.write_paths.phase2._shared import (
+from alphamind.execution.write_paths.command_execution._shared import (
     _emit,
     _emit_capital_reserved,
     _order_notional_usd,

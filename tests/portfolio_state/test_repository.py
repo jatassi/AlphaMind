@@ -165,7 +165,9 @@ def test_current_invocation_metadata_valid() -> None:
 
 def test_current_invocation_metadata_nullable_started_at() -> None:
     obj = CurrentInvocationMetadata(
-        invocation_id="inv-001", fill_collection_committed_at=_NOW_UTC, pipeline_invocation_started_at=None
+        invocation_id="inv-001",
+        fill_collection_committed_at=_NOW_UTC,
+        pipeline_invocation_started_at=None,
     )
     assert obj.pipeline_invocation_started_at is None
 
@@ -173,7 +175,9 @@ def test_current_invocation_metadata_nullable_started_at() -> None:
 def test_current_invocation_metadata_empty_id_raises() -> None:
     with pytest.raises((ValueError, TypeError)):
         CurrentInvocationMetadata(
-            invocation_id="", fill_collection_committed_at=_NOW_UTC, pipeline_invocation_started_at=None
+            invocation_id="",
+            fill_collection_committed_at=_NOW_UTC,
+            pipeline_invocation_started_at=None,
         )
 
 
@@ -202,7 +206,9 @@ def test_current_invocation_metadata_naive_started_at_raises() -> None:
 
 def test_prior_invocation_context_both_none() -> None:
     obj = PriorInvocationContext(
-        prior_invocation_id=None, prior_active_risk_parameters=None, prior_fill_collection_committed_at=None
+        prior_invocation_id=None,
+        prior_active_risk_parameters=None,
+        prior_fill_collection_committed_at=None,
     )
     assert obj.prior_invocation_id is None
 
@@ -338,13 +344,17 @@ def _make_bracket_record(position_id: str) -> BracketRecord:
 
 def _make_current_invocation_metadata() -> CurrentInvocationMetadata:
     return CurrentInvocationMetadata(
-        invocation_id="inv-001", fill_collection_committed_at=_NOW_UTC, pipeline_invocation_started_at=None
+        invocation_id="inv-001",
+        fill_collection_committed_at=_NOW_UTC,
+        pipeline_invocation_started_at=None,
     )
 
 
 def _make_prior_invocation_context() -> PriorInvocationContext:
     return PriorInvocationContext(
-        prior_invocation_id=None, prior_active_risk_parameters=None, prior_fill_collection_committed_at=None
+        prior_invocation_id=None,
+        prior_active_risk_parameters=None,
+        prior_fill_collection_committed_at=None,
     )
 
 

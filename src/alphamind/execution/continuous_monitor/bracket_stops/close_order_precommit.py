@@ -36,13 +36,13 @@ from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     CloseOrderPrecommitter,
     FloorAlpacaIdResolver,
 )
-from alphamind.execution.write_paths.phase2._shared import (
+from alphamind.execution.write_paths.command_execution._shared import (
     _build_pending_order,
     _close_order_direction_for_position,
     _instrument_spec_for_position,
     _position_quantity,
 )
-from alphamind.execution.write_paths.phase2.close import _close_order_id
+from alphamind.execution.write_paths.command_execution.close import _close_order_id
 from alphamind.persistence.retry import run_with_sqlite_busy_retry
 from alphamind.persistence.session import begin_write_immediate
 from alphamind.portfolio_state.records.orders import (

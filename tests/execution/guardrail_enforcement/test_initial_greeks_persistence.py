@@ -148,7 +148,7 @@ _PORTFOLIO_VALUE = 100_000.0
 
 
 # ---------------------------------------------------------------------------
-# DB fixture (mirrors tests/execution/state_persistence/test_phase2_write_path.py)
+# DB fixture (mirrors tests/execution/state_persistence/test_command_execution_write_path.py)
 # ---------------------------------------------------------------------------
 
 

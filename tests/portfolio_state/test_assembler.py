@@ -1367,7 +1367,9 @@ def test_assemble_snapshot_returns_assembled_snapshot_bundle() -> None:
 
     # Freshness sidecar corresponds to the snapshot
     assert assembled.freshness.snapshot_assembled_at == assembled.snapshot.snapshot_assembled_at
-    assert assembled.freshness.fill_collection_committed_at == assembled.snapshot.fill_collection_committed_at
+    assert assembled.freshness.fill_collection_committed_at == (
+        assembled.snapshot.fill_collection_committed_at
+    )
     assert assembled.freshness.total_open_positions == len(assembled.snapshot.open_positions)
     assert assembled.freshness.total_positions == (
         len(assembled.snapshot.open_positions) + len(assembled.snapshot.pending_positions)

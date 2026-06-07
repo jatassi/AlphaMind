@@ -135,7 +135,10 @@ class PriorInvocationContext:
             )
             raise ValueError(msg)
         if self.prior_fill_collection_committed_at is not None:
-            _require_tz_aware(self.prior_fill_collection_committed_at, "prior_fill_collection_committed_at")
+            _require_tz_aware(
+                self.prior_fill_collection_committed_at,
+                "prior_fill_collection_committed_at",
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -185,7 +185,7 @@ class SSEEventEmitter:
     # debug-e2e observation; the schema events are the operator view.
     # Mapping from one to the other is a caller-side concern — the
     # orchestrator decides which Protocol callback corresponds to a
-    # schema-shaped event (e.g. ``phase_start("phase1")`` is NOT the
+    # schema-shaped event (e.g. ``phase_start("fill_collection")`` is NOT the
     # same as the schema's ``phase_transition(phase="collect")``).
     # ------------------------------------------------------------------
 

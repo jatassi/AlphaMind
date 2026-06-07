@@ -75,7 +75,9 @@ def _flatten_portfolio_state_yaml(raw: dict[str, Any]) -> dict[str, Any]:
         "pm_decision_log_sliding_window_invocations": pm["sliding_window_invocations"],
         "thesis_resolutions_lookback_trading_days": tr["lookback_trading_days"],
         "thesis_quality_aggregates_trailing_windows_days": tuple(tq["trailing_windows_days"]),
-        "snapshot_freshness_max_fill_collection_to_snapshot_seconds": sf["max_fill_collection_to_snapshot_seconds"],
+        "snapshot_freshness_max_fill_collection_to_snapshot_seconds": (
+            sf["max_fill_collection_to_snapshot_seconds"]
+        ),
         "snapshot_freshness_max_price_age_seconds": sf["max_price_age_seconds"],
         "snapshot_freshness_max_option_price_age_seconds": sf["max_option_price_age_seconds"],
     }

@@ -1409,7 +1409,9 @@ async def test_get_current_invocation_metadata_falls_back_to_completed_when_curr
         invocation_id=_PRIOR_INV_ID, start_at=_PRIOR_START, fill_collection_completed_at=_PHASE1_AT
     )
     await _seed_minimal_invocation(factory, invocation=prior)
-    await _seed_minimal_invocation_extra(factory, _make_invocation_record(fill_collection_completed_at=None))
+    await _seed_minimal_invocation_extra(
+        factory, _make_invocation_record(fill_collection_completed_at=None)
+    )
 
     repo = _build_repo(factory)
     result = repo.get_current_invocation_metadata()
@@ -1946,7 +1948,9 @@ async def test_assemble_snapshot_under_paused_invocation_uses_fallback_metadata(
         invocation_id=_PRIOR_INV_ID, start_at=_PRIOR_START, fill_collection_completed_at=_PHASE1_AT
     )
     await _seed_minimal_invocation(factory, invocation=prior)
-    await _seed_minimal_invocation_extra(factory, _make_invocation_record(fill_collection_completed_at=None))
+    await _seed_minimal_invocation_extra(
+        factory, _make_invocation_record(fill_collection_completed_at=None)
+    )
     await _seed_cash_ledger(factory)
     await _seed_drawdown_state(factory)
 

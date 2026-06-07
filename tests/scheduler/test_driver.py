@@ -206,8 +206,8 @@ def _patch_run_invocation(
     invocation_id: str = "inv-driver-1",
 ) -> dict[str, Any]:
     """Stub ``alphamind.scheduler.driver.run_invocation`` with a recording fake."""
-    from alphamind.execution.write_paths.phase1 import (
-        Phase1Summary,
+    from alphamind.execution.write_paths.fill_collection import (
+        FillCollectionSummary,
     )
     from alphamind.scheduler import driver as module
     from alphamind.scheduler.orchestrator import InvocationSummary
@@ -224,7 +224,7 @@ def _patch_run_invocation(
             trigger_type=kwargs["trigger_type"],
             trigger_source=kwargs.get("trigger_source", "scheduled"),
             firing_run_type=kwargs["firing_run_type"],
-            phase1_summary=Phase1Summary(
+            fill_collection_summary=FillCollectionSummary(
                 fills_processed=0,
                 fills_quarantined=0,
                 ca_activities_processed=0,

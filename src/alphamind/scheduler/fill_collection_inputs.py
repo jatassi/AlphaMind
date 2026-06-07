@@ -7,7 +7,7 @@ account + positions, v1beta1 corporate-action activities, and the
 Per parent decision (H), broker-side failures degrade the bundle (no-op
 defaults + ``staleness_flag=True``) rather than aborting the invocation;
 exceptions raised by individual data-fetch helpers are caught and logged.
-The orchestrator (``run_invocation``) reads ``Phase1Inputs.staleness_flag``
+The orchestrator (``run_invocation``) reads ``FillCollectionInputs.staleness_flag``
 to populate the row's ``staleness_flag`` column.
 
 ALP-494 — broker-adapter access is parameterized via optional
@@ -81,7 +81,7 @@ _AccountQueriesFactory = Callable[[VenueConfig, ExecutionMode], AccountStateQuer
 _CorporateActionsQueriesFactory = Callable[[VenueConfig, ExecutionMode], CorporateActionsQueriesP]
 _QuoteSourceFactory = Callable[[VenueConfig, ExecutionMode], BatchQuoteSource]
 
-__all__ = ["Phase1Inputs", "gather_phase1_inputs"]
+__all__ = ["FillCollectionInputs", "gather_fill_collection_inputs"]
 
 log = logging.getLogger(__name__)
 
@@ -152,7 +152,7 @@ _DEFAULT_QUOTE_MAX_RELATIVE_SPREAD_PCT: float = 25.0
 
 
 @dataclass(frozen=True, slots=True)
-class Phase1Inputs:
+class FillCollectionInputs:
     """Bundle the orchestrator hands to ``process_unprocessed_fills``.
 
     Each field can independently degrade to a no-op default when its
@@ -188,7 +188,7 @@ def _default_account_queries_factory(
 ) -> AccountStateQueriesP:
     """Default Alpaca-backed ``AccountStateQueriesP`` construction.
 
-    Used when ``gather_phase1_inputs`` is called without an
+    Used when ``gather_fill_collection_inputs`` is called without an
     ``account_queries_factory`` kwarg (the production daemon path).
     """
     factory = _alpaca_client_factory(venue_config, execution_mode)
@@ -200,7 +200,7 @@ def _default_ca_queries_factory(
 ) -> CorporateActionsQueriesP:
     """Default Alpaca-backed ``CorporateActionsQueriesP`` construction.
 
-    Used when ``gather_phase1_inputs`` is called without a
+    Used when ``gather_fill_collection_inputs`` is called without a
     ``ca_queries_factory`` kwarg (the production daemon path).
     """
     factory = _alpaca_client_factory(venue_config, execution_mode)
@@ -216,7 +216,7 @@ def _default_quote_source_factory(
     uses for the marketable-entry rewrite: an :class:`AlpacaQuoteSource` over a
     fresh ``StockHistoricalDataClient`` (both default to ``DataFeed.IEX``, so the
     phase-1 reference anchor and the submission-time repricer read the same feed).
-    Used when ``gather_phase1_inputs`` is called without a ``quote_source_factory``
+    Used when ``gather_fill_collection_inputs`` is called without a ``quote_source_factory``
     kwarg (the production daemon path).
     """
     factory = _alpaca_client_factory(venue_config, execution_mode)
@@ -450,7 +450,7 @@ def _merge_quote_and_bar_prices(
                     universe_prices[ticker] = bar_close
                     gated_to_bar_count += 1
                     log.warning(
-                        "phase1_inputs: distrusting live quote for %s — %s; "
+                        "fill_collection_inputs: distrusting live quote for %s — %s; "
                         "using recorded bar %.4f as the reference instead",
                         ticker,
                         distrust_reason,
@@ -459,7 +459,7 @@ def _merge_quote_and_bar_prices(
                 else:
                     gated_unpriced_count += 1
                     log.warning(
-                        "phase1_inputs: distrusting live quote for %s — %s; no recorded "
+                        "fill_collection_inputs: distrusting live quote for %s — %s; no recorded "
                         "bar to fall back to, marking the ticker unavailable",
                         ticker,
                         distrust_reason,
@@ -480,7 +480,7 @@ def _merge_quote_and_bar_prices(
     # from universe_prices (no-quote-no-bar only; the gated-no-bar tickers are
     # already accounted under gated→unavailable). The five counts sum to ``total``.
     log.info(
-        "phase1_inputs: active-universe reference prices for %d active ticker(s) — "
+        "fill_collection_inputs: active-universe reference prices for %d active ticker(s) — "
         "%d via live quote, %d via recorded-bar fallback (no live quote), "
         "%d via recorded bar after distrusting the live quote (bar-divergence / "
         "broken-spread gate), %d distrusted with no bar to fall back to (marked "
@@ -522,7 +522,7 @@ async def _gather_universe_reference_prices(
             quotes = await quote_source.latest_quotes(active_tickers)
         except RuntimeError as exc:
             log.warning(
-                "phase1_inputs: batch live-quote fetch failed (%s); degrading "
+                "fill_collection_inputs: batch live-quote fetch failed (%s); degrading "
                 "active-universe reference layer to recorded bars",
                 exc,
             )
@@ -559,7 +559,7 @@ def _build_market_inputs(
     ``iv_provider`` is the caller-constructed IV-sourcing seam (ALP-642 —
     production-side this is :class:`SqlOptionsIvProvider`, resolved against
     ``options_contract_snapshots``). The provider's realized-vol fallback
-    map is owned by the caller (``gather_phase1_inputs`` for Phase 1) so
+    map is owned by the caller (``gather_fill_collection_inputs`` for Phase 1) so
     the same lifecycle that builds the price layers builds the IV layer.
     """
     # ALP-462 — ``pos.current_price`` is ``Price`` (Decimal) on the
@@ -578,7 +578,7 @@ def _build_market_inputs(
     )
 
 
-async def gather_phase1_inputs(
+async def gather_fill_collection_inputs(
     *,
     handle: InvocationHandle,
     venue_config: VenueConfig,
@@ -588,7 +588,7 @@ async def gather_phase1_inputs(
     account_queries_factory: _AccountQueriesFactory | None = None,
     ca_queries_factory: _CorporateActionsQueriesFactory | None = None,
     quote_source_factory: _QuoteSourceFactory | None = None,
-) -> Phase1Inputs:
+) -> FillCollectionInputs:
     """Assemble the Phase 1 input bundle for ``process_unprocessed_fills``.
 
     Calls the broker adapter for account + positions, the v1beta1 fetcher
@@ -635,7 +635,7 @@ async def gather_phase1_inputs(
             )
         except RuntimeError as exc:
             log.warning(
-                "phase1_inputs: corporate-actions fetch failed (%s); degrading "
+                "fill_collection_inputs: corporate-actions fetch failed (%s); degrading "
                 "ca_activities to empty tuple",
                 exc,
             )
@@ -646,7 +646,7 @@ async def gather_phase1_inputs(
         risk_free_rate = await _read_latest_risk_free_rate(handle)
     except RuntimeError as exc:
         log.warning(
-            "phase1_inputs: macro_observations DTB3 read failed (%s); "
+            "fill_collection_inputs: macro_observations DTB3 read failed (%s); "
             "falling back to default risk-free rate",
             exc,
         )
@@ -697,7 +697,7 @@ async def gather_phase1_inputs(
         iv_provider=iv_provider,
     )
 
-    return Phase1Inputs(
+    return FillCollectionInputs(
         ca_activities=ca_activities,
         alpaca_positions=positions,
         alpaca_account=account,
@@ -724,7 +724,7 @@ async def _gather_broker_state(
         queries = account_factory(venue_config, execution_mode)
     except RuntimeError as exc:
         log.warning(
-            "phase1_inputs: broker-adapter construction failed (%s); degrading "
+            "fill_collection_inputs: broker-adapter construction failed (%s); degrading "
             "alpaca_account/alpaca_positions to defaults",
             exc,
         )
@@ -735,7 +735,7 @@ async def _gather_broker_state(
         account = queries.get_account()
     except RuntimeError as exc:
         log.warning(
-            "phase1_inputs: AccountStateQueries.get_account() failed (%s); "
+            "fill_collection_inputs: AccountStateQueries.get_account() failed (%s); "
             "degrading alpaca_account to None",
             exc,
         )
@@ -747,7 +747,7 @@ async def _gather_broker_state(
         positions = queries.get_positions()
     except RuntimeError as exc:
         log.warning(
-            "phase1_inputs: AccountStateQueries.get_positions() failed (%s); "
+            "fill_collection_inputs: AccountStateQueries.get_positions() failed (%s); "
             "degrading alpaca_positions to empty tuple",
             exc,
         )

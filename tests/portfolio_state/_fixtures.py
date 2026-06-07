@@ -204,7 +204,9 @@ def _make_invocation_metadata(
 
 def _make_prior_context() -> PriorInvocationContext:
     return PriorInvocationContext(
-        prior_invocation_id=None, prior_active_risk_parameters=None, prior_fill_collection_committed_at=None
+        prior_invocation_id=None,
+        prior_active_risk_parameters=None,
+        prior_fill_collection_committed_at=None,
     )
 
 

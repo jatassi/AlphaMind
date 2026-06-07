@@ -41,7 +41,7 @@ from alphamind.scheduler.borrow_accrual_kernel import (
     AccrualTickResult,
     compute_tick,
 )
-from alphamind.scheduler.phase1_inputs import _MAX_REFERENCE_BAR_AGE_SECONDS
+from alphamind.scheduler.fill_collection_inputs import _MAX_REFERENCE_BAR_AGE_SECONDS
 from alphamind.state.invocation_context.activity_log import (
     activity_log_entry_to_row,
 )
@@ -66,7 +66,7 @@ _US_EASTERN = ZoneInfo("US/Eastern")
 _OHLCV_DAILY_TIMEFRAME = "1d"
 
 # Staleness ceiling for the per-ticker closing print — reuses
-# ``phase1_inputs._MAX_REFERENCE_BAR_AGE_SECONDS`` (7 calendar days) so the
+# ``fill_collection_inputs._MAX_REFERENCE_BAR_AGE_SECONDS`` (7 calendar days) so the
 # two consumers stay in sync: 7 days clears the longest US market-holiday
 # weekend yet still drops a ticker whose OHLCV feed has genuinely stalled,
 # surfacing the kernel's "missing closing print" ValueError instead of a

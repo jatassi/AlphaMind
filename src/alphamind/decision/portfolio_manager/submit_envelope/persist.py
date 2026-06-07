@@ -2,7 +2,7 @@
 
 After ALP-458 broke the decision↔execution cycle by relocating the engine-stub
 to ``decision.portfolio_manager.submit_envelope``, the formerly-inline imports
-of :mod:`alphamind.execution.write_paths.phase2` (cycle
+of :mod:`alphamind.execution.write_paths.command_execution` (cycle
 workarounds) become normal top-level imports — exactly one entry at the head
 of this module, used by every helper below.
 
@@ -24,7 +24,7 @@ from alphamind.decision.portfolio_manager.submit_envelope.types import (
     FailedSubmissionEntry,
     SubmissionResult,
 )
-from alphamind.execution.write_paths.phase2 import (
+from alphamind.execution.write_paths.command_execution import (
     persist_command_abandoned,
     persist_envelope_outcome,
     persist_envelope_parse_failure,

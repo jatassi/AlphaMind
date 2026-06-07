@@ -5,11 +5,11 @@ real ``alpaca_order_id``). A fast fill (~3s) can beat the deferred order-row com
 (~74s later in production), so the continuous monitor cannot resolve the fill and it gets
 dropped/quarantined. The fix (Option A): when broker routing is active, the submit_envelope
 tool handler runs the Phase-2 writeback IN THE PM TURN and commits on the invocation
-handle's session right after dispatch — closing the race to ~0. ``dispatch_phase2`` then
-skips the already-persisted envelope (covered in ``tests/scheduler/test_phase2_dispatch.py``).
+handle's session right after dispatch — closing the race to ~0. ``dispatch_command_execution``
+then skips the already-persisted envelope (see ``test_command_execution_dispatch.py``).
 
 This test proves the entry ``OrderRow`` — carrying the broker's real ``alpaca_order_id`` —
-is COMMITTED and resolvable at the end of the PM turn, before any ``dispatch_phase2`` runs.
+is COMMITTED and resolvable at the end of the PM turn, before ``dispatch_command_execution`` runs.
 """
 
 from __future__ import annotations
@@ -220,7 +220,7 @@ async def test_broker_active_path_commits_order_row_in_pm_turn(tmp_path: Any) ->
             # order row is durable the instant the broker fill could arrive.
 
         # A FRESH session (simulating the continuous monitor) resolves the entry
-        # order BEFORE dispatch_phase2 ever runs.
+        # order BEFORE dispatch_command_execution ever runs.
         async with factory() as monitor_session:
             order_rows = (await monitor_session.execute(_select(OrderRow))).scalars().all()
             log_rows = (

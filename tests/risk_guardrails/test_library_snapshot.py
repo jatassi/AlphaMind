@@ -1550,7 +1550,7 @@ def test_existing_positions_reserves_capital_from_pending_entry_limit() -> None:
     """ALP-506: a PENDING position with a pending entry LIMIT order gets its
     ``reserves_capital_usd`` populated as ``limit_price * remaining_quantity``,
     mirroring the OMS-side ``_order_reserved_notional`` formula in
-    ``execution/write_paths/phase2/_shared.py``.
+    ``execution/write_paths/command_execution/_shared.py``.
     """
     pos = _make_equity_position_view(
         "POS-AAPL",

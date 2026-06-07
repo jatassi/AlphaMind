@@ -90,15 +90,16 @@ async def _read_new_emergency_entries(
 async def _most_recent_completed_emergency_at(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> datetime | None:
-    """Return ``phase2_completed_at`` of the most recent completed emergency invocation."""
+    """Return ``command_execution_completed_at`` of the most recent completed emergency
+    invocation."""
     async with session_factory() as session:
         stmt = (
-            select(InvocationRow.phase2_completed_at)
+            select(InvocationRow.command_execution_completed_at)
             .where(
                 InvocationRow.trigger_type == "emergency",
-                InvocationRow.phase2_completed_at.is_not(None),
+                InvocationRow.command_execution_completed_at.is_not(None),
             )
-            .order_by(InvocationRow.phase2_completed_at.desc())
+            .order_by(InvocationRow.command_execution_completed_at.desc())
             .limit(1)
         )
         text = (await session.execute(stmt)).scalar_one_or_none()
@@ -139,7 +140,7 @@ async def run_emergency_receiver_task(
        a. Parse :class:`EmergencyInvocationRequestedDetail` from ``detail_json``.
        b. **Cooldown check** — bypass for ``trigger_type='margin_call'``; otherwise
           query the most-recent completed ``trigger_type='emergency'`` invocation
-          and suppress dispatch when its ``phase2_completed_at`` falls within the
+          and suppress dispatch when its ``command_execution_completed_at`` falls within the
           cooldown window.
        c. **Dispatch** ``run_invocation(...)``; log + swallow any exception so
           the receiver continues polling.

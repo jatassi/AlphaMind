@@ -615,7 +615,7 @@ async def test_entry_fill_transitions_pending_position_to_open(
 ) -> None:
     """Happy-path entry fill: position PENDING → OPEN, fill marked processed,
     cash debited, activity log carries the lifecycle entries."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -709,7 +709,7 @@ async def test_exit_fill_closes_position_and_leaves_thesis_active(
     """Happy-path exit fill: position OPEN → CLOSED, realized P/L computed,
     bracket DISSOLVED, linked thesis left ACTIVE (ALP-834 — thesis resolution
     is owned by the analysis pipeline, not execution)."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -817,7 +817,7 @@ async def test_take_profit_leg_fill_marks_leg_filled_and_closes_position(
     """ALP-746 — a protective TAKE_PROFIT leg fill (the fill the consumer now
     resolves to the leg row by captured UUID) integrates through Phase 1: the
     leg order transitions to FILLED and the OPEN position closes out."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
     from tests.state._fk_substrate import stub_order_row
@@ -886,7 +886,7 @@ async def test_multi_fill_ordering_produces_cumulative_state(
 ) -> None:
     """Two unprocessed fills on the same order, processed in fill-timestamp
     order, produce the right cumulative state."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -970,7 +970,7 @@ async def test_corporate_action_split_emits_events_and_ledger_anchor(
     """A stock split's corporate_action_applied entry fires, position quantity
     and cost basis adjust per the ratio, and the CA integration ledger records
     the dedupe anchor."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         CorporateActionActivity,
         process_unprocessed_fills,
     )
@@ -1059,7 +1059,7 @@ async def test_failed_fill_quarantined_leaves_no_lifecycle_log_entries(
     activity-log row left for the invocation is the reconciliation alert that
     surfaces the orphan. Phase-1 completes normally.
     """
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -1125,7 +1125,7 @@ async def test_quarantined_fill_excluded_without_aborting_batch(
 ) -> None:
     """A fill with negative quantity is marked quarantined and excluded from
     integration; other fills in the batch still process normally."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -1208,7 +1208,7 @@ async def test_buy_fill_decrements_reserved_capital_to_zero(
     OPEN reserve and Phase 1's fill double-count: current_cash drops AND
     reserved_capital stays — overstating committed capital.
     """
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -1273,7 +1273,7 @@ async def test_buy_fill_clamps_reserved_capital_decrement_at_zero(
     reprice), the decrement must clamp at zero rather than going negative
     (ALP-741 defensive floor).
     """
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -1343,11 +1343,11 @@ async def test_reprice_then_fill_returns_reserved_capital_to_zero(
     reservation pool — the kind of drift that, accumulated over reprices, drove
     the singleton negative and crashed every decision-pipeline invocation.
     """
-    from alphamind.execution.write_paths.phase1 import (
-        process_unprocessed_fills,
-    )
-    from alphamind.execution.write_paths.phase2 import (
+    from alphamind.execution.write_paths.command_execution import (
         persist_entry_window_reprice,
+    )
+    from alphamind.execution.write_paths.fill_collection import (
+        process_unprocessed_fills,
     )
 
     _, factory = db
@@ -1504,7 +1504,7 @@ async def test_short_entry_fill_transitions_pending_short_to_open_with_stamped_f
     locate_status=LOCATED, margin_held_usd = qty * price * 0.50 (Reg T
     initial margin).
     """
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
     from alphamind.portfolio_state.records.positions import LocateStatus
@@ -1597,7 +1597,7 @@ def _make_fill_record(
 
 def test_dispatcher_pending_long_buy_routes_to_entry_fill() -> None:
     """PENDING LONG + BUY → entry-fill (opens the LONG position)."""
-    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+    from alphamind.execution.write_paths.fill_collection import _apply_fill_to_position
 
     position = _make_pending_position(direction=Direction.LONG)
     fill = _make_fill_record()
@@ -1609,7 +1609,7 @@ def test_dispatcher_pending_long_buy_routes_to_entry_fill() -> None:
 
 def test_dispatcher_pending_long_sell_raises_value_error() -> None:
     """PENDING LONG + SELL → ValueError ("cannot close before it opens")."""
-    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+    from alphamind.execution.write_paths.fill_collection import _apply_fill_to_position
 
     position = _make_pending_position(direction=Direction.LONG)
     fill = _make_fill_record()
@@ -1621,7 +1621,7 @@ def test_dispatcher_pending_long_sell_raises_value_error() -> None:
 
 def test_dispatcher_pending_short_buy_raises_value_error() -> None:
     """PENDING SHORT + BUY → ValueError ("cannot close before it opens")."""
-    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+    from alphamind.execution.write_paths.fill_collection import _apply_fill_to_position
 
     position = _make_pending_position(direction=Direction.SHORT)
     fill = _make_fill_record()
@@ -1632,7 +1632,7 @@ def test_dispatcher_pending_short_buy_raises_value_error() -> None:
 
 def test_dispatcher_pending_short_sell_routes_to_entry_fill() -> None:
     """PENDING SHORT + SELL → entry-fill (SELL_TO_OPEN opens the short)."""
-    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+    from alphamind.execution.write_paths.fill_collection import _apply_fill_to_position
 
     position = _make_pending_position(direction=Direction.SHORT)
     fill = _make_fill_record()
@@ -1647,7 +1647,7 @@ def test_dispatcher_pending_short_sell_routes_to_entry_fill() -> None:
 
 def test_dispatcher_open_long_buy_routes_to_add_fill() -> None:
     """OPEN LONG + BUY → add-fill (grow the long position)."""
-    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+    from alphamind.execution.write_paths.fill_collection import _apply_fill_to_position
 
     position = _make_open_position(direction=Direction.LONG, share_count=10.0)
     fill = _make_fill_record(fill_quantity=5.0, fill_price=160.0)
@@ -1659,7 +1659,7 @@ def test_dispatcher_open_long_buy_routes_to_add_fill() -> None:
 
 def test_dispatcher_open_long_sell_routes_to_exit_fill() -> None:
     """OPEN LONG + SELL → exit-fill (reduce / close the long position)."""
-    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+    from alphamind.execution.write_paths.fill_collection import _apply_fill_to_position
 
     position = _make_open_position(direction=Direction.LONG, share_count=10.0)
     fill = _make_fill_record(fill_quantity=10.0, fill_price=160.0)
@@ -1669,7 +1669,7 @@ def test_dispatcher_open_long_sell_routes_to_exit_fill() -> None:
 
 def test_dispatcher_open_short_buy_routes_to_exit_fill() -> None:
     """OPEN SHORT + BUY → exit-fill (cover-to-close)."""
-    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+    from alphamind.execution.write_paths.fill_collection import _apply_fill_to_position
 
     position = _make_open_position(direction=Direction.SHORT, share_count=10.0)
     fill = _make_fill_record(fill_quantity=10.0, fill_price=140.0)
@@ -1679,7 +1679,7 @@ def test_dispatcher_open_short_buy_routes_to_exit_fill() -> None:
 
 def test_dispatcher_open_short_sell_routes_to_add_fill() -> None:
     """OPEN SHORT + SELL → add-fill (grow the short position)."""
-    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+    from alphamind.execution.write_paths.fill_collection import _apply_fill_to_position
 
     position = _make_open_position(direction=Direction.SHORT, share_count=10.0)
     fill = _make_fill_record(fill_quantity=5.0, fill_price=140.0)
@@ -1692,7 +1692,7 @@ def test_dispatcher_open_short_sell_routes_to_add_fill() -> None:
 def test_entry_fill_short_with_none_resolver_raises_value_error() -> None:
     """SHORT entry with ``borrow_cost_resolver=None`` raises ValueError naming
     the missing resolver — short stamping cannot proceed without a rate."""
-    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+    from alphamind.execution.write_paths.fill_collection import _apply_fill_to_position
 
     position = _make_pending_position(direction=Direction.SHORT, ticker="CRWD")
     fill = _make_fill_record()
@@ -1703,7 +1703,7 @@ def test_entry_fill_short_with_none_resolver_raises_value_error() -> None:
 def test_entry_fill_short_with_resolver_returning_none_raises_value_error() -> None:
     """SHORT entry with a resolver that returns ``None`` for the ticker
     raises ValueError naming the upstream contract violation."""
-    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+    from alphamind.execution.write_paths.fill_collection import _apply_fill_to_position
 
     position = _make_pending_position(direction=Direction.SHORT, ticker="CRWD")
     fill = _make_fill_record()
@@ -1719,7 +1719,7 @@ def test_entry_fill_short_with_resolver_returning_none_raises_value_error() -> N
 def test_entry_fill_long_with_none_resolver_succeeds() -> None:
     """LONG entry with ``borrow_cost_resolver=None`` succeeds — the LONG
     path never consults the resolver."""
-    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+    from alphamind.execution.write_paths.fill_collection import _apply_fill_to_position
 
     position = _make_pending_position(direction=Direction.LONG)
     fill = _make_fill_record()
@@ -1738,7 +1738,7 @@ def test_exit_fill_short_cover_to_close_flushes_accrued_borrow_into_pnl() -> Non
     entry $100, exit $90, qty 10 → realized_pnl = (100-90)*10 - 5 = 95.0.
     Position transitions to CLOSED; accrued_borrow_cost_usd is preserved as
     the lifetime borrow total (NOT zeroed out post-flush)."""
-    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+    from alphamind.execution.write_paths.fill_collection import _apply_fill_to_position
 
     position = _make_open_position(
         direction=Direction.SHORT,
@@ -1764,7 +1764,7 @@ def test_exit_fill_short_cover_to_close_with_zero_accrued_skips_flush() -> None:
     """Cover-to-close on an OPEN SHORT with ``accrued_borrow_cost_usd=0.0``:
     no subtraction (zero falsy short-circuits the flush branch); realized
     P/L is ``(entry - exit) * qty`` only."""
-    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+    from alphamind.execution.write_paths.fill_collection import _apply_fill_to_position
 
     position = _make_open_position(
         direction=Direction.SHORT,
@@ -1786,7 +1786,7 @@ def test_exit_fill_short_partial_cover_leaves_position_open_no_flush() -> None:
     """Partial cover on an OPEN SHORT leaves the position OPEN,
     ``accrued_borrow_cost_usd`` unchanged, and no borrow flush. The
     direction sign still applies to the partial realized P/L delta."""
-    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+    from alphamind.execution.write_paths.fill_collection import _apply_fill_to_position
 
     position = _make_open_position(
         direction=Direction.SHORT,
@@ -1812,7 +1812,7 @@ def test_add_fill_open_short_preserves_borrow_fields() -> None:
     ``accrued_borrow_cost_usd`` unchanged — the accumulator continues
     against the post-ADD combined notional from the next tick onward,
     and the borrow rate is not re-stamped per the design doc."""
-    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+    from alphamind.execution.write_paths.fill_collection import _apply_fill_to_position
 
     position = _make_open_position(
         direction=Direction.SHORT,
@@ -1848,7 +1848,7 @@ def test_add_fill_open_short_preserves_margin_held_usd_entry_snapshot() -> None:
     shares at 110 must leave the field at 500 — even though the share count
     grows to 15 and the average cost shifts.
     """
-    from alphamind.execution.write_paths.phase1 import _apply_fill_to_position
+    from alphamind.execution.write_paths.fill_collection import _apply_fill_to_position
 
     entry_margin_held = 10.0 * 100.0 * 0.50  # 500.0 — Reg T stamp at entry
     position = _make_open_position(
@@ -1876,7 +1876,7 @@ async def test_phase1_stamps_completion_timestamp_on_invocation_row(
     repository's snapshot-isolation guard reads this column and raises
     RepositoryConsistencyError when it is NULL.
     """
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -1957,7 +1957,7 @@ async def test_snapshot_mismatch_rebuilds_without_alert_or_correction(
     adjudication: NO ``RECONCILIATION_ALERT`` / ``RECONCILIATION_CORRECTION`` row
     is inserted, the local ``share_count`` is left as the event-log-derived value
     (not auto-corrected to Alpaca's), and ``reconciliation_alerts`` stays 0."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -2028,7 +2028,7 @@ async def test_fill_before_ca_reflects_pre_action_quantity_at_fill(
       * pre-CA share_count = 10 + 5 = 15 (entry+add fill applied first)
       * post-CA share_count = 15 * 2 = 30 (split applied second)
     """
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         CorporateActionActivity,
         process_unprocessed_fills,
     )
@@ -2124,7 +2124,7 @@ async def test_fill_after_ca_reflects_post_action_quantity_at_fill(
       * post-CA share_count = 10 * 2 = 20
       * post-fill share_count = 20 + 5 = 25
     """
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         CorporateActionActivity,
         process_unprocessed_fills,
     )
@@ -2253,7 +2253,7 @@ async def test_fill_against_terminal_position_quarantined_not_raised(
     (CANCELLED or CLOSED) is quarantined (not raised), fills_quarantined
     increments, a reconciliation alert is emitted, and Phase-1 completes
     normally. Parametrized over both members of _NON_INTEGRATABLE_STATUSES."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -2315,7 +2315,7 @@ async def test_mixed_batch_poison_pill_quarantined_healthy_processed(
     """AC (b): a batch with one poison-pill fill (target CANCELLED) plus a
     healthy entry fill — the healthy fill integrates, the poison is quarantined,
     and the invocation completes."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -2398,7 +2398,7 @@ async def test_unexpected_integration_error_isolated_to_single_fill(
     PENDING position) is isolated by the per-fill savepoint — its partial order
     mutation is rolled back, the fill is quarantined + alerted, and a later
     healthy fill in the same batch still processes."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -2491,7 +2491,7 @@ async def test_over_fill_quarantined_not_integrated(
     constraint could not suppress.  Phase-1 must quarantine it at the
     pre-integration gate, leaving share_count=3 and order.filled_quantity=3.
     """
-    from alphamind.execution.write_paths.phase1 import process_unprocessed_fills
+    from alphamind.execution.write_paths.fill_collection import process_unprocessed_fills
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -2575,7 +2575,7 @@ async def test_buy_fill_mirrors_settled_cash_alongside_current_cash(
     settled stayed frozen at the seed value, overstating deployable capital
     between reconciliation runs.
     """
-    from alphamind.execution.write_paths.phase1 import process_unprocessed_fills
+    from alphamind.execution.write_paths.fill_collection import process_unprocessed_fills
 
     _, factory = db
     await _seed_invocation_substrate(factory)
@@ -2612,7 +2612,7 @@ async def test_sell_fill_mirrors_settled_cash_alongside_current_cash(
 ) -> None:
     """ALP-778 — a sell fill that credits current_cash_usd must also update
     settled_cash_usd to the same value."""
-    from alphamind.execution.write_paths.phase1 import process_unprocessed_fills
+    from alphamind.execution.write_paths.fill_collection import process_unprocessed_fills
     from tests.state._fk_substrate import stub_order_row
 
     _, factory = db

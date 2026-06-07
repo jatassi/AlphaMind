@@ -20,8 +20,8 @@ independently persist new fill records" guarantee from the design doc) is
 out of surface for this test — it is exercised in
 ``test_fill_records_table.py``.
 
-Per-step unit tests live in ``test_phase1_write_path.py``,
-``test_phase2_write_path.py``, and ``test_sql_repository.py``. This module
+Per-step unit tests live in ``test_fill_collection_write_path.py``,
+``test_command_execution_write_path.py``, and ``test_sql_repository.py``. This module
 runs the full sequence inside a single invocation cycle to guard against
 read/write surfaces drifting out of contract once Phase 1 + Phase 2 share
 real state.
@@ -84,14 +84,14 @@ from alphamind.execution.oms.command_ids import (
     derive_open_thesis_id,
     derive_pm_command_id,
 )
-from alphamind.execution.write_paths.fill_persistence import (
-    append_fill_record,
+from alphamind.execution.write_paths.command_execution import (
+    persist_envelope_outcome,
 )
-from alphamind.execution.write_paths.phase1 import (
+from alphamind.execution.write_paths.fill_collection import (
     process_unprocessed_fills,
 )
-from alphamind.execution.write_paths.phase2 import (
-    persist_envelope_outcome,
+from alphamind.execution.write_paths.fill_persistence import (
+    append_fill_record,
 )
 from alphamind.persistence.session import (
     make_async_engine,

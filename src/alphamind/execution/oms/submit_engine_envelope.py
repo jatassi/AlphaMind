@@ -303,7 +303,7 @@ async def submit_engine_envelope(
     # activity-log detail surfaces them on the order_submitted entry.
     # Inline import kept to defer SQLAlchemy load until first use; the
     # ALP-458 split eliminated the formerly-circular path through PM models.
-    from alphamind.execution.write_paths.phase2 import (
+    from alphamind.execution.write_paths.command_execution import (
         persist_engine_envelope_outcome,
     )
 

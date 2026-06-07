@@ -77,7 +77,7 @@ class TestCounterfactualReplaysMigration:
         assert _TABLE in tables
 
     def test_downgrade_to_prior_head_removes_table(self, tmp_path: Path) -> None:
-        """Downgrading to the revision before a556rp0000dd drops the counterfactual_replays table."""
+        """Downgrading past a556rp0000dd drops the counterfactual_replays table."""
         db_path = tmp_path / "mig.db"
         cfg = _alembic_config(db_path)
         command.upgrade(cfg, "head")

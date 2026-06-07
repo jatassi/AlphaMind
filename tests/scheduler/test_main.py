@@ -21,7 +21,7 @@ from alphamind.scheduler.__main__ import main
 
 def _make_summary_stub(invocation_id: str = "inv-stub-1") -> Any:
     """Return an ``InvocationSummary``-like object the CLI can serialize."""
-    from alphamind.execution.write_paths.phase1 import Phase1Summary
+    from alphamind.execution.write_paths.fill_collection import FillCollectionSummary
     from alphamind.scheduler.orchestrator import InvocationSummary
 
     return InvocationSummary(
@@ -29,7 +29,7 @@ def _make_summary_stub(invocation_id: str = "inv-stub-1") -> Any:
         trigger_type="manual",
         trigger_source="cli",
         firing_run_type=RunType.market_hours_rolling,
-        phase1_summary=Phase1Summary(
+        fill_collection_summary=FillCollectionSummary(
             fills_processed=0,
             fills_quarantined=0,
             ca_activities_processed=0,

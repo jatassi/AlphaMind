@@ -199,7 +199,10 @@ class TestInvocationContext:
             # activity-log emission. Use a raw INSERT so we don't depend on a
             # later story's table definition.
             await handle.session.execute(
-                text("UPDATE invocations SET fill_collection_completed_at = :ts WHERE invocation_id = :iid"),
+                text(
+                    "UPDATE invocations SET fill_collection_completed_at = :ts "
+                    "WHERE invocation_id = :iid"
+                ),
                 {"ts": "2026-05-07T14:31:00Z", "iid": record.invocation_id},
             )
 

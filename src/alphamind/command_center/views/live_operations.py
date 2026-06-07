@@ -200,7 +200,7 @@ async def _read_pipeline_status(request: Request) -> InvocationStatusModel:
     """Read the most-recent invocation from the foreign-reader session.
 
     Queries the ``invocations`` table which carries execution scaffolding
-    (``start_at``, ``phase1_completed_at``, ``phase2_completed_at``),
+    (``start_at``, ``fill_collection_completed_at``, ``command_execution_completed_at``),
     trigger metadata (``trigger_type``), and JSON summary columns
     (``fill_collection_summary_json``, ``command_execution_summary_json``).
     """
@@ -216,7 +216,7 @@ async def _read_pipeline_status(request: Request) -> InvocationStatusModel:
             row = await session.execute(
                 text(
                     "SELECT invocation_id, trigger_type, start_at,"
-                    " phase1_completed_at, phase2_completed_at,"
+                    " fill_collection_completed_at, command_execution_completed_at,"
                     " fill_collection_summary_json,"
                     " command_execution_summary_json"
                     " FROM invocations"
@@ -235,23 +235,27 @@ async def _read_pipeline_status(request: Request) -> InvocationStatusModel:
             with contextlib.suppress(ValueError, TypeError):
                 cmd_summary = json.loads(record["command_execution_summary_json"])
         # Derive current_phase from completion timestamps.
-        # Phase 2 completed → ended; Phase 1 completed → in phase 2;
-        # neither → in phase 1 (or pre-phase).
+        # command_execution completed → ended; fill_collection completed → in
+        # command_execution; neither → in fill_collection (or pre-phase).
         current_phase: str | None = None
-        if not record.get("phase2_completed_at"):
-            current_phase = "phase2" if record.get("phase1_completed_at") else "phase1"
-        # status derived: has phase2_completed_at → completed, else running.
-        status = "completed" if record.get("phase2_completed_at") else "running"
+        if not record.get("command_execution_completed_at"):
+            current_phase = (
+                "command_execution"
+                if record.get("fill_collection_completed_at")
+                else "fill_collection"
+            )
+        # status derived: has command_execution_completed_at → completed, else running.
+        status = "completed" if record.get("command_execution_completed_at") else "running"
         return InvocationStatusModel(
             invocation_id=record.get("invocation_id"),
             run_type=record.get("trigger_type"),
             started_at=record.get("start_at"),
-            ended_at=record.get("phase2_completed_at"),
+            ended_at=record.get("command_execution_completed_at"),
             status=status,
             current_phase=current_phase,
             phase_durations={
-                "phase1_completed_at": record.get("phase1_completed_at"),
-                "phase2_completed_at": record.get("phase2_completed_at"),
+                "fill_collection_completed_at": record.get("fill_collection_completed_at"),
+                "command_execution_completed_at": record.get("command_execution_completed_at"),
             },
             agent_metrics={
                 "fill_summary": fill_summary,

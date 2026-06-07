@@ -6,7 +6,7 @@ eight-field ``RegTMarginAttribution`` record, and persists the serialized
 record into the fill row's ``regt_attribution_json`` column. Quarantined
 fills are skipped — they retain ``regt_attribution_json IS NULL``.
 
-Tests use the same engine + builder helpers as ``test_phase1_write_path.py``
+Tests use the same engine + builder helpers as ``test_fill_collection_write_path.py``
 but exercise the wedge-specific behaviour: per-fill attribution presence,
 quarantined-fill nullability, deterministic batched-fill threading, and the
 required-MarketInputs surface.
@@ -295,7 +295,7 @@ async def _append_fill(
 async def _open_handle(
     factory: async_sessionmaker[AsyncSession],
     *,
-    invocation_id_suffix: str = "phase1",
+    invocation_id_suffix: str = "fill_collection",
 ) -> tuple[InvocationContext, InvocationHandle]:
     ctx = InvocationContext(
         session_factory=factory,
@@ -348,7 +348,7 @@ async def test_processed_fill_carries_populated_attribution(
     eight-field RegTMarginAttribution with all numeric fields finite."""
     import math
 
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -402,7 +402,7 @@ async def test_short_entry_fill_attribution_carries_150pct_initial_margin(
     150%-MV bucket per
     ``regt_margin.py::_SHORT_EQUITY_INITIAL_MARGIN_PCT``), and writes the
     delta into ``regt_marginal_consumption`` (ALP-717)."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -443,7 +443,7 @@ async def test_quarantined_fill_retains_null_attribution(
 ) -> None:
     """A fill rejected by ``_quarantine_invalid`` (e.g., negative quantity)
     is excluded from integration and its ``regt_attribution_json`` stays NULL."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -486,7 +486,7 @@ async def test_batched_fills_have_threaded_pre_state(
     ``regt_margin_after`` — the wedge re-snapshots positions per fill so
     later fills see the cumulative effect of earlier ones.
     """
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -556,10 +556,10 @@ async def test_batched_fills_have_threaded_pre_state(
 async def test_phase1_summary_unchanged(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """The wedge does not alter ``Phase1Summary`` — the four count fields are
+    """The wedge does not alter ``FillCollectionSummary`` — the four count fields are
     still populated and remain the function's only return surface."""
-    from alphamind.execution.write_paths.phase1 import (
-        Phase1Summary,
+    from alphamind.execution.write_paths.fill_collection import (
+        FillCollectionSummary,
         process_unprocessed_fills,
     )
 
@@ -579,7 +579,7 @@ async def test_phase1_summary_unchanged(
     )
     await ctx.__aexit__(None, None, None)
 
-    assert isinstance(summary, Phase1Summary)
+    assert isinstance(summary, FillCollectionSummary)
     assert summary.fills_processed == 1
     assert summary.fills_quarantined == 0
     assert summary.ca_activities_processed == 0
@@ -609,7 +609,7 @@ async def test_missing_market_inputs_for_underlying_propagates_key_error(
     Phase 1. Surfacing the gap as a hard error prevents silent attribution
     misreporting.
     """
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 

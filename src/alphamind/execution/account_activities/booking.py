@@ -47,7 +47,7 @@ from alphamind.portfolio_state.records.positions import (
 logger = logging.getLogger(__name__)
 
 # Reg T initial margin fraction — the same 0.50 basis ``_apply_entry_fill`` stamps
-# on a proactive SHORT-equity entry (``write_paths/phase1.py``).
+# on a proactive SHORT-equity entry (``write_paths/fill_collection.py``).
 _REG_T_INITIAL_MARGIN_FRACTION = 0.50
 
 

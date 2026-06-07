@@ -202,7 +202,7 @@ class _SnapshotLookup:
 
 
 @dataclass(frozen=True)
-class Phase1Summary:
+class FillCollectionSummary:
     """Outcome of one ``process_unprocessed_fills`` invocation.
 
     ``reconciliation_alerts`` counts the per-fill orphan-quarantine alerts this
@@ -246,7 +246,7 @@ async def process_unprocessed_fills(
     market_inputs: MarketInputs,
     config: StatePersistenceConfig,
     borrow_cost_resolver: Callable[[str], float | None] | None = None,
-) -> Phase1Summary:
+) -> FillCollectionSummary:
     """Drain every unprocessed fill + CA activity and integrate them atomically.
 
     Per ``corporate-actions.md § Phase 1 integration sequence``, fills and CA
@@ -353,9 +353,9 @@ async def process_unprocessed_fills(
         alpaca_account=alpaca_account,
     )
 
-    await stamp_phase_completion(handle, column="phase1_completed_at")
+    await stamp_phase_completion(handle, column="fill_collection_completed_at")
 
-    return Phase1Summary(
+    return FillCollectionSummary(
         fills_processed=fills_processed,
         fills_quarantined=quarantined_count,
         ca_activities_processed=len(ca_activities),
@@ -2288,8 +2288,8 @@ def _build_recovery_invocation_row(
         invocation_id=invocation_id,
         process_lifetime_id=process_lifetime_id,
         start_at=iso,
-        phase1_completed_at=None,
-        phase2_completed_at=None,
+        fill_collection_completed_at=None,
+        command_execution_completed_at=None,
         trigger_type="scheduled",
         trigger_source="continuous_monitor",
         trigger_reason="fill_stream_recovery - fast-fill convergence (ALP-767)",
@@ -2381,7 +2381,7 @@ async def integrate_recovered_fills(
             if processed:
                 fills_processed += 1
 
-        await stamp_phase_completion(handle, column="phase1_completed_at")
+        await stamp_phase_completion(handle, column="fill_collection_completed_at")
         await session.commit()
 
     return fills_processed
@@ -2389,7 +2389,7 @@ async def integrate_recovered_fills(
 
 __all__ = [
     "CorporateActionActivity",
-    "Phase1Summary",
+    "FillCollectionSummary",
     "StateInconsistencyError",
     "integrate_recovered_fills",
     "process_unprocessed_fills",

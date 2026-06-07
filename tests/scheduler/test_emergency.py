@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.run_types import RunType
 from alphamind.config.models.venue import VenueConfig
-from alphamind.execution.write_paths.phase1 import Phase1Summary
+from alphamind.execution.write_paths.fill_collection import FillCollectionSummary
 from alphamind.portfolio_state.events.activity_log import (
     EmergencyInvocationRequestedDetail,
     EventGroup,
@@ -152,7 +152,7 @@ def _make_invocation_summary(
         trigger_type="emergency",
         trigger_source="continuous_monitor",
         firing_run_type=RunType.emergency,
-        phase1_summary=Phase1Summary(
+        fill_collection_summary=FillCollectionSummary(
             fills_processed=0,
             fills_quarantined=0,
             ca_activities_processed=0,

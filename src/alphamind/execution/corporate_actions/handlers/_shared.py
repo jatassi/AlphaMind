@@ -1,7 +1,7 @@
 """Shared helpers used by multiple CA handlers (ALP-409).
 
 ``_cancel_bracket_for_corporate_action`` and ``_emit_corporate_action_applied``
-are moved from ``state_persistence.write_paths.phase1`` so handler modules can
+are moved from ``state_persistence.write_paths.fill_collection`` so handler modules can
 import them without a circular dependency on the legacy write path.
 
 ``_apply_signed_cash_movement`` is a new helper that cash-impact handlers

@@ -465,7 +465,8 @@ class SqlPortfolioStateRepository:
                     raise RepositoryConsistencyError(msg)
                 log.warning(
                     "get_current_invocation_metadata: bound invocation %r is paused or missing "
-                    "— ticking against prior completed invocation %r (fill_collection_committed_at=%s). "
+                    "— ticking against prior completed invocation %r "
+                    "(fill_collection_committed_at=%s). "
                     "Snapshot metadata is stale; risk evaluation continues.",
                     self._invocation_id,
                     fallback.invocation_id,
@@ -478,7 +479,9 @@ class SqlPortfolioStateRepository:
             assert row.fill_collection_completed_at is not None
             return CurrentInvocationMetadata(
                 invocation_id=row.invocation_id,
-                fill_collection_committed_at=datetime.fromisoformat(row.fill_collection_completed_at),
+                fill_collection_committed_at=datetime.fromisoformat(
+                    row.fill_collection_completed_at
+                ),
                 # ``pipeline_invocation_started_at`` is left ``None`` at snapshot
                 # assembly time per the snapshot design (see archive ref in
                 # ``PortfolioStateSnapshot``). The field is meant to be populated

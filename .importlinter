@@ -384,7 +384,7 @@ layers =
 # carry PM request-routing logic alongside the wiring. The runtime
 # ``decision -> execution`` edges are two top-level imports
 # (``process -> execution.oms.command_ids``,
-# ``persist -> execution.write_paths.phase2``) plus four function-local
+# ``persist -> execution.write_paths.command_execution``) plus four function-local
 # fallbacks inside ``dispatch.py``; the remaining ``submit_envelope.*``
 # entries below are ``TYPE_CHECKING``-only and carry no runtime cost.
 # These ``submit_envelope.*`` exceptions are permanent architectural
@@ -410,7 +410,7 @@ ignore_imports =
     alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.broker_adapter.errors
     alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.broker_adapter.order_options
     alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.oms.broker_dispatch
-    alphamind.decision.portfolio_manager.submit_envelope.persist -> alphamind.execution.write_paths.phase2
+    alphamind.decision.portfolio_manager.submit_envelope.persist -> alphamind.execution.write_paths.command_execution
     alphamind.decision.portfolio_manager.submit_envelope.process -> alphamind.execution.oms.command_ids
     # ALP-711 — ``submit_envelope.server.build_broker_routing_kwargs`` lazily
     # constructs the Alpaca-backed TradingClient + AccountStateQueries inside
@@ -434,10 +434,10 @@ ignore_imports =
     # interleaves the per-command pre-commit / backfill / teardown
     # (``execution.write_paths.phase2.atomic``) with the broker dispatch in the PM
     # composition root, and ``submit_envelope.server`` finalizes the envelope-level
-    # audit (pm_decision + phase2 stamp) via the same module after the loop. Same
+    # audit (pm_decision + command_execution stamp) via the same module after the loop. Same
     # permanent composition-root carve-out as the ``persist -> ...phase2`` edge.
-    alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.write_paths.phase2.atomic
-    alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.write_paths.phase2.atomic
+    alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.write_paths.command_execution.atomic
+    alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.write_paths.command_execution.atomic
     # ALP-470 hoisted ``state.config`` out of execution but its
     # ``CorporateActionsConfig`` field still reaches into
     # ``execution.corporate_actions.config`` (the per-feature CA knobs).
@@ -487,8 +487,8 @@ type = forbidden
 source_modules =
     alphamind.scheduler.__main__
     alphamind.scheduler.orchestrator
-    alphamind.scheduler.phase1_inputs
-    alphamind.scheduler.phase2_dispatch
+    alphamind.scheduler.fill_collection_inputs
+    alphamind.scheduler.command_execution_dispatch
     alphamind.scheduler.run_context
     alphamind.scheduler.driver
     alphamind.scheduler.emergency

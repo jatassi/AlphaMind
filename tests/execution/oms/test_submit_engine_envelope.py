@@ -102,7 +102,7 @@ _MONITOR_SESSION = "session-abc"
 
 
 # ---------------------------------------------------------------------------
-# Engine + session fixtures (mirrors test_phase2_write_path.py)
+# Engine + session fixtures (mirrors test_command_execution_write_path.py)
 # ---------------------------------------------------------------------------
 
 

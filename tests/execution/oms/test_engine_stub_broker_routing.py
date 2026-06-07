@@ -1117,7 +1117,7 @@ async def test_pm_envelope_close_with_broker_routing_writes_in_turn(
     ``invocation_handle`` to the wrapper for broker-routing reads (CLOSE / ADD /
     ADJUST / CANCEL all consult persisted positions / orders) AND
     ``defer_writeback=True``. Pre-ALP-763 the broker-active path deferred the
-    whole writeback to ``dispatch_phase2`` — but a fast fill beat that deferred
+    whole writeback to ``dispatch_command_execution`` — but a fast fill beat that deferred
     commit, dropping the fill. The fix makes the broker-active path the
     synchronous writer: Step 6 now writes + commits IN-TURN even under
     ``defer_writeback=True``.
@@ -1130,7 +1130,7 @@ async def test_pm_envelope_close_with_broker_routing_writes_in_turn(
     2. With ``defer_writeback=True`` AND broker routing active, the wrapper's
        Step 6 writeback fires + commits in-turn, so the CLOSE ``orders`` row —
        carrying the broker's real ``alpaca_order_id`` — is durable the instant
-       the broker fill could arrive. ``dispatch_phase2`` then detects the
+       the broker fill could arrive. ``dispatch_command_execution`` then detects the
        already-persisted envelope and skips it (no double-write).
 
     The broker call still fires and the per-command result's acknowledgment
@@ -1219,7 +1219,7 @@ async def test_pm_envelope_close_with_broker_routing_writes_in_turn(
         # ALP-763 — Step 6 wrote + committed IN-TURN under the broker-active
         # path, so the CLOSE order row IS in `orders`, carrying the broker's
         # real alpaca_order_id. A fresh session (the continuous monitor) can
-        # resolve it before dispatch_phase2 ever runs.
+        # resolve it before dispatch_command_execution ever runs.
         async with factory() as sess:
             order_rows = (await sess.execute(select(OrderRow))).scalars().all()
             close_orders = [o for o in order_rows if o.order_role == "CLOSE"]
@@ -1233,7 +1233,7 @@ async def test_pm_envelope_close_with_broker_routing_writes_in_turn(
         ack = log_entry.submission_results[0].acknowledgment
         assert ack is not None
         assert ack.order_id == str(expected_alpaca_order_id)
-        # dispatch_results is populated so `dispatch_phase2` can forward
+        # dispatch_results is populated so `dispatch_command_execution` can forward
         # the real id to `persist_envelope_outcome`.
         assert log_entry.dispatch_results is not None
         assert len(log_entry.dispatch_results) == 1
@@ -2083,7 +2083,7 @@ def _seed_pending_protective_orders(
     """Seed PENDING PRICE_STOP + TAKE_PROFIT rows on *bracket_id*.
 
     Returns a coroutine (callers ``await`` it). Mirrors the seeding pattern
-    in test_phase2_write_path's adjust tests but trimmed to the rows needed
+    in test_command_execution_write_path's adjust tests but trimmed to the rows needed
     by ``_adjust_command_context``.
     """
     from alphamind.portfolio_state.records.orders import (

@@ -224,7 +224,7 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
     ``False`` (the engine-stub default), an accepted envelope writes
     through to SQL immediately inside the tool handler — the standalone
     composition path tests + the continuous monitor rely on this. When
-    ``True``, Step 6 is skipped and the orchestrator's ``dispatch_phase2``
+    ``True``, Step 6 is skipped and the orchestrator's ``dispatch_command_execution``
     becomes the sole writer of the per-envelope outcome. The scheduler
     orchestrator's PM-submit path passes ``True`` because it threads a
     handle for broker-routing reads (``_dispatcher_context_for`` needs a
@@ -471,7 +471,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
     # is a real wiring bug surfaced as ``OriginatingProposalLookupError`` rather
     # than a silent empty dict. The resolved body rides on the submission-log
     # entry so every downstream persistence path (in-tool / broker-active
-    # finalize / deferred ``dispatch_phase2``) carries it without re-accessing
+    # finalize / deferred ``dispatch_command_execution``) carries it without re-accessing
     # the bundle (which is not in scope at the orchestrator's deferred site).
     # The enter-now reprice rewrite in Step 4 preserves ``source_recommendation_id``,
     # so resolving after it is correct.
@@ -506,20 +506,20 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
     # with the real broker id (or torn down on rejection) — each in its own
     # retryable transaction. So here we only finalize the envelope-level audit:
     # the once-per-envelope ``pm_decision``, one ``command_abandoned`` per
-    # broker-rejected command, and the (integrity-guarded) ``phase2_completed_at``
-    # stamp. ``dispatch_phase2`` then detects the already-persisted envelope (by
+    # broker-rejected command, and the (integrity-guarded) ``command_execution_completed_at``
+    # stamp. ``dispatch_command_execution`` then detects the already-persisted envelope (by
     # the pre-committed order rows) and skips it.
     #
     # The non-broker in-tool path (``defer_writeback=False``, no broker triple —
     # the continuous monitor / standalone composition / debug-e2e) keeps the
     # single-pass writeback on the handle's session, committed by the surrounding
     # ``InvocationContext``. The deferred non-broker path writes nothing here;
-    # ``dispatch_phase2`` is the sole writer.
+    # ``dispatch_command_execution`` is the sole writer.
     broker_routing_active = (
         client is not None and queries is not None and execution_config is not None
     )
     if broker_routing_active and invocation_handle is not None:
-        from alphamind.execution.write_paths.phase2.atomic import (
+        from alphamind.execution.write_paths.command_execution.atomic import (
             finalize_broker_envelope,
             session_factory_from_handle,
         )

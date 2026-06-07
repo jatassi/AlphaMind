@@ -120,7 +120,10 @@ class SnapshotFreshness:
 
     def _check_fill_collection_to_snapshot_non_negative(self) -> None:
         if self.fill_collection_to_snapshot_seconds < 0:
-            msg = f"fill_collection_to_snapshot_seconds must be >= 0; got {self.fill_collection_to_snapshot_seconds}"
+            msg = (
+                "fill_collection_to_snapshot_seconds must be >= 0; "
+                f"got {self.fill_collection_to_snapshot_seconds}"
+            )
             raise ValueError(msg)
 
     def _check_total_positions(self) -> None:
@@ -183,7 +186,8 @@ class SnapshotFreshness:
         Format (all fresh):
             "fill_collection→snapshot 2.3s (within 30.0s); 13/13 positions priced fresh"
         Format (some stale):
-            "fill_collection→snapshot 2.3s (within 30.0s); 12/13 positions priced fresh; 1 stale (POS-A)"
+            "fill_collection→snapshot 2.3s (within 30.0s); 12/13 positions priced fresh;
+             1 stale (POS-A)"
         """
         stale_ids = self.position_ids_priced_stale | self.position_ids_unknown_ticker
         summary = (
@@ -243,7 +247,7 @@ def compute_snapshot_freshness(
         )
         raise ValueError(msg)
 
-    phase1_to_snapshot = (
+    fill_collection_to_snapshot = (
         snapshot.snapshot_assembled_at - snapshot.fill_collection_committed_at
     ).total_seconds()
     max_p1s = config.snapshot_freshness_max_fill_collection_to_snapshot_seconds
@@ -264,9 +268,9 @@ def compute_snapshot_freshness(
     return SnapshotFreshness(
         fill_collection_committed_at=snapshot.fill_collection_committed_at,
         snapshot_assembled_at=snapshot.snapshot_assembled_at,
-        fill_collection_to_snapshot_seconds=phase1_to_snapshot,
+        fill_collection_to_snapshot_seconds=fill_collection_to_snapshot,
         max_fill_collection_to_snapshot_seconds=max_p1s,
-        fill_collection_to_snapshot_within_threshold=phase1_to_snapshot <= max_p1s,
+        fill_collection_to_snapshot_within_threshold=fill_collection_to_snapshot <= max_p1s,
         total_open_positions=total_open,
         total_pending_positions=total_pending,
         total_positions=total_positions,

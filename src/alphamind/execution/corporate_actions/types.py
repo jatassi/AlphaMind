@@ -1,7 +1,7 @@
 """Types for the corporate-actions integration package (ALP-409 / ALP-410).
 
 ``CorporateActionActivity`` is the typed handle for a single Alpaca CA activity
-awaiting integration, moved from ``state_persistence.write_paths.phase1`` so the
+awaiting integration, moved from ``state_persistence.write_paths.fill_collection`` so the
 corporate-actions package owns its own input model.
 
 ``AlpacaPositionLookup`` is a Protocol-shaped callable that non-equity handlers

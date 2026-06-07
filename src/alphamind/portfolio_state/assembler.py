@@ -148,7 +148,9 @@ def _build_assembled_snapshot(
         oldest_price_as_of=oldest_price_as_of,
     )
     freshness = compute_snapshot_freshness(snapshot, fetch_outcomes=fetch_outcomes, config=config)
-    if warn_on_fill_collection_latency and not freshness.fill_collection_to_snapshot_within_threshold:
+    if warn_on_fill_collection_latency and (
+        not freshness.fill_collection_to_snapshot_within_threshold
+    ):
         log.warning(
             "fill_collection→snapshot latency exceeded threshold: %.3fs > %.3fs",
             freshness.fill_collection_to_snapshot_seconds,
