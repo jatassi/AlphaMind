@@ -2,7 +2,7 @@
 
 This is the orchestrator-shaped function that fans out per
 ``(sector_audience, indicator_group)`` and produces the flat
-list of :class:`OutputBlock` instances the orchestrator's Phase-2 dispatcher
+list of :class:`OutputBlock` instances the orchestrator's per-category-indicator-compute dispatcher
 will swap in for ``_placeholder_blocks("q1")``.
 
 Acceptance criteria (one test per criterion):

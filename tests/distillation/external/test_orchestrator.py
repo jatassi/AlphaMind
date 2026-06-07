@@ -11,7 +11,7 @@ Coverage map per the story scope (lines 78-86):
 
 - End-to-end fixture run produces non-empty sector outputs / CR brief / regime label.
 - Invocation-archive files written to the expected paths.
-- Briefs-table population — Phase 7 INSERTs the correlation_regime brief.
+- Briefs-table population — brief-store population INSERTs the correlation_regime brief.
 - Fault injection: per-category exception propagates without swallowing.
 - Determinism: byte-identical outputs across two runs.
 - Refresh ordering: refresh failure prevents downstream computation.
@@ -74,7 +74,7 @@ _SECTOR_TICKERS: dict[str, tuple[str, str, str]] = {
     "CVX": ("energy", "energy", "XLE"),
 }
 
-# Lead-lag tickers that the orchestrator's Phase 1 pair-lag refresh
+# Lead-lag tickers that the orchestrator's Class B pair-lag refresh
 # touches. The asset_universe FK on distillation_pair_lag means these
 # must exist in asset_universe. The fixture seeds them as auxiliary
 # (no sector classification) tickers.
@@ -252,7 +252,7 @@ _PROCESS_LIFETIME_ID = "pl-test"
 def _seed_invocation_row(session: Session, invocation_id: str) -> None:
     """Insert the process_lifetimes + invocations rows the briefs FK targets.
 
-    Phase 7's INSERT into ``briefs`` references ``invocations.invocation_id``,
+    The brief-store population's INSERT into ``briefs`` references ``invocations.invocation_id``,
     so an invocation row must exist before the orchestrator runs in tests.
     Idempotent — repeated calls with the same identifiers are no-ops, so the
     helper is safe to invoke twice (e.g., the determinism test runs two
@@ -371,7 +371,7 @@ def test_orchestrator_returns_distillation_outputs(
 
 
 def test_orchestrator_populates_brief_store(populated_session: Session, tmp_path: Path) -> None:
-    """Phase 7: orchestrator INSERTs a ``briefs`` row matching the in-process brief.
+    """Brief-store population: orchestrator INSERTs a ``briefs`` row matching the in-process brief.
 
     Per story ALP-518: the persisted row is the cross-process backup
     (replay harness, command-center diagnostic); the hot-path
@@ -405,7 +405,8 @@ def test_orchestrator_populates_brief_store(populated_session: Session, tmp_path
 def test_orchestrator_diagnostic_counts_populated(
     populated_session: Session, tmp_path: Path
 ) -> None:
-    """The diagnostic count fields on :class:`DistillationOutputs` reflect Phase-2/3 output."""
+    """The diagnostic count fields on :class:`DistillationOutputs` reflect
+    per-category-compute / regime-classification output."""
     outputs = _run_orchestrator(populated_session, archive_root=tmp_path)
     assert outputs.total_blocks >= 1  # At minimum, the regime block.
     assert outputs.total_anomalies >= 0
@@ -454,7 +455,7 @@ def test_orchestrator_caps_severity_in_non_calibrated_blocks(
 def test_orchestrator_persists_ticker_realized_vol(
     populated_session: Session, tmp_path: Path
 ) -> None:
-    """ALP-530 — the orchestrator's Phase 2 hook writes one row per
+    """ALP-530 — the orchestrator's per-category-indicator-compute hook writes one row per
     in-scope ticker into ``ticker_realized_vol``. Subsequent reads via
     ``read_realized_vol_map`` see the populated map.
     """
@@ -482,7 +483,8 @@ def test_orchestrator_persists_ticker_realized_vol(
 def test_orchestrator_writes_invocation_archive_files(
     populated_session: Session, tmp_path: Path
 ) -> None:
-    """Phase 6: archive files are written to ``<root>/<date>/<invocation>/distillation/``."""
+    """Invocation-archive write: archive files are written to
+    ``<root>/<date>/<invocation>/distillation/``."""
     invocation_id = "20260425T120000Z-test"
     _run_orchestrator(populated_session, archive_root=tmp_path, invocation_id=invocation_id)
 
@@ -501,11 +503,12 @@ def test_orchestrator_writes_invocation_archive_files(
 def test_orchestrator_writes_calibration_state_snapshot(
     populated_session: Session, tmp_path: Path
 ) -> None:
-    """Phase 6: the calibration-state snapshot lands under ``provenance_root`` per story 17.
+    """Invocation-archive write: the calibration-state snapshot lands under
+    ``provenance_root`` per story 17.
 
     The snapshot is the deterministic JSON reduction the feedback loop and
     command center calibration-mix panel both consume; the orchestrator's
-    phase 6 invokes the writer alongside the markdown archive write so a
+    invocation-archive-write step invokes the writer alongside the markdown archive write so a
     single fail-closed boundary covers both files.
     """
     invocation_id = "20260425T120000Z-test"
@@ -578,7 +581,7 @@ def test_orchestrator_fault_injection_propagates_per_category_exception(
 def test_orchestrator_refresh_failure_prevents_downstream_computation(
     populated_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Refresh ordering: a Phase 1 failure prevents any Phase 2+ work.
+    """Refresh ordering: a Class B refresh failure prevents any per-category-compute-and-later work.
 
     The orchestrator must not skip ahead to compute indicators when the
     Class B refresh fails — the indicators read from the state the
@@ -599,8 +602,8 @@ def test_orchestrator_refresh_failure_prevents_downstream_computation(
     ) -> int:
         raise _RefreshError("simulated refresh failure")
 
-    # Sentinel that records whether Phase 2 ran.
-    phase_2_ran = {"q12": False}
+    # Sentinel that records whether per-category compute ran.
+    category_compute_ran = {"q12": False}
 
     def _spy_q12(
         session: Session,
@@ -608,7 +611,7 @@ def test_orchestrator_refresh_failure_prevents_downstream_computation(
         config: DistillationConfig,
         as_of: datetime,
     ) -> list[OutputBlock]:
-        phase_2_ran["q12"] = True
+        category_compute_ran["q12"] = True
         return []
 
     monkeypatch.setattr(orch_mod, "_refresh_class_b_state", _failing_refresh)
@@ -617,8 +620,9 @@ def test_orchestrator_refresh_failure_prevents_downstream_computation(
     with pytest.raises(_RefreshError, match="simulated refresh failure"):
         _run_orchestrator(populated_session, archive_root=tmp_path)
 
-    assert phase_2_ran["q12"] is False, (
-        "Phase 2 ran despite Phase 1 refresh failure — refresh ordering contract violated"
+    assert category_compute_ran["q12"] is False, (
+        "per-category compute ran despite Class B refresh failure"
+        " — refresh ordering contract violated"
     )
 
 
@@ -704,8 +708,8 @@ def test_orchestrator_threads_resolved_contract_scope_to_both_consumers(
     populated_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The orchestrator must resolve scope ONCE and thread the same tuple to
-    ``refresh_contract_history`` (Phase 1 writer) and the qualitative
-    Phase 2 loader — splitting would let the writer ingest one set while
+    ``refresh_contract_history`` (Class B refresh writer) and the qualitative
+    per-category-compute loader — splitting would let the writer ingest one set while
     the reader reports on another.
 
     ALP-487 moved the qualitative reader from a direct
