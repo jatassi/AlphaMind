@@ -18,7 +18,6 @@ harness-level suites.
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncGenerator, Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -312,7 +311,7 @@ async def test_concurrent_workers_each_open_a_distinct_telemetry_session(
 
     provenance_root = tmp_path / "provenance"
     opened_session_ids: list[int] = []
-    real_factory = worker.make_async_session_factory
+    real_factory = make_async_session_factory
 
     def _recording_factory(engine: Any) -> Any:
         sessionmaker = real_factory(engine)
@@ -356,7 +355,7 @@ async def test_telemetry_commit_error_is_logged_not_fatal(
     call still returns its success payload (the worker's commit, like the
     harness's drain, never breaks the call it observes)."""
     provenance_root = tmp_path / "provenance"
-    real_factory = worker.make_async_session_factory
+    real_factory = make_async_session_factory
 
     def _failing_commit_factory(engine: Any) -> Any:
         sessionmaker = real_factory(engine)

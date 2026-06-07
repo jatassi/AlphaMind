@@ -106,7 +106,6 @@ async def _run_adaptive_researcher(  # noqa: PLR0913 — signature dictated by A
     agents_config: Mapping[str, BaseAgentConfig],
     deps: _Deps,
     archive_root: Path | None = None,
-    provenance_root: Path | None = None,
 ) -> AdaptiveResearcherResult:
     """Run the adaptive researcher with injected dependencies.
 
@@ -158,7 +157,6 @@ async def _run_adaptive_researcher(  # noqa: PLR0913 — signature dictated by A
         qualitative_brief=qualitative_brief,
         correlation_regime_brief=correlation_regime_brief,
         archive_root=archive_root,
-        provenance_root=provenance_root,
     )
     logger.info(
         "harness invoked (retry_count=%d, tokens=%s, tool_calls=%d)",
@@ -233,8 +231,11 @@ async def run_adaptive_researcher(  # noqa: PLR0913 — prescribed signature; va
         qualitative_brief: QualitativeBrief,
         correlation_regime_brief: CorrelationRegimeBrief,
         archive_root: Path | None,
-        provenance_root: Path | None,
     ) -> HarnessSuccess:
+        # ``provenance_root`` is captured from this enclosing scope alongside
+        # ``as_of`` / ``progress`` / ``phase`` (constant for the whole call), so
+        # the core need not thread it through ``deps.harness_fn`` — keeping the
+        # closure's brief fan-out within the argument-count rule (ALP-907).
         return await invoke_adaptive_researcher_in_subprocess(
             agent_config=agent_config,
             user_message=user_message,
@@ -266,5 +267,4 @@ async def run_adaptive_researcher(  # noqa: PLR0913 — prescribed signature; va
             harness_fn=_harness_fn,
         ),
         archive_root=archive_root,
-        provenance_root=provenance_root,
     )

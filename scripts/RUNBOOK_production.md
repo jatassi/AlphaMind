@@ -495,6 +495,34 @@ researcher fully consumed). All artifacts land in the same archive layout
 as scheduled runs — under
 `%USERPROFILE%\AlphaMind\archive\<YYYY-MM-DD>\<invocation_id>\`.
 
+**agent_calls telemetry capture is active in production (ALP-907).** Every LLM
+agent call (the 9 analysis + decision agents, run inside the SDK subprocess
+worker) persists one `agent_calls` table row plus a four-file provenance tree
+under
+`%USERPROFILE%\AlphaMind\data\provenance\invocations\<invocation_id>\agent_calls\<agent_call_id>\`
+(`system_prompt.md`, `output_schema.json`, `tools_definition.json`,
+`output.json`; the row's `output_artifact_ref` points at that directory). The
+worker opens one telemetry SQLite session per agent call and commits it before
+returning. Telemetry persistence is **logged-not-fatal**: a capture/commit error
+is logged (`agent_calls telemetry commit failed in subprocess worker` /
+`agent_calls capture failed …`) and never fails the agent call or the
+invocation. Delivery requires the `agent_calls` table to exist — the combined
+feedback-loop migration (ALP-879) must be applied on the prod box first;
+until then the insert silently no-ops (swallowed) and the table stays empty.
+
+**Post-deploy spot-check** (after the migration is applied): run one `--once`
+invocation, then confirm the table populated and the tree exists:
+
+```bash
+uv run python -c "import os, sqlite3; \
+db = sqlite3.connect(os.path.expandvars(r'%USERPROFILE%\AlphaMind\data\alphamind.db')); \
+print(db.execute('SELECT count(*), sum(success) FROM agent_calls').fetchone())"
+```
+
+```powershell
+Get-ChildItem "$env:USERPROFILE\AlphaMind\data\provenance\invocations" -Recurse -Filter output.json | Select-Object -First 5
+```
+
 **Do not pass `--fresh-start`.** That flag is reserved for the one-time
 bootstrap in § 2.4; it hard-fails when the singletons already exist.
 
@@ -1247,5 +1275,6 @@ it has no SSE / `/events` channel (§ 5.2) and writes nothing to the DB. Watch
 | Production DB                    | `%USERPROFILE%\AlphaMind\data\alphamind.db`                   |
 | Daemon logs                      | `%USERPROFILE%\AlphaMind\logs\<daemon>.{out,err,log}.log` (`safety_core.*`, `safety_core_watchdog.*` for the safety-core services) |
 | Invocation archives              | `%USERPROFILE%\AlphaMind\archive\<YYYY-MM-DD>\<invocation_id>\` |
+| Agent-call provenance            | `%USERPROFILE%\AlphaMind\data\provenance\invocations\<invocation_id>\agent_calls\<agent_call_id>\` (one dir per LLM agent call; `system_prompt.md` + `output_schema.json` + `tools_definition.json` + `output.json`; paired with one `agent_calls` table row) |
 | Config files                     | `<repo>\config\*.yaml`, `<repo>\config\run_types\*.yaml`, `<repo>\config\profiles\*.yaml` |
 | `.env`                           | `<repo>\.env`                                                  |
