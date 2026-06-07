@@ -65,9 +65,7 @@ def _conditioned(dataset: WindowDataset, conditioning: Conditioning) -> WindowDa
     matching = _conditioning_invocation_filter(dataset, conditioning)
     if matching is None:
         return dataset
-    sliced = tuple(
-        entry for entry in dataset.pm_decision_log if entry.invocation_id in matching
-    )
+    sliced = tuple(entry for entry in dataset.pm_decision_log if entry.invocation_id in matching)
     return replace(dataset, pm_decision_log=sliced)
 
 
@@ -424,14 +422,10 @@ _ANALYST_PROPOSALS_PER_INVOCATION = MetricId("analyst_proposals_per_invocation")
 #: per-invocation ``active_regime`` resolves an observation's held regime through
 #: the loader's regime map (the analyst run's model/prompt are not the PM-call
 #: fields the agent-call join exposes, so only the regime slice is reachable here).
-_ANALYST_SUPPORTED_CONDITIONING: tuple[ConditioningDimension, ...] = (
-    ConditioningDimension.REGIME,
-)
+_ANALYST_SUPPORTED_CONDITIONING: tuple[ConditioningDimension, ...] = (ConditioningDimension.REGIME,)
 
 
-def _analyst_proposal_counts(
-    dataset: WindowDataset, conditioning: Conditioning
-) -> tuple[int, ...]:
+def _analyst_proposal_counts(dataset: WindowDataset, conditioning: Conditioning) -> tuple[int, ...]:
     """The (conditioned) per-invocation analyst proposal counts.
 
     One entry per analyst invocation in the window; ``0`` for a watchlist run or a

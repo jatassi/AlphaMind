@@ -65,6 +65,7 @@ from alphamind.commands.submission_results import _ValidationMetadata
 from alphamind.decision.portfolio_manager.models import (
     AddCommand,
     AdjustCommand,
+    AntiPattern,
     CancelCommand,
     CloseCommand,
     CriterionAssessment,
@@ -490,7 +491,7 @@ def _add_command(
 def _make_analyst_envelope(
     envelope_id: str = "ENV-REC-1",
     commands: tuple[Any, ...] = (),
-    anti_patterns_identified: tuple[str, ...] | None = None,
+    anti_patterns_identified: tuple[AntiPattern, ...] | None = None,
 ) -> PMEnvelope:
     if not commands:
         commands = (_open_command(),)
@@ -1277,7 +1278,7 @@ async def test_pm_decision_persists_envelope_anti_patterns(
     await _seed_invocation_substrate(factory)
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
 
-    tags = ("sunk_cost_persistence", "conviction_inflation")
+    tags: tuple[AntiPattern, ...] = ("sunk_cost_persistence", "conviction_inflation")
     envelope = _make_analyst_envelope(
         commands=(_open_command(underlying=Symbol("NVDA")),),
         anti_patterns_identified=tags,

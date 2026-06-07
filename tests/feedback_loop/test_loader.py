@@ -185,9 +185,7 @@ class TestAnalystProposalsLoad:
     """The analyst-proposals sub-bundle counts recommendations off ``output.json``."""
 
     @pytest.fixture()
-    async def session_with_analyst_artifact(
-        self, tmp_path: Path
-    ) -> AsyncIterator[AsyncSession]:
+    async def session_with_analyst_artifact(self, tmp_path: Path) -> AsyncIterator[AsyncSession]:
         """A normal-mode analyst call with a real ``output.json`` carrying 2 recs."""
         artifact_dir = tmp_path / "analyst_artifact"
         artifact_dir.mkdir()

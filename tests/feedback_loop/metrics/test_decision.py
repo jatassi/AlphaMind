@@ -373,9 +373,7 @@ class TestAntiPatternFrequency:
         assert sunk.sample_size == 4
         conviction = _compute("anti_pattern_frequency__conviction_inflation", dataset)
         assert conviction.value == 1 / 4
-        assert (
-            _compute("anti_pattern_frequency__rationalized_continuation", dataset).value == 0.0
-        )
+        assert _compute("anti_pattern_frequency__rationalized_continuation", dataset).value == 0.0
 
     def test_all_five_canonical_patterns_register(self) -> None:
         from typing import get_args
@@ -412,9 +410,7 @@ class TestAnalystProposalMetrics:
 
     def test_proposals_per_invocation_is_mean_count(self) -> None:
         bundle = _proposals(("inv-a", 3), ("inv-b", 0), ("inv-c", 0))
-        result = _compute(
-            "analyst_proposals_per_invocation", _dataset(analyst_proposals=bundle)
-        )
+        result = _compute("analyst_proposals_per_invocation", _dataset(analyst_proposals=bundle))
         assert result.value == 1.0
         assert result.sample_size == 3
 
@@ -610,9 +606,7 @@ class TestConditioning:
             _pm_entry(verdict=PMVerdict.REJECT, invocation_id="inv-normal"),
             _pm_entry(verdict=PMVerdict.APPROVE, invocation_id="inv-elevated"),
         )
-        regimes = RegimeBundle(
-            by_invocation={"inv-normal": "normal", "inv-elevated": "elevated"}
-        )
+        regimes = RegimeBundle(by_invocation={"inv-normal": "normal", "inv-elevated": "elevated"})
         dataset = _dataset(log, regimes=regimes)
 
         # Unconditioned: 2 approve / 3 total.
@@ -645,9 +639,7 @@ class TestConditioning:
             ),
             _pm_entry(verdict=PMVerdict.APPROVE, invocation_id="inv-normal"),
         )
-        regimes = RegimeBundle(
-            by_invocation={"inv-normal": "normal", "inv-elevated": "elevated"}
-        )
+        regimes = RegimeBundle(by_invocation={"inv-normal": "normal", "inv-elevated": "elevated"})
         dataset = _dataset(log, regimes=regimes)
         sliced = _compute(
             "anti_pattern_frequency__sunk_cost_persistence",
@@ -659,9 +651,7 @@ class TestConditioning:
 
     def test_analyst_inaction_recomputes_under_regime_slice(self) -> None:
         bundle = _proposals(("inv-normal", 3), ("inv-elevated", 0))
-        regimes = RegimeBundle(
-            by_invocation={"inv-normal": "normal", "inv-elevated": "elevated"}
-        )
+        regimes = RegimeBundle(by_invocation={"inv-normal": "normal", "inv-elevated": "elevated"})
         dataset = _dataset(analyst_proposals=bundle, regimes=regimes)
         sliced = _compute(
             "analyst_inaction_rate",

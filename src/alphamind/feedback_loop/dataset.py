@@ -650,9 +650,7 @@ def _analyst_proposal_count(payload: object) -> int | None:
     return None
 
 
-async def _load_regimes(
-    session: AsyncSession, start: datetime, end: datetime
-) -> RegimeBundle:
+async def _load_regimes(session: AsyncSession, start: datetime, end: datetime) -> RegimeBundle:
     """Per-invocation active-regime sub-bundle loader hook (story 06f).
 
     Reads the ``invocation_id -> active_regime`` map over invocations started in
