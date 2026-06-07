@@ -25,7 +25,7 @@ from sqlalchemy import text
 
 from alphamind.persistence.session import make_engine
 
-_PARENT_REVISION = "b001fc0000ee"
+_PARENT_REVISION = "c001fb0000ff"
 _MIGRATION_REVISION = "b899tr0000ff"
 
 

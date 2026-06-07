@@ -128,17 +128,19 @@ class TestEnumMembers:
             "CORPORATE_ACTION",
             "CONFIGURATION",
             "RECONCILIATION",
+            "DISTILLATION_ANOMALY",
         }
         assert {m.name for m in EventGroup} == expected
 
     def test_event_type_is_str_enum(self) -> None:
         assert issubclass(EventType, StrEnum)
 
-    def test_event_type_has_exactly_46_members(self) -> None:
-        # 46 = 44 baseline + 1 (PROFILE_SWITCHED, ALP-663) + 1
+    def test_event_type_has_exactly_47_members(self) -> None:
+        # 47 = 44 baseline + 1 (PROFILE_SWITCHED, ALP-663) + 1
         # (BORROW_COST_ACCRUED, ALP-718, emitted by the continuous monitor's
-        # daily borrow-accrual tick — architecture.md § 4f).
-        assert len(EventType) == 46
+        # daily borrow-accrual tick — architecture.md § 4f) + 1
+        # (the distillation-anomaly event, ALP-877/02e — distillation anomaly emission).
+        assert len(EventType) == 47
 
     def test_event_type_position_lifecycle_members(self) -> None:
         for name in ("POSITION_OPENED", "POSITION_CLOSED", "POSITION_ADDED", "POSITION_REDUCED"):
@@ -336,11 +338,11 @@ class TestMappingExhaustiveness:
 class TestAnyDetailTypeAlias:
     """AnyDetailType is exported and covers all detail-payload classes."""
 
-    def test_any_detail_type_has_46_members(self) -> None:
-        # See test_event_type_has_exactly_46_members — BorrowCostAccruedDetail
-        # added by ALP-718 alongside PROFILE_SWITCHED (ALP-663).
+    def test_any_detail_type_has_47_members(self) -> None:
+        # See test_event_type_has_exactly_47_members — DistillationAnomalyFlagDetail
+        # added by ALP-877/02e alongside the earlier BorrowCostAccruedDetail (ALP-718).
         members = get_args(AnyDetailType)
-        assert len(members) == 46
+        assert len(members) == 47
 
     def test_any_detail_type_covers_all_detail_classes(self) -> None:
         members = set(get_args(AnyDetailType))
