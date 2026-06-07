@@ -375,6 +375,7 @@ async def invoke_domain_researcher_in_subprocess(  # noqa: PLR0913 — signature
     invocation_id: str,
     as_of: datetime | None = None,
     archive_root: Path | None = None,
+    provenance_root: Path | None = None,
     sdk_query_fn: Any = None,  # noqa: ARG001 — signature parity; subprocess uses its own SDK call
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "domain_researchers",
@@ -392,6 +393,7 @@ async def invoke_domain_researcher_in_subprocess(  # noqa: PLR0913 — signature
         "invocation_id": invocation_id,
         "as_of": _as_of_to_str(as_of),
         "archive_root": str(archive_root) if archive_root is not None else None,
+        "provenance_root": str(provenance_root) if provenance_root is not None else None,
         "progress_jsonl_path": _extract_progress_jsonl_path(progress),
         "phase": phase,
     }
@@ -416,6 +418,7 @@ async def invoke_qualitative_researcher_in_subprocess(  # noqa: PLR0913 — sign
     universe: frozenset[str],
     as_of: datetime | None = None,
     archive_root: Path | None = None,
+    provenance_root: Path | None = None,
     sdk_query_fn: Any = None,  # noqa: ARG001 — signature parity; subprocess uses its own SDK call
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "qualitative",
@@ -439,6 +442,7 @@ async def invoke_qualitative_researcher_in_subprocess(  # noqa: PLR0913 — sign
         "universe": sorted(universe),
         "as_of": _as_of_to_str(as_of),
         "archive_root": str(archive_root) if archive_root is not None else None,
+        "provenance_root": str(provenance_root) if provenance_root is not None else None,
         "progress_jsonl_path": _extract_progress_jsonl_path(progress),
         "phase": phase,
     }
@@ -469,6 +473,7 @@ async def invoke_synthesizer_in_subprocess(  # noqa: PLR0913 — signature parit
     portfolio_reader: SynthesizerPortfolioStateReader,
     as_of: datetime | None = None,
     archive_root: Path | None = None,
+    provenance_root: Path | None = None,
     sdk_query_fn: Any = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "synthesizer",
@@ -484,7 +489,9 @@ async def invoke_synthesizer_in_subprocess(  # noqa: PLR0913 — signature parit
     transport entirely and routes to the in-process harness. This restores
     the SDK-substitution test seam — runner tests that inject a stub SDK
     (and that often build inputs containing local-function closures the
-    pickle transport cannot carry) continue to work unchanged.
+    pickle transport cannot carry) continue to work unchanged. The
+    in-process branch leaves telemetry inert (no ``telemetry_session`` to
+    open in-parent); production goes through the subprocess worker below.
     """
     if sdk_query_fn is not None:
         from alphamind.analysis.synthesizer.harness import invoke_synthesizer
@@ -509,6 +516,7 @@ async def invoke_synthesizer_in_subprocess(  # noqa: PLR0913 — signature parit
         "portfolio_reader_pickle": _encode_pickle(portfolio_reader),
         "as_of": _as_of_to_str(as_of),
         "archive_root": str(archive_root) if archive_root is not None else None,
+        "provenance_root": str(provenance_root) if provenance_root is not None else None,
         "progress_jsonl_path": _extract_progress_jsonl_path(progress),
         "phase": phase,
     }
@@ -535,6 +543,7 @@ async def invoke_adaptive_researcher_in_subprocess(  # noqa: PLR0913 — signatu
     correlation_regime_brief: Any,  # CorrelationRegimeBrief — typed Pydantic at the worker boundary
     as_of: datetime | None = None,
     archive_root: Path | None = None,
+    provenance_root: Path | None = None,
     sdk_query_fn: Any = None,  # noqa: ARG001 — signature parity; subprocess uses its own SDK call
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "adaptive",
@@ -556,6 +565,7 @@ async def invoke_adaptive_researcher_in_subprocess(  # noqa: PLR0913 — signatu
         "correlation_regime_brief_pickle": _encode_pickle(correlation_regime_brief),
         "as_of": _as_of_to_str(as_of),
         "archive_root": str(archive_root) if archive_root is not None else None,
+        "provenance_root": str(provenance_root) if provenance_root is not None else None,
         "progress_jsonl_path": _extract_progress_jsonl_path(progress),
         "phase": phase,
     }
@@ -581,6 +591,7 @@ async def invoke_analyst_in_subprocess(  # noqa: PLR0913 — signature parity wi
     active_sectors: frozenset[str],
     as_of: datetime | None = None,
     archive_root: Path | None = None,
+    provenance_root: Path | None = None,
     sdk_query_fn: Any = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "analyst",
@@ -627,6 +638,7 @@ async def invoke_analyst_in_subprocess(  # noqa: PLR0913 — signature parity wi
         "active_sectors": sorted(active_sectors),
         "as_of": _as_of_to_str(as_of),
         "archive_root": str(archive_root) if archive_root is not None else None,
+        "provenance_root": str(provenance_root) if provenance_root is not None else None,
         "progress_jsonl_path": _extract_progress_jsonl_path(progress),
         "phase": phase,
     }
@@ -653,6 +665,7 @@ async def invoke_strategist_in_subprocess(  # noqa: PLR0913 — signature parity
     active_sectors: frozenset[str],
     as_of: datetime | None = None,
     archive_root: Path | None = None,
+    provenance_root: Path | None = None,
     sdk_query_fn: Any = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "strategist",
@@ -695,6 +708,7 @@ async def invoke_strategist_in_subprocess(  # noqa: PLR0913 — signature parity
         "active_sectors": sorted(active_sectors),
         "as_of": _as_of_to_str(as_of),
         "archive_root": str(archive_root) if archive_root is not None else None,
+        "provenance_root": str(provenance_root) if provenance_root is not None else None,
         "progress_jsonl_path": _extract_progress_jsonl_path(progress),
         "phase": phase,
     }
@@ -729,6 +743,7 @@ async def invoke_portfolio_manager_in_subprocess(  # noqa: PLR0913 — signature
     state_persistence_config: StatePersistenceConfig,
     as_of: datetime | None = None,
     archive_root: Path | None = None,
+    provenance_root: Path | None = None,
     sdk_query_fn: Any = None,
     broker_dispatch: Any = None,
     venue_config: Any = None,  # VenueConfig — Pydantic, picklable
@@ -824,6 +839,7 @@ async def invoke_portfolio_manager_in_subprocess(  # noqa: PLR0913 — signature
         "state_persistence_config": state_persistence_config.model_dump(mode="json"),
         "as_of": _as_of_to_str(as_of),
         "archive_root": str(archive_root) if archive_root is not None else None,
+        "provenance_root": str(provenance_root) if provenance_root is not None else None,
         "progress_jsonl_path": _extract_progress_jsonl_path(progress),
         "phase": phase,
         # ALP-711 — picklable broker-routing inputs the worker uses to
