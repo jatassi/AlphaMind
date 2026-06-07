@@ -22,6 +22,15 @@ _MECHANICAL_EXIT_METHODS: frozenset[PositionExitMethod] = frozenset(
         PositionExitMethod.MARGIN_LIQUIDATION,
         PositionExitMethod.FORCED_BUY_IN,
         PositionExitMethod.CORPORATE_ACTION_CASH_MERGER,
+        # Option-lifecycle closes (ALP-918) are categorically mechanical — an OTM
+        # expiry with negative P/L is "invalidated, stopped correctly", not a PM
+        # hold-too-long. OPTION_EXPIRY is the live resolver path; ASSIGNMENT /
+        # EXERCISE are recorded here for changelog faithfulness but those theses
+        # resolve off the delivered equity leg's real exit method, not at
+        # option-close.
+        PositionExitMethod.OPTION_EXPIRY,
+        PositionExitMethod.OPTION_ASSIGNMENT,
+        PositionExitMethod.OPTION_EXERCISE,
     }
 )
 
@@ -45,7 +54,8 @@ def classify_thesis_resolution(
 
     * INVALIDATED_STOPPED_CORRECTLY — realized_pnl_usd <= 0 AND exit_method
       indicates a mechanically-triggered exit (stop-triggered, time-expired,
-      target-reached, margin-liquidation, forced-buy-in, corporate_action_*).
+      target-reached, margin-liquidation, forced-buy-in, corporate_action_*,
+      option-expiry/assignment/exercise).
       Negative P/L outcome but positive process outcome — the system correctly
       identified when it was wrong.
 

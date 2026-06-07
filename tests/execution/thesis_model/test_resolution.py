@@ -32,8 +32,21 @@ TIME = PositionExitMethod.TIME_EXPIRED
 MARGIN = PositionExitMethod.MARGIN_LIQUIDATION
 FORCED = PositionExitMethod.FORCED_BUY_IN
 CASH_MERGER = PositionExitMethod.CORPORATE_ACTION_CASH_MERGER
+OPTION_EXPIRY = PositionExitMethod.OPTION_EXPIRY
+OPTION_ASSIGNMENT = PositionExitMethod.OPTION_ASSIGNMENT
+OPTION_EXERCISE = PositionExitMethod.OPTION_EXERCISE
 
-MECHANICAL_EXITS = [STOP, TARGET, TIME, MARGIN, FORCED, CASH_MERGER]
+MECHANICAL_EXITS = [
+    STOP,
+    TARGET,
+    TIME,
+    MARGIN,
+    FORCED,
+    CASH_MERGER,
+    OPTION_EXPIRY,
+    OPTION_ASSIGNMENT,
+    OPTION_EXERCISE,
+]
 
 # ---------------------------------------------------------------------------
 # Tracer bullet: empty tuple raises ValueError
@@ -133,6 +146,14 @@ def test_all_wrong_negative_pnl_cash_merger_returns_stopped_correctly() -> None:
 def test_all_inconclusive_negative_pnl_stop_returns_stopped_correctly() -> None:
     result = classify_thesis_resolution((INCONCLUSIVE, INCONCLUSIVE), -75.0, STOP)
     assert result == ISC
+
+
+def test_wrong_nonpositive_pnl_option_expiry_returns_stopped_correctly() -> None:
+    """ALP-918 AC2: an option-lifecycle close is categorically mechanical — an
+    OTM expiry with a wrong component and non-positive P/L is stopped-correctly,
+    not held-too-long (the new members joined ``_MECHANICAL_EXIT_METHODS``)."""
+    assert classify_thesis_resolution((WRONG,), -100.0, OPTION_EXPIRY) == ISC
+    assert classify_thesis_resolution((WRONG,), 0.0, OPTION_EXPIRY) == ISC
 
 
 # ---------------------------------------------------------------------------
