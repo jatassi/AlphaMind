@@ -672,6 +672,21 @@ def test_normal_mode_dispatches_normal_to_analyst_and_strategist(
     assert log.strategist["mode"] == "normal"
 
 
+def test_pipeline_forwards_provenance_root_to_all_three_runners(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``provenance_root`` reaches the analyst, strategist, and PM runners
+    (ALP-907 — each forwards it to its subprocess wrapper → the worker's per-call
+    agent_calls telemetry session)."""
+    log = _CallLog()
+    _patch_runners(monkeypatch, log=log)
+    prov = tmp_path / "provenance"
+    _drive(provenance_root=prov)
+    assert log.analyst["provenance_root"] == prov
+    assert log.strategist["provenance_root"] == prov
+    assert log.pm["provenance_root"] == prov
+
+
 def test_halt_mode_dispatches_modal_vocabulary(monkeypatch: pytest.MonkeyPatch) -> None:
     """When ``mode='halt'``, analyst gets ``watchlist``, strategist gets
     ``defensive_posture``, PM gets ``halt``."""

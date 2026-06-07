@@ -19,7 +19,7 @@ harness-level suites.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -156,7 +156,7 @@ def read_factory(telemetry_db: Path) -> async_sessionmaker[AsyncSession]:
 
 async def _read_rows(
     read_factory: async_sessionmaker[AsyncSession],
-) -> list[Any]:
+) -> Sequence[Any]:
     async with read_factory() as session:
         return await read_agent_calls_for_invocation(session, _INV)
 
@@ -214,6 +214,174 @@ async def test_worker_success_persists_one_row_and_four_artifacts(
     assert pdir == provenance_root / "invocations" / _INV / "agent_calls" / row.agent_call_id
     for name in ("system_prompt.md", "output_schema.json", "tools_definition.json", "output.json"):
         assert (pdir / name).exists()
+
+
+def _malformed_stub() -> Callable[..., AsyncGenerator[Any]]:
+    bad = {"shape": "wrong"}
+    return _make_stub_query([_make_sdk_messages(bad), _make_sdk_messages(bad)])
+
+
+def _context_overflow_stub() -> Callable[..., AsyncGenerator[Any]]:
+    # Parse failure paired with stop_reason=max_tokens → ContextOverflowFailure.
+    return _make_stub_query([_make_sdk_messages(None, stop_reason="max_tokens")])
+
+
+def _sdk_failure_stub() -> Callable[..., AsyncGenerator[Any]]:
+    from claude_agent_sdk import CLIConnectionError
+
+    async def _stub(**_kwargs: Any) -> AsyncGenerator[Any]:
+        raise CLIConnectionError("OAuth token invalid or missing")
+        yield  # make it a generator
+
+    return _stub
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stub_factory", "expected_error_type", "expected_error_class"),
+    [
+        (_malformed_stub, "MalformedOutputFailure", AgentCallErrorClass.malformed_output),
+        (_context_overflow_stub, "ContextOverflowFailure", AgentCallErrorClass.context_overflow),
+        (_sdk_failure_stub, "SDKFailure", AgentCallErrorClass.model_api_error),
+    ],
+)
+async def test_worker_failure_persists_row_with_mapped_error_class(
+    agent_config: BaseAgentConfig,
+    tmp_path: Path,
+    read_factory: async_sessionmaker[AsyncSession],
+    stub_factory: Callable[[], Callable[..., AsyncGenerator[Any]]],
+    expected_error_type: str,
+    expected_error_class: AgentCallErrorClass,
+) -> None:
+    """A failed worker-path call persists one row with success=false and the
+    error_class mapped from the raised HarnessFailure subclass — the worker
+    committed the failure row that the harness drained before re-raising, and
+    returns its typed failure envelope. One case per domain-routable subclass
+    (the mapping itself is unchanged in this story)."""
+    provenance_root = tmp_path / "provenance"
+
+    with patch("claude_agent_sdk.query", stub_factory()):
+        result = await worker._run_domain_researcher(
+            _domain_payload(agent_config, provenance_root=provenance_root)
+        )
+
+    assert result["kind"] == "failure"
+    assert result["error_type"] == expected_error_type
+
+    rows = await _read_rows(read_factory)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.success is False
+    assert row.error_class is expected_error_class
+
+
+@pytest.mark.asyncio
+async def test_worker_with_none_provenance_root_is_a_noop(
+    agent_config: BaseAgentConfig,
+    read_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """With ``provenance_root`` absent from the payload (the in-process / test
+    path, or a non-telemetry-wired production invocation), the worker opens no
+    telemetry session: no agent_calls row is written and the call still
+    succeeds."""
+    stub = _make_stub_query([_make_sdk_messages(_MINIMAL_BRIEF_PAYLOAD)])
+
+    with patch("claude_agent_sdk.query", stub):
+        result = await worker._run_domain_researcher(
+            _domain_payload(agent_config, provenance_root=None)
+        )
+
+    assert result["kind"] == "success"
+    rows = await _read_rows(read_factory)
+    assert len(rows) == 0
+
+
+@pytest.mark.asyncio
+async def test_concurrent_workers_each_open_a_distinct_telemetry_session(
+    agent_config: BaseAgentConfig,
+    tmp_path: Path,
+    read_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three concurrent domain-researcher worker calls each open their own
+    per-call telemetry ``AsyncSession`` — no single session is shared (wave-3
+    finding C2). Each subprocess is its own process in production; here the
+    in-process drive proves the helper mints one session per call. Three rows
+    (distinct agent_call_ids) land, one per call."""
+    import asyncio
+
+    provenance_root = tmp_path / "provenance"
+    opened_session_ids: list[int] = []
+    real_factory = worker.make_async_session_factory
+
+    def _recording_factory(engine: Any) -> Any:
+        sessionmaker = real_factory(engine)
+
+        def _make() -> Any:
+            session = sessionmaker()
+            opened_session_ids.append(id(session))
+            return session
+
+        return _make
+
+    monkeypatch.setattr(worker, "make_async_session_factory", _recording_factory)
+    stub = _make_stub_query([_make_sdk_messages(_MINIMAL_BRIEF_PAYLOAD)])
+
+    with patch("claude_agent_sdk.query", stub):
+        results = await asyncio.gather(
+            *(
+                worker._run_domain_researcher(
+                    _domain_payload(agent_config, provenance_root=provenance_root)
+                )
+                for _ in range(3)
+            )
+        )
+
+    assert all(r["kind"] == "success" for r in results)
+    # One session opened per concurrent call, all distinct objects.
+    assert len(opened_session_ids) == 3
+    assert len(set(opened_session_ids)) == 3
+
+    rows = await _read_rows(read_factory)
+    assert len({row.agent_call_id for row in rows}) == 3
+
+
+@pytest.mark.asyncio
+async def test_telemetry_commit_error_is_logged_not_fatal(
+    agent_config: BaseAgentConfig,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A telemetry commit failure is logged and swallowed — the successful agent
+    call still returns its success payload (the worker's commit, like the
+    harness's drain, never breaks the call it observes)."""
+    provenance_root = tmp_path / "provenance"
+    real_factory = worker.make_async_session_factory
+
+    def _failing_commit_factory(engine: Any) -> Any:
+        sessionmaker = real_factory(engine)
+
+        def _make() -> Any:
+            session = sessionmaker()
+
+            async def _boom() -> None:
+                raise RuntimeError("telemetry commit blew up")
+
+            session.commit = _boom  # type: ignore[method-assign]
+            return session
+
+        return _make
+
+    monkeypatch.setattr(worker, "make_async_session_factory", _failing_commit_factory)
+    stub = _make_stub_query([_make_sdk_messages(_MINIMAL_BRIEF_PAYLOAD)])
+
+    with patch("claude_agent_sdk.query", stub):
+        result = await worker._run_domain_researcher(
+            _domain_payload(agent_config, provenance_root=provenance_root)
+        )
+
+    # The agent call still succeeds despite the telemetry commit failure.
+    assert result["kind"] == "success"
 
 
 pytestmark = pytest.mark.filterwarnings("error::DeprecationWarning")
