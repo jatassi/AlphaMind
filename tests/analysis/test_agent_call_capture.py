@@ -100,6 +100,73 @@ def _capture(**overrides: object) -> AgentCallCapture:
 
 
 # ---------------------------------------------------------------------------
+# prompt_git_sha memoization (ALP-909 L3)
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_git_sha_memoizes_by_path_and_mtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``git hash-object`` runs at most once per ``(path, mtime)``; an unchanged
+    file is served from the cache, a changed mtime recomputes."""
+    import subprocess
+
+    from alphamind.analysis import _agent_call_capture as cap
+
+    prompt = tmp_path / "demo.md"
+    prompt.write_text("v1", encoding="utf-8")
+
+    calls: list[str] = []
+    real_run = subprocess.run
+
+    def _counting_run(args: Any, **kwargs: Any) -> Any:
+        calls.append(str(args))
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(cap, "_PROMPT_GIT_SHA_CACHE", {})
+    monkeypatch.setattr(cap.subprocess, "run", _counting_run)
+
+    sha1 = cap.prompt_git_sha(str(prompt))
+    sha2 = cap.prompt_git_sha(str(prompt))  # unchanged → cache hit, no re-spawn
+    assert sha1 == sha2
+    assert len(calls) == 1
+
+    # Mutate the file so its mtime + size change → recompute.
+    import os
+
+    prompt.write_text("v2-longer", encoding="utf-8")
+    os.utime(prompt, (prompt.stat().st_atime, prompt.stat().st_mtime + 5))
+    sha3 = cap.prompt_git_sha(str(prompt))
+    assert len(calls) == 2
+    assert sha3 != sha1  # different content → different blob SHA
+
+
+def test_prompt_git_sha_missing_file_returns_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing prompt file yields ``""`` and never raises (best-effort contract)."""
+    from alphamind.analysis import _agent_call_capture as cap
+
+    monkeypatch.setattr(cap, "_PROMPT_GIT_SHA_CACHE", {})
+    assert cap.prompt_git_sha(str(tmp_path / "nope.md")) == ""
+
+
+def test_prompt_git_sha_does_not_leak_across_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two distinct prompt paths get distinct cache entries (no cross-path leak)."""
+    from alphamind.analysis import _agent_call_capture as cap
+
+    a = tmp_path / "a.md"
+    b = tmp_path / "b.md"
+    a.write_text("alpha", encoding="utf-8")
+    b.write_text("beta", encoding="utf-8")
+
+    monkeypatch.setattr(cap, "_PROMPT_GIT_SHA_CACHE", {})
+    assert cap.prompt_git_sha(str(a)) != cap.prompt_git_sha(str(b))
+
+
+# ---------------------------------------------------------------------------
 # Provenance path
 # ---------------------------------------------------------------------------
 

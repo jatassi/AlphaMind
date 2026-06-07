@@ -77,6 +77,17 @@ def prompt_content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+# Process-scoped memoization of ``git hash-object`` results (ALP-909 L3).
+# Keyed by ``(prompt_path, mtime_ns, size)`` so a committed prompt re-hashed
+# within the process (e.g. an aggregated capture after a corrective retry, or
+# repeated unit-test builds) does not re-spawn the subprocess, while a changed
+# file (new mtime / size) recomputes and distinct paths never collide. No
+# invalidation needed beyond the stat key: the pipeline process restarts on
+# prompt edits per the deploy-time-vs-invocation classification, and a stale
+# entry could only survive an in-place same-mtime-and-size edit.
+_PROMPT_GIT_SHA_CACHE: dict[tuple[str, int, int], str] = {}
+
+
 def prompt_git_sha(prompt_path: str) -> str:
     """Git blob SHA of the committed prompt file, or ``""`` if unavailable.
 
@@ -84,7 +95,21 @@ def prompt_git_sha(prompt_path: str) -> str:
     confirms which committed prompt version was on disk for the call. A
     non-git environment (or a deleted prompt) yields ``""`` — the capture
     stays best-effort and never fails the call it observes.
+
+    Memoized by ``(prompt_path, mtime_ns, size)`` (ALP-909 L3): a repeated
+    build for the same on-disk prompt within a process reuses the cached SHA
+    instead of re-spawning ``git hash-object`` (notably slower on the Windows
+    prod target). A missing file is not cached — so a prompt that appears later
+    is hashed on its next call rather than pinned to ``""``.
     """
+    try:
+        stat = Path(prompt_path).stat()
+    except OSError:
+        return ""
+    key = (prompt_path, stat.st_mtime_ns, stat.st_size)
+    cached = _PROMPT_GIT_SHA_CACHE.get(key)
+    if cached is not None:
+        return cached
     try:
         completed = subprocess.run(
             ["git", "hash-object", prompt_path],
@@ -95,7 +120,9 @@ def prompt_git_sha(prompt_path: str) -> str:
         )
     except (OSError, subprocess.CalledProcessError):
         return ""
-    return completed.stdout.strip()
+    sha = completed.stdout.strip()
+    _PROMPT_GIT_SHA_CACHE[key] = sha
+    return sha
 
 
 _SYSTEM_PROMPT_FILENAME = "system_prompt.md"
