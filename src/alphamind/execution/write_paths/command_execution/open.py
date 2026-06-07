@@ -1100,7 +1100,7 @@ def _capital_floor_order_for_open(
     return floor_order, floor_order_id
 
 
-def _build_capital_floor_order(  # noqa: PLR0913 — distinct id / position / bracket / pricing threaded through, matching the other phase2 _build_* builders.
+def _build_capital_floor_order(  # noqa: PLR0913 — distinct id / position / bracket / pricing threaded through, matching the other command_execution _build_* builders.
     *,
     order_id: str,
     position_id: str,

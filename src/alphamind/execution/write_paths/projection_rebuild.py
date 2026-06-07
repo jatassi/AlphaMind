@@ -192,7 +192,7 @@ class ProjectionRebuildSummary:
     order_statuses_projected: int
     broker_facts_without_intent: tuple[BrokerFactNoIntent, ...]
     # Defaulted so the empty-rebuild constructors (recovery / scheduler stubs in
-    # phase1.py) that predate RD1 keep their shape; the production rebuild always
+    # fill_collection.py) that predate RD1 keep their shape; the production rebuild always
     # populates it.
     pending_with_broker_holding: tuple[PendingWithBrokerHolding, ...] = ()
     # Defaulted for the same predate-this-field constructors; the production rebuild

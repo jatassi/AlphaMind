@@ -30,10 +30,10 @@ from alphamind.decision.portfolio_manager.submit_envelope.dispatch import (
     _route_through_broker,
 )
 from alphamind.decision.portfolio_manager.submit_envelope.persist import (
-    _emit_command_abandoned_via_phase2,
-    _persist_envelope_outcome_via_phase2,
-    _persist_envelope_parse_failure_via_phase2,
-    _persist_envelope_rejection_via_phase2,
+    _emit_command_abandoned_via_command_execution,
+    _persist_envelope_outcome_via_command_execution,
+    _persist_envelope_parse_failure_via_command_execution,
+    _persist_envelope_rejection_via_command_execution,
 )
 from alphamind.decision.portfolio_manager.submit_envelope.process import (
     OrderThesisLookup,
@@ -379,7 +379,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
             failed_submission_log=(*state.failed_submission_log, failed_entry),
         )
         if invocation_handle is not None and not defer_writeback:
-            await _persist_envelope_parse_failure_via_phase2(
+            await _persist_envelope_parse_failure_via_command_execution(
                 invocation_handle, failed_entry, state_persistence_config
             )
         return _build_envelope_level_rejection(
@@ -403,7 +403,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
     if not layer23.is_valid:
         suggested = layer23.errors[0].message
         if invocation_handle is not None and not defer_writeback:
-            await _persist_envelope_rejection_via_phase2(
+            await _persist_envelope_rejection_via_command_execution(
                 invocation_handle, envelope, layer23.errors, state_persistence_config
             )
         return _build_envelope_level_rejection(
@@ -537,7 +537,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
             originating_proposal_json=originating_proposal_json,
         )
     elif invocation_handle is not None and not defer_writeback:
-        await _persist_envelope_outcome_via_phase2(
+        await _persist_envelope_outcome_via_command_execution(
             invocation_handle,
             envelope,
             submission_results,
@@ -547,7 +547,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
             originating_proposal_json=originating_proposal_json,
         )
         for abandoned in abandoned_entries:
-            await _emit_command_abandoned_via_phase2(
+            await _emit_command_abandoned_via_command_execution(
                 invocation_handle,
                 envelope_id=envelope.envelope_id,
                 command_id=CommandId(abandoned.command_id),

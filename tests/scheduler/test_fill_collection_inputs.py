@@ -190,13 +190,13 @@ def _no_quotes_factory(
     return _StubQuoteSource({})
 
 
-async def _open_phase1_handle(
+async def _open_fill_collection_handle(
     *,
     async_factory: async_sessionmaker[AsyncSession],
     env_path: Path,
     archive_root: Path,
 ) -> tuple[AsyncSession, InvocationHandle]:
-    """Insert the invocation row + open a fresh Phase 1 session.
+    """Insert the invocation row + open a fresh fill_collection session.
 
     Returns ``(session, handle)``; caller is responsible for closing the
     session (use ``async with closing(session)`` or call
@@ -676,7 +676,7 @@ class TestGatherFillCollectionInputs:
         positions = (_make_position_snapshot(),)
         account = _make_account_snapshot()
 
-        session, handle = await _open_phase1_handle(
+        session, handle = await _open_fill_collection_handle(
             async_factory=async_factory,
             env_path=env_path,
             archive_root=archive_root,
@@ -734,7 +734,7 @@ class TestGatherFillCollectionInputs:
                 return
                 yield  # pragma: no cover — makes this an async generator
 
-        session, handle = await _open_phase1_handle(
+        session, handle = await _open_fill_collection_handle(
             async_factory=async_factory,
             env_path=env_path,
             archive_root=archive_root,
@@ -770,7 +770,7 @@ class TestGatherFillCollectionInputs:
             msg = "Alpaca paper credentials not set"
             raise RuntimeError(msg)
 
-        session, handle = await _open_phase1_handle(
+        session, handle = await _open_fill_collection_handle(
             async_factory=async_factory,
             env_path=env_path,
             archive_root=archive_root,
@@ -808,7 +808,7 @@ class TestGatherFillCollectionInputs:
             _make_position_snapshot("MSFT", 410.0),
         )
 
-        session, handle = await _open_phase1_handle(
+        session, handle = await _open_fill_collection_handle(
             async_factory=async_factory,
             env_path=env_path,
             archive_root=archive_root,
@@ -856,7 +856,7 @@ class TestGatherFillCollectionInputs:
             _make_position_snapshot("MSFT", 410.0),
         )
 
-        session, handle = await _open_phase1_handle(
+        session, handle = await _open_fill_collection_handle(
             async_factory=async_factory,
             env_path=env_path,
             archive_root=archive_root,
@@ -948,7 +948,7 @@ class TestGatherFillCollectionInputs:
             )
             await seed_session.commit()
 
-        session, handle = await _open_phase1_handle(
+        session, handle = await _open_fill_collection_handle(
             async_factory=async_factory,
             env_path=env_path,
             archive_root=archive_root,
@@ -995,7 +995,7 @@ class TestGatherFillCollectionInputs:
             )
             await seed_session.commit()
 
-        session, handle = await _open_phase1_handle(
+        session, handle = await _open_fill_collection_handle(
             async_factory=async_factory,
             env_path=env_path,
             archive_root=archive_root,
@@ -1052,7 +1052,7 @@ class TestGatherFillCollectionInputs:
             {"ORCL": TouchQuote(bid=price("226.00"), ask=price("226.20"))}
         )
 
-        session, handle = await _open_phase1_handle(
+        session, handle = await _open_fill_collection_handle(
             async_factory=async_factory,
             env_path=env_path,
             archive_root=archive_root,
@@ -1107,7 +1107,7 @@ class TestGatherFillCollectionInputs:
             )
             await seed_session.commit()
 
-        session, handle = await _open_phase1_handle(
+        session, handle = await _open_fill_collection_handle(
             async_factory=async_factory,
             env_path=env_path,
             archive_root=archive_root,
@@ -1160,7 +1160,7 @@ class TestGatherFillCollectionInputs:
             {"AAPL": TouchQuote(bid=price("210.00"), ask=price("210.10"))}
         )
 
-        session, handle = await _open_phase1_handle(
+        session, handle = await _open_fill_collection_handle(
             async_factory=async_factory,
             env_path=env_path,
             archive_root=archive_root,

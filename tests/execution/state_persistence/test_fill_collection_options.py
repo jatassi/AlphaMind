@@ -592,7 +592,7 @@ async def _open_handle(
     ctx = InvocationContext(
         session_factory=factory,
         record=_make_invocation_record(
-            invocation_id=_INV_ID + "-phase1",
+            invocation_id=_INV_ID + "-fill-collection",
             process_lifetime_id=_PROCESS_ID,
         ),
     )

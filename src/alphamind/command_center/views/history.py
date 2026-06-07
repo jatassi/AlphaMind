@@ -100,11 +100,11 @@ class RunHistoryPage(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _derive_status(phase1: str | None, phase2: str | None) -> str:
+def _derive_status(fill_collection: str | None, command_execution: str | None) -> str:
     """Derive the human-readable status from phase completion timestamps."""
-    if phase2 is not None:
+    if command_execution is not None:
         return _STATUS_COMPLETED
-    if phase1 is not None:
+    if fill_collection is not None:
         return _STATUS_PARTIAL
     return _STATUS_FAILED
 

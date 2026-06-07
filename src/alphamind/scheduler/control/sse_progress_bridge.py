@@ -122,7 +122,7 @@ class PipelineSSEProgressBridge:
     only — the orchestrator emits schema-shaped ``phase_transition``
     events explicitly at phase boundaries via :meth:`emit_phase_transition`
     because the Protocol's phase taxonomy
-    (``phase1`` / ``snapshot_assembly`` / ``phase2``) does not 1:1 with
+    (``fill_collection`` / ``snapshot_assembly`` / ``command_execution``) does not 1:1 with
     the schema's 5-phase taxonomy (``collect`` / ``distill`` / ``analyze``
     / ``decide`` / ``execute``).
     """

@@ -324,7 +324,7 @@ async def _seed_position_cluster(
 async def _open_handle(
     factory: async_sessionmaker[AsyncSession],
     *,
-    invocation_id: str = _INV_ID + "-phase2",
+    invocation_id: str = _INV_ID + "-cmd-exec",
 ) -> tuple[InvocationContext, InvocationHandle]:
     ctx = InvocationContext(
         session_factory=factory,
@@ -1424,7 +1424,7 @@ async def test_open_command_persists_real_position_size_and_capital_reservation(
     assert Decimal(detail["amount_usd"]) == expected_notional
 
 
-async def test_persist_envelope_outcome_stamps_phase2_completion_on_invocation_row(
+async def test_persist_envelope_outcome_stamps_command_execution_completion_on_invocation_row(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """An accepted envelope's writeback must set the bound invocation row's
@@ -1462,7 +1462,7 @@ async def test_persist_envelope_outcome_stamps_phase2_completion_on_invocation_r
         assert parsed.utcoffset() == timedelta(0)
 
 
-async def test_persist_envelope_parse_failure_does_not_stamp_phase2_completion(
+async def test_persist_envelope_parse_failure_does_not_stamp_command_execution_completion(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """A Layer-1 parse failure is NOT a Phase 2 commit — the audit-trail
@@ -1828,7 +1828,7 @@ async def test_reserve_capital_decimal_arithmetic_preserves_precision(
     """Seven ``money("0.1")`` debits on the cash row land at exactly
     ``Decimal("-0.7")``.
 
-    The float-era ``max(... - ..., 0.0)`` floor at line 1349 of phase2.py was
+    The float-era ``max(... - ..., 0.0)`` floor at line 1349 of command_execution/_shared.py was
     masking binary-rounding drift on the buying-power source of truth. With
     Decimal arithmetic on a ``Numeric``-backed ``cash_row.reserved_capital_usd``
     column, subtraction is exact and the floor is no longer needed. This test
@@ -2840,7 +2840,7 @@ async def test_adjust_rejects_non_pl_percentage_target_on_strategy_position(
     with pytest.raises(ValueError, match=r"strategy position requires.+pl_percentage"):
         async with InvocationContext(
             session_factory=factory,
-            record=_make_invocation_record(invocation_id=_INV_ID + "-phase2"),
+            record=_make_invocation_record(invocation_id=_INV_ID + "-cmd-exec"),
         ) as handle:
             await persist_envelope_outcome(
                 handle,
@@ -2962,7 +2962,7 @@ async def test_adjust_targeting_absent_leg_type_fails_closed_with_clear_error(
     with pytest.raises(ValueError, match=r"opened without a TIME_EXPIRATION leg"):
         async with InvocationContext(
             session_factory=factory,
-            record=_make_invocation_record(invocation_id=_INV_ID + "-phase2"),
+            record=_make_invocation_record(invocation_id=_INV_ID + "-cmd-exec"),
         ) as handle:
             await persist_envelope_outcome(
                 handle,
@@ -4251,8 +4251,8 @@ async def test_command_abandoned_emission_survives_per_command_rollback(
 
     # Open a transaction, persist outcome, then synthetically raise so the
     # InvocationContext rolls back.
-    main_ctx, main_handle = await _open_handle(factory, invocation_id=_INV_ID + "-phase2-fail")
-    synthetic = RuntimeError("synthetic Phase 2 failure")
+    main_ctx, main_handle = await _open_handle(factory, invocation_id=_INV_ID + "-cmd-exec-fail")
+    synthetic = RuntimeError("synthetic command_execution failure")
 
     def _trip_failure() -> None:
         """Helper extracted so the ``raise`` lives outside the try block (TRY301)."""
@@ -4277,7 +4277,7 @@ async def test_command_abandoned_emission_survives_per_command_rollback(
 
     # Now open a post-rollback transaction and emit COMMAND_ABANDONED.
     abandon_ctx, abandon_handle = await _open_handle(
-        factory, invocation_id=_INV_ID + "-phase2-abandon"
+        factory, invocation_id=_INV_ID + "-cmd-exec-abandon"
     )
     await persist_command_abandoned(
         abandon_handle,

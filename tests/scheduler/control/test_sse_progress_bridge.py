@@ -148,7 +148,9 @@ class TestAgentRequest:
         )
 
         async with emitter.subscribe() as queue:
-            bridge.agent_request(phase="phase2", agent="tech_semis_researcher", model="claude-opus")
+            bridge.agent_request(
+                phase="command_execution", agent="tech_semis_researcher", model="claude-opus"
+            )
             record = await asyncio.wait_for(queue.get(), timeout=1.0)
             assert queue.empty()
 
@@ -161,7 +163,7 @@ class TestAgentRequest:
         assert started_at.utcoffset() == timedelta(0)
         # Forwarded to inner with the original, untranslated agent name.
         assert inner.agent_requests == [
-            {"phase": "phase2", "agent": "tech_semis_researcher", "model": "claude-opus"}
+            {"phase": "command_execution", "agent": "tech_semis_researcher", "model": "claude-opus"}
         ]
 
     async def test_out_of_schema_does_not_emit_but_forwards(self) -> None:
@@ -171,12 +173,12 @@ class TestAgentRequest:
 
         async with emitter.subscribe() as queue:
             bridge.agent_request(
-                phase="phase1", agent="debug_probe_researcher", model="claude-haiku"
+                phase="fill_collection", agent="debug_probe_researcher", model="claude-haiku"
             )
             assert queue.empty()
 
         assert inner.agent_requests == [
-            {"phase": "phase1", "agent": "debug_probe_researcher", "model": "claude-haiku"}
+            {"phase": "fill_collection", "agent": "debug_probe_researcher", "model": "claude-haiku"}
         ]
 
     async def test_emit_failure_is_swallowed_and_still_forwards(
@@ -193,11 +195,11 @@ class TestAgentRequest:
             logging.ERROR, logger="alphamind.scheduler.control.sse_progress_bridge"
         ):
             # Must not raise even though emit() does.
-            bridge.agent_request(phase="phase2", agent="analyst", model="claude-opus")
+            bridge.agent_request(phase="command_execution", agent="analyst", model="claude-opus")
 
         assert "SSE agent_started emit failed" in caplog.text
         assert inner.agent_requests == [
-            {"phase": "phase2", "agent": "analyst", "model": "claude-opus"}
+            {"phase": "command_execution", "agent": "analyst", "model": "claude-opus"}
         ]
 
 
@@ -214,7 +216,7 @@ class TestAgentResponse:
 
         async with emitter.subscribe() as queue:
             bridge.agent_response(
-                phase="phase2",
+                phase="command_execution",
                 agent="strategist",
                 model="claude-opus",
                 duration_s=-2.5,  # clamps to 0.0
@@ -246,7 +248,7 @@ class TestAgentResponse:
 
         async with emitter.subscribe() as queue:
             bridge.agent_response(
-                phase="phase2",
+                phase="command_execution",
                 agent="analyst",
                 model="claude-opus",
                 duration_s=12.5,
@@ -274,7 +276,7 @@ class TestAgentResponse:
 
         async with emitter.subscribe() as queue:
             bridge.agent_response(
-                phase="phase1",
+                phase="fill_collection",
                 agent="debug_probe_researcher",
                 model="claude-haiku",
                 duration_s=1.0,
@@ -304,7 +306,7 @@ class TestInnerOnlySignals:
 
         async with emitter.subscribe() as queue:
             bridge.agent_retrying(
-                phase="phase2",
+                phase="command_execution",
                 agent="synthesizer",
                 model="claude-opus",
                 attempt=1,
@@ -314,7 +316,7 @@ class TestInnerOnlySignals:
 
         assert inner.agent_retryings == [
             {
-                "phase": "phase2",
+                "phase": "command_execution",
                 "agent": "synthesizer",
                 "model": "claude-opus",
                 "attempt": 1,
@@ -328,9 +330,9 @@ class TestInnerOnlySignals:
         bridge = _make_bridge(emitter=emitter, inner=inner)
 
         async with emitter.subscribe() as queue:
-            bridge.phase_start("phase1")
-            bridge.phase_done("phase1", fills_processed=4)
+            bridge.phase_start("fill_collection")
+            bridge.phase_done("fill_collection", fills_processed=4)
             assert queue.empty()
 
-        assert inner.phase_starts == ["phase1"]
-        assert inner.phase_dones == [("phase1", {"fills_processed": 4})]
+        assert inner.phase_starts == ["fill_collection"]
+        assert inner.phase_dones == [("fill_collection", {"fills_processed": 4})]

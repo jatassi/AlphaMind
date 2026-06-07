@@ -118,7 +118,7 @@ _T2 = datetime(2025, 1, 1, 10, 2, 0, tzinfo=UTC)
 _INV_ID = "inv-test-001"
 
 _ENTRY_AT = datetime(2025, 6, 1, 8, 0, 0, tzinfo=UTC)  # used by position builders
-_PHASE1_AT = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
+_FILL_COLLECTION_AT = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
 _NOW = datetime(2025, 6, 1, 9, 0, 30, tzinfo=UTC)
 
 

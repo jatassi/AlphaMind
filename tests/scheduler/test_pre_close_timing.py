@@ -90,12 +90,12 @@ def _insert_invocation(
     duration_seconds: float,
 ) -> None:
     """Insert a completed invocation row with the given start time and duration."""
-    phase2_at = start_at + timedelta(seconds=duration_seconds)
+    cmd_exec_at = start_at + timedelta(seconds=duration_seconds)
     row = InvocationRow(
         invocation_id=invocation_id,
         process_lifetime_id="proc-test-timing",
         start_at=start_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        command_execution_completed_at=phase2_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        command_execution_completed_at=cmd_exec_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
         trigger_type="scheduled",
         trigger_source="pre_close",
         trigger_reason="0 15 * * mon-fri",

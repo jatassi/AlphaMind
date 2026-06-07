@@ -86,9 +86,9 @@ def test_submodules_are_focused() -> None:
     assert hasattr(dispatch_mod, "_route_through_broker")
     assert hasattr(dispatch_mod, "_adjust_command_context")
 
-    # persist.py owns the phase-2 persistence helpers and imports phase2 at top.
-    assert hasattr(persist_mod, "_persist_envelope_outcome_via_phase2")
-    assert hasattr(persist_mod, "_persist_envelope_parse_failure_via_phase2")
+    # persist.py owns the command_execution persistence helpers.
+    assert hasattr(persist_mod, "_persist_envelope_outcome_via_command_execution")
+    assert hasattr(persist_mod, "_persist_envelope_parse_failure_via_command_execution")
 
     # server.py owns the MCP factory.
     assert hasattr(server_mod, "build_submit_envelope_mcp_server")

@@ -55,11 +55,11 @@ class TestProgressEmitterProtocol:
         # mapping from the in-process Protocol to the schema-shaped event
         # taxonomy is the orchestrator's concern and not exercised here.
         emitter = events.SSEEventEmitter()
-        emitter.phase_start("phase1")
-        emitter.phase_done("phase1", fills_processed=0)
-        emitter.agent_request(phase="phase1", agent="analyst", model="claude")
+        emitter.phase_start("fill_collection")
+        emitter.phase_done("fill_collection", fills_processed=0)
+        emitter.agent_request(phase="fill_collection", agent="analyst", model="claude")
         emitter.agent_response(
-            phase="phase1",
+            phase="fill_collection",
             agent="analyst",
             model="claude",
             duration_s=12.5,

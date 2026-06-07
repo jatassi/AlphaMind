@@ -725,13 +725,13 @@ async def test_six_step_snapshot_isolation_contract(
         await session.close()
     assert summary.fills_processed == 1
 
-    # ---- Snapshot read after Phase 1 -------------------------------------
+    # ---- Snapshot read after fill_collection -------------------------------------
     repo = _build_repo(factory, invocation_id=_INV_ID)
-    open_after_phase1 = repo.get_open_positions()
-    pending_after_phase1 = repo.get_pending_positions()
-    assert {p.position_id for p in open_after_phase1} == {"pos-six"}
-    # Phase 2 hasn't run; no other PENDING positions exist yet.
-    assert pending_after_phase1 == ()
+    open_after_fill_collection = repo.get_open_positions()
+    pending_after_fill_collection = repo.get_pending_positions()
+    assert {p.position_id for p in open_after_fill_collection} == {"pos-six"}
+    # command_execution hasn't run; no other PENDING positions exist yet.
+    assert pending_after_fill_collection == ()
 
     # ---- Phase 2 commit ---------------------------------------------------
     envelope = _open_envelope()
@@ -767,14 +767,14 @@ async def test_six_step_snapshot_isolation_contract(
     finally:
         await session2.close()
 
-    # ---- Snapshot read after Phase 2 -------------------------------------
-    repo_after_phase2 = _build_repo(factory, invocation_id=_INV_ID)
-    open_after_phase2 = repo_after_phase2.get_open_positions()
-    pending_after_phase2 = repo_after_phase2.get_pending_positions()
-    # Phase 1's OPEN position still surfaces.
-    assert {p.position_id for p in open_after_phase2} == {"pos-six"}
-    # Phase 2 introduced exactly one new PENDING position (the NVDA OPEN).
-    pending_ids = {p.position_id for p in pending_after_phase2}
+    # ---- Snapshot read after command_execution -------------------------------------
+    repo_after_cmd_exec = _build_repo(factory, invocation_id=_INV_ID)
+    open_after_cmd_exec = repo_after_cmd_exec.get_open_positions()
+    pending_after_cmd_exec = repo_after_cmd_exec.get_pending_positions()
+    # fill_collection's OPEN position still surfaces.
+    assert {p.position_id for p in open_after_cmd_exec} == {"pos-six"}
+    # command_execution introduced exactly one new PENDING position (the NVDA OPEN).
+    pending_ids = {p.position_id for p in pending_after_cmd_exec}
     assert len(pending_ids) == 1
     new_pending_id = next(iter(pending_ids))
     assert new_pending_id.startswith("POS-NVDA-")

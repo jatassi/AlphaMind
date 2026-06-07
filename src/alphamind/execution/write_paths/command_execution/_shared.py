@@ -186,7 +186,7 @@ def _instrument_spec_for_position(position: PositionRecord) -> InstrumentSpec:
     underlying ticker. The pre-ALP-614 ``_build_pending_order`` defaulted to
     EquityInstrumentSpec for every non-strategy order regardless of the
     position's instrument type, and downstream cash-movement / consideration
-    code (``_fill_consideration_usd`` in phase1) keys off the order's spec —
+    code (``_fill_consideration_usd`` in fill_collection) keys off the order's spec —
     so an instrument-faithful shape on single-leg options orders would
     silently change cash-ledger semantics (multiplier scaling). Preserve the
     pre-PR shape on non-strategy orders; the strategy-aware branch is the
@@ -549,7 +549,7 @@ _ALL_PROTECTIVE_ROLES: frozenset[str] = frozenset(
 )
 
 # The options capital-floor OrderRow's ``order_id`` prefix (ALP-856). Mirrors
-# ``phase2.open._capital_floor_order_id`` (``ORD-FLOOR-{suffix}``); duplicated as a
+# ``command_execution.open._capital_floor_order_id`` (``ORD-FLOOR-{suffix}``); duplicated as a
 # literal here because ``open`` imports from this module, so importing it back
 # would cycle. The floor row shares the PRICE_STOP role with the invalidation
 # stop, so its id prefix — not its role — is what identifies it.
@@ -616,7 +616,7 @@ async def _cancel_pending_protective_orders(
 async def _cancel_all_bracket_legs(handle: InvocationHandle, *, bracket_id: str) -> None:
     """Transition every ``bracket_legs`` row for *bracket_id* to CANCELLED.
 
-    Symmetric with the phase1 dissolve path (``phase1._dissolve_bracket``):
+    Symmetric with the fill_collection dissolve path (``fill_collection._dissolve_bracket``):
     once a bracket is DISSOLVED the read-time invariant
     (``BracketRecord._check_dissolved_rule``) requires every leg row to be
     CANCELLED. This iterates ``bracket_legs`` directly rather than deriving

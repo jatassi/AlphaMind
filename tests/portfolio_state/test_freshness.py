@@ -26,8 +26,8 @@ from ._view_builders import (
 # Shared timestamps
 # ---------------------------------------------------------------------------
 
-_PHASE1_AT = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
-_NOW = datetime(2025, 6, 1, 9, 0, 30, tzinfo=UTC)  # 30s after phase1
+_FILL_COLLECTION_AT = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
+_NOW = datetime(2025, 6, 1, 9, 0, 30, tzinfo=UTC)  # 30s after fill_collection
 _ENTRY_AT = datetime(2025, 6, 1, 8, 0, 0, tzinfo=UTC)
 _PRICE_AS_OF = datetime(2025, 6, 1, 8, 59, 50, tzinfo=UTC)  # 40s before _NOW
 
@@ -136,7 +136,7 @@ def test_price_fetch_outcomes_overlapping_stale_unknown_raises() -> None:
 def test_price_fetch_outcomes_oldest_price_non_tz_aware_raises() -> None:
     """oldest_price_as_of must be tz-aware UTC."""
     # Strip tzinfo from a known tz-aware datetime to get a naive datetime for testing
-    naive_dt = _PHASE1_AT.replace(tzinfo=None)
+    naive_dt = _FILL_COLLECTION_AT.replace(tzinfo=None)
     with pytest.raises((ValueError, TypeError)):
         PriceFetchOutcomes(
             position_ids_priced_fresh=frozenset(),
@@ -152,7 +152,7 @@ def test_price_fetch_outcomes_oldest_price_non_tz_aware_raises() -> None:
 
 
 def _make_freshness(
-    fill_collection_committed_at: datetime = _PHASE1_AT,
+    fill_collection_committed_at: datetime = _FILL_COLLECTION_AT,
     snapshot_assembled_at: datetime = _NOW,
     fill_collection_to_snapshot_seconds: float = 30.0,
     max_fill_collection_to_snapshot_seconds: float = 300.0,
@@ -196,7 +196,7 @@ def _make_freshness(
 def test_snapshot_freshness_happy_path() -> None:
     """Build SnapshotFreshness with known fixture; verify all fields match."""
     sf = _make_freshness()
-    assert sf.fill_collection_committed_at == _PHASE1_AT
+    assert sf.fill_collection_committed_at == _FILL_COLLECTION_AT
     assert sf.snapshot_assembled_at == _NOW
     assert sf.fill_collection_to_snapshot_seconds == pytest.approx(30.0)
     assert sf.max_fill_collection_to_snapshot_seconds == pytest.approx(300.0)
@@ -237,7 +237,7 @@ def test_snapshot_freshness_disjoint_sets_violated_raises() -> None:
         )
 
 
-def test_snapshot_freshness_negative_phase1_to_snapshot_raises() -> None:
+def test_snapshot_freshness_negative_fill_collection_to_snapshot_raises() -> None:
     """fill_collection_to_snapshot_seconds < 0 raises ValidationError."""
     with pytest.raises((ValueError, TypeError)):
         _make_freshness(
@@ -431,7 +431,7 @@ def test_compute_snapshot_freshness_happy_path() -> None:
     snapshot = _make_snapshot(
         open_positions=(pos1, pos2),
         pending_positions=(pend,),
-        fill_collection_committed_at=_PHASE1_AT,
+        fill_collection_committed_at=_FILL_COLLECTION_AT,
         snapshot_assembled_at=_NOW,
     )
     outcomes = PriceFetchOutcomes(
@@ -454,7 +454,7 @@ def test_compute_snapshot_freshness_happy_path() -> None:
     assert freshness.count_priced_stale == 0
     assert freshness.count_unknown_ticker == 0
     assert freshness.all_position_prices_fresh is True
-    # phase1 = _PHASE1_AT, assembled = _NOW = phase1 + 30s
+    # fill_collection = _FILL_COLLECTION_AT, assembled = _NOW = fill_collection + 30s
     assert freshness.fill_collection_to_snapshot_seconds == pytest.approx(30.0)
     assert freshness.fill_collection_to_snapshot_within_threshold is True
     # oldest_price_as_of = _PRICE_AS_OF = _NOW - 40s
@@ -510,7 +510,7 @@ def test_compute_snapshot_freshness_deterministic() -> None:
     pos = _make_open_position("POS-001")
     snapshot = _make_snapshot(
         open_positions=(pos,),
-        fill_collection_committed_at=_PHASE1_AT,
+        fill_collection_committed_at=_FILL_COLLECTION_AT,
         snapshot_assembled_at=_NOW,
     )
     outcomes = PriceFetchOutcomes(
@@ -529,17 +529,17 @@ def test_compute_snapshot_freshness_threshold_boundary() -> None:
     """Exactly at threshold: within=True; 1ms beyond: within=False."""
     pos = _make_open_position("POS-001")
 
-    # Exactly at threshold: snapshot_assembled_at = phase1 + 300s
+    # Exactly at threshold: snapshot_assembled_at = fill_collection + 300s
     snapshot_exact = _make_snapshot(
         open_positions=(pos,),
-        fill_collection_committed_at=_PHASE1_AT,
-        snapshot_assembled_at=_PHASE1_AT + timedelta(seconds=300),
+        fill_collection_committed_at=_FILL_COLLECTION_AT,
+        snapshot_assembled_at=_FILL_COLLECTION_AT + timedelta(seconds=300),
     )
     outcomes = PriceFetchOutcomes(
         position_ids_priced_fresh=frozenset({"POS-001"}),
         position_ids_priced_stale=frozenset(),
         position_ids_unknown_ticker=frozenset(),
-        oldest_price_as_of=_PHASE1_AT,
+        oldest_price_as_of=_FILL_COLLECTION_AT,
     )
     config = _make_config(max_fill_collection_to_snapshot_seconds=300.0)
     freshness_exact = compute_snapshot_freshness(
@@ -550,8 +550,8 @@ def test_compute_snapshot_freshness_threshold_boundary() -> None:
     # 1ms beyond
     snapshot_beyond = _make_snapshot(
         open_positions=(pos,),
-        fill_collection_committed_at=_PHASE1_AT,
-        snapshot_assembled_at=_PHASE1_AT + timedelta(seconds=300, milliseconds=1),
+        fill_collection_committed_at=_FILL_COLLECTION_AT,
+        snapshot_assembled_at=_FILL_COLLECTION_AT + timedelta(seconds=300, milliseconds=1),
     )
     freshness_beyond = compute_snapshot_freshness(
         snapshot_beyond, fetch_outcomes=outcomes, config=config

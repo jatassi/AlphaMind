@@ -224,7 +224,7 @@ async def _seed_cash_ledger(
 
 
 # ---------------------------------------------------------------------------
-# Builders — position cluster (mirrors phase2 helpers)
+# Builders — position cluster (mirrors command_execution helpers)
 # ---------------------------------------------------------------------------
 
 

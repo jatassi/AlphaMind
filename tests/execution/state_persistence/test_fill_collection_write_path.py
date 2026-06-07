@@ -587,12 +587,12 @@ async def _append_fill(
 async def _open_handle(
     factory: async_sessionmaker[AsyncSession],
     *,
-    invocation_id: str = _INV_ID + "-phase1",
+    invocation_id: str = _INV_ID + "-fill-collection",
 ) -> tuple[InvocationContext, InvocationHandle]:
     """Open an InvocationContext and return (ctx, handle).
 
     Caller is responsible for ``await ctx.__aexit__(None, None, None)`` after
-    Phase 1 completes (or passing an exc to trigger rollback). Pass a distinct
+    fill_collection completes (or passing an exc to trigger rollback). Pass a distinct
     ``invocation_id`` when a test opens more than one handle in sequence — each
     handle inserts its own ``invocations`` row, so reusing the default id trips
     the primary-key UNIQUE constraint.
@@ -1117,7 +1117,7 @@ async def test_failed_fill_quarantined_leaves_no_lifecycle_log_entries(
             .all()
         )
         assert [r.event_type for r in log_rows] == [EventType.RECONCILIATION_ALERT.value]
-    await _assert_phase1_completed(factory, invocation_id)
+    await _assert_fill_collection_completed(factory, invocation_id)
 
 
 async def test_quarantined_fill_excluded_without_aborting_batch(
@@ -1749,7 +1749,7 @@ def test_exit_fill_short_cover_to_close_flushes_accrued_borrow_into_pnl() -> Non
     fill = _make_fill_record(fill_quantity=10.0, fill_price=90.0)
     result = _apply_fill_to_position(position, fill, is_buy_side=True, borrow_cost_resolver=None)
     assert result.status == PositionStatus.CLOSED
-    # Phase1 computes: pnl_per_share = exit - entry = 90 - 100 = -10;
+    # fill_collection computes: pnl_per_share = exit - entry = 90 - 100 = -10;
     # direction_sign(SHORT) = -1; realized = (-10) * 10 * (-1) - 5 = 95.
     # Equivalent intuition: SHORT profits when price falls, so the per-share
     # gain is +10 (entry - exit); minus the $5 borrow drag yields 95.
@@ -1868,7 +1868,7 @@ def test_add_fill_open_short_preserves_margin_held_usd_entry_snapshot() -> None:
     assert result.details.locate_status == LocateStatus.LOCATED
 
 
-async def test_phase1_stamps_completion_timestamp_on_invocation_row(
+async def test_fill_collection_stamps_completion_timestamp_on_invocation_row(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """After process_unprocessed_fills commits, the bound invocation row's
@@ -2232,7 +2232,7 @@ async def _read_reconciliation_alerts(
         )
 
 
-async def _assert_phase1_completed(
+async def _assert_fill_collection_completed(
     factory: async_sessionmaker[AsyncSession], invocation_id: str
 ) -> None:
     async with factory() as sess:
@@ -2306,7 +2306,7 @@ async def test_fill_against_terminal_position_quarantined_not_raised(
     assert alerts[0].position_id == "pos-1"
     assert "quarantined" in alerts[0].detail_json
     assert "fill-orphan" in alerts[0].detail_json
-    await _assert_phase1_completed(factory, handle.invocation_id)
+    await _assert_fill_collection_completed(factory, handle.invocation_id)
 
 
 async def test_mixed_batch_poison_pill_quarantined_healthy_processed(
@@ -2388,7 +2388,7 @@ async def test_mixed_batch_poison_pill_quarantined_healthy_processed(
     alerts = await _read_reconciliation_alerts(factory, handle.invocation_id)
     assert len(alerts) == 1
     assert alerts[0].position_id == "pos-dvn"
-    await _assert_phase1_completed(factory, handle.invocation_id)
+    await _assert_fill_collection_completed(factory, handle.invocation_id)
 
 
 async def test_unexpected_integration_error_isolated_to_single_fill(
@@ -2476,7 +2476,7 @@ async def test_unexpected_integration_error_isolated_to_single_fill(
     alerts = await _read_reconciliation_alerts(factory, handle.invocation_id)
     assert len(alerts) == 1
     assert "fill-poison" in alerts[0].detail_json
-    await _assert_phase1_completed(factory, handle.invocation_id)
+    await _assert_fill_collection_completed(factory, handle.invocation_id)
 
 
 async def test_over_fill_quarantined_not_integrated(
@@ -2562,7 +2562,7 @@ async def test_over_fill_quarantined_not_integrated(
     assert len(alerts) == 1
     assert "fill-phantom-agg" in alerts[0].detail_json
     assert "ALP-766" in alerts[0].detail_json
-    await _assert_phase1_completed(factory, handle.invocation_id)
+    await _assert_fill_collection_completed(factory, handle.invocation_id)
 
 
 async def test_buy_fill_mirrors_settled_cash_alongside_current_cash(

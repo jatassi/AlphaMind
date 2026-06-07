@@ -127,7 +127,7 @@ async def seeded_db(tmp_path: Path) -> AsyncIterator[Path]:
                 command_execution_summary_json='{"commands_submitted": 5, "commands_rejected": 0}',
             )
         )
-        # Row 2: partial (phase1 done, phase2 missing), market_hours_rolling
+        # Row 2: partial (fill_collection done, command_execution missing), market_hours_rolling
         session.add(
             _make_row(
                 invocation_id="inv-002",

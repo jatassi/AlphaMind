@@ -72,7 +72,7 @@ __all__ = [
 # ``_pre_invocation`` archive directory and is intentionally NOT part of
 # the ribbon.
 _PHASE_ORDER: tuple[str, ...] = (
-    "phase1",
+    "fill_collection",
     "snapshot_assembly",
     "distillation",
     "domain_researchers",
@@ -83,7 +83,7 @@ _PHASE_ORDER: tuple[str, ...] = (
     "strategist",
     "pre_processor",
     "pm",
-    "phase2",
+    "command_execution",
 )
 
 

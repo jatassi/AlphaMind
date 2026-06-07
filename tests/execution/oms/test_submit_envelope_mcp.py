@@ -1562,12 +1562,12 @@ async def test_layer_1_parse_failure_is_logged_for_operator(
 
 
 @pytest.mark.asyncio
-async def test_handle_submit_envelope_persists_layer1_failure_via_phase2(
+async def test_handle_submit_envelope_persists_layer1_failure_via_command_execution(
     tmp_path: Any,
 ) -> None:
     """When ``invocation_handle`` is supplied AND Layer-1 fails, the
     in-memory failed_submission_log AND an envelope_parse_failed activity log
-    entry are both written. Mirrors the phase2 write-path test surface so
+    entry are both written. Mirrors the command_execution write-path test surface so
     an OMS-tree change touching the wrapper trips here too."""
     from sqlalchemy import select as _select
 
@@ -1692,11 +1692,11 @@ async def test_handle_submit_envelope_persists_layer1_failure_via_phase2(
 
 
 @pytest.mark.asyncio
-async def test_handle_submit_envelope_persists_accepted_envelope_via_phase2(
+async def test_handle_submit_envelope_persists_accepted_envelope_via_command_execution(
     tmp_path: Any,
 ) -> None:
     """When ``invocation_handle`` is supplied AND the envelope is accepted,
-    the Phase 2 writeback runs alongside the in-memory state-cell advance."""
+    the command_execution writeback runs alongside the in-memory state-cell advance."""
     from sqlalchemy import select as _select
 
     import alphamind.state.tables  # noqa: F401
@@ -2133,9 +2133,9 @@ def _equity_position_with_thesis(*, position_id: str, thesis_id: str | None) -> 
     )
 
 
-def test_resolve_thesis_open_matches_phase2_minted_thesis_id() -> None:
+def test_resolve_thesis_open_matches_command_execution_minted_thesis_id() -> None:
     """An OPEN's broker-carried thesis FK equals the ``THE-{ticker}-{suffix}``
-    thesis_id Phase 2 mints from the same base command id — so a fill
+    thesis_id command_execution mints from the same base command id — so a fill
     self-attributes to the very thesis row the OPEN creates (ALP-844)."""
     from alphamind.decision.portfolio_manager.submit_envelope.process import (
         _resolve_originating_thesis,

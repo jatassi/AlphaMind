@@ -553,7 +553,7 @@ async def test_batched_fills_have_threaded_pre_state(
     assert attribution2.regt_marginal_consumption > 0.0
 
 
-async def test_phase1_summary_unchanged(
+async def test_fill_collection_summary_unchanged(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """The wedge does not alter ``FillCollectionSummary`` — the four count fields are

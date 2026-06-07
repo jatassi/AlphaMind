@@ -83,7 +83,7 @@ class _StubEnvelope:
         self.envelope_id = envelope_id
 
 
-class TestDispatchPhase2:
+class TestDispatchCommandExecution:
     async def test_empty_submission_log_returns_zero_counts(
         self,
         async_factory: async_sessionmaker[AsyncSession],

@@ -757,9 +757,9 @@ async def _set_order_status(
 async def _open_handle(
     factory: async_sessionmaker[AsyncSession],
     *,
-    invocation_id_suffix: str = "-phase1",
+    invocation_id_suffix: str = "-fill-collection",
 ) -> tuple[InvocationContext, InvocationHandle]:
-    """Open an invocation context for a Phase 1 invocation.
+    """Open an invocation context for a fill_collection invocation.
 
     Multi-invocation tests (e.g., staggered fills across T1/T2) must pass
     distinct ``invocation_id_suffix`` values so each invocation row obeys
@@ -1235,7 +1235,7 @@ async def test_staggered_legs_only_open_at_last_filled_event(
         ),
     )
 
-    ctx2, handle2 = await _open_handle(factory, invocation_id_suffix="-phase1-t2")
+    ctx2, handle2 = await _open_handle(factory, invocation_id_suffix="-fill-collection-t2")
     handle2_invocation_id = handle2.invocation_id
     await process_unprocessed_fills(
         handle2,
@@ -1953,7 +1953,7 @@ async def test_staggered_credit_entry_metrics_zero_until_final_leg(
         ),
     )
 
-    ctx2, handle2 = await _open_handle(factory, invocation_id_suffix="-phase1-t2")
+    ctx2, handle2 = await _open_handle(factory, invocation_id_suffix="-fill-collection-t2")
     await process_unprocessed_fills(
         handle2,
         market_inputs=_make_market_inputs(),

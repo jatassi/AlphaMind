@@ -56,7 +56,7 @@ from alphamind.state.tables.positions_codec import (
 from ..types import CorporateActionActivity
 
 # Sub-nanocent cash movements are floating-point noise rather than real
-# economic events; mirrors ``phase1._QTY_EPSILON`` (1e-9) so the CA path's
+# economic events; mirrors ``fill_collection._QTY_EPSILON`` (1e-9) so the CA path's
 # zero-amount gate is uniform with the fill-side gate.
 _CASH_EPSILON: Final[float] = 1e-9
 
@@ -64,8 +64,8 @@ _CASH_EPSILON: Final[float] = 1e-9
 class _StateInconsistencyError(RuntimeError):
     """Raised when a bracket FK target is missing during CA integration.
 
-    Mirrors ``phase1.StateInconsistencyError``; defined here to avoid a
-    circular import between the corporate_actions package and phase1.
+    Mirrors ``fill_collection.StateInconsistencyError``; defined here to avoid a
+    circular import between the corporate_actions package and fill_collection.
     """
 
 
@@ -138,7 +138,7 @@ async def _assert_bracket_readable(handle: InvocationHandle, bracket_id: str) ->
     CANCELLED is committable but unreadable — every
     ``get_brackets_for_positions`` loader then raises. Rebuilding the record
     here runs the same ``BracketRecord`` invariants the read path enforces, so
-    a state the reader forbids fails loudly at write time. Mirrors the phase2
+    a state the reader forbids fails loudly at write time. Mirrors the command_execution
     cancel-path guard of the same name.
     """
     bracket_row = await handle.session.get(BracketRow, bracket_id)

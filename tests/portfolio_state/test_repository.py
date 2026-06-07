@@ -181,7 +181,7 @@ def test_current_invocation_metadata_empty_id_raises() -> None:
         )
 
 
-def test_current_invocation_metadata_naive_phase1_raises() -> None:
+def test_current_invocation_metadata_naive_fill_collection_raises() -> None:
     with pytest.raises((ValueError, TypeError)):
         CurrentInvocationMetadata(
             invocation_id="inv-001",

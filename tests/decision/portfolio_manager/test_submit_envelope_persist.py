@@ -1,14 +1,14 @@
 """Regression coverage for ``StatePersistenceConfig`` threading — ALP-653.
 
-Before ALP-653 the submit_envelope Phase-2 wrappers fell back to a hardcoded
+Before ALP-653 the submit_envelope command_execution wrappers fell back to a hardcoded
 ``_stub_state_persistence_config()`` when the caller didn't supply one — and
-the harness path never supplied one, so any Phase-2 knob read would have
+the harness path never supplied one, so any command_execution knob read would have
 silently landed on ``/tmp`` and ``window=1`` regardless of the operator's
 real config.
 
 These tests pin the contract that:
 
-1. The Phase-2 wrappers (``_persist_envelope_outcome_via_phase2`` and friends)
+1. The command_execution wrappers (``_persist_envelope_outcome_via_command_execution`` and friends)
    forward the supplied :class:`StatePersistenceConfig` instance verbatim to
    the engine's ``persist_envelope_outcome`` / ``persist_envelope_parse_failure``
    / ``persist_envelope_rejection`` entrypoints — no substitution, no defaulting.
@@ -43,7 +43,7 @@ def _config() -> StatePersistenceConfig:
 
 
 @pytest.mark.asyncio
-async def test_persist_envelope_outcome_via_phase2_forwards_config_unchanged(
+async def test_persist_envelope_outcome_via_command_execution_forwards_config_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The wrapper passes the caller's :class:`StatePersistenceConfig` straight
@@ -56,7 +56,7 @@ async def test_persist_envelope_outcome_via_phase2_forwards_config_unchanged(
     monkeypatch.setattr(persist_module, "persist_envelope_outcome", _spy)
 
     cfg = _config()
-    await persist_module._persist_envelope_outcome_via_phase2(
+    await persist_module._persist_envelope_outcome_via_command_execution(
         invocation_handle=object(),
         envelope=object(),  # type: ignore[arg-type]  # spy ignores it
         submission_results=(),
@@ -68,7 +68,7 @@ async def test_persist_envelope_outcome_via_phase2_forwards_config_unchanged(
 
 
 @pytest.mark.asyncio
-async def test_persist_envelope_parse_failure_via_phase2_forwards_config_unchanged(
+async def test_persist_envelope_parse_failure_via_command_execution_forwards_config_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Mirror coverage for the parse-failure wrapper."""
@@ -80,7 +80,7 @@ async def test_persist_envelope_parse_failure_via_phase2_forwards_config_unchang
     monkeypatch.setattr(persist_module, "persist_envelope_parse_failure", _spy)
 
     cfg = _config()
-    await persist_module._persist_envelope_parse_failure_via_phase2(
+    await persist_module._persist_envelope_parse_failure_via_command_execution(
         invocation_handle=object(),
         failed_entry=object(),  # type: ignore[arg-type]  # spy ignores it
         state_persistence_config=cfg,
@@ -90,7 +90,7 @@ async def test_persist_envelope_parse_failure_via_phase2_forwards_config_unchang
 
 
 @pytest.mark.asyncio
-async def test_persist_envelope_rejection_via_phase2_forwards_config_unchanged(
+async def test_persist_envelope_rejection_via_command_execution_forwards_config_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Mirror coverage for the rejection wrapper."""
@@ -103,7 +103,7 @@ async def test_persist_envelope_rejection_via_phase2_forwards_config_unchanged(
 
     cfg = _config()
     errors: Sequence[Any] = ()
-    await persist_module._persist_envelope_rejection_via_phase2(
+    await persist_module._persist_envelope_rejection_via_command_execution(
         invocation_handle=object(),
         envelope=object(),  # type: ignore[arg-type]  # spy ignores it
         errors=errors,

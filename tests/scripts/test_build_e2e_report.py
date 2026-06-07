@@ -109,7 +109,7 @@ def _full_progress_stream() -> list[dict[str, Any]]:
             }
         )
 
-    phase("phase1", 2, 3)
+    phase("fill_collection", 2, 3)
     phase("snapshot_assembly", 4, 5)
 
     s.append({"event": "phase_start", "phase": "distillation", "timestamp": _ts(6)})
@@ -226,7 +226,7 @@ def _full_progress_stream() -> list[dict[str, Any]]:
     )
     s.append({"event": "phase_done", "phase": "pm", "timestamp": _ts(1060)})
 
-    phase("phase2", 1061, 1062)
+    phase("command_execution", 1061, 1062)
     return s
 
 
@@ -236,7 +236,7 @@ def _truncated_progress_stream() -> list[dict[str, Any]]:
     pm_done_idx = next(
         i for i, e in enumerate(s) if e.get("event") == "phase_done" and e.get("phase") == "pm"
     )
-    # Drop pm phase_done + phase2 events.
+    # Drop pm phase_done + command_execution events.
     return s[:pm_done_idx]
 
 
@@ -397,9 +397,9 @@ def test_build_phase_summaries_marks_unfinished_phase_as_incomplete(
     assert summaries["pm"].started is True
     assert summaries["pm"].done is False
     assert summaries["pm"].verdict == "FAIL"
-    # phase2 never even started.
-    assert summaries["phase2"].started is False
-    assert summaries["phase2"].verdict == "FAIL"
+    # command_execution never even started.
+    assert summaries["command_execution"].started is False
+    assert summaries["command_execution"].verdict == "FAIL"
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +491,7 @@ def test_render_emits_valid_html_with_dark_mode_css(
     # ``seed`` event lives in the sibling ``_pre_invocation`` archive and
     # is intentionally NOT part of the ribbon.
     for phase_name in (
-        "phase1",
+        "fill_collection",
         "snapshot_assembly",
         "distillation",
         "domain_researchers",
@@ -502,7 +502,7 @@ def test_render_emits_valid_html_with_dark_mode_css(
         "strategist",
         "pre_processor",
         "pm",
-        "phase2",
+        "command_execution",
     ):
         assert phase_name in html
     # Verdict ribbon and SDK-call table land in the body.
@@ -531,7 +531,7 @@ def test_render_marks_unfinished_phases_with_fail_badge(
     assert "FAIL" in html
     # The failure section names the incomplete phase(s).
     assert "pm" in html
-    assert "phase2" in html
+    assert "command_execution" in html
 
 
 def test_render_includes_pipeline_log_excerpt_in_collapsible_details(

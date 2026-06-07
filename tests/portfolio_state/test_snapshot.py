@@ -388,15 +388,15 @@ class TestIntraInvocationChangelogValidator:
 
 
 class TestTimestampOrderingValidator:
-    def test_phase1_before_assembled_passes(self) -> None:
+    def test_fill_collection_before_assembled_passes(self) -> None:
         snap = _make_snapshot(fill_collection_committed_at=_T0, snapshot_assembled_at=_T1)
         assert snap.fill_collection_committed_at <= snap.snapshot_assembled_at
 
-    def test_phase1_equal_assembled_passes(self) -> None:
+    def test_fill_collection_equal_assembled_passes(self) -> None:
         snap = _make_snapshot(fill_collection_committed_at=_T0, snapshot_assembled_at=_T0)
         assert snap.fill_collection_committed_at == snap.snapshot_assembled_at
 
-    def test_phase1_after_assembled_raises(self) -> None:
+    def test_fill_collection_after_assembled_raises(self) -> None:
         with pytest.raises((ValueError, TypeError)):
             _make_snapshot(fill_collection_committed_at=_T1, snapshot_assembled_at=_T0)
 

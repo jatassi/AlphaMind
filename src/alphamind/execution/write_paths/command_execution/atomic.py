@@ -532,7 +532,8 @@ async def invocation_has_pending_submit_strand(
     for order_id, client_order_id in rows:
         if client_order_id and client_order_id.startswith(prefix):
             logger.error(
-                "phase2 integrity: order %s (client_order_id=%s) stuck in PENDING_SUBMIT — "
+                "command_execution integrity: order %s (client_order_id=%s)"
+                " stuck in PENDING_SUBMIT — "
                 "a lost post-submit backfill; the floor is live at broker with no local "
                 "alpaca_order_id; withholding command_execution_completed_at — "
                 "operator recovery required",

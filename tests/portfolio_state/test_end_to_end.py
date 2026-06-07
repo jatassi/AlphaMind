@@ -7,7 +7,7 @@ Sections:
   A — Smoke tests against the five fixture builders
   B — Per-consumer projection consistency (multi-position fixture)
   C — Assembler correctness against known formulas
-  D — Freshness reporting (stale / unknown / fresh / phase1 boundary)
+  D — Freshness reporting (stale / unknown / fresh / fill_collection boundary)
   E — Determinism
   F — Empty / degenerate edge cases
   G — Repository error propagation
@@ -390,15 +390,15 @@ class TestSectionDFreshness:
         assert result.freshness.count_priced_stale == 0
         assert result.freshness.count_unknown_ticker == 0
 
-    def test_phase1_to_snapshot_two_seconds(self) -> None:
-        """now = phase1_at + 2s → fill_collection_to_snapshot_seconds == 2.0."""
-        phase1_at = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
-        now = phase1_at + timedelta(seconds=2)
+    def test_fill_collection_to_snapshot_two_seconds(self) -> None:
+        """now = fill_collection_at + 2s → fill_collection_to_snapshot_seconds == 2.0."""
+        fill_collection_at = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
+        now = fill_collection_at + timedelta(seconds=2)
 
         fixture = _make_base_fixture(
             cash_ledger=_make_cash_ledger(),
             invocation_metadata=_make_invocation_metadata(
-                invocation_id=_INV_ID, phase1_at=phase1_at
+                invocation_id=_INV_ID, fill_collection_at=fill_collection_at
             ),
             now=now,
         )
@@ -416,17 +416,17 @@ class TestSectionDFreshness:
         assert abs(result.freshness.fill_collection_to_snapshot_seconds - 2.0) < 1e-9
         assert result.freshness.fill_collection_to_snapshot_within_threshold is True
 
-    def test_phase1_boundary_exactly_at_threshold(self) -> None:
-        """now = phase1_at + max_seconds → within_threshold True."""
+    def test_fill_collection_boundary_exactly_at_threshold(self) -> None:
+        """now = fill_collection_at + max_seconds → within_threshold True."""
         config = _make_config()
         max_s = config.snapshot_freshness_max_fill_collection_to_snapshot_seconds  # 300.0
-        phase1_at = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
-        now = phase1_at + timedelta(seconds=max_s)
+        fill_collection_at = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
+        now = fill_collection_at + timedelta(seconds=max_s)
 
         fixture = _make_base_fixture(
             cash_ledger=_make_cash_ledger(),
             invocation_metadata=_make_invocation_metadata(
-                invocation_id=_INV_ID, phase1_at=phase1_at
+                invocation_id=_INV_ID, fill_collection_at=fill_collection_at
             ),
             now=now,
         )
@@ -442,17 +442,17 @@ class TestSectionDFreshness:
         )
         assert result.freshness.fill_collection_to_snapshot_within_threshold is True
 
-    def test_phase1_boundary_one_ms_past_threshold(self) -> None:
-        """now = phase1_at + max_seconds + 1ms → within_threshold False."""
+    def test_fill_collection_boundary_one_ms_past_threshold(self) -> None:
+        """now = fill_collection_at + max_seconds + 1ms → within_threshold False."""
         config = _make_config()
         max_s = config.snapshot_freshness_max_fill_collection_to_snapshot_seconds  # 300.0
-        phase1_at = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
-        now = phase1_at + timedelta(seconds=max_s) + timedelta(milliseconds=1)
+        fill_collection_at = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
+        now = fill_collection_at + timedelta(seconds=max_s) + timedelta(milliseconds=1)
 
         fixture = _make_base_fixture(
             cash_ledger=_make_cash_ledger(),
             invocation_metadata=_make_invocation_metadata(
-                invocation_id=_INV_ID, phase1_at=phase1_at
+                invocation_id=_INV_ID, fill_collection_at=fill_collection_at
             ),
             now=now,
         )

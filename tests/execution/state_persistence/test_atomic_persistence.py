@@ -4,7 +4,7 @@
 ``abandon_command`` (F) each run in their own committed transaction on a fresh
 session, so a durable ``orders`` row keyed by ``client_order_id`` exists before
 the broker dispatch and a lost post-submit commit can never strand a live broker
-order. Reuses the phase2 write-path builders + the shared ``db`` fixture.
+order. Reuses the command_execution write-path builders + the shared ``db`` fixture.
 """
 
 from __future__ import annotations
@@ -700,7 +700,7 @@ def test_dispatched_order_id_is_none_for_cancel() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Integrity guard — phase2 stamp withheld on a PENDING_SUBMIT strand
+# Integrity guard — command_execution stamp withheld on a PENDING_SUBMIT strand
 # ---------------------------------------------------------------------------
 
 

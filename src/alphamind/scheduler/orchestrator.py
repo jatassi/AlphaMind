@@ -1030,7 +1030,7 @@ def _warn_if_pre_close_projected_late(
     """Log a WARNING when a pre_close run is projected to miss the session close.
 
     Computes the rolling average wall-clock of the most recent completed
-    invocations to project when phase2 will complete. Non-pre_close fires and
+    invocations to project when command_execution will complete. Non-pre_close fires and
     non-trading days are silently skipped.
     """
     if firing_run_type is not RunType.pre_close:

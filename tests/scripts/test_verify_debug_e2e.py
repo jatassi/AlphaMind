@@ -176,11 +176,11 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
 
     Mirrors the production sequence written to the real-invocation
     ``<archive>/invocations/<invocation_id>/progress.jsonl``:
-      phase1 → snapshot_assembly → distillation →
+      fill_collection → snapshot_assembly → distillation →
       (domain_researchers, qualitative) interleaved →
       adaptive → synthesizer →
       (analyst, strategist) interleaved →
-      pre_processor → pm → phase2
+      pre_processor → pm → command_execution
 
     The ``seed`` event lands in the ``_pre_invocation`` archive
     directory (the canonical invocation_id isn't known until
@@ -198,8 +198,8 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
         return (t + timedelta(seconds=offset_s)).isoformat()
 
     stream: list[dict[str, Any]] = []
-    stream.append({"event": "phase_start", "phase": "phase1", "timestamp": ts(2)})
-    stream.append({"event": "phase_done", "phase": "phase1", "timestamp": ts(3)})
+    stream.append({"event": "phase_start", "phase": "fill_collection", "timestamp": ts(2)})
+    stream.append({"event": "phase_done", "phase": "fill_collection", "timestamp": ts(3)})
 
     stream.append({"event": "phase_start", "phase": "snapshot_assembly", "timestamp": ts(4)})
     stream.append({"event": "phase_done", "phase": "snapshot_assembly", "timestamp": ts(5)})
@@ -416,8 +416,8 @@ def _canonical_event_stream() -> list[dict[str, Any]]:
     )
     stream.append({"event": "phase_done", "phase": "pm", "timestamp": ts(1034)})
 
-    stream.append({"event": "phase_start", "phase": "phase2", "timestamp": ts(1035)})
-    stream.append({"event": "phase_done", "phase": "phase2", "timestamp": ts(1036)})
+    stream.append({"event": "phase_start", "phase": "command_execution", "timestamp": ts(1035)})
+    stream.append({"event": "phase_done", "phase": "command_execution", "timestamp": ts(1036)})
 
     return stream
 
@@ -1143,8 +1143,8 @@ def test_check_synthetic_portfolio_visibility_ignores_pm_skeleton_rows_default(
 def test_check_no_alpaca_passes_on_clean_stream(verify_module: ModuleType) -> None:
     """PASS when the captured subprocess stream carries no Alpaca HTTP indicators."""
     stream = (
-        "2026-05-16 12:00:00 INFO alphamind.scheduler.orchestrator phase1 start\n"
-        "2026-05-16 12:00:01 INFO alphamind.scheduler.orchestrator phase1 done\n"
+        "2026-05-16 12:00:00 INFO alphamind.scheduler.orchestrator fill_collection start\n"
+        "2026-05-16 12:00:01 INFO alphamind.scheduler.orchestrator fill_collection done\n"
     )
 
     result = verify_module.check_no_alpaca(stream)

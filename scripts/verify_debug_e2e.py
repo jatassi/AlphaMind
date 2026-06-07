@@ -212,8 +212,8 @@ def check_archive_directory(*, archive_root: Path, invocation_id: str) -> CheckR
 # TaskGroup) are intentionally absent from each other's edge sets so the
 # parallel-overlap event interleaving validates.
 _PHASE_PREDECESSORS: dict[str, frozenset[str]] = {
-    "phase1": frozenset(),
-    "snapshot_assembly": frozenset({"phase1"}),
+    "fill_collection": frozenset(),
+    "snapshot_assembly": frozenset({"fill_collection"}),
     "distillation": frozenset({"snapshot_assembly"}),
     "domain_researchers": frozenset({"distillation"}),
     "qualitative": frozenset({"distillation"}),
@@ -223,7 +223,7 @@ _PHASE_PREDECESSORS: dict[str, frozenset[str]] = {
     "strategist": frozenset({"synthesizer"}),
     "pre_processor": frozenset({"analyst", "strategist"}),
     "pm": frozenset({"pre_processor"}),
-    "phase2": frozenset({"pm"}),
+    "command_execution": frozenset({"pm"}),
 }
 
 # 9 SDK call pairs per parent issue ALP-493 § (E) — 3 domain-researcher
@@ -813,7 +813,7 @@ def check_deterministic_prefix(
 ) -> CheckResult:
     """Hash distillation outputs pairwise; FAIL on the first byte mismatch.
 
-    Asserts the design-doc § 5 deterministic-prefix invariant: phase1 +
+    Asserts the design-doc § 5 deterministic-prefix invariant: fill_collection +
     snapshot_assembly + distillation must produce byte-identical
     outputs on a resume run vs the source run. Distillation is the
     load-bearing comparison surface — it is the deterministic phase
@@ -881,7 +881,7 @@ def check_deterministic_prefix(
                     f"source={source_hash[:16]}... ({source_len}B), "
                     f"new={new_hash[:16]}... ({new_len}B). "
                     f"Likely cause: non-determinism regression in "
-                    f"phase1 / snapshot_assembly / distillation."
+                    f"fill_collection / snapshot_assembly / distillation."
                 ),
             )
         total_bytes += source_path.stat().st_size

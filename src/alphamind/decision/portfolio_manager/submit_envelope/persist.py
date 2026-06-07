@@ -1,4 +1,4 @@
-"""Phase-2 persistence helpers for the ``submit_envelope`` package — ALP-464.
+"""Command-execution persistence helpers for the ``submit_envelope`` package — ALP-464.
 
 After ALP-458 broke the decision↔execution cycle by relocating the engine-stub
 to ``decision.portfolio_manager.submit_envelope``, the formerly-inline imports
@@ -6,11 +6,11 @@ of :mod:`alphamind.execution.write_paths.command_execution` (cycle
 workarounds) become normal top-level imports — exactly one entry at the head
 of this module, used by every helper below.
 
-Each helper wraps one Phase-2 entrypoint: ``persist_envelope_outcome``,
+Each helper wraps one command_execution entrypoint: ``persist_envelope_outcome``,
 ``persist_command_abandoned``, ``persist_envelope_parse_failure``,
 ``persist_envelope_rejection``. The wrappers forward the orchestrator-supplied
 :class:`~alphamind.state.config.StatePersistenceConfig` through unchanged so
-every Phase-2 knob read inside the engine sees the operator's real config.
+every command_execution knob read inside the engine sees the operator's real config.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
 
 
-async def _persist_envelope_outcome_via_phase2(
+async def _persist_envelope_outcome_via_command_execution(
     invocation_handle: Any,
     envelope: PMEnvelope,
     submission_results: tuple[SubmissionResult, ...],
@@ -58,7 +58,7 @@ async def _persist_envelope_outcome_via_phase2(
     )
 
 
-async def _emit_command_abandoned_via_phase2(
+async def _emit_command_abandoned_via_command_execution(
     invocation_handle: Any,
     *,
     envelope_id: EnvelopeId,
@@ -85,7 +85,7 @@ async def _emit_command_abandoned_via_phase2(
     )
 
 
-async def _persist_envelope_parse_failure_via_phase2(
+async def _persist_envelope_parse_failure_via_command_execution(
     invocation_handle: Any,
     failed_entry: FailedSubmissionEntry,
     state_persistence_config: StatePersistenceConfig,
@@ -96,7 +96,7 @@ async def _persist_envelope_parse_failure_via_phase2(
     )
 
 
-async def _persist_envelope_rejection_via_phase2(
+async def _persist_envelope_rejection_via_command_execution(
     invocation_handle: Any,
     envelope: PMEnvelope,
     errors: Sequence[Any],
@@ -109,8 +109,8 @@ async def _persist_envelope_rejection_via_phase2(
 
 
 __all__ = [
-    "_emit_command_abandoned_via_phase2",
-    "_persist_envelope_outcome_via_phase2",
-    "_persist_envelope_parse_failure_via_phase2",
-    "_persist_envelope_rejection_via_phase2",
+    "_emit_command_abandoned_via_command_execution",
+    "_persist_envelope_outcome_via_command_execution",
+    "_persist_envelope_parse_failure_via_command_execution",
+    "_persist_envelope_rejection_via_command_execution",
 ]

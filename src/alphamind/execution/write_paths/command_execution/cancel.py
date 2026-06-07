@@ -195,7 +195,7 @@ async def _writeback_cancel(
     )
 
     # A never-filled position whose entry just cancelled has no terminal state
-    # in the fill path (phase1 only transitions PENDING→OPEN→CLOSED). Without
+    # in the fill path (fill_collection only transitions PENDING→OPEN→CLOSED). Without
     # this it strands in PENDING forever: never priced by the OPEN-only quote
     # stream, perpetually emitting the assembler's stale-sentinel warning
     # (ALP-744). Both the PM CANCEL and the ALP-737 entry-window auto-cancel

@@ -418,12 +418,12 @@ _LEG_ORDER_ID = "ORD-767-leg-stop"
 _NOW_767 = datetime(2026, 6, 2, 14, 0, 0, tzinfo=UTC)
 
 
-async def _seed_phase1_substrate_for_767(
+async def _seed_fill_collection_substrate_for_767(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     alpaca_order_id: str,
 ) -> None:
-    """Seed all rows Phase-1 needs: process_lifetime, position, order, thesis,
+    """Seed all rows fill_collection needs: process_lifetime, position, order, thesis,
     bracket (with one PENDING_ACTIVATION leg), cash_ledger, drawdown_state.
 
     The entry order is PENDING with remaining_quantity=10 so a single-fill of
@@ -648,8 +648,8 @@ async def _seed_phase1_substrate_for_767(
         await sess.commit()
 
 
-class TestPhase1IntegrationOnDrain:
-    """ALP-767 — drain immediately converges local state via Phase-1 integration.
+class TestFillCollectionIntegrationOnDrain:
+    """ALP-767 — drain immediately converges local state via fill_collection integration.
 
     Verifies that supplying ``process_lifetime_id`` to
     :func:`drain_unattributed_fills` triggers Phase-1 fill integration right
@@ -681,7 +681,7 @@ class TestPhase1IntegrationOnDrain:
         async_engine = make_async_engine(str(db_path))
         factory = make_async_session_factory(async_engine)
         alpaca_uuid = str(uuid4())
-        await _seed_phase1_substrate_for_767(factory, alpaca_order_id=alpaca_uuid)
+        await _seed_fill_collection_substrate_for_767(factory, alpaca_order_id=alpaca_uuid)
         try:
             yield factory, alpaca_uuid
         finally:
@@ -774,11 +774,11 @@ class TestPhase1IntegrationOnDrain:
             ).scalar_one()
             assert leg_row.leg_status == BracketLegStatus.ACTIVE.value
 
-    async def test_drain_with_process_lifetime_id_runs_phase1_end_to_end(
+    async def test_drain_with_process_lifetime_id_runs_fill_collection_end_to_end(
         self,
         substrate_factory: tuple[async_sessionmaker[AsyncSession], str],
     ) -> None:
-        """ALP-767: the full drain path — unattributed fill → drain → Phase-1 —
+        """ALP-767: the full drain path — unattributed fill → drain → fill_collection —
         converges the position to OPEN without waiting for the next scheduled run."""
         from alphamind.execution.continuous_monitor.fill_stream_consumer.translation import (
             derive_broker_fill_key,

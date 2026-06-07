@@ -1,6 +1,7 @@
-"""Structural invariants for the decomposed ``phase2/`` package (story 06c).
+"""Structural invariants for the decomposed ``command_execution/`` package (story 06c).
 
-The package was carved out of a single 2.3k-LOC ``phase2.py`` god module
+The package was carved out of a single 2.3k-LOC monolith (``fill_collection.py`` /
+``command_execution/``)
 into one file per OMS command kind (OPEN / CLOSE / ADJUST / CANCEL / ADD)
 plus ``_shared.py``. These tests pin the layout so a future contributor
 cannot silently re-introduce the regressions the decomposition fixed.
@@ -13,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-PHASE2 = (
+COMMAND_EXECUTION = (
     Path(__file__).resolve().parents[3]
     / "src"
     / "alphamind"
@@ -23,8 +24,8 @@ PHASE2 = (
 )
 
 
-def test_phase2_is_a_package_with_prescribed_files() -> None:
-    """phase2/ has the files prescribed by ALP-465, plus reprice.py (ALP-740) and
+def test_command_execution_is_a_package_with_prescribed_files() -> None:
+    """command_execution/ has the files prescribed by ALP-465, plus reprice.py (ALP-740) and
     atomic.py (ALP-836).
 
     ALP-740 added ``reprice.py`` — the non-terminal entry-window reprice
@@ -32,8 +33,8 @@ def test_phase2_is_a_package_with_prescribed_files() -> None:
     ``atomic.py`` — the atomicity-first per-command pre-commit / backfill /
     teardown the broker-active dispatch loop interleaves with broker submission.
     """
-    assert PHASE2.is_dir()
-    names = sorted(p.name for p in PHASE2.iterdir() if p.suffix == ".py")
+    assert COMMAND_EXECUTION.is_dir()
+    names = sorted(p.name for p in COMMAND_EXECUTION.iterdir() if p.suffix == ".py")
     assert names == [
         "__init__.py",
         "_shared.py",
@@ -78,9 +79,9 @@ def test_each_command_kind_module_exports_its_writeback(module_name: str) -> Non
     assert callable(writeback)
 
 
-def test_no_function_local_imports_of_alphamind_inside_phase2() -> None:
+def test_no_function_local_imports_of_alphamind_inside_command_execution() -> None:
     """Acceptance criterion: no inline / function-local ``from alphamind.``
-    imports anywhere in ``phase2/``; all imports live at the top of the file.
+    imports anywhere in ``command_execution/``; all imports live at the top of the file.
 
     The original monolith carried function-local imports as cycle workarounds
     around the decision ↔ execution cycle. Story 02b broke that cycle; the
@@ -88,10 +89,11 @@ def test_no_function_local_imports_of_alphamind_inside_phase2() -> None:
     """
     indented_alphamind_import = re.compile(r"^[ \t]+from alphamind\.")
     offenders: list[tuple[Path, int, str]] = []
-    for py in PHASE2.glob("*.py"):
+    for py in COMMAND_EXECUTION.glob("*.py"):
         for lineno, raw in enumerate(py.read_text(encoding="utf-8").splitlines(), start=1):
             if indented_alphamind_import.match(raw):
                 offenders.append((py, lineno, raw))
-    assert not offenders, "Function-local alphamind imports re-introduced in phase2/: " + ", ".join(
+    msg = "Function-local alphamind imports re-introduced in command_execution/: " + ", ".join(
         f"{p.name}:{n} → {line.strip()}" for p, n, line in offenders
     )
+    assert not offenders, msg

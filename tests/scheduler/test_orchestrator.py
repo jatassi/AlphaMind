@@ -155,7 +155,7 @@ def _make_context(
     )
 
 
-def _make_phase1_inputs(*, staleness_flag: bool = False) -> Any:
+def _make_fill_collection_inputs(*, staleness_flag: bool = False) -> Any:
     """Build a minimal ``FillCollectionInputs`` with no positions / no CA activities."""
     from alphamind.risk_guardrails.guardrail_evaluation import (
         FixtureIvProvider,
@@ -177,7 +177,7 @@ def _make_phase1_inputs(*, staleness_flag: bool = False) -> Any:
     )
 
 
-def _make_phase1_summary() -> FillCollectionSummary:
+def _make_fill_collection_summary() -> FillCollectionSummary:
     return FillCollectionSummary(
         fills_processed=0,
         fills_quarantined=0,
@@ -283,8 +283,7 @@ def _patch_no_op_pipeline(
     analysis_result: Any | None = None,
     decision_result: Any | None = None,
     fill_collection_raises: Exception | None = None,
-    phase1_raises: Exception | None = None,  # alias for fill_collection_raises
-    phase1_transient_failures: int = 0,
+    fill_collection_transient_failures: int = 0,
     decision_raises: Exception | None = None,
     captured: dict[str, Any] | None = None,
     staleness_flag: bool = False,
@@ -295,7 +294,7 @@ def _patch_no_op_pipeline(
     threading invariants (e.g., ``mode='halt'`` arriving at the decision
     pipeline). The stubs return the canonical empty fixture for each stage.
 
-    ``phase1_transient_failures`` (ALP-824) makes the Phase-1 stub raise a
+    ``fill_collection_transient_failures`` (ALP-824) makes the fill_collection stub raise a
     transient ``database is locked`` ``OperationalError`` on its first N calls
     before succeeding, exercising the orchestrator's ``run_with_sqlite_busy_retry``
     wrapper around the write unit.
@@ -303,22 +302,21 @@ def _patch_no_op_pipeline(
     from alphamind.scheduler import orchestrator as module
 
     captured = captured if captured is not None else {}
-    phase1_calls = {"n": 0}
+    fill_collection_calls = {"n": 0}
 
     async def _gather_stub(**kw: Any) -> Any:
         captured["gather"] = kw
-        return _make_phase1_inputs(staleness_flag=staleness_flag)
+        return _make_fill_collection_inputs(staleness_flag=staleness_flag)
 
     async def _process_stub(*args: Any, **kw: Any) -> FillCollectionSummary:
         captured["fill_collection"] = {"args": args, "kwargs": kw}
-        phase1_calls["n"] += 1
-        if phase1_calls["n"] <= phase1_transient_failures:
+        fill_collection_calls["n"] += 1
+        if fill_collection_calls["n"] <= fill_collection_transient_failures:
             raise OperationalError(
                 "INSERT INTO activity_log ...", {}, Exception("database is locked")
             )
-        _raises = fill_collection_raises or phase1_raises
-        if _raises is not None:
-            raise _raises
+        if fill_collection_raises is not None:
+            raise fill_collection_raises
         # Production ``process_unprocessed_fills`` stamps ``fill_collection_completed_at``
         # on the bound row before returning (write_paths/fill_collection.py:294) AND
         # seeds the ``cash_ledger`` + ``drawdown_state`` singletons as a side
@@ -332,7 +330,7 @@ def _patch_no_op_pipeline(
         handle = args[0]
         await _seed_singletons_via_handle(handle)
         await stamp_phase_completion(handle, column="fill_collection_completed_at")
-        return fill_collection_summary or _make_phase1_summary()
+        return fill_collection_summary or _make_fill_collection_summary()
 
     async def _analysis_stub(**kw: Any) -> Any:
         captured["analysis"] = kw
@@ -367,7 +365,7 @@ def _patch_no_op_pipeline(
     monkeypatch.setattr(module, "_resolve_regime_adaptation_for_invocation", _regime_stub)
 
 
-class TestPhase1WriteLockResilience:
+class TestFillCollectionWriteLockResilience:
     """ALP-824 — Phase-1 gathers inputs before taking the SQLite write lock, and a
     transient cross-writer collision retries the write unit instead of aborting."""
 
@@ -428,14 +426,14 @@ class TestPhase1WriteLockResilience:
         invocation completes with fills processed and ``fill_collection_completed_at`` stamped."""
         from alphamind.scheduler.orchestrator import run_invocation
 
-        phase1 = FillCollectionSummary(
+        fc_summary = FillCollectionSummary(
             fills_processed=2,
             fills_quarantined=0,
             ca_activities_processed=0,
             reconciliation_alerts=0,
         )
         _patch_no_op_pipeline(
-            monkeypatch, phase1_transient_failures=1, fill_collection_summary=phase1
+            monkeypatch, fill_collection_transient_failures=1, fill_collection_summary=fc_summary
         )
 
         await run_invocation(
@@ -492,7 +490,7 @@ class TestRunInvocationHappyPath:
         assert summary.duration_seconds >= 0.0
         assert summary.invocation_id
 
-    async def test_persists_one_row_with_phase1_and_phase2_stamped(
+    async def test_persists_one_row_with_fill_collection_and_command_execution_stamped(
         self,
         async_factory: async_sessionmaker[AsyncSession],
         env_path: Path,
@@ -529,7 +527,7 @@ class TestRunInvocationHappyPath:
         assert row.active_overlays_json is not None
         assert row.feature_flags_snapshot_json is not None
 
-    async def test_fill_collection_summary_is_serialized_phase1_summary(
+    async def test_fill_collection_summary_is_serialized_fill_collection_summary(
         self,
         async_factory: async_sessionmaker[AsyncSession],
         env_path: Path,
@@ -539,13 +537,13 @@ class TestRunInvocationHappyPath:
         """The row's ``fill_collection_summary_json`` is the Phase 1 summary JSON-serialized."""
         from alphamind.scheduler.orchestrator import run_invocation
 
-        phase1 = FillCollectionSummary(
+        fc_summary = FillCollectionSummary(
             fills_processed=3,
             fills_quarantined=1,
             ca_activities_processed=2,
             reconciliation_alerts=0,
         )
-        _patch_no_op_pipeline(monkeypatch, fill_collection_summary=phase1)
+        _patch_no_op_pipeline(monkeypatch, fill_collection_summary=fc_summary)
         await run_invocation(
             context=_make_context(
                 session_factory=async_factory,
@@ -666,7 +664,7 @@ class TestRunInvocationHappyPath:
 
 
 class TestRunInvocationFailures:
-    async def test_phase1_exception_leaves_row_with_fill_collection_completed_at_null(
+    async def test_fill_collection_exception_leaves_row_with_fill_collection_completed_at_null(
         self,
         async_factory: async_sessionmaker[AsyncSession],
         env_path: Path,
@@ -684,7 +682,7 @@ class TestRunInvocationFailures:
         """
         from alphamind.scheduler.orchestrator import run_invocation
 
-        _patch_no_op_pipeline(monkeypatch, phase1_raises=RuntimeError("phase 1 boom"))
+        _patch_no_op_pipeline(monkeypatch, fill_collection_raises=RuntimeError("phase 1 boom"))
         with pytest.raises(RuntimeError, match="phase 1 boom"):
             await run_invocation(
                 context=_make_context(
@@ -706,7 +704,7 @@ class TestRunInvocationFailures:
         assert row.fill_collection_completed_at is None
         assert row.command_execution_completed_at is None
 
-    async def test_decision_exception_leaves_phase1_committed_skips_phase2(
+    async def test_decision_exception_leaves_fill_collection_committed_skips_command_execution(
         self,
         async_factory: async_sessionmaker[AsyncSession],
         env_path: Path,
@@ -1152,7 +1150,7 @@ class TestRunInvocationFailuresThreeTxBoundaries:
     are tested in ``tests/scheduler/test_command_execution_dispatch.py``).
     """
 
-    async def test_command_execution_dispatch_failure_leaves_phase1_committed_phase2_null(
+    async def test_cmd_exec_dispatch_failure_leaves_fill_collection_committed_cmd_exec_null(
         self,
         async_factory: async_sessionmaker[AsyncSession],
         env_path: Path,
@@ -1192,7 +1190,7 @@ class TestRunInvocationFailuresThreeTxBoundaries:
         assert row.fill_collection_completed_at is not None
         assert row.command_execution_completed_at is None
 
-    async def test_pending_submit_strand_withholds_phase2_stamp_and_warns(
+    async def test_pending_submit_strand_withholds_command_execution_stamp_and_warns(
         self,
         async_factory: async_sessionmaker[AsyncSession],
         env_path: Path,
@@ -1288,7 +1286,7 @@ def _stub_only_llm_and_broker(
     from alphamind.scheduler import orchestrator as module
 
     async def _gather_stub(**_kw: Any) -> Any:
-        return _make_phase1_inputs(staleness_flag=False)
+        return _make_fill_collection_inputs(staleness_flag=False)
 
     async def _analysis_stub(**_kw: Any) -> Any:
         return _make_analysis_result()
@@ -1470,7 +1468,7 @@ class TestRunInvocationDebugE2EWiring:
     the gatherer falls back to its inline Alpaca-backed defaults.
     """
 
-    async def test_debug_e2e_threads_query_factories_through_phase1(
+    async def test_debug_e2e_threads_query_factories_through_fill_collection(
         self,
         async_factory: async_sessionmaker[AsyncSession],
         env_path: Path,
@@ -1665,7 +1663,7 @@ def _make_invocation_row(
     invocation_id: str,
     start_at: datetime,
     *,
-    phase2_completed: bool,
+    command_execution_completed: bool,
 ) -> InvocationRow:
     """Build a minimal ``InvocationRow`` with the columns required by the schema."""
     iso = start_at.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1674,7 +1672,7 @@ def _make_invocation_row(
         process_lifetime_id="proc-driver-1",
         start_at=iso,
         fill_collection_completed_at=iso,
-        command_execution_completed_at=iso if phase2_completed else None,
+        command_execution_completed_at=iso if command_execution_completed else None,
         trigger_type="manual",
         trigger_source="cli",
         trigger_reason="prior",
@@ -1748,7 +1746,9 @@ class TestRunInvocationLastInvocationTimeResolution:
         prior_start_at = _NOW - timedelta(hours=3)
         async with async_factory() as setup_session:
             setup_session.add(
-                _make_invocation_row("inv-prior-0001", prior_start_at, phase2_completed=True)
+                _make_invocation_row(
+                    "inv-prior-0001", prior_start_at, command_execution_completed=True
+                )
             )
             await setup_session.commit()
 
@@ -1794,10 +1794,14 @@ class TestRunInvocationLastInvocationTimeResolution:
         aborted_start_at = _NOW - timedelta(hours=2)
         async with async_factory() as setup_session:
             setup_session.add(
-                _make_invocation_row("inv-success-0001", successful_start_at, phase2_completed=True)
+                _make_invocation_row(
+                    "inv-success-0001", successful_start_at, command_execution_completed=True
+                )
             )
             setup_session.add(
-                _make_invocation_row("inv-aborted-0002", aborted_start_at, phase2_completed=False)
+                _make_invocation_row(
+                    "inv-aborted-0002", aborted_start_at, command_execution_completed=False
+                )
             )
             await setup_session.commit()
 

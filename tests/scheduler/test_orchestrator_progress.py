@@ -5,8 +5,8 @@ Drives :func:`alphamind.scheduler.orchestrator.run_invocation` against a
 
 * Every phase boundary the parent issue ALP-493 § (D) enumerates (excluding
   ``seed`` — story 04 emits that one) is recorded.
-* The orchestrator emits ``phase_start`` / ``phase_done`` for ``phase1``,
-  ``snapshot_assembly``, and ``phase2``.
+* The orchestrator emits ``phase_start`` / ``phase_done`` for ``fill_collection``,
+  ``snapshot_assembly``, and ``command_execution``.
 * The progress emitter is correctly threaded into ``run_analysis_pipeline``
   and ``run_decision_pipeline`` — both stubs receive the same emitter the
   orchestrator constructed from ``context.debug_e2e.emitter_factory`` and
@@ -103,7 +103,7 @@ def _make_context(
     )
 
 
-def _make_phase1_inputs(*, staleness_flag: bool = False) -> Any:
+def _make_fill_collection_inputs(*, staleness_flag: bool = False) -> Any:
     """Minimal ``FillCollectionInputs`` with no positions / no CA activities."""
     from alphamind.risk_guardrails.guardrail_evaluation import (
         FixtureIvProvider,
@@ -125,7 +125,7 @@ def _make_phase1_inputs(*, staleness_flag: bool = False) -> Any:
     )
 
 
-def _make_phase1_summary() -> FillCollectionSummary:
+def _make_fill_collection_summary() -> FillCollectionSummary:
     return FillCollectionSummary(
         fills_processed=0,
         fills_quarantined=0,
@@ -338,7 +338,7 @@ def _patch_no_op_pipeline_with_progress_emit(monkeypatch: pytest.MonkeyPatch) ->
     from alphamind.scheduler import orchestrator as module
 
     async def _gather_stub(**_kw: Any) -> Any:
-        return _make_phase1_inputs()
+        return _make_fill_collection_inputs()
 
     async def _process_stub(*args: Any, **_kw: Any) -> FillCollectionSummary:
         from alphamind.state.invocation_context.context import (
@@ -348,7 +348,7 @@ def _patch_no_op_pipeline_with_progress_emit(monkeypatch: pytest.MonkeyPatch) ->
         handle = args[0]
         await _seed_singletons_via_handle(handle)
         await stamp_phase_completion(handle, column="fill_collection_completed_at")
-        return _make_phase1_summary()
+        return _make_fill_collection_summary()
 
     async def _analysis_stub(**kw: Any) -> Any:
         progress = kw["progress"]
@@ -493,7 +493,7 @@ async def test_run_invocation_records_agents_in_dependency_order(
     )
 
 
-async def test_phase1_done_carries_fills_processed(
+async def test_fill_collection_done_carries_fills_processed(
     async_factory: async_sessionmaker[AsyncSession],
     env_path: Path,
     archive_root: Path,
@@ -521,15 +521,15 @@ async def test_phase1_done_carries_fills_processed(
         now=_NOW,
     )
 
-    phase1_done = next(
+    fill_collection_done = next(
         fields
         for kind, fields in emitter.events
         if kind == "phase_done" and fields.get("phase") == "fill_collection"
     )
-    assert phase1_done["fills_processed"] == 0
+    assert fill_collection_done["fills_processed"] == 0
 
 
-async def test_phase2_done_carries_commands_submitted(
+async def test_command_execution_done_carries_commands_submitted(
     async_factory: async_sessionmaker[AsyncSession],
     env_path: Path,
     archive_root: Path,
@@ -557,12 +557,12 @@ async def test_phase2_done_carries_commands_submitted(
         now=_NOW,
     )
 
-    phase2_done = next(
+    command_execution_done = next(
         fields
         for kind, fields in emitter.events
         if kind == "phase_done" and fields.get("phase") == "command_execution"
     )
-    assert phase2_done["commands_submitted"] == 0
+    assert command_execution_done["commands_submitted"] == 0
 
 
 async def test_run_invocation_without_debug_e2e_uses_noop_emitter(

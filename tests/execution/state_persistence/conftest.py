@@ -1,8 +1,8 @@
 """Shared test substrate for state_persistence tests (ALP-790 hoist).
 
 Houses the duplicated db fixture and the invocation / cash / drawdown
-builders and seeds extracted from phase1_write_path, phase2_write_path,
-phase1_strategy, phase1_options, and phase1_regt_attribution.
+builders and seeds extracted from fill_collection_write_path, command_execution_write_path,
+fill_collection_strategy, fill_collection_options, and fill_collection_regt_attribution.
 """
 
 from __future__ import annotations

@@ -97,7 +97,7 @@ from ._view_builders import (
 # Shared timestamps
 # ---------------------------------------------------------------------------
 
-_PHASE1_AT = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
+_FILL_COLLECTION_AT = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
 _NOW = datetime(2025, 6, 1, 9, 30, 0, tzinfo=UTC)
 _ENTRY_AT = datetime(2025, 6, 1, 7, 0, 0, tzinfo=UTC)
 _INV_ID = "inv-e2e-001"
@@ -193,11 +193,11 @@ def _make_thesis_quality_aggregates(now: datetime = _NOW) -> ThesisQualityAggreg
 
 def _make_invocation_metadata(
     invocation_id: str = _INV_ID,
-    phase1_at: datetime = _PHASE1_AT,
+    fill_collection_at: datetime = _FILL_COLLECTION_AT,
 ) -> CurrentInvocationMetadata:
     return CurrentInvocationMetadata(
         invocation_id=invocation_id,
-        fill_collection_committed_at=phase1_at,
+        fill_collection_committed_at=fill_collection_at,
         pipeline_invocation_started_at=None,
     )
 
