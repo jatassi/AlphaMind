@@ -66,6 +66,7 @@ def build_sql_portfolio_state_repository(
     active_risk_parameters_provider: Callable[[], ActiveRiskParameterSet],
     prior_active_risk_parameters_provider: Callable[[str], ActiveRiskParameterSet],
     config: StatePersistenceConfig,
+    thesis_quality_aggregates_trailing_windows_days: tuple[int, ...],
 ) -> PortfolioStateRepository:
     """Construct a production ``SqlPortfolioStateRepository`` conforming to the Protocol.
 
@@ -74,6 +75,11 @@ def build_sql_portfolio_state_repository(
     the zero-arg current variant produces the live set; the path-keyed
     prior variant rebuilds the prior set from a stored
     ``resolved_config_snapshot_path``.
+
+    ``thesis_quality_aggregates_trailing_windows_days`` is sourced from
+    ``PortfolioStateConfig`` at the composition root (the Protocol method is
+    zero-arg, so the windows are bound at construction) and drives the
+    compute-on-read thesis-quality aggregation.
     """
     return SqlPortfolioStateRepository(
         session_factory=session_factory,
@@ -81,6 +87,9 @@ def build_sql_portfolio_state_repository(
         active_risk_parameters_provider=active_risk_parameters_provider,
         prior_active_risk_parameters_provider=prior_active_risk_parameters_provider,
         config=config,
+        thesis_quality_aggregates_trailing_windows_days=(
+            thesis_quality_aggregates_trailing_windows_days
+        ),
     )
 
 
