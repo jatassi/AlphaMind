@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from alphamind.execution.thesis_model import classify_thesis_resolution
+from alphamind.portfolio_state.records.thesis_resolution import classify_thesis_resolution
 from alphamind.portfolio_state.events.activity_log import PositionExitMethod
 from alphamind.portfolio_state.records.theses import (
     ThesisComponentOutcome,
