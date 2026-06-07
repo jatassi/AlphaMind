@@ -140,8 +140,8 @@ Executes trades and records results.
 | [Position model](05-execution-layer/position-model.md) | Multi-instrument hierarchy (equity, options, strategy), delta-adjusted exposure, Reg T margin |
 | [Thesis model](05-execution-layer/thesis-model.md) | Structured components within flat record, mandatory bracket coverage, component-level resolution |
 | [OMS commands](05-execution-layer/oms-commands.md) | Five commands: OPEN, CLOSE, ADJUST, CANCEL, ADD — no compound commands (see [design decisions](design-decisions.md)) |
-| [Corporate actions](05-execution-layer/corporate-actions.md) | Position-layer mechanics for Alpaca-emitted CA events: per-action quantity/cost-basis/cash mutations, spin-off child positions, Phase 1 chronological merge with fills, idempotency ledger |
-| [State persistence](05-execution-layer/state-persistence.md) | Three-tier persistence model (core / lifecycle / derived entities), Phase 1 collect + Phase 2 commit, atomic transactions, immediate fill persistence, single-writer invariant, activity log catalog |
+| [Corporate actions](05-execution-layer/corporate-actions.md) | Position-layer mechanics for Alpaca-emitted CA events: per-action quantity/cost-basis/cash mutations, spin-off child positions, fill collection chronological merge with fills, idempotency ledger |
+| [State persistence](05-execution-layer/state-persistence.md) | Three-tier persistence model (core / lifecycle / derived entities), fill collection + command execution commits, atomic transactions, immediate fill persistence, single-writer invariant, activity log catalog |
 | [Venue configuration](05-execution-layer/venue-configuration.md) | Alpaca-specific venue rules: settlement, sessions, PDT, Reg T margin tiers |
 
 ### 06 — Risk guardrails (cross-cutting)

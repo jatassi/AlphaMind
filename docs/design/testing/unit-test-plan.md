@@ -12,7 +12,7 @@ This document defines scope, disciplines, and preliminary unit catalogs for each
 
 - **Distillation layer** — deterministic computations that transform raw external data and raw internal state into signals, indicators, composites, and rollups. Covers both [external distillation](../02-distillation-layer/external.md) (normalization, technical indicators, order flow, derivatives, short interest, expectations, volatility regime classification, correlation, anomaly detectors) and [internal distillation](../02-distillation-layer/internal.md) (beta-adjusted exposure, correlation profile, P/L attribution, capital efficiency, performance metrics, execution quality).
 
-- **OMS processing** — command envelope parsing, [command ID derivation](../oms-command-ids.md), conflict detection, sequential command execution for each of the [five commands](../05-execution-layer/oms-commands.md), fill integration into position / bracket / cash ledger / thesis / activity log, [Phase 1 atomicity](../05-execution-layer/architecture.md) guarantees, broker submission retry and abandonment (per [state-persistence.md Phase 2 write path](../05-execution-layer/state-persistence.md)), continuous-monitor-originated command issuance.
+- **OMS processing** — command envelope parsing, [command ID derivation](../oms-command-ids.md), conflict detection, sequential command execution for each of the [five commands](../05-execution-layer/oms-commands.md), fill integration into position / bracket / cash ledger / thesis / activity log, [fill collection atomicity](../05-execution-layer/architecture.md) guarantees, broker submission retry and abandonment (per [state-persistence.md command execution write path](../05-execution-layer/state-persistence.md#command-execution-write-path)), continuous-monitor-originated command issuance.
 
 - **Risk guardrails** — per-rule evaluation for each of the [18 rules](../06-risk-guardrails/rules-and-limits.md), [escalation zones](../06-risk-guardrails/breach-behavior.md), forced-reduction position selection, drawdown halt (daily + three-tier cumulative), [regime parameter lookup and transition interpolation](../06-risk-guardrails/regime-adaptation.md), pre-event and stress overlays, cross-constraint impact, [guardrail validation tool](../06-risk-guardrails/state-delivery.md) with cumulative tracking, cascade logic, emergency invocation triggers, guardrail state header projection per agent and per portfolio profile.
 
@@ -60,7 +60,7 @@ Heavy stochastics from the previous simulator (fill probability, borrow rate, lo
 
 For state-mutation units with atomicity guarantees, "does partial failure leave the portfolio in a valid state" is a first-class concern distinct from happy-path output:
 
-- **Phase 1 fill integration.** All fills committed or none; fill record processing_status coupled to state mutations; fills arriving mid-transaction ignored until next invocation's collect.
+- **Fill collection.** All fills committed or none; fill record processing_status coupled to state mutations; fills arriving mid-transaction ignored until next invocation's collect.
 - **Bracket lifecycle on entry fill.** Protective legs submitted together or not at all; entry cancellation cancels both protective legs; stop trigger cancels the target and vice versa.
 - **Forced-reduction cascade.** Primary breach response plus secondary-breach check; close command and secondary-breach alert share `cascade_id`; rollback doesn't orphan the alert.
 - **Gateway submission retry with abandonment.** Retry succeeds (command committed) or retry window exhausts (full rollback, `command_abandoned` activity log entry, surface to originating agent next invocation).
@@ -130,7 +130,7 @@ Preliminary. Expect the list to move as implementation begins; the axes (categor
 
 ## OMS processing
 
-Two flavors: pure transformations (ID derivation, envelope parsing, conflict detection) and state mutations (command executors, fill integrators, Phase 1 transaction). State-mutation units concentrate atomicity tests.
+Two flavors: pure transformations (ID derivation, envelope parsing, conflict detection) and state mutations (command executors, fill integrators, fill collection transaction). State-mutation units concentrate atomicity tests.
 
 ### Test concerns
 
@@ -140,9 +140,9 @@ Two flavors: pure transformations (ID derivation, envelope parsing, conflict det
 
 **Sequential command execution.** Commands within an invocation are processed in envelope order; each command's guardrail validation accounts for prior commands' state changes. Tests exercise the capital reservation cascade (N OPENs each reserving capital; command N sees cumulative state), CLOSE-then-OPEN sequencing (capital released before next reservation), conflict detection when a later command references an earlier output.
 
-**Phase 1 atomicity.** Fill integration into position / bracket / cash / thesis / activity log runs as a single transaction. Tests: happy path, mid-loop failure (rollback), concurrent fill arrival from the monitor (ignored until next invocation), OMS restart mid-Phase 1 (state recovery on next startup).
+**Fill collection atomicity.** Fill integration into position / bracket / cash / thesis / activity log runs as a single transaction. Tests: happy path, mid-loop failure (rollback), concurrent fill arrival from the monitor (ignored until next invocation), OMS restart mid-fill-collection (state recovery on next startup).
 
-**Broker submission retry and abandonment.** [state-persistence.md § Phase 2 write path](../05-execution-layer/state-persistence.md) defines a within-invocation retry window followed by full rollback and `command_abandoned` activity log entry. Tests: retry succeeds first attempt; retry succeeds after N transient failures; retry exhausts (rollback executes, abandoned command surfaced to originator next invocation). Rollback is the important property: if retry exhausts, position / thesis / bracket / orders all revert and capital reservation released.
+**Broker submission retry and abandonment.** [state-persistence.md § Command execution write path](../05-execution-layer/state-persistence.md#command-execution-write-path) defines a within-invocation retry window followed by full rollback and `command_abandoned` activity log entry. Tests: retry succeeds first attempt; retry succeeds after N transient failures; retry exhausts (rollback executes, abandoned command surfaced to originator next invocation). Rollback is the important property: if retry exhausts, position / thesis / bracket / orders all revert and capital reservation released.
 
 **Engine-originated command issuance.** Continuous-monitor protective CLOSE commands use the `MON.` ID scheme, carry a guardrail trigger reference, skip PM evaluation. Tests verify session-initialization, breach detection and trigger recording, secondary-breach check before issuance, cooldown enforcement on emergency triggers.
 
@@ -164,8 +164,8 @@ Preliminary. ~30 units grouped by processing phase.
 | Command validation | OPEN guardrail validation, CLOSE guardrail validation (protective, engine-originated), command ID deduplication, sequential state projection |
 | Command execution | OPEN executor, CLOSE executor, ADJUST executor, ADD executor, CANCEL executor |
 | Fill integration | fill collection from gateway, fill → position update, fill → bracket state transition, fill → cash ledger update, fill → activity log entry generation, thesis resolution on close |
-| Phase 1 transaction | atomic write wrapper, snapshot reader (post-Phase 1 read model) |
-| Phase 2 processing | command sequencer, gateway submission manager, per-command rollback |
+| Fill collection transaction | atomic write wrapper, snapshot reader (post-fill-collection read model) |
+| Command execution processing | command sequencer, gateway submission manager, per-command rollback |
 | Continuous monitor | session initializer, breach detector, secondary-breach validator, protective CLOSE issuer, emergency invocation trigger, invocation ID assigner, greeks refresh orchestrator (scheduled timer + 2%-move trigger + IV fetch + Black-Scholes recompute + position-record write-through), greeks refresh failure handler (retry window, stale-buffer widening, escalation to emergency invocation on ambiguous breach) |
 
 ---
@@ -374,7 +374,7 @@ Exposes Alpaca REST endpoints and `trade_updates` websocket with scripted respon
 
 - Multi-position forced-closure handling — AlphaMind's ETB-only universe and Alpaca's no-HTB-shorting mean lender-recall forced buy-ins don't occur. The closest analogue is Alpaca's ETB→HTB overnight auto-closure on a previously-ETB name. Synchronized multi-position closures are validated through [scenario-tests.md A11](../06-risk-guardrails/scenario-tests.md) rather than stochastic unit tests.
 
-- Corporate action handling — any corporate action (split, reverse split, stock or cash dividend, merger, acquisition, spin-off) cancels the bracket and flags the position; the strategist produces a fresh `adjust-bracket` or `close` via the normal command path. See [orders-and-brackets.md § Corporate action handling](../05-execution-layer/orders-and-brackets.md#corporate-action-handling), [strategist.md § Corporate-action-pending positions](../04-decision-layer/strategist.md#corporate-action-pending-positions), [corporate-actions.md](../05-execution-layer/corporate-actions.md). Unit tests cover: bracket cancellation + flagging against each per-action-type fixture, spin-off child position creation (orphan thesis_id/bracket_id with origin reference), chronological merge of unprocessed fills and CA activities in Phase 1, `processed_corporate_actions` ledger dedup on retry, reconciliation-against-Alpaca at Phase 1 end.
+- Corporate action handling — any corporate action (split, reverse split, stock or cash dividend, merger, acquisition, spin-off) cancels the bracket and flags the position; the strategist produces a fresh `adjust-bracket` or `close` via the normal command path. See [orders-and-brackets.md § Corporate action handling](../05-execution-layer/orders-and-brackets.md#corporate-action-handling), [strategist.md § Corporate-action-pending positions](../04-decision-layer/strategist.md#corporate-action-pending-positions), [corporate-actions.md](../05-execution-layer/corporate-actions.md). Unit tests cover: bracket cancellation + flagging against each per-action-type fixture, spin-off child position creation (orphan thesis_id/bracket_id with origin reference), chronological merge of unprocessed fills and CA activities during fill collection, `processed_corporate_actions` ledger dedup on retry, reconciliation-against-Alpaca at fill collection end.
 
 ---
 
@@ -383,7 +383,7 @@ Exposes Alpaca REST endpoints and `trade_updates` websocket with scripted respon
 - Phase 3 testing items: [project-tracker.md](../../project-tracker.md)
 - Guardrail scenario walkthroughs (design validation): [scenario-tests.md](../06-risk-guardrails/scenario-tests.md)
 - OMS command ID discipline: [oms-command-ids.md](../oms-command-ids.md)
-- Broker submission retry and abandonment: [state-persistence.md § Phase 2 write path](../05-execution-layer/state-persistence.md)
+- Broker submission retry and abandonment: [state-persistence.md § Command execution write path](../05-execution-layer/state-persistence.md#command-execution-write-path)
 - Two-phase invocation model: [architecture.md](../05-execution-layer/architecture.md)
 - Broker adapter (Alpaca): [broker-adapter.md](../05-execution-layer/broker-adapter.md)
 - Paper-evaluation harness: [paper-evaluation-harness.md](../05-execution-layer/paper-evaluation-harness.md)

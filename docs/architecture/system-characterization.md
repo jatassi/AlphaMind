@@ -40,7 +40,7 @@ Underlying price feed → options stop trigger evaluation → close order via br
                       → guardrail breach detection
 ```
 
-**Event-driven, real-time.** Low latency matters; maintains state (pending orders, bracket lifecycle for options, position greeks); shares the DB with the pipeline (pipeline reads during Phase 1; monitor writes continuously).
+**Event-driven, real-time.** Low latency matters; maintains state (pending orders, bracket lifecycle for options, position greeks); shares the DB with the pipeline (pipeline reads during fill collection; monitor writes continuously).
 
 ### 3. The scheduler (control plane)
 

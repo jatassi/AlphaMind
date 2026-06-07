@@ -92,7 +92,7 @@ Bracket legs can be defined in P/L terms rather than absolute price — "close a
 
 When the entry leg fills, the engine recalculates P/L-based protective leg prices using the **actual fill price** as the anchor. If entry was a limit at $18.50 but filled at $17.80, an 80% profit target recalculates from $33.30 to $32.04. The engine cancels the originally submitted protective order and replaces it.
 
-Recalculation happens as part of bracket activation — the same Phase 1 step that transitions the bracket from pending-entry to active and submits protective legs ([state-persistence.md](state-persistence.md), Phase 1 write path, step 4). No additional processing phase needed.
+Recalculation happens as part of bracket activation — the same fill collection step that transitions the bracket from pending-entry to active and submits protective legs ([state-persistence.md](state-persistence.md), fill collection write path, step 4). No additional processing phase needed.
 
 *Design rationale:* P/L targets express the thesis's risk/reward structure — "I expect 80% upside, wrong at 30% downside." The risk/reward ratio is the thesis, not the specific dollar value. Anchoring to planned entry would silently distort intended risk/reward when fills deviate from plan. A fill at $17.80 instead of $18.50 is a 3.8% better entry — the 80% upside target should benefit from that improvement, not remain pinned to a stale reference.
 
@@ -116,4 +116,4 @@ When a corporate action fires on a position with an active bracket — stock spl
 
 *Activity log:* records `corporate_action_applied` (action type and ratio/amount), `bracket_cancelled_corporate_action` on cancellation, and a normal `bracket_modified` with source `corporate_action_adjustment` when the strategist/PM submit the fresh bracket.
 
-*Prerequisite scope:* this section defines only the bracket lifecycle under CAs. Position-level mechanics — quantity scaling, cost basis adjustment, cash crediting/debiting, short-position dividend obligation flow, merger conversion, spin-off splitting, activity log catalog, and Phase 1 integration timing — are in [corporate-actions.md](corporate-actions.md).
+*Prerequisite scope:* this section defines only the bracket lifecycle under CAs. Position-level mechanics — quantity scaling, cost basis adjustment, cash crediting/debiting, short-position dividend obligation flow, merger conversion, spin-off splitting, activity log catalog, and fill collection integration timing — are in [corporate-actions.md](corporate-actions.md).

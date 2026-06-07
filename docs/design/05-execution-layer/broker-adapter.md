@@ -150,7 +150,7 @@ Alpaca does not populate greeks on the order record or fill events for options o
 
 ### Fill buffer model
 
-The continuous monitor owns the websocket subscription and writes each fill event into the fill buffer (`state-persistence.md`). The OMS drains the buffer during Phase 1 (`architecture.md`). Buffer writes are durable — a monitor restart does not lose in-flight fills as long as the state DB is intact.
+The continuous monitor owns the websocket subscription and writes each fill event into the fill buffer (`state-persistence.md`). The OMS drains the buffer during fill collection (`architecture.md`). Buffer writes are durable — a monitor restart does not lose in-flight fills as long as the state DB is intact.
 
 **Re-subscription on disconnect.** On disconnect, the monitor reconnects and re-queries `GET /v2/orders` with a `since` parameter to recover missed events. Alpaca orders are authoritative; any disagreement between buffered state and Alpaca's reported state resolves toward Alpaca.
 
@@ -177,7 +177,7 @@ The OMS accounts for fills pre-fee at fill time. EOD, it reads the day's fee act
 Thin wrappers over the Alpaca REST endpoints the OMS uses for state reconciliation:
 
 - `GET /v2/account` — cash, equity, buying power (day and overnight), regt_buying_power, maintenance margin, day trade count, pattern day trader flag
-- `GET /v2/positions` — authoritative current positions. The OMS reconciles internal state against this every Phase 1
+- `GET /v2/positions` — authoritative current positions. The OMS reconciles internal state against this every fill collection
 - `GET /v2/orders` — order state query, used for disconnect recovery and spot reconciliation
 - `GET /v2/account/activities` — EOD fee reconciliation, dividends, corporate actions, options exercise/assignment notifications, and other non-fill debits/credits. Exercise and assignment surface as `OPEXC` (exercise) and `OPASN` (assignment) activity types — the OMS treats each as a terminal event on the option position and an opening event on the resulting equity position (long for exercised calls / assigned puts, short for assigned calls / exercised puts), with cost basis derived from the strike price and the equity position carrying a fresh thesis stub flagged for strategist review at the next invocation
 - `GET /v2/assets/{symbol}` — asset metadata (`shortable`, `fractionable`, `tradable`, `easy_to_borrow`); used by the guardrail layer for short-sell eligibility
@@ -207,7 +207,7 @@ Cases where Alpaca's surface is narrower than AlphaMind's design; each is handle
 
 5. **Fractional shorts.** Alpaca restricts fractional orders to market + day TIF and disallows net-short fractional positions. AlphaMind orders are in whole shares and whole contracts.
 
-6. **Corporate action handling.** Alpaca handles corporate actions natively (splits, dividends, mergers) and surfaces adjustments via `account/activities`; post-adjustment state is reflected in `GET /v2/positions` and `GET /v2/account`. OMS-side integration mechanics — quantity/cost-basis/cash mutations, spin-off child creation, Phase 1 sequencing, idempotency, activity log entries — are in [corporate-actions.md](corporate-actions.md). Bracket lifecycle: [orders-and-brackets.md § Corporate action handling](orders-and-brackets.md#corporate-action-handling). Strategist re-evaluation: [strategist.md § Corporate-action-pending positions](../04-decision-layer/strategist.md#corporate-action-pending-positions).
+6. **Corporate action handling.** Alpaca handles corporate actions natively (splits, dividends, mergers) and surfaces adjustments via `account/activities`; post-adjustment state is reflected in `GET /v2/positions` and `GET /v2/account`. OMS-side integration mechanics — quantity/cost-basis/cash mutations, spin-off child creation, fill collection sequencing, idempotency, activity log entries — are in [corporate-actions.md](corporate-actions.md). Bracket lifecycle: [orders-and-brackets.md § Corporate action handling](orders-and-brackets.md#corporate-action-handling). Strategist re-evaluation: [strategist.md § Corporate-action-pending positions](../04-decision-layer/strategist.md#corporate-action-pending-positions).
 
 ---
 

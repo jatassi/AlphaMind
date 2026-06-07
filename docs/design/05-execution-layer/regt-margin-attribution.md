@@ -38,12 +38,12 @@ Initial-margin equivalent only. Both `regt_margin_*` and `pm_equivalent_*` snaps
 
 ## Computation flow
 
-Runs in **Phase 1 fill processing** ([`state-persistence.md § Phase 1`](state-persistence.md)). Each unprocessed fill is integrated into position state; the attribution computation runs alongside.
+Runs in **fill collection** ([`state-persistence.md § Fill collection write path`](state-persistence.md#fill-collection-write-path-fill-integration)). Each unprocessed fill is integrated into position state; the attribution computation runs alongside.
 
 For a batch of unprocessed fills, fills are processed in `fill_timestamp` order so each fill's `*_before` reflects all prior fills in the batch. Single-pass per fill:
 
 1. **`*_before` snapshot.** Compute the portfolio-aggregate Reg T requirement and the portfolio-margin-equivalent requirement against the pre-fill position set.
-2. **Integrate the fill.** Standard Phase 1 update of position state, cost basis, cash ledger.
+2. **Integrate the fill.** Standard fill collection update of position state, cost basis, cash ledger.
 3. **`*_after` snapshot.** Recompute both requirements against the post-fill position set.
 4. **Marginal deltas.** Subtract; populate the structure; persist alongside the fill record.
 

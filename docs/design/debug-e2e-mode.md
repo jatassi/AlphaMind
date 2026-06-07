@@ -31,7 +31,7 @@ matches production: one `run_invocation` pass, no daemon loop.
 ## 2. Principles guiding this design
 
 - **P4 (hexagonal — explicit Protocol seams):** central. Today
-  `scheduler/phase1_inputs.py` constructs `AlpacaClientFactory` inline and
+  `scheduler/fill_collection_inputs.py` constructs `AlpacaClientFactory` inline and
   tests monkey-patch the module-level builder hooks. Swapping in a log-only
   broker forces the seam to be explicit — `AccountStateQueriesP` /
   `CorporateActionsQueriesP` Protocols on the broker adapter, injected via
@@ -67,7 +67,7 @@ src/alphamind/
 └── scheduler/
     ├── __main__.py                      # MODIFIED — +--debug-e2e flag on `run`
     ├── orchestrator.py                  # MODIFIED — read context.debug_e2e; thread emitter; trigger_source
-    ├── phase1_inputs.py                 # MODIFIED — depend on Protocols, take factories from context
+    ├── fill_collection_inputs.py        # MODIFIED — depend on Protocols, take factories from context
     ├── run_context.py                   # MODIFIED — +debug_e2e: DebugE2ESettings | None
     ├── progress.py                      # NEW — ProgressEmitter Protocol + NoOpProgressEmitter
     └── debug_e2e/
@@ -103,7 +103,7 @@ type = "forbidden"
 source_modules = [
   "alphamind.scheduler.__main__",
   "alphamind.scheduler.orchestrator",
-  "alphamind.scheduler.phase1_inputs",
+  "alphamind.scheduler.fill_collection_inputs",
   "alphamind.scheduler.run_context",
   "alphamind.scheduler.driver",
   "alphamind.scheduler.emergency",
@@ -173,7 +173,7 @@ class AccountStateQueriesP(Protocol):
     async def get_activities_after(
         self, *, after: datetime,
     ) -> tuple[ActivitySnapshot, ...]: ...
-    # Mirror the exact method set gather_phase1_inputs and dispatch_phase2
+    # Mirror the exact method set gather_fill_collection_inputs and dispatch_command_execution
     # call — no broader; small Protocol surface (P9).
 
 
@@ -380,11 +380,11 @@ Integration test: drive `_run_once` with `--debug-e2e` against an in-memory
 SQLite, assert that `progress.jsonl` contains all 13 phase events + 8 agent
 request/response pairs in dependency order.
 
-The monkey-patches on `phase1_inputs._build_account_state_queries` /
+The monkey-patches on `fill_collection_inputs._build_account_state_queries` /
 `_build_corporate_actions_queries` retire — tests that needed them now
 inject queries via `RunInvocationContext.debug_e2e` or via a new
 `account_queries_override` / `ca_queries_override` parameter on
-`gather_phase1_inputs` (the orchestrator passes either the
+`gather_fill_collection_inputs` (the orchestrator passes either the
 `debug_e2e`-provided queries or the Alpaca-backed defaults).
 
 ---
@@ -395,7 +395,7 @@ inject queries via `RunInvocationContext.debug_e2e` or via a new
 
 **Picked.** Add `AccountStateQueriesP` and `CorporateActionsQueriesP`
 Protocols to `execution/broker_adapter/protocols.py`. Change
-`gather_phase1_inputs` to depend on the Protocols, not the concrete classes.
+`gather_fill_collection_inputs` to depend on the Protocols, not the concrete classes.
 
 **Alternative.** Structural typing — let `LogOnlyAccountStateQueries`
 satisfy the concrete `AccountStateQueries` interface via duck typing and

@@ -285,8 +285,8 @@ versions silently mutate `bun.lock` on `--frozen-lockfile`.
 The paper-Alpaca account must be at zero positions with starting cash before
 this runs. The bootstrap fetches Alpaca's reported cash, writes the
 `cash_ledger` + `drawdown_state` singletons, and runs one `market_open`
-invocation. The invocation drives the full pipeline (Phase 1 → analysis →
-decision → Phase 2 broker dispatch) — the PM's accepted commands must land
+invocation. The invocation drives the full pipeline (fill collection → analysis →
+decision → command execution broker dispatch) — the PM's accepted commands must land
 on Alpaca with real broker order ids. The synthetic `alp-{order_id}`
 placeholder is deleted (ALP-847): an order with no broker counterpart — a
 monitor-enforced protective leg (armed Intent the continuous monitor
@@ -363,7 +363,7 @@ crashes.
 
 **Recovery if the cold-start invocation itself fails after the singletons
 committed.** The two rows are committed in their own transaction *before*
-the invocation runs, so a Phase 1 error or transient external dependency
+the invocation runs, so a fill collection error or transient external dependency
 leaves them in place and a retry of `--fresh-start` will hard-fail. Two
 options, in preference order:
 
@@ -514,7 +514,7 @@ To watch a manual `--once` invocation live, use:
 
 - **The process's own stdout/stderr** — the terminal you launched it in. This
   is the richest live view: per-phase `distillation.orchestrator` completions,
-  per-agent `analysis.*.runner` lines, Phase 2 dispatch, and the final exit
+  per-agent `analysis.*.runner` lines, command execution dispatch, and the final exit
   code all stream here.
 - **The structured `pipeline.log`** (§ 5.4) — `_run_once` does call
   `configure_pipeline_logging()`, so records land in the rotating log
@@ -715,15 +715,15 @@ uv run python -c "
 import sqlite3, os
 db = sqlite3.connect(os.path.expandvars(r'%USERPROFILE%\AlphaMind\data\alphamind.db'))
 db.row_factory = sqlite3.Row
-for row in db.execute('SELECT invocation_id, trigger_type, trigger_source, trigger_reason, start_at, phase1_completed_at, phase2_completed_at, git_sha_at_invocation, staleness_flag FROM invocations ORDER BY start_at DESC LIMIT 20').fetchall():
+for row in db.execute('SELECT invocation_id, trigger_type, trigger_source, trigger_reason, start_at, fill_collection_completed_at, command_execution_completed_at, git_sha_at_invocation, staleness_flag FROM invocations ORDER BY start_at DESC LIMIT 20').fetchall():
     print(dict(row))
 "
 ```
 
 The table does **not** carry a single `status` column. Completion is read
-from the phase timestamps: a row with a non-null `phase2_completed_at`
-succeeded through Phase 2; a row with `start_at` set but
-`phase2_completed_at` NULL either is still in-flight or aborted mid-pipeline
+from the phase timestamps: a row with a non-null `command_execution_completed_at`
+succeeded through command execution; a row with `start_at` set but
+`command_execution_completed_at` NULL either is still in-flight or aborted mid-pipeline
 (cross-check the SSE stream / `pipeline.log`). Useful columns:
 `trigger_type` (how the invocation was launched — `scheduled`, `manual`,
 or `emergency`), `trigger_source` (the run-type / origin label — for
@@ -731,7 +731,7 @@ scheduled fires `market_open`, `market_hours_rolling`, `pre_close`,
 `weekend_sunday`, or `off_hours_rolling`; `cli` for a
 manual `--once` run; `operator_console` for a command-center action;
 `continuous_monitor` for an emergency invocation),
-`trigger_reason` (free-form), `phase1_completed_at` / `phase2_completed_at`
+`trigger_reason` (free-form), `fill_collection_completed_at` / `command_execution_completed_at`
 (lifecycle), `git_sha_at_invocation` (the repo HEAD when the invocation
 ran — useful for confirming which code version a run executed under),
 `command_execution_summary_json` (PM command-submission detail),
@@ -766,8 +766,8 @@ unexplained silence in the SSE stream.
 
 **Failed invocation.** An `invocation_ended` event reporting a non-success
 terminal state. The `invocations` row has **no `status` or `exit_reason`
-column** — a failed run is identified by `phase2_completed_at` being NULL
-(often `phase1_completed_at` too). Tail `pipeline.log` (and the daemon's
+column** — a failed run is identified by `command_execution_completed_at` being NULL
+(often `fill_collection_completed_at` too). Tail `pipeline.log` (and the daemon's
 `pipeline.err.log`) for the traceback that names the failing layer.
 
 **Skipped invocations.** When you expected a scheduled fire (per § 4) and
@@ -832,11 +832,11 @@ invocation":
    frames become notifications.
 3. Wait for `invocation_started`. Record the `invocation_id`.
 4. Watch for `phase_transition` → `agent_started` → `agent_succeeded` pairs
-   covering every phase through `phase2`.
+   covering every phase through `command_execution`.
 5. Wait for `invocation_ended`. On success, summarize cost + wall-clock
    from the archive's per-agent `metadata.json` files. On failure, fetch
    the traceback from `pipeline.log` / `pipeline.err.log` — the
-   `invocations` row carries no `exit_reason`; a NULL `phase2_completed_at`
+   `invocations` row carries no `exit_reason`; a NULL `command_execution_completed_at`
    is the failure signal.
 6. Surface the `invocation_id` to the operator in any report — it's the
    entry point for follow-up archive inspection.
@@ -878,22 +878,22 @@ Optional `--since <ISO8601Z>` widens/narrows the discovery window; `--tz-offset
 (pass `7` for MST in winter). Paths are overridable via the `DB` / `LOG` / `ERR` /
 `ARCHROOT` env vars (prod defaults are baked in).
 
-It emits, as they happen: `PHASE1-COMPLETE` (ingestion + fill-collection summary);
+It emits, as they happen: `FILL-COLLECTION-COMPLETE` (ingestion + fill-collection summary);
 `ACT …` for every `activity_log` row of the run. A `RECONCILIATION_ALERT` row now
 means only an **orphan fill** that could not integrate (a poison-pill fill against a
 terminal/over-filled position, ALP-761) — the reconcile-adjudication path is deleted
 (ALP-854 / ADR-0001), so a positions/cash mismatch is silently rebuilt, never alerted.
-The watch also emits all Phase-2 actions (`ORDER_SUBMITTED` / `PM_DECISION` /
+The watch also emits all command-execution actions (`ORDER_SUBMITTED` / `PM_DECISION` /
 `CAPITAL_RESERVED` / …);
 `DISTILLATION` when `composite_state` is written; `AGENT <layer>/<name> success=…
 wall=… stop=…` per agent (the strategist's line is prefixed `>>> STRATEGIST`);
 `FILLS` on each `unprocessed`→`processed`/`quarantined` transition; `FAULT(log|err)`
-on a fresh non-benign traceback; and the terminal `PHASE2-COMPLETE` (+ a final
+on a fresh non-benign traceback; and the terminal `COMMAND-EXECUTION-COMPLETE` (+ a final
 positions / cash / fills dump) or `ABORT`. It is **silent while waiting** — no
 routine "still waiting" ticks — except a one-shot `WARN scheduler port 8765 DOWN`.
 
 **Why it covers "silence ≠ success."** A healthy run is proven only by
-`PHASE2-COMPLETE` (the sole positive success signal — there is no `status` column,
+`COMMAND-EXECUTION-COMPLETE` (the sole positive success signal — there is no `status` column,
 § 5.5). A hard crash writes **no** `metadata.json`, so the fault/abort legs catch
 what the per-agent leg can't: fresh `Traceback`/`CRITICAL`/`ERROR` in
 `pipeline.log` + `pipeline.err.log` (with the benign Windows asyncio-teardown noise
@@ -901,7 +901,7 @@ what the per-agent leg can't: fresh `Traceback`/`CRITICAL`/`ERROR` in
 — filtered out), plus the driver's `scheduled trigger=<rt> failed` /
 `scheduler exited with error`. And the **at-attach terminal check** handles a run
 that already finished or aborted before the watch started: it checks
-`phase2_completed_at` and greps the log (scoped to this run's own start + trigger)
+`command_execution_completed_at` and greps the log (scoped to this run's own start + trigger)
 once up front, emitting `ALREADY-COMPLETE` / `ALREADY-ABORTED` and exiting instead
 of polling a dead invocation. (Before this check, a watcher armed after a fast-fail
 abort polled a dead 17:00Z run for 20 min — 2026-06-02.)
@@ -910,7 +910,7 @@ Gotchas baked into the script (worth knowing when reading its output):
 
 - Some agents (`synthesizer`, `strategist`) record `tool_calls_used` instead of
   `retry_count`; a missing `retry` field is benign, not a failure.
-- The `FILLS unprocessed N→M` leg confirms Phase-1 ingestion before analysis even
+- The `FILLS unprocessed N→M` leg confirms fill-collection ingestion before analysis even
   starts — how both the 2026-06-01 poison-pill wedge and the 2026-06-02 ALP-824
   cross-writer fix were verified.
 - A manual `--once` run does not publish to SSE (§ 5.1), and its

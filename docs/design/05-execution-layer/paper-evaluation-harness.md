@@ -107,6 +107,6 @@ Enabled only when the adapter is configured for paper mode. In live mode, fills 
 ## Dependencies
 
 - [broker-adapter.md](broker-adapter.md) — the fills the harness annotates come from this adapter's fill stream
-- [architecture.md](architecture.md) — defines Phase 1 fill collection; the harness runs on collected fills
+- [architecture.md](architecture.md) — defines fill collection; the harness runs on collected fills
 - [state-persistence.md](state-persistence.md) — the `live_execution_estimate` metadata is persisted alongside raw fill records
 - [portfolio state — P/L](../01-data-layer/internal/portfolio-state.md) — delivers raw and live-adjusted P/L aggregates to downstream consumers

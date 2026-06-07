@@ -27,12 +27,12 @@ PM-rejected-proposal simulation → `counterfactual_replay_engine/`
 | `regt_margin_attribution/` | Reg T margin attribution — OCC TIMS / FINRA 4210 baseline v1 reference model. |
 | `thesis_model/` | Thesis model utilities for the execution layer. |
 | `venue_configuration/` | Venue configuration runtime — settlement / sessions / margin / fees. |
-| `write_paths/` | Phase 1 and Phase 2 write-path helpers. |
+| `write_paths/` | Fill-collection and command-execution write-path helpers. |
 <!-- END modules -->
 
 ## Key invariants
 
-- **Two-phase invocation**: Phase 1 collects, Phase 2 commits atomically.
+- **Two-phase invocation**: fill collection commits, then command execution commits atomically.
 - **Single-writer**: only the execution write paths mutate portfolio state.
 - OMS vocabulary is five commands — OPEN / CLOSE / ADJUST / CANCEL / ADD — no compound commands.
 - Every position carries mandatory thesis-linked protective brackets.

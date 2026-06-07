@@ -38,8 +38,8 @@ floor under every exit, and gives every fact one writer.
 
 - Attribution / ids: `oms/command_ids.py`, `oms/broker_dispatch.py`, `broker_adapter/order_{equity,options,mleg}.py`, `decision/portfolio_manager/submit_envelope/`.
 - Capture: `continuous_monitor/fill_stream_consumer/persistence.py` (`_resolve_oms_order_id`, `_quarantine_unattributed_fill`), `continuous_monitor/activities_backfill/`, `broker_adapter/queries.py` (`get_account_activities:491` — **dead, to wire**; `get_orders`, `get_positions`, `get_account`), `corporate_actions/fetcher.py` (CA v1beta1 endpoint — `WorthlessRemoval`/`UnitSplit`/etc. unhandled). **`OPASN`/`OPEXC`/`OPEXP` are account-activities types, absent from the codebase entirely** (the activities endpoint is never polled).
-- Projection / reconcile: `corporate_actions/reconciliation.py` (**delete the adjudication path**), `execution/write_paths/phase1.py` (`process_unprocessed_fills`), `scheduler/phase1_inputs.py`, `scheduler/orchestrator.py`.
-- Brackets: `write_paths/phase2/_shared.py:305` (**remove `alp-{order_id}` synthetic id**), `write_paths/phase2/open.py`, `continuous_monitor/bracket_stops/`, `state/tables/{brackets,bracket_legs}.py`.
+- Projection / reconcile: `corporate_actions/reconciliation.py` (**delete the adjudication path**), `execution/write_paths/fill_collection.py` (`process_unprocessed_fills`), `scheduler/fill_collection_inputs.py`, `scheduler/orchestrator.py`.
+- Brackets: `write_paths/command_execution/_shared.py:305` (**remove `alp-{order_id}` synthetic id**), `write_paths/command_execution/open.py`, `continuous_monitor/bracket_stops/`, `state/tables/{brackets,bracket_legs}.py`.
 - Monitor / writers: `continuous_monitor/{__main__,supervisor}.py`, `continuous_monitor/{breach_loop,greeks_refresh,borrow_accrual,emergency_trigger}/`, `persistence/session.py` (`BEGIN IMMEDIATE`/retry → cheap insurance).
 - Schema: `state/tables/*`, new Alembic baseline under `persistence/migrations/`.
 - Decision layer: `commands/` + OMS command schema (thesis-nature tag, thesis-shaped exits, capital floor), `decision/{portfolio_manager,strategist}/`.
@@ -111,7 +111,7 @@ on**, **Scope**, **Key files**, **Done when**.
 **W2a — Projection rebuild + delete reconcile-adjudication**
 - Depends on: W1a, W1c.
 - Scope: Make positions/cash a derived read-model rebuilt from the event log + the snapshot **checkpoint**. **Delete** `reconcile()`'s adjudication/auto-correct path and the `RECONCILIATION_ALERT/CORRECTION` emitters. A broker position with no Intent becomes a first-class projection state (attach/flag), not an alert.
-- Key files: `corporate_actions/reconciliation.py` (remove), `execution/write_paths/phase1.py`, `scheduler/phase1_inputs.py`.
+- Key files: `corporate_actions/reconciliation.py` (remove), `execution/write_paths/fill_collection.py`, `scheduler/fill_collection_inputs.py`.
 - Done when: a snapshot/projection mismatch triggers a rebuild (no adjudication, no alert insert); the DVN-style orphan surfaces as "broker fact, no Intent."
 
 **W2b — Per-thesis PnL/cost-basis in Intent, from the log**
@@ -125,7 +125,7 @@ on**, **Scope**, **Key files**, **Done when**.
 **W3a — Protective leg = Intent; kill synthetic ids; close ALP-837**
 - Depends on: W0a.
 - Scope: Model a protective leg as an Intent record (no broker id); remove `alp-{order_id}` minting; type the enforcement binding (broker-enforced vs monitor-enforced). "Cancel" of a monitor-enforced leg is a local state change.
-- Key files: `write_paths/phase2/_shared.py:305`, `write_paths/phase2/open.py`, `state/tables/{brackets,bracket_legs}.py`, `oms/broker_dispatch.py`.
+- Key files: `write_paths/command_execution/_shared.py:305`, `write_paths/command_execution/open.py`, `state/tables/{brackets,bracket_legs}.py`, `oms/broker_dispatch.py`.
 - Done when: no `alp-…` exists; CANCEL/ADJUST never targets a non-existent broker order (ALP-837 unrepresentable).
 
 **W3b — Thesis-nature tag + thesis-shaped trigger selection**
@@ -245,8 +245,8 @@ bare-sync `get_orders` on the event loop (`queries.py:480`) with the watchdog on
 loop, the monitor as a second writer (greeks RMW on the positions row), and the
 single-writer doc claim it violates.
 
-Corrections folded in: `BEGIN IMMEDIATE` + retry is **no longer Phase-1-only** — ALP-836
-(#300) extended it to Phase-2 (`write_paths/phase2/atomic.py`), so the primitives manage
+Corrections folded in: `BEGIN IMMEDIATE` + retry is **no longer fill-collection-only** — ALP-836
+(#300) extended it to command execution (`write_paths/command_execution/atomic.py`), so the primitives manage
 contention on both phases (the redesign still removes the need). The post-#300 durable
 order row is a **required pre-condition** before broker submit (the broker-carried link is
 what *demotes* it to an optional cache). Only the **first** equity price-stop + take-profit

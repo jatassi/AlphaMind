@@ -18,10 +18,10 @@ triage, and pointers to the surviving standalone scripts all live below.
 ## Purpose
 
 A green `verify_debug_e2e.py` run proves the pipeline composes end-to-end:
-Phase 1 ingest → snapshot assembly → `run_analysis_pipeline` (distillation +
+fill collection → snapshot assembly → `run_analysis_pipeline` (distillation +
 3 sector researchers + qualitative + adaptive + synthesizer) →
 `run_decision_pipeline` (analyst + strategist + proposal pre-processor + PM)
-→ Phase 2 envelope dispatch. The check helpers assert every load-bearing
+→ command execution envelope dispatch. The check helpers assert every load-bearing
 invariant the prior per-feature verify suite collectively covered:
 
 - All 12 in-invocation phases produced both `phase_start` + `phase_done`
@@ -272,7 +272,7 @@ set -a && source <(tr -d '\r' < .env) && set +a && \
 ```
 
 The bootstrap commits the two singleton rows in their own transaction;
-the same process then runs one `market_open` invocation through to Phase 2
+the same process then runs one `market_open` invocation through to command execution
 so the operator immediately sees the pipeline complete against the
 freshly-bootstrapped state. After it returns, start the daemon
 normally (no `--fresh-start`).
@@ -302,7 +302,7 @@ edit the guard; the runbook does not document that path.
 
 **Recovery if the first invocation fails.** The bootstrap commits the
 two singleton rows in their own transaction *before* the first
-invocation runs. If the invocation itself fails (Phase 1 error, missing
+invocation runs. If the invocation itself fails (fill collection error, missing
 collector data, transient external dependency), the singletons remain
 committed and a retry of `--fresh-start` will hard-fail. Recovery
 options, in order of preference:
@@ -430,9 +430,9 @@ rm -rf "$ARCHIVE_ROOT"/[0-9]*-[0-9]*-[0-9]* "$ARCHIVE_ROOT"/invocations
 What to watch for as events arrive:
 
 - **`phase_start` / `phase_done` pairs** — the 12 in-invocation phases
-  (`phase1`, `snapshot_assembly`, `distillation`, `domain_researchers`,
+  (`fill_collection`, `snapshot_assembly`, `distillation`, `domain_researchers`,
   `qualitative`, `adaptive`, `synthesizer`, `analyst`, `strategist`,
-  `pre_processor`, `pm`, `phase2`) fire in dependency-respecting order;
+  `pre_processor`, `pm`, `command_execution`) fire in dependency-respecting order;
   `domain_researchers`+`qualitative` and `analyst`+`strategist` overlap
   under their respective TaskGroups.
 - **`agent_response` with `stop_reason: null` and `output_tokens: 0`** —
@@ -583,7 +583,7 @@ Wall-clock varies sharply with cache state and seeded portfolio shape:
   total: distillation 4m 56s; parallel researchers 5–6.5 min (tech_semis
   6m 28s the longest, paired with `qualitative` 5m 38s); `adaptive` 7m
   58s; `synthesizer` 3m 10s; analyst/strategist parallel TaskGroup
-  3m 27s (analyst dominates; strategist 37 s); pm 2m 57s; phase2 29 ms.
+  3m 27s (analyst dominates; strategist 37 s); pm 2m 57s; command_execution 29 ms.
 
 See the archive's `progress.jsonl` for per-phase timings on a specific
 invocation; budget your iteration cadence against the higher end of
@@ -595,7 +595,7 @@ The motivating shape: the analyst SDK call hits its latency budget 9
 minutes into a debug-e2e run, the operator bumps
 `decision.analyst.latency_budget_s` in `config/run_types/<trigger>.yaml`,
 and re-invokes the verify wrapper with `--resume-from <inv-id>:<phase>`.
-The new invocation re-runs the deterministic prefix (phase1 +
+The new invocation re-runs the deterministic prefix (fill_collection +
 snapshot_assembly + distillation — all cheap, all deterministic against
 the synthetic portfolio fixture) and hydrates the upstream SDK-phase
 outputs from the prior archive, then runs the named target phase and
@@ -624,8 +624,8 @@ event; the next `phase_start` with no matching `phase_done` is the
 phase the original run died on. That is your resume target. The 9
 SDK-phase names recognized by `--resume-from` are: `tech_semis`,
 `financials`, `energy`, `qualitative`, `adaptive`, `synthesizer`,
-`analyst`, `strategist`, `pm`. The deterministic phases (`phase1`,
-`snapshot_assembly`, `distillation`, `pre_processor`, `phase2`) are
+`analyst`, `strategist`, `pm`. The deterministic phases (`fill_collection`,
+`snapshot_assembly`, `distillation`, `pre_processor`, `command_execution`) are
 always re-run from scratch on resume and cannot be named as the
 target — they are cheap and produce identical outputs against the
 synthetic fixture, so the resume contract does not need to
@@ -657,7 +657,7 @@ PASS: deterministic_prefix — 5 distillation file(s) byte-identical (N bytes ha
 | `FAIL: subprocess — debug-e2e subprocess exited N`       | CLI raised internally | Read `stderr` tail in the FAIL message; the orchestrator names the failing layer |
 | `FAIL: subprocess — ... OperationalError: no such table: <X>` | Debug DB behind alembic head — a migration that added `<X>` never ran on the snapshot | Compare `alembic current` (under `DATABASE_PATH=data/alphamind-debug-e2e.db`) against `alembic heads`; if they differ, re-snapshot (`scripts/snapshot_prod_for_debug_e2e.py --force`) or `alembic upgrade head` against the debug DB. See Prerequisites step 4 pre-flight |
 | `FAIL: archive_directory — archive directory missing`    | CLI never wrote the archive | The orchestrator died before `insert_invocation_record` committed — check `~/AlphaMind/logs/pipeline.log` |
-| `FAIL: archive_directory — resolved_config.json missing` | Phase 1 prep crashed | Same as above — orchestrator died before the resolved-config writer fired |
+| `FAIL: archive_directory — resolved_config.json missing` | Fill collection prep crashed | Same as above — orchestrator died before the resolved-config writer fired |
 | `FAIL: archive_directory — progress.jsonl missing`       | JSONL emitter never wired | Re-verify `DebugE2ESettings.emitter_factory` populated (story ALP-500) |
 | `FAIL: jsonl_ordering — missing phase_start for <name>`  | A pipeline stage never emitted its `phase_start` | Cross-check `src/alphamind/pipeline/{analysis,decision}.py` against the 12-in-invocation-phase ladder |
 | `FAIL: jsonl_ordering — phase_done for <name> precedes its own phase_start` | An emitter mis-emits | Same as above |
@@ -666,11 +666,11 @@ PASS: deterministic_prefix — 5 distillation file(s) byte-identical (N bytes ha
 | `FAIL: synthetic_portfolio — required table(s) missing`  | DB not migrated to head | Delete the debug DB; the CLI re-migrates on next run |
 | `FAIL: synthetic_portfolio — positions count expected 8` | Seeder didn't run | Either the seeder raised (check stderr) or a downstream stage truncated `positions` |
 | `FAIL: synthetic_portfolio — cash_ledger.current_cash_usd expected 24440.0` | Seeder bug or a downstream write mutated the row | Cross-check `wipe_and_seed` against `SYNTHETIC_PORTFOLIO.starting_cash_usd` |
-| `FAIL: no_alpaca — captured stream carries alpaca indicator(s)` | `LogOnlyAccountStateQueries` not wired | Verify `context.debug_e2e is not None` reaches `phase1_inputs.gather_phase1_inputs`; the import-linter contract should have caught this at lint time |
-| `FAIL: invocation_summary — staleness_flag expected false` | Phase 1 saw a stale data source | Inspect the staleness logger output in the pipeline log; debug-e2e seeds fresh state so this is a real regression |
+| `FAIL: no_alpaca — captured stream carries alpaca indicator(s)` | `LogOnlyAccountStateQueries` not wired | Verify `context.debug_e2e is not None` reaches `fill_collection_inputs.gather_fill_collection_inputs`; the import-linter contract should have caught this at lint time |
+| `FAIL: invocation_summary — staleness_flag expected false` | Fill collection saw a stale data source | Inspect the staleness logger output in the pipeline log; debug-e2e seeds fresh state so this is a real regression |
 | `FAIL: invocation_summary — trigger_source expected 'debug_e2e_cli'` | CLI dispatch routed to `_run_once` instead of `_run_debug_e2e` | The `--debug-e2e` argparse branch in `__main__.py` regressed |
 | `FAIL: invocation_summary — commands_submitted` | The orchestrator's typed return shape changed | Inspect `InvocationSummary` against `scheduler/orchestrator.py` |
-| `FAIL: deterministic_prefix — distillation file <name> differs` (resume only) | Non-determinism regression in phase1 / snapshot_assembly / distillation, OR the synthetic portfolio fixture changed between runs | First re-snapshot the debug DB (`scripts/snapshot_prod_for_debug_e2e.py --force`) in case the source archive's distillation was computed against drifted upstream state; if the FAIL repeats, `git bisect` for the regression starting from the source archive's commit |
+| `FAIL: deterministic_prefix — distillation file <name> differs` (resume only) | Non-determinism regression in fill_collection / snapshot_assembly / distillation, OR the synthetic portfolio fixture changed between runs | First re-snapshot the debug DB (`scripts/snapshot_prod_for_debug_e2e.py --force`) in case the source archive's distillation was computed against drifted upstream state; if the FAIL repeats, `git bisect` for the regression starting from the source archive's commit |
 
 For deeper investigation: every agent harness writes its own diagnostic
 archive under `<archive>/<YYYY-MM-DD>/<id>/analysis/<agent>/` (and
