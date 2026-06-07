@@ -1,7 +1,7 @@
 """activity_log_source_analysis_pipeline — widen the source CHECK (ALP-899)
 
 Revision ID: b899tr0000ff
-Revises: b001fc0000ee
+Revises: c001fb0000ff
 Create Date: 2026-06-07 00:00:00.000000
 
 ALP-899 wires the deliberative pipeline's thesis-resolution step, which emits
@@ -11,8 +11,9 @@ ALP-899 wires the deliberative pipeline's thesis-resolution step, which emits
 ``activity_log`` was created before this member existed carries a CHECK that
 rejects ``ANALYSIS_PIPELINE`` — this migration widens it.
 
-**Parented on** ``b001fc0000ee`` (the current head), so the chain stays linear
-(a single head — two Alembic heads break ``upgrade head``).
+**Parented on** ``c001fb0000ff`` (story 03's combined feedback-loop migration) —
+re-chained from the pre-03 head so the chain stays linear (a single head — two
+Alembic heads break ``upgrade head``).
 
 **Idempotent + drift-free on a fresh DB.** The genesis baseline
 (``a000000000aa``) is metadata-driven (``Base.metadata.create_all`` against the

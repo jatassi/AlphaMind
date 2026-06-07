@@ -85,9 +85,13 @@ def _classify_movement(
     movement is not distinguishable from noise (``INDISTINGUISHABLE``); a
     bandless metric only reads ``INDISTINGUISHABLE`` on an exact non-movement.
     """
-    if pre is None or post is None or post.insufficient_sample:
-        return _Movement.UNREADABLE
-    if pre.value is None or post.value is None:
+    if (
+        pre is None
+        or post is None
+        or post.insufficient_sample
+        or pre.value is None
+        or post.value is None
+    ):
         return _Movement.UNREADABLE
 
     if post.posterior_band is not None:
@@ -97,6 +101,12 @@ def _classify_movement(
         return _Movement.INDISTINGUISHABLE
 
     delta = post.value - pre.value
+    if delta == 0:
+        # A zero delta is a non-movement regardless of band shape — it must never
+        # fall through to ``moved_sign = -1`` (which would drive a directional
+        # verdict, and a spurious rollback obligation, off a degenerate post band
+        # that excludes its own point estimate).
+        return _Movement.INDISTINGUISHABLE
     expected_sign = _expected_sign(direction)
     if expected_sign == 0:
         # The registration expected no movement; any distinguishable move is
