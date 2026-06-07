@@ -1,6 +1,11 @@
 # Ordinal-phase rename — scope & plan
 
 Status: Spec (2026-06-06). No code changed yet — packaging deferred per operator.
+Reconciled against **ALP-129** (counterfactual replay engine, landed `94a531fc` / PR #326,
+2026-06-06): its new `execution/counterfactual_replay_engine/` package (17 modules) is
+**clean of `phase` references** and does *not* enter the blast radius; `.importlinter` was
+**untouched**. ALP-129 did, however, (a) enlarge `#1`'s existing surface and (b) move the
+alembic head — both folded in below.
 
 Governing decision: **[ADR 0006](../adr/0006-name-steps-by-behavior-not-ordinal-phase.md)** —
 code steps are named for what they do; nothing is named `phase N`. Canonical execution
@@ -53,6 +58,9 @@ The big one: a schema change that propagates across the stack and lands atomical
   these columns** (only trigger_type / trigger_source / active_mode / staleness_flag), so
   no constraint rebuild. Data preserved, no backfill. Provide a downgrade. Add a migration
   test (rename preserves rows).
+- **Head re-baselined by ALP-129:** the alembic head is now `a556rp0000dd`
+  (`add_counterfactual_replays`, revises `a867er0000cc`) — set this migration's
+  `down_revision = "a556rp0000dd"`, not the pre-ALP-129 head.
 
 **Python (string-literal & query sites — ~20 files):**
 - `state/tables/invocations.py` — model columns + class docstring.
@@ -78,6 +86,14 @@ The big one: a schema change that propagates across the stack and lands atomical
 - `orchestrator._run_phase1_write_unit`→`_run_fill_collection_write_unit`;
   `_update_row_phase1`/`_update_row_phase2`→`_update_row_fill_collection`/`…_command_execution`
 - `process_unprocessed_fills()` — **already behavior-named; keep.**
+- **ALP-129 enlarged this surface** (same files, bigger diff): a
+  `lookup_originating_proposal_json` seam now threads through `dispatch_phase2`
+  (`scheduler/phase2_dispatch.py`), and `write_paths/phase2/__init__.py` (`_emit_pm_decision`)
+  / `phase2/atomic.py` grew. New test symbols to rename: `TestDispatchPhase2OriginatingProposal`
+  / `TestDispatchPhase2Idempotency` (`tests/scheduler/test_phase2_dispatch.py`), plus fresh
+  `phase1/2_completed_at` + `write_paths.phase2` lines in
+  `tests/execution/state_persistence/test_phase2_write_path.py` and
+  `tests/scripts/test_report_emergency_invocations.py`.
 
 **`.importlinter` (CI gate — must update or `lint-imports` fails):**
 - Contract edges (lines ~413, 439, 440): `…execution.write_paths.phase2[.atomic]` →
