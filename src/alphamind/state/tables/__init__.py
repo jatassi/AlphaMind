@@ -29,6 +29,9 @@ from alphamind.state.tables.theses import ThesisRow
 from alphamind.state.tables.thesis_components import ThesisComponentRow
 from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
 from alphamind.state.tables.unattributed_fills import UnattributedFillRow
+from alphamind.state.tables.validation_outcomes import ValidationOutcomesRow
+from alphamind.state.tables.validations import ValidationsRow
+from alphamind.state.tables.weekly_digest_snapshots import WeeklyDigestSnapshotsRow
 
 __all__ = [
     "ActivityLogRow",
@@ -52,4 +55,7 @@ __all__ = [
     "ThesisPnlLedgerRow",
     "ThesisRow",
     "UnattributedFillRow",
+    "ValidationOutcomesRow",
+    "ValidationsRow",
+    "WeeklyDigestSnapshotsRow",
 ]

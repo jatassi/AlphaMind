@@ -26,6 +26,11 @@ from alphamind.state.repository.counterfactual_replays import (
     insert_counterfactual_replay,
     load_counterfactual_replays_for_envelope,
 )
+from alphamind.state.repository.digest_queries import (
+    insert_weekly_digest_snapshot,
+    read_weekly_digest_snapshot,
+    read_weekly_digest_snapshots_in_range,
+)
 from alphamind.state.repository.position_state import (
     PositionStateNotFoundError,
     PositionStateSnapshot,
@@ -36,6 +41,15 @@ from alphamind.state.repository.sql_option_price_provider import (
 )
 from alphamind.state.repository.sql_repository import (
     SqlPortfolioStateRepository,
+)
+from alphamind.state.repository.validation_queries import (
+    derive_validation_status,
+    insert_validation,
+    insert_validation_outcome,
+    mark_validation_superseded,
+    read_outcomes_by_artifact,
+    read_pending_validations,
+    read_validation,
 )
 
 
@@ -70,11 +84,21 @@ __all__ = [
     "SqlOptionPriceProvider",
     "SqlPortfolioStateRepository",
     "build_sql_portfolio_state_repository",
+    "derive_validation_status",
     "insert_counterfactual_replay",
+    "insert_validation",
+    "insert_validation_outcome",
+    "insert_weekly_digest_snapshot",
     "load_counterfactual_replays_for_envelope",
     "load_position_state_at",
+    "mark_validation_superseded",
     "read_intra_invocation_changelog",
     "read_most_recent_config_change_new_hash",
+    "read_outcomes_by_artifact",
+    "read_pending_validations",
     "read_position_modification_trail",
     "read_recent_pm_decision_log",
+    "read_validation",
+    "read_weekly_digest_snapshot",
+    "read_weekly_digest_snapshots_in_range",
 ]
