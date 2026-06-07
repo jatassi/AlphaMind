@@ -7,7 +7,7 @@ Status: Accepted — 2026-06-03
 AlphaMind kept a local SQLite copy of broker-owned execution facts — position
 quantity, fills, order status, cash — written by **two processes** (pipeline + continuous
 monitor) from **two authorities** (AlphaMind's own intent at submission; observed broker
-state from the fill stream), then reconciled toward Alpaca every Phase 1 under the
+state from the fill stream), then reconciled toward Alpaca every fill collection under the
 doctrine *"Alpaca's positions and account endpoints are the source of truth. On
 disagreement, Alpaca wins"* (`broker-adapter.md:186`). This dual-source-of-truth is the
 generator of a recurring bug class — husks, stranded fills, mis-booked PnL

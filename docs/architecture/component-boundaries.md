@@ -37,7 +37,7 @@ The system runs comfortably on 4 cores / 8 GB RAM. Splitting further adds operat
 
 ### Why a shared database instead of IPC?
 
-Processes interact at low-frequency boundaries: pipeline → monitor sends new orders (end of Phase 2, 8-10x/day); monitor → pipeline sends fills (start of Phase 1, 8-10x/day). A natural write-rows / read-rows pattern, durable across either process's restart.
+Processes interact at low-frequency boundaries: pipeline → monitor sends new orders (end of command execution, 8-10x/day); monitor → pipeline sends fills (start of fill collection, 8-10x/day). A natural write-rows / read-rows pattern, durable across either process's restart.
 
 ---
 
@@ -50,7 +50,7 @@ Processes interact at low-frequency boundaries: pipeline → monitor sends new o
 │  Scheduler → Data Collection → Distillation → Analysis →    │
 │              Decision → Execution (OMS command submission)   │
 │                                                              │
-│  Phase 1: read fills from DB    Phase 2: write orders to DB │
+│  Fill collection: read fills     Command execution: write orders │
 └──────────────┬──────────────────────────────┬────────────────┘
                │ read fills                   │ write orders
                ▼                              ▼
