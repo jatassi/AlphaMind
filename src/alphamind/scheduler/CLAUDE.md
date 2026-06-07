@@ -17,16 +17,16 @@ Design intent (historical): `docs/design/pipeline-control-and-events-schema.md`,
 | `account_activities_poll.py` | Scheduler-layer registration of the account-activities poll (ALP-846 / W1b). |
 | `borrow_accrual.py` | Scheduler-layer borrow-accrual accrual, relocated from the always-on monitor (ALP-855 / W4a). |
 | `borrow_accrual_kernel.py` | Pure recompute kernel for the daily borrow-accrual tick (ALP-719 / relocated ALP-855). |
+| `command_execution_dispatch.py` | Command-execution envelope dispatcher. |
 | `control/` | Pipeline ``/control`` + ``/events`` HTTP surface. |
 | `debug_e2e/` | Debug-e2e mode package — two-symbol public surface. |
 | `driver.py` | APScheduler driver for the pipeline scheduler. |
 | `emergency.py` | Emergency-invocation receiver task. |
+| `fill_collection_inputs.py` | Fill-collection input gatherer. |
 | `fresh_start.py` | First-run bootstrap of the cash_ledger + drawdown_state singletons. |
 | `invocation.py` | Per-invocation row composition. |
 | `logging_setup.py` | ``pipeline.log`` rotation setup for the scheduler. |
 | `orchestrator.py` | End-to-end phase orchestrator — ``run_invocation``. |
-| `fill_collection_inputs.py` | Fill-collection input gatherer. |
-| `command_execution_dispatch.py` | Command-execution envelope dispatcher. |
 | `progress.py` | Re-export of the kernel-level ``ProgressEmitter`` Protocol + NoOp default. |
 | `run_context.py` | Per-invocation context bundle for ``run_invocation``. |
 | `runtime.py` | Runtime-dimensions resolver — produce the four per-invocation runtime values. |

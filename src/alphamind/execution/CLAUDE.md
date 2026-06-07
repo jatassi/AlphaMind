@@ -27,7 +27,7 @@ PM-rejected-proposal simulation → `counterfactual_replay_engine/`
 | `regt_margin_attribution/` | Reg T margin attribution — OCC TIMS / FINRA 4210 baseline v1 reference model. |
 | `thesis_model/` | Thesis model utilities for the execution layer. |
 | `venue_configuration/` | Venue configuration runtime — settlement / sessions / margin / fees. |
-| `write_paths/` | Fill-collection and command-execution write-path helpers. |
+| `write_paths/` | fill collection and command execution write-path helpers. |
 <!-- END modules -->
 
 ## Key invariants
