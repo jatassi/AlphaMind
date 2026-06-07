@@ -366,6 +366,8 @@ name = feedback_loop metric cores are pure — no sqlalchemy / session / reposit
 type = forbidden
 source_modules =
     alphamind.feedback_loop.metrics
+    alphamind.feedback_loop.citation.parser
+    alphamind.feedback_loop.citation.chain
 forbidden_modules =
     sqlalchemy
     alphamind.persistence.models

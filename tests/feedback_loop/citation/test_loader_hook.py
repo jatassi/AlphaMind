@@ -28,7 +28,6 @@ from alphamind.persistence.session import (
     make_engine,
     make_session_factory,
 )
-from alphamind.portfolio_state.records.theses import ThesisComponentOutcome
 from alphamind.state.repository.agent_calls_queries import insert_agent_call
 from alphamind.state.tables.agent_calls import AgentCallRecord
 from tests.state._fk_substrate import stub_invocation_row, stub_process_lifetime_row
@@ -121,9 +120,7 @@ class TestRefsHook:
         assert by_id["QR-1"].cited_in_synthesis is False
         assert by_id["SA-TECH-1"].ref.source is CitationSource.SA_TECH
 
-    async def test_empty_when_no_artifacts(
-        self, session: tuple[AsyncSession, Path]
-    ) -> None:
+    async def test_empty_when_no_artifacts(self, session: tuple[AsyncSession, Path]) -> None:
         sess, _root = session
         await insert_agent_call(sess, _agent_call("synth", "synthesizer", None))
         await sess.commit()

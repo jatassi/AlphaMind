@@ -33,8 +33,6 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from alphamind.analysis.synthesizer.models import REF_ID_RE, parse_reference_id
-
 if TYPE_CHECKING:
     from alphamind.portfolio_state.records.theses import ThesisComponentOutcome
 
@@ -69,8 +67,14 @@ class CitationSource(enum.StrEnum):
     CR = "cr"
 
 
-# Map a synthesizer ``ReferencePrefix`` value to the producing source. Sub-typed
-# variants fold to their base; only upstream-producible prefixes appear here.
+# The upstream reference-ID prefix taxonomy, mapped to the producing source.
+# Mirrors the as-built synthesizer
+# :class:`alphamind.analysis.synthesizer.models.ReferencePrefix` (the canonical
+# producer-side grammar) — inlined rather than imported because that module
+# transitively pulls ``sqlalchemy`` via ``analysis._shared``, which the
+# feedback-loop metric-core purity contract forbids. Sub-typed variants fold to
+# their base source; only upstream-producible prefixes appear (consumer-layer
+# REC / SA / SA-ORD / ENV IDs are deliberately absent).
 _PREFIX_TO_SOURCE: dict[str, CitationSource] = {
     "SA-TECH": CitationSource.SA_TECH,
     "SA-TECH-ANOM": CitationSource.SA_TECH,
@@ -86,6 +90,37 @@ _PREFIX_TO_SOURCE: dict[str, CitationSource] = {
     "AR": CitationSource.AR,
     "CR": CitationSource.CR,
 }
+
+# Longest-match prefix order: a sub-typed prefix (``SA-TECH-ANOM``) must beat its
+# base (``SA-TECH``) so ``SA-TECH-ANOM-3`` resolves to the sub-type, never to
+# ``SA-TECH`` with a ``ANOM-3`` tail (mirrors the synthesizer's parse table).
+_PREFIXES_BY_LENGTH: tuple[str, ...] = tuple(sorted(_PREFIX_TO_SOURCE, key=len, reverse=True))
+
+# Bracketed-citation marker: ``[<prefix-segments>-<digits>]`` in narrative prose.
+# Matches the as-built synthesizer ``REF_ID_RE``; the source filter narrows to
+# the upstream taxonomy.
+REF_ID_RE = re.compile(r"\[([A-Z][A-Z0-9-]*-[0-9]+)\]")
+
+
+def _parse_upstream_index(ref_id: str) -> int | None:
+    """Return the positive index of an upstream *ref_id*, or ``None``.
+
+    Longest-match over :data:`_PREFIXES_BY_LENGTH`; rejects unknown prefixes,
+    missing / non-integer / non-positive indexes, and empty input — the same
+    contract as the synthesizer's ``parse_reference_id`` over the upstream subset.
+    """
+    if not ref_id:
+        return None
+    for prefix in _PREFIXES_BY_LENGTH:
+        head = f"{prefix}-"
+        if not ref_id.startswith(head):
+            continue
+        tail = ref_id[len(head) :]
+        if not tail.isdigit():
+            return None
+        index = int(tail)
+        return index if index > 0 else None
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,11 +159,12 @@ def classify_source(ref_id: str) -> CitationSource | None:
     Sub-typed prefixes fold to their base source (``SA-TECH-ANOM-3`` →
     :attr:`CitationSource.SA_TECH`).
     """
-    parsed = parse_reference_id(ref_id)
-    if parsed is None:
+    if _parse_upstream_index(ref_id) is None:
         return None
-    prefix, _index = parsed
-    return _PREFIX_TO_SOURCE.get(prefix.value)
+    for prefix in _PREFIXES_BY_LENGTH:
+        if ref_id.startswith(f"{prefix}-"):
+            return _PREFIX_TO_SOURCE[prefix]
+    return None
 
 
 def extract_citations(text: str) -> tuple[str, ...]:

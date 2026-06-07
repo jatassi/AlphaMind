@@ -284,9 +284,10 @@ def _read_output_payload(output_artifact_ref: str | None) -> object | None:
     except OSError:
         return None
     try:
-        return json.loads(raw)
+        payload: object = json.loads(raw)
     except json.JSONDecodeError:
         return None
+    return payload
 
 
 def _synthesis_text(payload: object) -> str:
@@ -336,9 +337,7 @@ def _read_component_citations(session: Session) -> tuple[ComponentCitation, ...]
             if row.resolution_outcome is not None
             else None
         )
-        citations.append(
-            ComponentCitation(cited_refs=frozenset(cited), resolution_outcome=outcome)
-        )
+        citations.append(ComponentCitation(cited_refs=frozenset(cited), resolution_outcome=outcome))
     return tuple(citations)
 
 
