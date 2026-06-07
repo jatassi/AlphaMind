@@ -87,6 +87,7 @@ def _pm_entry(
     evaluation_json: dict[str, Any] | None = None,
     modifications_json: list[dict[str, Any]] | None = None,
     originating_proposal_json: dict[str, Any] | None = None,
+    anti_patterns_json: list[str] | None = None,
     invocation_id: str = "inv-1",
     timestamp: datetime = _TS,
 ) -> ActivityLogEntry:
@@ -104,6 +105,7 @@ def _pm_entry(
         resulting_command_ids=(),
         verdict=verdict,
         originating_proposal_json=originating_proposal_json or {},
+        anti_patterns_json=anti_patterns_json or [],
     )
     return ActivityLogEntry(
         entry_id=f"ent-{_ENTRY_SEQ[0]}",
@@ -319,6 +321,59 @@ class TestAnalystConvictionDistribution:
         assert _compute("analyst_conviction_rate__1", dataset).value == 0.0
         assert _compute("analyst_conviction_rate__3", dataset).value == 0.0
         assert _compute("analyst_conviction_rate__4", dataset).value == 0.0
+
+
+class TestAntiPatternFrequency:
+    """ALP-911: per-pattern frequency over the window's PM decisions.
+
+    Each ``anti_pattern_frequency__<name>`` is ``count(decisions tagged name) /
+    count(all PM decisions)``; the five names come from ``get_args(AntiPattern)``.
+    """
+
+    def test_per_pattern_rate_over_all_pm_decisions(self) -> None:
+        log = (
+            _pm_entry(
+                verdict=PMVerdict.REJECT,
+                anti_patterns_json=["sunk_cost_persistence", "conviction_inflation"],
+            ),
+            _pm_entry(
+                verdict=PMVerdict.APPROVE,
+                anti_patterns_json=["sunk_cost_persistence"],
+            ),
+            # A decision the PM flagged no anti-pattern on: in the denominator only.
+            _pm_entry(verdict=PMVerdict.APPROVE, anti_patterns_json=[]),
+            # A strategist decision counts toward the denominator too.
+            _pm_entry(
+                verdict=PMVerdict.APPROVE,
+                source_provenance="pm_strategist",
+                recommendation_type="position_assessment",
+            ),
+        )
+        dataset = _dataset(log)
+        sunk = _compute("anti_pattern_frequency__sunk_cost_persistence", dataset)
+        assert sunk.value == 2 / 4
+        assert sunk.sample_size == 4
+        conviction = _compute("anti_pattern_frequency__conviction_inflation", dataset)
+        assert conviction.value == 1 / 4
+        assert (
+            _compute("anti_pattern_frequency__rationalized_continuation", dataset).value == 0.0
+        )
+
+    def test_all_five_canonical_patterns_register(self) -> None:
+        from typing import get_args
+
+        from alphamind.commands.pm_envelope import AntiPattern
+        from alphamind.feedback_loop.digest.generator import _anti_pattern_metric_id
+
+        listed = {m.metric_id for m in list_metrics()}
+        for name in get_args(AntiPattern):
+            # The id is exactly the one the already-landed digest reads.
+            assert _anti_pattern_metric_id(name) in listed
+
+    def test_empty_log_gives_none_value(self) -> None:
+        result = _compute("anti_pattern_frequency__sunk_cost_persistence", _dataset(()))
+        assert result.value is None
+        assert result.sample_size == 0
 
 
 def _strategist_log() -> tuple[ActivityLogEntry, ...]:

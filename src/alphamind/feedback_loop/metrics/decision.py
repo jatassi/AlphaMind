@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, get_args
 
 from alphamind.commands.pm_envelope import (
     AdjustmentCategory,
+    AntiPattern,
     PositionActionEvaluation,
     SourceProvenance,
     ThesisQualityEvaluation,
@@ -273,6 +274,31 @@ def _modification_categories(dataset: WindowDataset) -> tuple[str, ...]:
     )
 
 
+# ---------------------------------------------------------------------------
+# Anti-pattern frequency (per-pattern rate over the window's PM decisions)
+# ---------------------------------------------------------------------------
+
+#: The five canonical anti-pattern strings (``commands.pm_envelope.AntiPattern``),
+#: sourced via ``get_args`` so the metric ids cannot drift from the envelope contract.
+#: A pattern added to the Literal mints its frequency metric here automatically — and
+#: the digest's ``_anti_pattern_metric_id`` reads the same names.
+_ANTI_PATTERN_NAMES: tuple[str, ...] = get_args(AntiPattern)
+
+#: The metric-id prefix the digest's ``_anti_pattern_metric_id`` joins on.
+_ANTI_PATTERN_ID_PREFIX = "anti_pattern_frequency"
+
+
+def _anti_pattern_frequency_compute(
+    metric_id: MetricId, pattern: str
+) -> Callable[[WindowDataset, Conditioning], MetricResult]:
+    def _compute(dataset: WindowDataset, conditioning: Conditioning) -> MetricResult:
+        decisions = _pm_decisions(_conditioned(dataset, conditioning))
+        tagged = sum(pattern in d.anti_patterns_json for d in decisions)
+        return rate_result(metric_id, tagged, len(decisions))
+
+    return _compute
+
+
 # The conditioning dimensions reachable from the existing WindowDataset bundles: the
 # pm_decision_log↔agent_calls join on invocation_id exposes the PM agent call's
 # model_id (MODEL_VERSION) and prompt_git_sha (PROMPT_VERSION). REGIME / SECTOR / etc.
@@ -314,6 +340,32 @@ _PM_METRICS: tuple[Metric, ...] = (
         population=_modification_categories,
     ),
 )
+
+
+def _anti_pattern_metrics() -> tuple[Metric, ...]:
+    """One per-pattern frequency ``Metric`` per canonical ``AntiPattern`` string.
+
+    Each id is ``anti_pattern_frequency__<name>`` — the exact id the digest's
+    ``_anti_pattern_metric_id`` reads. Unlike a distribution, the patterns do not
+    partition (a decision may carry several), so each is its own rate over the same
+    PM-decision denominator rather than a ``_distribution_metrics`` bin group.
+    """
+    metrics: list[Metric] = []
+    for name in _ANTI_PATTERN_NAMES:
+        metric_id = MetricId(f"{_ANTI_PATTERN_ID_PREFIX}__{name}")
+        metrics.append(
+            Metric(
+                metric_id=metric_id,
+                po_type="process",
+                default_window=Window.WEEKLY,
+                supported_conditioning=_PM_SUPPORTED_CONDITIONING,
+                compute=_anti_pattern_frequency_compute(metric_id, name),
+            )
+        )
+    return tuple(metrics)
+
+
+_ANTI_PATTERN_METRICS: tuple[Metric, ...] = _anti_pattern_metrics()
 
 
 # ---------------------------------------------------------------------------
@@ -464,4 +516,6 @@ _STRATEGIST_METRICS: tuple[Metric, ...] = (
 )
 
 
-METRICS: tuple[Metric, ...] = _PM_METRICS + _ANALYST_METRICS + _STRATEGIST_METRICS
+METRICS: tuple[Metric, ...] = (
+    _PM_METRICS + _ANTI_PATTERN_METRICS + _ANALYST_METRICS + _STRATEGIST_METRICS
+)
