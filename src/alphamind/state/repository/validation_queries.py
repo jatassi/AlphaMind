@@ -36,6 +36,7 @@ from alphamind.feedback_loop.validation.records import (
     ValidationOutcomeRecord,
     ValidationRecord,
 )
+from alphamind.state.tables._singleton_codec import datetime_to_iso_z
 from alphamind.state.tables.validation_outcomes import ValidationOutcomesRow
 from alphamind.state.tables.validation_outcomes_codec import (
     record_to_row as outcome_record_to_row,
@@ -115,7 +116,7 @@ def mark_validation_superseded(
     if row is None:
         msg = f"no validation row found for id={validation_id!r}"
         raise ValueError(msg)
-    row.superseded_at = at.isoformat().replace("+00:00", "Z")
+    row.superseded_at = datetime_to_iso_z(at, field_name="superseded_at")
     row.superseded_reason = reason.value
 
 
@@ -161,14 +162,11 @@ def read_pending_validations(
     Results are ordered by ``registered_at`` ascending so callers get the
     oldest-first window for evaluation scheduling.
     """
-    # Subquery: validation_ids that already have an outcome.
-    evaluated_ids_subq = select(ValidationOutcomesRow.validation_id).subquery()
-
     stmt = (
         select(ValidationsRow)
         .where(
             ValidationsRow.superseded_at.is_(None),
-            ValidationsRow.validation_id.not_in(select(evaluated_ids_subq.c.validation_id)),
+            ValidationsRow.validation_id.not_in(select(ValidationOutcomesRow.validation_id)),
         )
         .order_by(ValidationsRow.registered_at.asc())
     )

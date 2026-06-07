@@ -14,14 +14,37 @@ harness write-hook (story 04a) and the per-agent calibration analysis (06*):
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from alphamind.state.tables.agent_calls import AgentCallRecord, AgentCallsRow
-from alphamind.state.tables.agent_calls_codec import decode_agent_call, encode_agent_call
+from alphamind.state.tables.agent_calls_codec import record_to_row, row_to_record
 from alphamind.state.tables.invocations import InvocationRow
+
+# Length of the ``YYYY-MM-DDTHH:MM:SS`` second-precision prefix shared by every
+# ISO-8601 timestamp the codebase writes, regardless of its suffix.
+_SECOND_PREFIX_LEN = 19
+
+
+def _second_prefix(value: datetime) -> str:
+    """Render a window bound as its ``YYYY-MM-DDTHH:MM:SS`` second prefix (UTC).
+
+    ``invocations.start_at`` is a Text column written by two paths with
+    *different* sub-second precision: the scheduler / operator paths emit
+    second precision (``strftime("%Y-%m-%dT%H:%M:%SZ")``) while the
+    fill-collection recovery path emits microsecond precision
+    (``isoformat().replace("+00:00", "Z")``). The suffixes therefore differ
+    (``Z`` 0x5A vs ``.`` 0x2E vs ``+`` 0x2B), so a naive lexicographic range
+    filter over the raw column mis-sorts at sub-second boundaries.
+
+    Comparing the bound's second prefix against the column's second prefix
+    (``substr(start_at, 1, 19)``) is chronologically faithful at second
+    granularity for *every* stored value regardless of which writer produced
+    it, which is the resolution callers need for invocation-start windows.
+    """
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 async def insert_agent_call(session: AsyncSession, record: AgentCallRecord) -> None:
@@ -31,7 +54,7 @@ async def insert_agent_call(session: AsyncSession, record: AgentCallRecord) -> N
     flushes (``flush()`` or ``commit()``). Immutable once written — no UPDATE
     path is provided.
     """
-    row = AgentCallsRow(**encode_agent_call(record))
+    row = AgentCallsRow(**record_to_row(record))
     session.add(row)
 
 
@@ -46,7 +69,7 @@ async def read_agent_calls_for_invocation(
         .order_by(AgentCallsRow.attempt_number.asc(), AgentCallsRow.agent_call_id.asc())
     )
     result = await session.execute(stmt)
-    return tuple(decode_agent_call(row) for row in result.scalars())
+    return tuple(row_to_record(row) for row in result.scalars())
 
 
 async def read_agent_calls_in_window(
@@ -60,19 +83,18 @@ async def read_agent_calls_in_window(
     ``invocations.start_at``. The start bound is inclusive, the end bound is
     exclusive.
     """
-    start_iso = start.isoformat()
-    end_iso = end.isoformat()
+    start_at_prefix = func.substr(InvocationRow.start_at, 1, _SECOND_PREFIX_LEN)
     stmt = (
         select(AgentCallsRow)
         .join(InvocationRow, AgentCallsRow.invocation_id == InvocationRow.invocation_id)
         .where(
-            InvocationRow.start_at >= start_iso,
-            InvocationRow.start_at < end_iso,
+            start_at_prefix >= _second_prefix(start),
+            start_at_prefix < _second_prefix(end),
         )
         .order_by(InvocationRow.start_at.asc(), AgentCallsRow.attempt_number.asc())
     )
     result = await session.execute(stmt)
-    return tuple(decode_agent_call(row) for row in result.scalars())
+    return tuple(row_to_record(row) for row in result.scalars())
 
 
 async def read_agent_calls_for_agent(
@@ -87,20 +109,19 @@ async def read_agent_calls_for_agent(
     the window bounds, matching the same inclusive-start / exclusive-end
     semantics as :func:`read_agent_calls_in_window`.
     """
-    start_iso = start.isoformat()
-    end_iso = end.isoformat()
+    start_at_prefix = func.substr(InvocationRow.start_at, 1, _SECOND_PREFIX_LEN)
     stmt = (
         select(AgentCallsRow)
         .join(InvocationRow, AgentCallsRow.invocation_id == InvocationRow.invocation_id)
         .where(
             AgentCallsRow.agent_name == agent_name,
-            InvocationRow.start_at >= start_iso,
-            InvocationRow.start_at < end_iso,
+            start_at_prefix >= _second_prefix(start),
+            start_at_prefix < _second_prefix(end),
         )
         .order_by(InvocationRow.start_at.asc(), AgentCallsRow.attempt_number.asc())
     )
     result = await session.execute(stmt)
-    return tuple(decode_agent_call(row) for row in result.scalars())
+    return tuple(row_to_record(row) for row in result.scalars())
 
 
 __all__ = [

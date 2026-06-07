@@ -17,11 +17,8 @@ from alphamind.feedback_loop.validation.records import (
     ValidationOutcomeRecord,
     Verdict,
 )
+from alphamind.state.tables._singleton_codec import datetime_to_iso_z
 from alphamind.state.tables.validation_outcomes import ValidationOutcomesRow
-
-
-def _isoformat(ts: datetime) -> str:
-    return ts.isoformat().replace("+00:00", "Z")
 
 
 def _parse_isoformat(text: str) -> datetime:
@@ -33,7 +30,7 @@ def record_to_row(record: ValidationOutcomeRecord) -> ValidationOutcomesRow:
     return ValidationOutcomesRow(
         outcome_id=str(record.outcome_id),
         validation_id=str(record.validation_id),
-        evaluated_at=_isoformat(record.evaluated_at),
+        evaluated_at=datetime_to_iso_z(record.evaluated_at, field_name="evaluated_at"),
         evaluated_by_session_id=record.evaluated_by_session_id,
         verdict=record.verdict.value,
         posterior_summary_json=json.dumps(record.posterior_summary),

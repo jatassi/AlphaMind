@@ -3,7 +3,7 @@
 Covers:
 * ``AgentCallRecord`` + ``AgentCallsRow`` — column shape, CHECK constraints,
   FK to ``invocations``.
-* Codec round-trip: ``encode_agent_call`` → ``decode_agent_call`` equals original
+* Codec round-trip: ``record_to_row`` → ``row_to_record`` equals original
   for all-populated and minimally-populated records.
 * ``insert_agent_call`` + ``read_agent_calls_for_invocation`` — insert then read
   back from the same invocation; different invocation not returned.
@@ -42,7 +42,7 @@ from alphamind.state.tables.agent_calls import (
     AgentCallRecord,
     AgentCallsRow,
 )
-from alphamind.state.tables.agent_calls_codec import decode_agent_call, encode_agent_call
+from alphamind.state.tables.agent_calls_codec import record_to_row, row_to_record
 from tests.state._fk_substrate import (
     stub_invocation_row,
     stub_process_lifetime_row,
@@ -195,7 +195,7 @@ def _make_failed_record(
 class TestRoundTrip:
     def test_full_record_round_trips(self) -> None:
         record = _make_record()
-        assert decode_agent_call(encode_agent_call(record)) == record
+        assert row_to_record(record_to_row(record)) == record
 
     def test_minimal_record_round_trips(self) -> None:
         """All nullable optionals set to None."""
@@ -207,11 +207,11 @@ class TestRoundTrip:
             error_class=None,
             error_message=None,
         )
-        assert decode_agent_call(encode_agent_call(record)) == record
+        assert row_to_record(record_to_row(record)) == record
 
     def test_failed_record_with_error_class_round_trips(self) -> None:
         record = _make_failed_record()
-        assert decode_agent_call(encode_agent_call(record)) == record
+        assert row_to_record(record_to_row(record)) == record
 
     def test_all_error_class_members_round_trip(self) -> None:
         for member in AgentCallErrorClass:
@@ -220,11 +220,11 @@ class TestRoundTrip:
                 invocation_id=_INV_MID,
                 agent_name="analyst",
             )
-            record = AgentCallRecord(**{**encode_agent_call(record), "error_class": member})
-            assert decode_agent_call(encode_agent_call(record)) == record
+            record = AgentCallRecord(**{**record_to_row(record), "error_class": member})
+            assert row_to_record(record_to_row(record)) == record
 
     def test_decode_accepts_orm_row(self, session: Session) -> None:
-        """``decode_agent_call`` works with an ORM row (attribute access), not just dicts."""
+        """``row_to_record`` works with an ORM row (attribute access), not just dicts."""
         # Seed the FK targets in dependency order (PLT → invocation).
         session.add(stub_process_lifetime_row())
         session.flush()
@@ -232,7 +232,7 @@ class TestRoundTrip:
         session.flush()
 
         record = _make_record()
-        row = AgentCallsRow(**encode_agent_call(record))
+        row = AgentCallsRow(**record_to_row(record))
         session.add(row)
         session.flush()
         session.expire(row)
@@ -242,7 +242,7 @@ class TestRoundTrip:
         fetched = session.execute(
             select(AgentCallsRow).where(AgentCallsRow.agent_call_id == record.agent_call_id)
         ).scalar_one()
-        assert decode_agent_call(fetched) == record
+        assert row_to_record(fetched) == record
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +335,99 @@ class TestWindowFilter:
             datetime(2031, 1, 1, tzinfo=UTC),
         )
         assert loaded == ()
+
+
+# ---------------------------------------------------------------------------
+# Cycle 3b — window filter against the PRODUCTION ``Z``-suffix start_at format
+#
+# ``invocations.start_at`` is written with a literal ``Z`` suffix (never the
+# ``+00:00`` form ``datetime.isoformat()`` yields), and the fill-collection
+# recovery path writes it at *microsecond* precision (``...SS.ffffffZ``) while
+# the scheduler / operator paths write second precision (``...SSZ``). The
+# window filter compares this Text column lexicographically; a naive
+# ``bound.isoformat()`` mis-sorts at sub-second boundaries because the stored
+# fractional suffix ``.`` (0x2E) and the bound suffix ``+`` (0x2B) order
+# inconsistently with chronology. These tests seed the production microsecond
+# ``Z`` format (NOT ``+00:00``) so the bug is observable; the broader
+# ``async_db`` fixture masks it by seeding the ``+00:00`` form.
+# ---------------------------------------------------------------------------
+
+# ``fill_collection`` writes start_at via ``isoformat().replace("+00:00","Z")``,
+# i.e. microsecond precision with a literal ``Z``. The invocation begins one
+# microsecond into second 09:00:51.
+_TS_MICRO_Z = "2026-06-01T09:00:51.000001Z"
+_INV_MICRO = "inv-micro-z"
+
+
+class TestWindowFilterProductionZFormat:
+    @pytest.fixture()
+    async def async_session_z(
+        self,
+        tmp_path: Path,
+    ) -> AsyncIterator[AsyncSession]:
+        """Async session with one invocation seeded in the microsecond ``Z`` format."""
+        db_path = tmp_path / "agent_calls_z_test.db"
+        sync_engine = make_engine(str(db_path))
+        Base.metadata.create_all(sync_engine)
+        with make_session_factory(sync_engine)() as sess:
+            sess.add(stub_process_lifetime_row(_PLT))
+            sess.flush()
+            inv = stub_invocation_row(_INV_MICRO, process_lifetime_id=_PLT)
+            inv.start_at = _TS_MICRO_Z  # production Z-suffix microsecond format
+            sess.add(inv)
+            sess.commit()
+        sync_engine.dispose()
+
+        async_engine = make_async_engine(str(db_path))
+        factory = make_async_session_factory(async_engine)
+        async with factory() as sess:
+            yield sess
+        await async_engine.dispose()
+
+    async def test_subsecond_stored_value_included_for_same_second_bound(
+        self, async_session_z: AsyncSession
+    ) -> None:
+        """A microsecond-``Z`` invocation is included by a window opening in its second.
+
+        The invocation began at ``09:00:51.000001Z``; the window's inclusive
+        start bound ``09:00:51.5`` is in the *same* second, so at second
+        granularity the call falls in ``[start, end)``. The buggy
+        ``start.isoformat()`` bound (``09:00:51.500000+00:00``) compares
+        ``09:00:51.000001`` < ``09:00:51.500000`` and wrongly *excludes* the
+        call; the second-prefix fix includes it.
+        """
+        record = _make_record(agent_call_id="call-micro", invocation_id=_INV_MICRO)
+        await insert_agent_call(async_session_z, record)
+        await async_session_z.flush()
+
+        loaded = await read_agent_calls_in_window(
+            async_session_z,
+            datetime(2026, 6, 1, 9, 0, 51, 500000, tzinfo=UTC),
+            datetime(2026, 6, 1, 9, 2, 23, 500000, tzinfo=UTC),
+        )
+        assert len(loaded) == 1
+        assert loaded[0].agent_call_id == "call-micro"
+
+    async def test_for_agent_subsecond_stored_value_included_for_same_second_bound(
+        self, async_session_z: AsyncSession
+    ) -> None:
+        """``read_agent_calls_for_agent`` shares the same Z-format-correct bounds."""
+        record = _make_record(
+            agent_call_id="call-micro-analyst",
+            invocation_id=_INV_MICRO,
+            agent_name="analyst",
+        )
+        await insert_agent_call(async_session_z, record)
+        await async_session_z.flush()
+
+        loaded = await read_agent_calls_for_agent(
+            async_session_z,
+            "analyst",
+            datetime(2026, 6, 1, 9, 0, 51, 500000, tzinfo=UTC),
+            datetime(2026, 6, 1, 9, 2, 23, 500000, tzinfo=UTC),
+        )
+        assert len(loaded) == 1
+        assert loaded[0].agent_call_id == "call-micro-analyst"
 
 
 # ---------------------------------------------------------------------------

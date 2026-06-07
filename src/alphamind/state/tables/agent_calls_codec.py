@@ -2,16 +2,16 @@
 
 Mirrors the counterfactual_replays_codec pattern:
 
-* ``encode_agent_call(record) -> dict[str, Any]`` — projects a record to a
+* ``record_to_row(record) -> dict[str, Any]`` — projects a record to a
   column-keyed dict for INSERT.
-* ``decode_agent_call(row) -> AgentCallRecord`` — rehydrates a column-keyed
+* ``row_to_record(row) -> AgentCallRecord`` — rehydrates a column-keyed
   dict (or ORM row attribute-access) back into the typed record.
 
 ``error_class`` encodes to its ``.value`` and decodes back to the enum member.
 All other fields are primitive types (str, int, bool) that pass through
 without transformation.
 
-Round-trip property: ``decode_agent_call(encode_agent_call(r)) == r`` for
+Round-trip property: ``row_to_record(record_to_row(r)) == r`` for
 every valid ``AgentCallRecord``.
 """
 
@@ -22,7 +22,7 @@ from typing import Any
 from alphamind.state.tables.agent_calls import AgentCallErrorClass, AgentCallRecord
 
 
-def encode_agent_call(record: AgentCallRecord) -> dict[str, Any]:
+def record_to_row(record: AgentCallRecord) -> dict[str, Any]:
     """Project an ``AgentCallRecord`` to a column-keyed dict for INSERT."""
     return {
         "agent_call_id": record.agent_call_id,
@@ -49,10 +49,10 @@ def encode_agent_call(record: AgentCallRecord) -> dict[str, Any]:
     }
 
 
-def decode_agent_call(row: Any) -> AgentCallRecord:
+def row_to_record(row: Any) -> AgentCallRecord:
     """Rehydrate a column-keyed dict or ORM row into an ``AgentCallRecord``.
 
-    Accepts both a plain ``dict`` (from ``encode_agent_call``) and an ORM row
+    Accepts both a plain ``dict`` (from ``record_to_row``) and an ORM row
     (attribute access) so the same function serves both round-trip tests and
     the live read path.
     """
@@ -85,4 +85,4 @@ def decode_agent_call(row: Any) -> AgentCallRecord:
     )
 
 
-__all__ = ["decode_agent_call", "encode_agent_call"]
+__all__ = ["record_to_row", "row_to_record"]
