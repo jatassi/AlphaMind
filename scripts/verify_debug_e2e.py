@@ -568,7 +568,7 @@ def check_synthetic_portfolio_visibility(
     linked to such positions). The seeder writes ``entry_timestamp`` at seed
     time on every fixture row, so seeded rows always match; PM-dispatched
     OPEN commands write PENDING position skeletons with ``entry_timestamp
-    IS NULL`` (Phase 1 sets it on fill) and the log-only broker in debug-e2e
+    IS NULL`` (fill collection sets it on fill) and the log-only broker in debug-e2e
     mode never produces a fill, so those skeletons would otherwise inflate
     the count and falsely fail the check whenever the analyst proposes a
     new trade. ``cash_ledger.current_cash_usd`` is left as a strict-equality

@@ -44,7 +44,7 @@ The LLM invocation boundary is the single seam for LLM failures. The gateway moc
 
 ### Fixture name equals taxonomy label
 
-Every scripted-misbehavior fixture is named after the failure mode it represents (`llm_timeout`, `llm_malformed_output_recover`, `llm_context_overflow`, `gateway_unavailable_phase2`, etc.). When the spec adds, removes, or renames a failure mode, the corresponding fixture must change — drift is detectable mechanically.
+Every scripted-misbehavior fixture is named after the failure mode it represents (`llm_timeout`, `llm_malformed_output_recover`, `llm_context_overflow`, `gateway_unavailable_cmd_exec`, etc.). When the spec adds, removes, or renames a failure mode, the corresponding fixture must change — drift is detectable mechanically.
 
 ### Realistic operational conditions
 

@@ -116,4 +116,4 @@ When a corporate action fires on a position with an active bracket — stock spl
 
 *Activity log:* records `corporate_action_applied` (action type and ratio/amount), `bracket_cancelled_corporate_action` on cancellation, and a normal `bracket_modified` with source `corporate_action_adjustment` when the strategist/PM submit the fresh bracket.
 
-*Prerequisite scope:* this section defines only the bracket lifecycle under CAs. Position-level mechanics — quantity scaling, cost basis adjustment, cash crediting/debiting, short-position dividend obligation flow, merger conversion, spin-off splitting, activity log catalog, and Phase 1 integration timing — are in [corporate-actions.md](corporate-actions.md).
+*Prerequisite scope:* this section defines only the bracket lifecycle under CAs. Position-level mechanics — quantity scaling, cost basis adjustment, cash crediting/debiting, short-position dividend obligation flow, merger conversion, spin-off splitting, activity log catalog, and fill collection integration timing — are in [corporate-actions.md](corporate-actions.md).

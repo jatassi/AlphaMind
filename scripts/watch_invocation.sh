@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # watch_invocation.sh — canonical §5.9 archive-watch for an AlphaMind pipeline
 # invocation. Streams every milestone (ingestion, distillation, each agent
-# completion, Phase-2 actions, fill integration) to stdout so the `Monitor` tool
+# completion, command-execution actions, fill integration) to stdout so the `Monitor` tool
 # turns each into a notification, and self-terminates on a terminal state —
 # INCLUDING one that already happened before the watch attached.
 #
@@ -24,9 +24,9 @@
 # the lone idle exception is a one-shot scheduler-port-DOWN warning during the wait.
 #
 # Emitted events: ARMED, DETECTED, ALREADY-COMPLETE / ALREADY-ABORTED (at attach),
-# PHASE1-COMPLETE, ACT <activity_log row> (ingestion + Phase-2 actions),
+# FILL-COLLECTION-COMPLETE, ACT <activity_log row> (ingestion + command-execution actions),
 # DISTILLATION, AGENT <layer>/<name> (">>> STRATEGIST" prefixed), DISTILL(log),
-# FAULT(log|err), FILLS <unprocessed transition>, ABORT, PHASE2-COMPLETE + dump.
+# FAULT(log|err), FILLS <unprocessed transition>, ABORT, COMMAND-EXECUTION-COMPLETE + dump.
 set -u
 
 DB=${DB:-/c/Users/jacks/AlphaMind/data/alphamind.db}
@@ -115,9 +115,9 @@ if [ "$ttype" = scheduled ]; then ABORT_PAT="scheduled trigger=$tsrc failed"; el
 # exit instead of polling a corpse. (A watcher armed after a fast-fail abort once
 # polled a dead 17:00Z run for 20 min — 2026-06-02.) For a manual run the launching
 # process's exit code remains the authoritative terminal signal.
-p2=$(q "SELECT COALESCE(phase2_completed_at,'') FROM invocations WHERE invocation_id='$INV';")
+p2=$(q "SELECT COALESCE(command_execution_completed_at,'') FROM invocations WHERE invocation_id='$INV';")
 if [ -n "$p2" ]; then echo "ALREADY-COMPLETE @ ${p2} (terminal before attach)"; final_dump; exit 0; fi
-if abort_logged; then echo "ALREADY-ABORTED $INV (\"$ABORT_PAT\" logged at/after run start; phase2 NULL) — terminal before attach"; exit 0; fi
+if abort_logged; then echo "ALREADY-ABORTED $INV (\"$ABORT_PAT\" logged at/after run start; command_execution NULL) — terminal before attach"; exit 0; fi
 
 # ── Phase B: live milestone stream to terminal ──
 lbase=$(wc -c <"$LOG" 2>/dev/null || echo 0)
@@ -125,14 +125,14 @@ ebase=$(wc -c <"$ERR" 2>/dev/null || echo 0)
 p1emit=0; distemit=0; prev_unproc=$base_unproc
 while true; do
   if [ "$p1emit" -eq 0 ]; then
-    p1=$(q "SELECT COALESCE(phase1_completed_at,'') FROM invocations WHERE invocation_id='$INV';")
+    p1=$(q "SELECT COALESCE(fill_collection_completed_at,'') FROM invocations WHERE invocation_id='$INV';")
     if [ -n "$p1" ]; then
       fs=$(q "SELECT COALESCE(fill_collection_summary_json,'') FROM invocations WHERE invocation_id='$INV';" | tr -d '\n' | cut -c1-220)
-      echo "PHASE1-COMPLETE (ingestion) @ $p1 | fill_summary=${fs:-none}"; p1emit=1
+      echo "FILL-COLLECTION-COMPLETE (ingestion) @ $p1 | fill_summary=${fs:-none}"; p1emit=1
     fi
   fi
 
-  # ingestion + Phase-2 actions: new activity_log rows for this invocation
+  # ingestion + command-execution actions: new activity_log rows for this invocation
   q "SELECT entry_id||char(31)||'ACT '||substr(entry_at,12,8)||' '||event_type||
        CASE WHEN COALESCE(order_id,'')!='' THEN ' ord='||substr(order_id,1,32) ELSE '' END||
        CASE WHEN COALESCE(position_id,'')!='' THEN ' pos='||substr(position_id,1,22) ELSE '' END||
@@ -189,7 +189,7 @@ while true; do
 
   [ "$aborted" -eq 1 ] && { echo "ABORT $INV (\"$ABORT_PAT\") — see FAULT lines above"; break; }
 
-  p2=$(q "SELECT COALESCE(phase2_completed_at,'') FROM invocations WHERE invocation_id='$INV';")
-  if [ -n "$p2" ]; then echo "PHASE2-COMPLETE @ $p2 -- $INV done"; final_dump; break; fi
+  p2=$(q "SELECT COALESCE(command_execution_completed_at,'') FROM invocations WHERE invocation_id='$INV';")
+  if [ -n "$p2" ]; then echo "COMMAND-EXECUTION-COMPLETE @ $p2 -- $INV done"; final_dump; break; fi
   sleep 6
 done
