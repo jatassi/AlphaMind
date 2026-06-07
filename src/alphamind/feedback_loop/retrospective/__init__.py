@@ -1,7 +1,3 @@
-"""Feedback loop retrospective — placeholder namespace (scheduled for ALP-131)."""
+"""Retrospective (periodic LLM-driven review) data layer (ALP-131 story 07c)."""
 
 from __future__ import annotations
-
-
-def __getattr__(name: str) -> object:
-    raise NotImplementedError("feedback_loop.retrospective scheduled for ALP-131")

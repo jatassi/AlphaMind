@@ -340,6 +340,20 @@ forbidden_modules =
     alphamind.scripts
     alphamind.state
 
+# Forbidden contract: ``alphamind.feedback_loop`` is read-only over trading
+# state — it measures and proposes, never mutating live trading-state records.
+# The clearest enforceable proxy is that it must not import the execution layer
+# (the writer of trading state). The one thesis-resolution authoring exception
+# (ALP-834 handoff) deliberately lives in ``analysis/thesis_resolution/`` + a
+# ``run_invocation`` step, NOT in ``feedback_loop``, so this stays a clean ban.
+[importlinter:contract:feedback_loop-no-execution]
+name = feedback_loop is read-only over trading state — never imports execution
+type = forbidden
+source_modules =
+    alphamind.feedback_loop
+forbidden_modules =
+    alphamind.execution
+
 # Layered contract: ``alphamind.distillation`` sits above
 # ``alphamind.persistence.models``. The forbidden shape that would
 # directly ban ``distillation -> persistence.models`` carries 23
