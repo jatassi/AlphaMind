@@ -17,7 +17,7 @@ The write helper is intentionally a thin wrapper over the ORM rather than
 a repository method — adding a write method to the repository would
 expand the pilot's surface beyond the read-only seam the audit calls out.
 The write path is exercised by story 07's refresh entry point, not by the
-Phase 2 compute path the parallelization unlocks.
+per-category indicator compute path the parallelization unlocks.
 """
 
 from __future__ import annotations

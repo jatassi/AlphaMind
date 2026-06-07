@@ -1,7 +1,8 @@
 """Q6 macro-release surprise anomaly detector — pure compute (ALP-485).
 
-Extracted from the legacy ``q6_macro.py`` so the orchestrator's Phase 2 can
-run q6 in parallel under ``asyncio.TaskGroup`` + ``asyncio.to_thread``.
+Extracted from the legacy ``q6_macro.py`` so the per-category indicator
+compute step can run q6 in parallel under ``asyncio.TaskGroup`` +
+``asyncio.to_thread``.
 
 The session-bound reads (``event_calendar`` for completed release dates,
 ``macro_observations`` for the differenced-actual series) live in

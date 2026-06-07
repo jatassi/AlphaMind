@@ -12,8 +12,9 @@ three classifiers covered (per
 
 The split is the qualitative half of the propagation tracked under ALP-467
 (the q1 pilot). After this story, qualitative becomes pure compute and
-lifts into its own ``asyncio.TaskGroup`` task in Phase 2 of the
-orchestrator — see :func:`alphamind.distillation.orchestrator._run_phase_2`.
+lifts into its own ``asyncio.TaskGroup`` task in the per-category
+indicator compute step — see
+:func:`alphamind.distillation.orchestrator._compute_category_indicators`.
 
 The session-accepting public surface that legacy callers (and the
 ``tests/distillation/external/qualitative_derived/`` test suite) consume

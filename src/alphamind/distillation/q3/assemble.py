@@ -3,8 +3,9 @@
 ALP-484 split this module along the compute/load boundary:
 
 * :func:`assemble_q3_blocks_from_inputs` — pure compute over a frozen
-  :class:`alphamind.distillation.q3._loaders.Q3Inputs`. The orchestrator's
-  Phase 2 calls this under ``asyncio.TaskGroup`` + ``asyncio.to_thread``.
+  :class:`alphamind.distillation.q3._loaders.Q3Inputs`. The per-category
+  indicator compute step calls this under ``asyncio.TaskGroup`` +
+  ``asyncio.to_thread``.
 * :func:`assemble_q3_blocks` — thin session-accepting shim that wraps the
   session in :func:`load_q3_inputs` and delegates to the pure compute.
 
@@ -551,8 +552,8 @@ def assemble_q3_blocks_from_inputs(inputs: Q3Inputs) -> list[OutputBlock]:
     """Pure-compute assembly of every Q3 :class:`OutputBlock`.
 
     Operates entirely on the pre-loaded :class:`Q3Inputs`; no DB access.
-    This is the function the orchestrator's Phase 2 calls under
-    ``asyncio.TaskGroup`` + ``asyncio.to_thread`` parallel with q1.
+    This is the function the per-category indicator compute step calls
+    under ``asyncio.TaskGroup`` + ``asyncio.to_thread`` parallel with q1.
 
     Detection thresholds are pinned by the spec as module constants
     (``_PAIR_FLOW_SIGMA_THRESHOLD`` etc.), so :class:`DistillationDomainConfig`

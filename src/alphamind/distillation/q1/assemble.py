@@ -8,9 +8,10 @@ ALP-467 split this module into:
   session in a :class:`SqlDistillationRepository`, calls
   :func:`load_q1_inputs`, and delegates to the pure compute.
 
-The pure entry point is what the orchestrator's Phase 2 calls under
-``asyncio.TaskGroup`` + ``asyncio.to_thread``; no shared mutable session
-means q1 cannot conflict with another category's session flushes.
+The pure entry point is what the per-category indicator compute step
+calls under ``asyncio.TaskGroup`` + ``asyncio.to_thread``; no shared
+mutable session means q1 cannot conflict with another category's session
+flushes.
 
 Design summary:
 
@@ -1123,8 +1124,8 @@ def assemble_q1_blocks_from_inputs(
     """Pure-compute assembly of every Q1 :class:`OutputBlock`.
 
     Operates entirely on the pre-loaded :class:`Q1Inputs`; no DB access.
-    This is the function the orchestrator's Phase 2 calls under
-    ``asyncio.TaskGroup`` + ``asyncio.to_thread``.
+    This is the function the per-category indicator compute step calls
+    under ``asyncio.TaskGroup`` + ``asyncio.to_thread``.
     """
     if not inputs.ticker_scope:
         return []

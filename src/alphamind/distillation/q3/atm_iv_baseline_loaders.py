@@ -12,7 +12,8 @@ that the pure compute cannot carry:
 3. :func:`load_and_refresh_atm_iv_baselines` — composes the two halves
    plus the pure compute so q3's :class:`Q3Inputs` loader can pre-resolve
    ``iv_rank_results`` (a ``Mapping[str, CalibratedValue]``) before the
-   Phase 2 ``TaskGroup`` dispatches the parallel pure compute.
+   per-category indicator compute ``TaskGroup`` dispatches the parallel
+   pure compute.
 
 The write path is kept on a raw ``Session`` rather than a Protocol method
 because the pilot-scoped :class:`DistillationRepository` Protocol is
@@ -207,8 +208,8 @@ def load_and_refresh_atm_iv_baselines(
     This is the loader-side composition the q3-wide loader (and the legacy
     session-accepting shim) call. The session work brackets the pure
     compute so the resulting :class:`Q3Inputs` carries ``iv_rank_results``
-    as already-calibrated values — the Phase 2 pure compute consumes them
-    without further DB access.
+    as already-calibrated values — the per-category indicator compute step
+    consumes them without further DB access.
     """
     history_by_ticker = load_atm_iv_history_by_ticker(
         session,

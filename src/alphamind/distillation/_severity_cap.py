@@ -13,9 +13,9 @@ by the source block's calibration state:
   signal rather than an action item.
 
 The cap is applied uniformly at the publishing layer in the distillation
-orchestrator before blocks reach Phase 4 (aggregation) — every consumer
-(sector assembly, correlation/regime brief, anomaly summary, per-block
-renderer) reads the already-capped severity.
+orchestrator before the aggregation step — every consumer (sector assembly,
+correlation/regime brief, anomaly summary, per-block renderer) reads the
+already-capped severity.
 
 A flag whose ``name`` appears in ``exempt_flag_names`` bypasses the cap
 entirely; some modules emit structural signals (e.g.,
@@ -186,9 +186,8 @@ def cap_blocks_for_calibration(
 ) -> list[OutputBlock]:
     """Cap every block's anomaly-flag severities by its calibration state.
 
-    The orchestrator's distillation phase calls this once after every
-    per-category compute has produced its blocks but before Phase 4
-    (aggregation), so downstream consumers see the capped severities
-    uniformly.
+    The orchestrator calls this once after every per-category compute step
+    has produced its blocks but before aggregation, so downstream consumers
+    see the capped severities uniformly.
     """
     return [cap_block_severities(block, exempt_flag_names=exempt_flag_names) for block in blocks]
