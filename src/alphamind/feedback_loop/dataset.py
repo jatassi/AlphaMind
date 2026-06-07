@@ -84,8 +84,19 @@ class WindowDataset:
     """Typed, in-memory, load-once view of every record a window's metrics need.
 
     Built once by :func:`load_window`; metric cores read it without further I/O.
-    ``start`` is inclusive, ``end`` exclusive — matching the repository helpers'
-    window semantics.
+
+    **Per-bundle window semantics differ — read carefully when computing windowed
+    metrics (``start`` inclusive, ``end`` exclusive):**
+
+    * ``agent_calls`` — strictly bounded to ``[start, end)`` (via the invocation join).
+    * ``pm_decision_log`` — the most-recent ``_PM_DECISION_SLIDING_WINDOW`` decisions
+      (a count-based read-depth), **not** clipped to ``[start, end)``: it may include
+      decisions outside the window or omit in-window decisions beyond that depth.
+    * ``validations`` — all currently-pending validations (point-in-time), **not**
+      window-bounded.
+
+    A metric needing a strict per-window slice of ``pm_decision_log`` / ``validations``
+    must filter by timestamp itself.
     """
 
     start: datetime
