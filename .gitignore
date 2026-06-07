@@ -28,3 +28,6 @@ opencode.json
 # Verification-run diagnostic archives (LLM-call dumps, prompts, responses)
 .archive/
 archive/
+
+# Local-scope subagent scratch memory — never commit (recurring worktree leak)
+.claude/agent-memory-local/
