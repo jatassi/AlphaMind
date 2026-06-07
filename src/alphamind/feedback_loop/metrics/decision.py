@@ -21,8 +21,13 @@ expressed as one ``MetricId`` per bin so a single bin flows losslessly into
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, get_args
 
+from alphamind.commands.pm_envelope import (
+    AdjustmentCategory,
+    PositionActionEvaluation,
+    ThesisQualityEvaluation,
+)
 from alphamind.feedback_loop.metrics.types import (
     Conditioning,
     ConditioningDimension,
@@ -217,6 +222,69 @@ def _compute_pm_modification_rate(
     return _rate_result(_PM_MODIFICATION_RATE, modified, len(verdicts))
 
 
+# ---------------------------------------------------------------------------
+# PM per-criterion fail rate (per source agent × criterion)
+# ---------------------------------------------------------------------------
+
+#: Canonical criterion keys per source provenance — derived from the field names on the
+#: ``ThesisQualityEvaluation`` (analyst) / ``PositionActionEvaluation`` (strategist)
+#: models that produce ``evaluation_json``, so they cannot drift from the envelope
+#: contract.
+_ANALYST_CRITERIA: tuple[str, ...] = tuple(ThesisQualityEvaluation.model_fields)
+_STRATEGIST_CRITERIA: tuple[str, ...] = tuple(PositionActionEvaluation.model_fields)
+
+
+def _criterion_fail_rate_compute(
+    metric_id: MetricId, source_provenance: str, criterion: str
+) -> Callable[[WindowDataset, Conditioning], MetricResult]:
+    def _compute(dataset: WindowDataset, conditioning: Conditioning) -> MetricResult:
+        decisions = [
+            d
+            for d in _pm_decisions(_conditioned(dataset, conditioning))
+            if d.source_provenance_json.get("source_provenance") == source_provenance
+        ]
+        failed = sum(d.evaluation_json.get(criterion, {}).get("status") == "fail" for d in decisions)
+        return _rate_result(metric_id, failed, len(decisions))
+
+    return _compute
+
+
+def _criterion_fail_rate_metrics(
+    source_provenance: str, criteria: tuple[str, ...]
+) -> tuple[Metric, ...]:
+    id_prefix = f"pm_{source_provenance.removeprefix('pm_')}_criterion_fail_rate"
+    metrics: list[Metric] = []
+    for criterion in criteria:
+        metric_id = MetricId(f"{id_prefix}__{criterion}")
+        metrics.append(
+            Metric(
+                metric_id=metric_id,
+                po_type="process",
+                default_window=Window.WEEKLY,
+                supported_conditioning=(),
+                compute=_criterion_fail_rate_compute(metric_id, source_provenance, criterion),
+            )
+        )
+    return tuple(metrics)
+
+
+# ---------------------------------------------------------------------------
+# PM modification-category distribution (denominator = total modifications)
+# ---------------------------------------------------------------------------
+
+#: Canonical adjustment categories — the ``AdjustmentCategory`` Literal members
+#: persisted in each ``ModificationRecord.adjustment_category``.
+_ADJUSTMENT_CATEGORIES: tuple[str, ...] = get_args(AdjustmentCategory)
+
+
+def _modification_categories(dataset: WindowDataset) -> tuple[str, ...]:
+    return tuple(
+        mod.get("adjustment_category", "")
+        for d in _pm_decisions(dataset)
+        for mod in d.modifications_json
+    )
+
+
 _PM_METRICS: tuple[Metric, ...] = (
     Metric(
         metric_id=_PM_APPROVAL_RATE,
@@ -236,6 +304,13 @@ _PM_METRICS: tuple[Metric, ...] = (
         id_prefix="pm_verdict_rate",
         bins=_VERDICT_BINS,
         population=_verdicts,
+    ),
+    *_criterion_fail_rate_metrics("pm_analyst", _ANALYST_CRITERIA),
+    *_criterion_fail_rate_metrics("pm_strategist", _STRATEGIST_CRITERIA),
+    *_distribution_metrics(
+        id_prefix="pm_modification_category_rate",
+        bins=tuple((c, c) for c in _ADJUSTMENT_CATEGORIES),
+        population=_modification_categories,
     ),
 )
 

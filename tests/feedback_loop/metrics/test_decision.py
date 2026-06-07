@@ -202,3 +202,75 @@ class TestPmVerdictMetrics:
         result = _compute("pm_approval_rate", _dataset(()))
         assert result.value is None
         assert result.sample_size == 0
+
+
+class TestPmCriterionFailRate:
+    def test_analyst_criterion_fail_rate_over_analyst_envelopes_only(self) -> None:
+        log = (
+            _pm_entry(
+                verdict=PMVerdict.APPROVE,
+                source_provenance="pm_analyst",
+                evaluation_json=_analyst_evaluation(failed=("falsifiability",)),
+            ),
+            _pm_entry(
+                verdict=PMVerdict.APPROVE,
+                source_provenance="pm_analyst",
+                evaluation_json=_analyst_evaluation(),
+            ),
+            # A strategist envelope must not count toward an analyst criterion.
+            _pm_entry(
+                verdict=PMVerdict.APPROVE,
+                source_provenance="pm_strategist",
+                recommendation_type="position_assessment",
+                evaluation_json=_strategist_evaluation(failed=("portfolio_coherence",)),
+            ),
+        )
+        result = _compute("pm_analyst_criterion_fail_rate__falsifiability", _dataset(log))
+        assert result.value == 0.5
+        assert result.sample_size == 2
+
+    def test_portfolio_coherence_split_by_source(self) -> None:
+        log = (
+            _pm_entry(
+                verdict=PMVerdict.APPROVE,
+                source_provenance="pm_strategist",
+                recommendation_type="position_assessment",
+                evaluation_json=_strategist_evaluation(failed=("portfolio_coherence",)),
+            ),
+            _pm_entry(
+                verdict=PMVerdict.APPROVE,
+                source_provenance="pm_analyst",
+                evaluation_json=_analyst_evaluation(),
+            ),
+        )
+        dataset = _dataset(log)
+        strat = _compute("pm_strategist_criterion_fail_rate__portfolio_coherence", dataset)
+        analyst = _compute("pm_analyst_criterion_fail_rate__portfolio_coherence", dataset)
+        assert strat.value == 1.0
+        assert strat.sample_size == 1
+        assert analyst.value == 0.0
+        assert analyst.sample_size == 1
+
+
+class TestPmModificationCategory:
+    def test_modification_category_distribution(self) -> None:
+        log = (
+            _pm_entry(
+                verdict=PMVerdict.APPROVE_WITH_MODIFICATION,
+                modifications_json=[
+                    {"adjustment_category": "risk_reduction"},
+                    {"adjustment_category": "conviction_disagreement"},
+                ],
+            ),
+            _pm_entry(
+                verdict=PMVerdict.APPROVE_WITH_MODIFICATION,
+                modifications_json=[{"adjustment_category": "risk_reduction"}],
+            ),
+        )
+        dataset = _dataset(log)
+        # Denominator is the total modification count (3), not envelopes.
+        assert _compute("pm_modification_category_rate__risk_reduction", dataset).value == 2 / 3
+        rate = _compute("pm_modification_category_rate__conviction_disagreement", dataset)
+        assert rate.value == 1 / 3
+        assert rate.sample_size == 3
+        assert _compute("pm_modification_category_rate__capital_constraint", dataset).value == 0.0
