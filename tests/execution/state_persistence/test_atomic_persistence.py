@@ -503,7 +503,7 @@ async def test_abandon_options_open_cancels_pending_submit_floor_no_strand(
     (``abandon_command`` → ``_writeback_cancel`` → ``_cancel_pending_protective_orders``)
     must sweep the floor leg out of PENDING_SUBMIT, or its ``inv-{id}.``
     ``client_order_id`` keeps ``invocation_has_pending_submit_strand`` True forever
-    → ``phase2_completed_at`` withheld with no recovery, and the resting floor is
+    → ``command_execution_completed_at`` withheld with no recovery, and the resting floor is
     never cancelled. The floor reserves no capital, so none is released here.
     """
     from alphamind.execution.write_paths.phase2.atomic import (
@@ -541,7 +541,7 @@ async def test_abandon_options_open_cancels_pending_submit_floor_no_strand(
     )
 
     # The floor row is cleared out of PENDING_SUBMIT (CANCELLED), so no strand
-    # remains and the invocation can stamp phase2_completed_at.
+    # remains and the invocation can stamp command_execution_completed_at.
     floor_row = await _read_order_by_order_id(factory, floor_order_id)
     assert floor_row is not None
     assert floor_row.status == OrderStatus.CANCELLED.value

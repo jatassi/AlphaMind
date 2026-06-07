@@ -6,7 +6,7 @@ portfolio_state:
   thesis_quality_aggregates:
     trailing_windows_days: [5, 20]       # category 6 — windows for aggregate computation
   snapshot_freshness:
-    max_phase1_to_snapshot_seconds: 30   # above this, log warning
+    max_fill_collection_to_snapshot_seconds: 30   # above this, log warning
     max_price_age_seconds: 900           # underlying-quote freshness threshold (live stream)
     max_option_price_age_seconds: 2100   # option-snapshot freshness — collector cron fires
                                           # every 30 min (config/collector_schedule.yaml,

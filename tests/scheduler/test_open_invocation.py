@@ -106,8 +106,8 @@ class TestInsertInvocationRecord:
         row = rows[0]
         assert row.invocation_id == invocation_id
         assert row.start_at == "2026-05-07T14:30:00Z"
-        assert row.phase1_completed_at is None
-        assert row.phase2_completed_at is None
+        assert row.fill_collection_completed_at is None
+        assert row.command_execution_completed_at is None
 
     async def test_returns_resolved_pipeline_config(
         self,

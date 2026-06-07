@@ -35,11 +35,12 @@ def _alembic_config(db_path: Path) -> Config:
 
 
 class TestCounterfactualReplaysMigration:
-    def test_new_revision_is_single_head(self) -> None:
+    def test_revision_is_reachable(self) -> None:
+        """The a556rp0000dd revision is reachable in the migration chain."""
         repo_root = Path(__file__).parents[2]
         script = ScriptDirectory.from_config(Config(repo_root / "alembic.ini"))
-        heads = list(script.get_heads())
-        assert heads == [_NEW_REVISION]
+        rev = script.get_revision(_NEW_REVISION)
+        assert rev is not None
 
     def test_new_revision_parents_on_prior_head(self) -> None:
         repo_root = Path(__file__).parents[2]
@@ -75,11 +76,14 @@ class TestCounterfactualReplaysMigration:
             eng.dispose()
         assert _TABLE in tables
 
-    def test_downgrade_removes_table(self, tmp_path: Path) -> None:
-        """``downgrade -1`` from head drops the counterfactual_replays table."""
+    def test_downgrade_to_prior_head_removes_table(self, tmp_path: Path) -> None:
+        """Downgrading to the revision before a556rp0000dd drops the counterfactual_replays table."""
         db_path = tmp_path / "mig.db"
         cfg = _alembic_config(db_path)
         command.upgrade(cfg, "head")
+        # Downgrade specifically to the revision before a556rp0000dd (the add-table migration).
+        command.downgrade(cfg, _PRIOR_HEAD)
+        # Then downgrade one more step to remove the table itself.
         command.downgrade(cfg, "-1")
 
         eng = make_engine(str(db_path))
@@ -90,10 +94,11 @@ class TestCounterfactualReplaysMigration:
         assert _TABLE not in tables
 
     def test_downgrade_then_upgrade_recreates_table(self, tmp_path: Path) -> None:
-        """The full round-trip: upgrade → downgrade → upgrade creates the table."""
+        """The full round-trip: upgrade → downgrade to prior → upgrade creates the table."""
         db_path = tmp_path / "mig.db"
         cfg = _alembic_config(db_path)
         command.upgrade(cfg, "head")
+        command.downgrade(cfg, _PRIOR_HEAD)
         command.downgrade(cfg, "-1")
         command.upgrade(cfg, "head")
 
@@ -104,19 +109,20 @@ class TestCounterfactualReplaysMigration:
             eng.dispose()
         assert _TABLE in tables
 
-    def test_downgrade_one_step_lands_on_prior_head(self, tmp_path: Path) -> None:
-        """After ``downgrade -1``, the DB is at the prior head revision."""
+    def test_downgrade_one_step_stays_on_this_revision(self, tmp_path: Path) -> None:
+        """After ``downgrade -1`` from head, the DB is at the phase-rename revision."""
         db_path = tmp_path / "mig.db"
         cfg = _alembic_config(db_path)
         command.upgrade(cfg, "head")
         command.downgrade(cfg, "-1")
 
-        # broker_event_log was created by the prior-head's chain — still exists.
+        # The counterfactual_replays table still exists — only the column rename is reverted.
         eng = make_engine(str(db_path))
         try:
             tables = set(inspect(eng).get_table_names())
         finally:
             eng.dispose()
+        assert _TABLE in tables
         assert "broker_event_log" in tables
 
     def test_upgrade_check_constraints_present_in_ddl(self, tmp_path: Path) -> None:

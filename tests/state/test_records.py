@@ -70,8 +70,8 @@ def _make_invocation_record(
         invocation_id=invocation_id,
         process_lifetime_id="proc-1",
         start_at="2026-05-07T14:30:00Z",
-        phase1_completed_at=None,
-        phase2_completed_at=None,
+        fill_collection_completed_at=None,
+        command_execution_completed_at=None,
         trigger_type="scheduled",
         trigger_source="morning-cron",
         trigger_reason="0 9 * * 1-5",
@@ -155,13 +155,13 @@ class TestInvocationRecord:
 
         # Verify Phase 1/2 columns can be filled with strings on a later
         # update without breaking the round-trip.
-        readback_row.phase1_completed_at = "2026-05-07T14:31:00Z"
+        readback_row.fill_collection_completed_at = "2026-05-07T14:31:00Z"
         readback_row.staleness_flag = 0
         session.commit()
         re_readback_row = session.get(InvocationRow, "inv-2026-05-07T14:30:00Z-abcd")
         assert re_readback_row is not None
         re_readback = invocation_record_from_row(re_readback_row)
-        assert re_readback.phase1_completed_at == "2026-05-07T14:31:00Z"
+        assert re_readback.fill_collection_completed_at == "2026-05-07T14:31:00Z"
         assert re_readback.staleness_flag is False
 
     def test_record_rejects_unknown_trigger_type(self) -> None:

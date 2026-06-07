@@ -13,7 +13,7 @@ def test_yaml_parses_documented_defaults() -> None:
     assert cfg.pm_decision_log_sliding_window_invocations == 3
     assert cfg.thesis_resolutions_lookback_trading_days == 20
     assert cfg.thesis_quality_aggregates_trailing_windows_days == (5, 20)
-    assert cfg.snapshot_freshness_max_phase1_to_snapshot_seconds == 30.0
+    assert cfg.snapshot_freshness_max_fill_collection_to_snapshot_seconds == 30.0
     assert cfg.snapshot_freshness_max_price_age_seconds == 900.0
     assert cfg.snapshot_freshness_max_option_price_age_seconds == 2100.0
 
@@ -25,8 +25,8 @@ def test_yaml_parses_documented_defaults() -> None:
         ("pm_decision_log_sliding_window_invocations", 0),
         ("thesis_resolutions_lookback_trading_days", -1),
         ("thesis_resolutions_lookback_trading_days", 0),
-        ("snapshot_freshness_max_phase1_to_snapshot_seconds", -1.0),
-        ("snapshot_freshness_max_phase1_to_snapshot_seconds", 0.0),
+        ("snapshot_freshness_max_fill_collection_to_snapshot_seconds", -1.0),
+        ("snapshot_freshness_max_fill_collection_to_snapshot_seconds", 0.0),
         ("snapshot_freshness_max_price_age_seconds", -1.0),
         ("snapshot_freshness_max_price_age_seconds", 0.0),
         ("snapshot_freshness_max_option_price_age_seconds", -1.0),
@@ -38,7 +38,7 @@ def test_non_positive_value_fails_with_field_path(field: str, value: int | float
         "pm_decision_log_sliding_window_invocations": 3,
         "thesis_resolutions_lookback_trading_days": 20,
         "thesis_quality_aggregates_trailing_windows_days": (5, 20),
-        "snapshot_freshness_max_phase1_to_snapshot_seconds": 30.0,
+        "snapshot_freshness_max_fill_collection_to_snapshot_seconds": 30.0,
         "snapshot_freshness_max_price_age_seconds": 900.0,
         "snapshot_freshness_max_option_price_age_seconds": 2100.0,
     }
@@ -55,7 +55,7 @@ def test_empty_trailing_windows_days_fails() -> None:
             pm_decision_log_sliding_window_invocations=3,
             thesis_resolutions_lookback_trading_days=20,
             thesis_quality_aggregates_trailing_windows_days=(),
-            snapshot_freshness_max_phase1_to_snapshot_seconds=30.0,
+            snapshot_freshness_max_fill_collection_to_snapshot_seconds=30.0,
             snapshot_freshness_max_price_age_seconds=900.0,
             snapshot_freshness_max_option_price_age_seconds=2100.0,
         )
@@ -68,7 +68,7 @@ def test_negative_element_in_trailing_windows_days_fails() -> None:
             pm_decision_log_sliding_window_invocations=3,
             thesis_resolutions_lookback_trading_days=20,
             thesis_quality_aggregates_trailing_windows_days=(-1, 20),
-            snapshot_freshness_max_phase1_to_snapshot_seconds=30.0,
+            snapshot_freshness_max_fill_collection_to_snapshot_seconds=30.0,
             snapshot_freshness_max_price_age_seconds=900.0,
             snapshot_freshness_max_option_price_age_seconds=2100.0,
         )

@@ -176,7 +176,7 @@ def _make_snapshot_with_thesis(
     """Minimal snapshot with one open position and one active thesis."""
     return PortfolioStateSnapshot(
         invocation_id=_INV_ID,
-        phase1_committed_at=_T0,
+        fill_collection_committed_at=_T0,
         snapshot_assembled_at=_T1,
         pipeline_invocation_started_at=_T2,
         open_positions=(_make_open_position(position_id),),
@@ -203,7 +203,7 @@ def _make_empty_snapshot() -> PortfolioStateSnapshot:
     """Minimal snapshot with no positions or theses."""
     return PortfolioStateSnapshot(
         invocation_id=_INV_ID,
-        phase1_committed_at=_T0,
+        fill_collection_committed_at=_T0,
         snapshot_assembled_at=_T1,
         pipeline_invocation_started_at=None,
         open_positions=(),

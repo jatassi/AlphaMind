@@ -1872,7 +1872,7 @@ async def test_phase1_stamps_completion_timestamp_on_invocation_row(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """After process_unprocessed_fills commits, the bound invocation row's
-    phase1_completed_at must be a valid ISO-8601 UTC timestamp — the SQL
+    fill_collection_completed_at must be a valid ISO-8601 UTC timestamp — the SQL
     repository's snapshot-isolation guard reads this column and raises
     RepositoryConsistencyError when it is NULL.
     """
@@ -1905,9 +1905,9 @@ async def test_phase1_stamps_completion_timestamp_on_invocation_row(
     async with factory() as sess:
         row = await sess.get(InvocationRow, invocation_id)
         assert row is not None
-        assert row.phase1_completed_at is not None
+        assert row.fill_collection_completed_at is not None
         # Must round-trip through fromisoformat (covers both Z-suffix and +00:00 forms).
-        parsed = datetime.fromisoformat(row.phase1_completed_at)
+        parsed = datetime.fromisoformat(row.fill_collection_completed_at)
         assert parsed.tzinfo is not None
         assert parsed.utcoffset() == timedelta(0)
 
@@ -2238,7 +2238,7 @@ async def _assert_phase1_completed(
     async with factory() as sess:
         inv_row = await sess.get(InvocationRow, invocation_id)
         assert inv_row is not None
-        assert inv_row.phase1_completed_at is not None
+        assert inv_row.fill_collection_completed_at is not None
 
 
 @pytest.mark.parametrize(

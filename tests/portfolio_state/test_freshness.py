@@ -37,14 +37,14 @@ _PRICE_AS_OF = datetime(2025, 6, 1, 8, 59, 50, tzinfo=UTC)  # 40s before _NOW
 
 
 def _make_config(
-    max_phase1_to_snapshot_seconds: float = 300.0,
+    max_fill_collection_to_snapshot_seconds: float = 300.0,
     max_price_age_seconds: float = 60.0,
 ) -> PortfolioStateConfig:
     return PortfolioStateConfig(
         pm_decision_log_sliding_window_invocations=5,
         thesis_resolutions_lookback_trading_days=10,
         thesis_quality_aggregates_trailing_windows_days=(5, 20),
-        snapshot_freshness_max_phase1_to_snapshot_seconds=max_phase1_to_snapshot_seconds,
+        snapshot_freshness_max_fill_collection_to_snapshot_seconds=max_fill_collection_to_snapshot_seconds,
         snapshot_freshness_max_price_age_seconds=max_price_age_seconds,
         snapshot_freshness_max_option_price_age_seconds=max_price_age_seconds,
     )
@@ -152,11 +152,11 @@ def test_price_fetch_outcomes_oldest_price_non_tz_aware_raises() -> None:
 
 
 def _make_freshness(
-    phase1_committed_at: datetime = _PHASE1_AT,
+    fill_collection_committed_at: datetime = _PHASE1_AT,
     snapshot_assembled_at: datetime = _NOW,
-    phase1_to_snapshot_seconds: float = 30.0,
-    max_phase1_to_snapshot_seconds: float = 300.0,
-    phase1_to_snapshot_within_threshold: bool = True,
+    fill_collection_to_snapshot_seconds: float = 30.0,
+    max_fill_collection_to_snapshot_seconds: float = 300.0,
+    fill_collection_to_snapshot_within_threshold: bool = True,
     total_open_positions: int = 2,
     total_pending_positions: int = 1,
     total_positions: int = 3,
@@ -172,11 +172,11 @@ def _make_freshness(
     max_price_age_seconds: float = 60.0,
 ) -> SnapshotFreshness:
     return SnapshotFreshness(
-        phase1_committed_at=phase1_committed_at,
+        fill_collection_committed_at=fill_collection_committed_at,
         snapshot_assembled_at=snapshot_assembled_at,
-        phase1_to_snapshot_seconds=phase1_to_snapshot_seconds,
-        max_phase1_to_snapshot_seconds=max_phase1_to_snapshot_seconds,
-        phase1_to_snapshot_within_threshold=phase1_to_snapshot_within_threshold,
+        fill_collection_to_snapshot_seconds=fill_collection_to_snapshot_seconds,
+        max_fill_collection_to_snapshot_seconds=max_fill_collection_to_snapshot_seconds,
+        fill_collection_to_snapshot_within_threshold=fill_collection_to_snapshot_within_threshold,
         total_open_positions=total_open_positions,
         total_pending_positions=total_pending_positions,
         total_positions=total_positions,
@@ -196,11 +196,11 @@ def _make_freshness(
 def test_snapshot_freshness_happy_path() -> None:
     """Build SnapshotFreshness with known fixture; verify all fields match."""
     sf = _make_freshness()
-    assert sf.phase1_committed_at == _PHASE1_AT
+    assert sf.fill_collection_committed_at == _PHASE1_AT
     assert sf.snapshot_assembled_at == _NOW
-    assert sf.phase1_to_snapshot_seconds == pytest.approx(30.0)
-    assert sf.max_phase1_to_snapshot_seconds == pytest.approx(300.0)
-    assert sf.phase1_to_snapshot_within_threshold is True
+    assert sf.fill_collection_to_snapshot_seconds == pytest.approx(30.0)
+    assert sf.max_fill_collection_to_snapshot_seconds == pytest.approx(300.0)
+    assert sf.fill_collection_to_snapshot_within_threshold is True
     assert sf.total_open_positions == 2
     assert sf.total_pending_positions == 1
     assert sf.total_positions == 3
@@ -238,10 +238,10 @@ def test_snapshot_freshness_disjoint_sets_violated_raises() -> None:
 
 
 def test_snapshot_freshness_negative_phase1_to_snapshot_raises() -> None:
-    """phase1_to_snapshot_seconds < 0 raises ValidationError."""
+    """fill_collection_to_snapshot_seconds < 0 raises ValidationError."""
     with pytest.raises((ValueError, TypeError)):
         _make_freshness(
-            phase1_to_snapshot_seconds=-1.0,
+            fill_collection_to_snapshot_seconds=-1.0,
         )
 
 
@@ -361,13 +361,13 @@ def test_staleness_summary_all_fresh() -> None:
         count_priced_stale=0,
         count_unknown_ticker=0,
         all_position_prices_fresh=True,
-        phase1_to_snapshot_seconds=2.3,
-        max_phase1_to_snapshot_seconds=30.0,
+        fill_collection_to_snapshot_seconds=2.3,
+        max_fill_collection_to_snapshot_seconds=30.0,
         oldest_price_as_of=_PRICE_AS_OF,
         oldest_price_age_seconds=40.0,
     )
     summary = sf.staleness_summary()
-    assert summary == "phase1→snapshot 2.3s (within 30.0s); 3/3 positions priced fresh"
+    assert summary == "fill_collection→snapshot 2.3s (within 30.0s); 3/3 positions priced fresh"
 
 
 def test_staleness_summary_mixed() -> None:
@@ -382,8 +382,8 @@ def test_staleness_summary_mixed() -> None:
         count_priced_stale=1,
         count_unknown_ticker=0,
         all_position_prices_fresh=False,
-        phase1_to_snapshot_seconds=2.3,
-        max_phase1_to_snapshot_seconds=30.0,
+        fill_collection_to_snapshot_seconds=2.3,
+        max_fill_collection_to_snapshot_seconds=30.0,
         oldest_price_as_of=_PRICE_AS_OF,
         oldest_price_age_seconds=40.0,
     )
@@ -394,28 +394,28 @@ def test_staleness_summary_mixed() -> None:
 
 
 # ---------------------------------------------------------------------------
-# phase1_to_snapshot_within_threshold boundary tests
+# fill_collection_to_snapshot_within_threshold boundary tests
 # ---------------------------------------------------------------------------
 
 
-def test_phase1_to_snapshot_within_threshold_exactly_at_boundary() -> None:
+def test_fill_collection_to_snapshot_within_threshold_exactly_at_boundary() -> None:
     """Exactly at max returns True."""
     sf = _make_freshness(
-        phase1_to_snapshot_seconds=300.0,
-        max_phase1_to_snapshot_seconds=300.0,
-        phase1_to_snapshot_within_threshold=True,
+        fill_collection_to_snapshot_seconds=300.0,
+        max_fill_collection_to_snapshot_seconds=300.0,
+        fill_collection_to_snapshot_within_threshold=True,
     )
-    assert sf.phase1_to_snapshot_within_threshold is True
+    assert sf.fill_collection_to_snapshot_within_threshold is True
 
 
-def test_phase1_to_snapshot_within_threshold_1ms_beyond() -> None:
+def test_fill_collection_to_snapshot_within_threshold_1ms_beyond() -> None:
     """1ms beyond max returns False."""
     sf = _make_freshness(
-        phase1_to_snapshot_seconds=300.001,
-        max_phase1_to_snapshot_seconds=300.0,
-        phase1_to_snapshot_within_threshold=False,
+        fill_collection_to_snapshot_seconds=300.001,
+        max_fill_collection_to_snapshot_seconds=300.0,
+        fill_collection_to_snapshot_within_threshold=False,
     )
-    assert sf.phase1_to_snapshot_within_threshold is False
+    assert sf.fill_collection_to_snapshot_within_threshold is False
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +431,7 @@ def test_compute_snapshot_freshness_happy_path() -> None:
     snapshot = _make_snapshot(
         open_positions=(pos1, pos2),
         pending_positions=(pend,),
-        phase1_committed_at=_PHASE1_AT,
+        fill_collection_committed_at=_PHASE1_AT,
         snapshot_assembled_at=_NOW,
     )
     outcomes = PriceFetchOutcomes(
@@ -441,7 +441,7 @@ def test_compute_snapshot_freshness_happy_path() -> None:
         oldest_price_as_of=_PRICE_AS_OF,
     )
     config = _make_config(
-        max_phase1_to_snapshot_seconds=300.0,
+        max_fill_collection_to_snapshot_seconds=300.0,
         max_price_age_seconds=60.0,
     )
 
@@ -455,8 +455,8 @@ def test_compute_snapshot_freshness_happy_path() -> None:
     assert freshness.count_unknown_ticker == 0
     assert freshness.all_position_prices_fresh is True
     # phase1 = _PHASE1_AT, assembled = _NOW = phase1 + 30s
-    assert freshness.phase1_to_snapshot_seconds == pytest.approx(30.0)
-    assert freshness.phase1_to_snapshot_within_threshold is True
+    assert freshness.fill_collection_to_snapshot_seconds == pytest.approx(30.0)
+    assert freshness.fill_collection_to_snapshot_within_threshold is True
     # oldest_price_as_of = _PRICE_AS_OF = _NOW - 40s
     assert freshness.oldest_price_as_of == _PRICE_AS_OF
     assert freshness.oldest_price_age_seconds == pytest.approx(40.0)
@@ -510,7 +510,7 @@ def test_compute_snapshot_freshness_deterministic() -> None:
     pos = _make_open_position("POS-001")
     snapshot = _make_snapshot(
         open_positions=(pos,),
-        phase1_committed_at=_PHASE1_AT,
+        fill_collection_committed_at=_PHASE1_AT,
         snapshot_assembled_at=_NOW,
     )
     outcomes = PriceFetchOutcomes(
@@ -532,7 +532,7 @@ def test_compute_snapshot_freshness_threshold_boundary() -> None:
     # Exactly at threshold: snapshot_assembled_at = phase1 + 300s
     snapshot_exact = _make_snapshot(
         open_positions=(pos,),
-        phase1_committed_at=_PHASE1_AT,
+        fill_collection_committed_at=_PHASE1_AT,
         snapshot_assembled_at=_PHASE1_AT + timedelta(seconds=300),
     )
     outcomes = PriceFetchOutcomes(
@@ -541,22 +541,22 @@ def test_compute_snapshot_freshness_threshold_boundary() -> None:
         position_ids_unknown_ticker=frozenset(),
         oldest_price_as_of=_PHASE1_AT,
     )
-    config = _make_config(max_phase1_to_snapshot_seconds=300.0)
+    config = _make_config(max_fill_collection_to_snapshot_seconds=300.0)
     freshness_exact = compute_snapshot_freshness(
         snapshot_exact, fetch_outcomes=outcomes, config=config
     )
-    assert freshness_exact.phase1_to_snapshot_within_threshold is True
+    assert freshness_exact.fill_collection_to_snapshot_within_threshold is True
 
     # 1ms beyond
     snapshot_beyond = _make_snapshot(
         open_positions=(pos,),
-        phase1_committed_at=_PHASE1_AT,
+        fill_collection_committed_at=_PHASE1_AT,
         snapshot_assembled_at=_PHASE1_AT + timedelta(seconds=300, milliseconds=1),
     )
     freshness_beyond = compute_snapshot_freshness(
         snapshot_beyond, fetch_outcomes=outcomes, config=config
     )
-    assert freshness_beyond.phase1_to_snapshot_within_threshold is False
+    assert freshness_beyond.fill_collection_to_snapshot_within_threshold is False
 
 
 # ---------------------------------------------------------------------------

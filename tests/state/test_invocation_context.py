@@ -98,8 +98,8 @@ def _make_invocation_record(
         invocation_id=invocation_id,
         process_lifetime_id="proc-1",
         start_at="2026-05-07T14:30:00Z",
-        phase1_completed_at=None,
-        phase2_completed_at=None,
+        fill_collection_completed_at=None,
+        command_execution_completed_at=None,
         trigger_type="scheduled",
         trigger_source="morning-cron",
         trigger_reason="0 9 * * 1-5",
@@ -159,7 +159,7 @@ class TestInvocationContext:
         § Snapshot isolation the row commit precedes phase work, so an
         exception inside the ``async with`` body rolls back only the
         phase's writes — the invocation row stays for the next invocation
-        to see (and the SQL repository's ``phase1_completed_at IS NULL``
+        to see (and the SQL repository's ``fill_collection_completed_at IS NULL``
         guard refuses snapshot reads against it).
         """
         _, factory = async_engine_and_factory
@@ -180,8 +180,8 @@ class TestInvocationContext:
             )
             row = result.scalar_one_or_none()
             assert row is not None
-            assert row.phase1_completed_at is None
-            assert row.phase2_completed_at is None
+            assert row.fill_collection_completed_at is None
+            assert row.command_execution_completed_at is None
 
     async def test_context_handle_session_can_join_same_transaction(
         self,
@@ -199,7 +199,7 @@ class TestInvocationContext:
             # activity-log emission. Use a raw INSERT so we don't depend on a
             # later story's table definition.
             await handle.session.execute(
-                text("UPDATE invocations SET phase1_completed_at = :ts WHERE invocation_id = :iid"),
+                text("UPDATE invocations SET fill_collection_completed_at = :ts WHERE invocation_id = :iid"),
                 {"ts": "2026-05-07T14:31:00Z", "iid": record.invocation_id},
             )
 
@@ -209,7 +209,7 @@ class TestInvocationContext:
             )
             persisted = result.scalar_one_or_none()
             assert persisted is not None
-            assert persisted.phase1_completed_at == "2026-05-07T14:31:00Z"
+            assert persisted.fill_collection_completed_at == "2026-05-07T14:31:00Z"
 
     async def test_fk_violation_raises_and_no_row_lands(
         self,

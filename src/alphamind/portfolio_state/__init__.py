@@ -16,7 +16,7 @@ class PortfolioStateConfig:
     pm_decision_log_sliding_window_invocations: int
     thesis_resolutions_lookback_trading_days: int
     thesis_quality_aggregates_trailing_windows_days: tuple[int, ...]
-    snapshot_freshness_max_phase1_to_snapshot_seconds: float
+    snapshot_freshness_max_fill_collection_to_snapshot_seconds: float
     snapshot_freshness_max_price_age_seconds: float
     # Independent of ``max_price_age_seconds`` because the option-snapshot
     # cadence (collector cron, every ~30 min) is materially slower than the
@@ -38,10 +38,10 @@ class PortfolioStateConfig:
                 f"got {self.thesis_resolutions_lookback_trading_days}"
             )
             raise ValueError(msg)
-        if self.snapshot_freshness_max_phase1_to_snapshot_seconds <= 0:
+        if self.snapshot_freshness_max_fill_collection_to_snapshot_seconds <= 0:
             msg = (
-                "snapshot_freshness_max_phase1_to_snapshot_seconds must be > 0; "
-                f"got {self.snapshot_freshness_max_phase1_to_snapshot_seconds}"
+                "snapshot_freshness_max_fill_collection_to_snapshot_seconds must be > 0; "
+                f"got {self.snapshot_freshness_max_fill_collection_to_snapshot_seconds}"
             )
             raise ValueError(msg)
         if self.snapshot_freshness_max_price_age_seconds <= 0:
@@ -75,7 +75,7 @@ def _flatten_portfolio_state_yaml(raw: dict[str, Any]) -> dict[str, Any]:
         "pm_decision_log_sliding_window_invocations": pm["sliding_window_invocations"],
         "thesis_resolutions_lookback_trading_days": tr["lookback_trading_days"],
         "thesis_quality_aggregates_trailing_windows_days": tuple(tq["trailing_windows_days"]),
-        "snapshot_freshness_max_phase1_to_snapshot_seconds": sf["max_phase1_to_snapshot_seconds"],
+        "snapshot_freshness_max_fill_collection_to_snapshot_seconds": sf["max_fill_collection_to_snapshot_seconds"],
         "snapshot_freshness_max_price_age_seconds": sf["max_price_age_seconds"],
         "snapshot_freshness_max_option_price_age_seconds": sf["max_option_price_age_seconds"],
     }

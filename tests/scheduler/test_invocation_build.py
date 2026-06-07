@@ -379,8 +379,8 @@ class TestBuildInvocationRecord:
 
         # The five fields that must be ``None`` at insert per the spec.
         expected_none = {
-            "phase1_completed_at",
-            "phase2_completed_at",
+            "fill_collection_completed_at",
+            "command_execution_completed_at",
             "fill_collection_summary_json",
             "command_execution_summary_json",
             "staleness_flag",
@@ -391,8 +391,8 @@ class TestBuildInvocationRecord:
             "invocation_id",
             "process_lifetime_id",
             "start_at",
-            "phase1_completed_at",
-            "phase2_completed_at",
+            "fill_collection_completed_at",
+            "command_execution_completed_at",
             "trigger_type",
             "trigger_source",
             "trigger_reason",

@@ -51,8 +51,8 @@ def _make_row(
     invocation_id: str,
     start_at: str,
     trigger_source: str = "market_open",
-    phase1_completed_at: str | None = None,
-    phase2_completed_at: str | None = None,
+    fill_collection_completed_at: str | None = None,
+    command_execution_completed_at: str | None = None,
     command_execution_summary_json: str | None = None,
     snapshot_metadata_json: str | None = None,
     staleness_flag: int | None = None,
@@ -61,8 +61,8 @@ def _make_row(
         invocation_id=invocation_id,
         process_lifetime_id=_PROCESS_LIFETIME_ID,
         start_at=start_at,
-        phase1_completed_at=phase1_completed_at,
-        phase2_completed_at=phase2_completed_at,
+        fill_collection_completed_at=fill_collection_completed_at,
+        command_execution_completed_at=command_execution_completed_at,
         trigger_type="scheduled",
         trigger_source=trigger_source,
         trigger_reason="test",
@@ -122,8 +122,8 @@ async def seeded_db(tmp_path: Path) -> AsyncIterator[Path]:
                 invocation_id="inv-001",
                 start_at="2026-05-01T09:00:00",
                 trigger_source="market_open",
-                phase1_completed_at="2026-05-01T09:05:00",
-                phase2_completed_at="2026-05-01T09:10:00",
+                fill_collection_completed_at="2026-05-01T09:05:00",
+                command_execution_completed_at="2026-05-01T09:10:00",
                 command_execution_summary_json='{"commands_submitted": 5, "commands_rejected": 0}',
             )
         )
@@ -133,8 +133,8 @@ async def seeded_db(tmp_path: Path) -> AsyncIterator[Path]:
                 invocation_id="inv-002",
                 start_at="2026-05-02T10:00:00",
                 trigger_source="market_hours_rolling",
-                phase1_completed_at="2026-05-02T10:05:00",
-                phase2_completed_at=None,
+                fill_collection_completed_at="2026-05-02T10:05:00",
+                command_execution_completed_at=None,
             )
         )
         # Row 3: failed (both phases missing), pre_close
@@ -143,8 +143,8 @@ async def seeded_db(tmp_path: Path) -> AsyncIterator[Path]:
                 invocation_id="inv-003",
                 start_at="2026-05-03T15:00:00",
                 trigger_source="pre_close",
-                phase1_completed_at=None,
-                phase2_completed_at=None,
+                fill_collection_completed_at=None,
+                command_execution_completed_at=None,
                 snapshot_metadata_json='{"abort_reason": "context-overflow"}',
             )
         )
@@ -154,8 +154,8 @@ async def seeded_db(tmp_path: Path) -> AsyncIterator[Path]:
                 invocation_id="inv-004",
                 start_at="2026-05-04T09:00:00",
                 trigger_source="market_open",
-                phase1_completed_at="2026-05-04T09:05:00",
-                phase2_completed_at="2026-05-04T09:11:00",
+                fill_collection_completed_at="2026-05-04T09:05:00",
+                command_execution_completed_at="2026-05-04T09:11:00",
                 command_execution_summary_json='{"commands_submitted": 3, "commands_rejected": 2}',
             )
         )
@@ -165,8 +165,8 @@ async def seeded_db(tmp_path: Path) -> AsyncIterator[Path]:
                 invocation_id="inv-005",
                 start_at="2026-05-05T12:00:00",
                 trigger_source="emergency",
-                phase1_completed_at="2026-05-05T12:03:00",
-                phase2_completed_at=None,
+                fill_collection_completed_at="2026-05-05T12:03:00",
+                command_execution_completed_at=None,
             )
         )
         await session.commit()

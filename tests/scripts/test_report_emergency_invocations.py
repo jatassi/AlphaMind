@@ -151,8 +151,8 @@ def _add_invocation(
         invocation_id=invocation_id,
         process_lifetime_id=_PROC_ID,
         start_at=_iso(start_at),
-        phase1_completed_at=None,
-        phase2_completed_at=None,
+        fill_collection_completed_at=None,
+        command_execution_completed_at=None,
         trigger_type=trigger_type,  # type: ignore[arg-type]
         trigger_source=trigger_source,
         trigger_reason=trigger_reason,

@@ -171,7 +171,7 @@ async def _seed_singletons_via_handle(handle: Any) -> None:
     """Mirror ``process_unprocessed_fills``'s singleton-seeding side effects.
 
     Joins the Phase 1 transaction so the singletons commit together with
-    ``phase1_completed_at`` — same shape as the helper in
+    ``fill_collection_completed_at`` — same shape as the helper in
     ``test_orchestrator.py``.
     """
     from alphamind.state.tables.cash_ledger_codec import cash_ledger_record_to_row
@@ -347,7 +347,7 @@ def _patch_no_op_pipeline_with_progress_emit(monkeypatch: pytest.MonkeyPatch) ->
 
         handle = args[0]
         await _seed_singletons_via_handle(handle)
-        await stamp_phase_completion(handle, column="phase1_completed_at")
+        await stamp_phase_completion(handle, column="fill_collection_completed_at")
         return _make_phase1_summary()
 
     async def _analysis_stub(**kw: Any) -> Any:

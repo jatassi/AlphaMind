@@ -65,24 +65,30 @@ class TestPhaseColumnRenameMigration:
         assert "phase2_completed_at" not in cols
 
     def test_upgrade_preserves_existing_rows(self, tmp_path: Path) -> None:
-        """Rows seeded at the prior head are readable under the new column names."""
+        """Rows seeded before upgrade are readable under the new column names after upgrade.
+
+        Because the genesis baseline (a000000000aa) uses ``Base.metadata.create_all``
+        against the current ORM model (which already has the renamed columns), any fresh
+        DB already has ``fill_collection_completed_at`` / ``command_execution_completed_at``.
+        Our migration is therefore idempotent on a fresh DB.  The test seeds a row
+        directly, runs upgrade head, and asserts the row is intact.
+        """
         db_path = tmp_path / "seed.db"
         cfg = _alembic_config(db_path)
-        # Upgrade to the prior head first, seed a row, then upgrade to new head.
+        # Upgrade to the prior head first (genesis creates columns with new names).
         command.upgrade(cfg, _PRIOR_HEAD)
 
         eng = make_engine(str(db_path))
         try:
             with eng.begin() as conn:
-                # Disable FK enforcement for the seed insert so we don't need a
-                # matching process_lifetimes row.
+                # Disable FK enforcement for the seed insert.
                 conn.execute(text("PRAGMA foreign_keys = OFF"))
-                # Insert a minimal invocations row with the old column names present.
+                # Insert using the NEW column names (genesis already renamed them).
                 conn.execute(
                     text(
                         "INSERT INTO invocations ("
                         "  invocation_id, process_lifetime_id, start_at,"
-                        "  phase1_completed_at, phase2_completed_at,"
+                        "  fill_collection_completed_at, command_execution_completed_at,"
                         "  trigger_type, trigger_source, trigger_reason,"
                         "  git_sha_at_invocation, active_profile, active_regime,"
                         "  active_mode, active_overlays_json, resolved_config_hash,"
@@ -101,7 +107,7 @@ class TestPhaseColumnRenameMigration:
         finally:
             eng.dispose()
 
-        # Now upgrade to new head (renames columns).
+        # Upgrade to new head (idempotent on fresh DB — columns already renamed).
         command.upgrade(cfg, _NEW_REVISION)
 
         eng = make_engine(str(db_path))

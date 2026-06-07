@@ -1428,7 +1428,7 @@ async def test_persist_envelope_outcome_stamps_phase2_completion_on_invocation_r
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """An accepted envelope's writeback must set the bound invocation row's
-    phase2_completed_at as the final step of the open transaction so observers
+    command_execution_completed_at as the final step of the open transaction so observers
     can distinguish "Phase 2 in flight" from "Phase 2 committed".
     """
     from alphamind.execution.write_paths.phase2 import (
@@ -1456,8 +1456,8 @@ async def test_persist_envelope_outcome_stamps_phase2_completion_on_invocation_r
     async with factory() as sess:
         row = await sess.get(InvocationRow, invocation_id)
         assert row is not None
-        assert row.phase2_completed_at is not None
-        parsed = datetime.fromisoformat(row.phase2_completed_at)
+        assert row.command_execution_completed_at is not None
+        parsed = datetime.fromisoformat(row.command_execution_completed_at)
         assert parsed.tzinfo is not None
         assert parsed.utcoffset() == timedelta(0)
 
@@ -1466,7 +1466,7 @@ async def test_persist_envelope_parse_failure_does_not_stamp_phase2_completion(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """A Layer-1 parse failure is NOT a Phase 2 commit — the audit-trail
-    activity-log entry persists but phase2_completed_at must remain NULL so
+    activity-log entry persists but command_execution_completed_at must remain NULL so
     observers can tell rejection apart from a real Phase 2 commit.
     """
     from alphamind.execution.write_paths.phase2 import (
@@ -1492,7 +1492,7 @@ async def test_persist_envelope_parse_failure_does_not_stamp_phase2_completion(
     async with factory() as sess:
         row = await sess.get(InvocationRow, invocation_id)
         assert row is not None
-        assert row.phase2_completed_at is None
+        assert row.command_execution_completed_at is None
 
 
 async def _seed_pending_protective_order(

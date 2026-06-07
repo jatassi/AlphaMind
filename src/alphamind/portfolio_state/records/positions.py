@@ -41,7 +41,7 @@ class PositionStatus(StrEnum):
     # cancelled (bracket dissolved) — ALP-744. Distinct from CLOSED ("opened
     # then exited"): a CANCELLED position never opened, so it carries no fills
     # and no realized P&L. The cancel/dissolve write path
-    # (``execution/write_paths/phase2/cancel.py``) drives PENDING → CANCELLED so
+    # (``execution/write_paths/command_execution/cancel.py``) drives PENDING → CANCELLED so
     # a never-filled position can't strand in PENDING forever.
     CANCELLED = "CANCELLED"
 
@@ -304,7 +304,7 @@ class PositionRecord:
 
     execution_history: tuple[PositionFill, ...]
     # Per-**position** cumulative realized P&L. Written by the close paths on exit
-    # (e.g. ``write_paths/phase1._apply_exit_fill`` / ``_apply_options_exit_fill``,
+    # (e.g. ``write_paths/fill_collection._apply_exit_fill`` / ``_apply_options_exit_fill``,
     # ``account_activities/booking._closed_option``, the corporate-action
     # ``corporate_actions/handlers/mergers`` cash-merger close)
     # and summed over CLOSED positions by ``get_portfolio_pnl_inputs`` to produce

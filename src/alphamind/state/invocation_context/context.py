@@ -67,9 +67,9 @@ async def insert_invocation_row(
 ) -> None:
     """Insert one ``invocations`` row in its own short transaction; commit.
 
-    The row is durable in the DB on return — Phase 1's transaction opens
-    afterwards and can read the row from a fresh session; the SQL
-    repository's snapshot-isolation guard (``phase1_completed_at IS NULL``
+    The row is durable in the DB on return — fill-collection's transaction
+    opens afterwards and can read the row from a fresh session; the SQL
+    repository's snapshot-isolation guard (``fill_collection_completed_at IS NULL``
     → ``RepositoryConsistencyError``) can then participate correctly
     across phase boundaries.
 
@@ -133,17 +133,20 @@ class InvocationContext:
             self._session = None
 
 
-_PhaseColumn = Literal["phase1_completed_at", "phase2_completed_at"]
+_PhaseColumn = Literal[
+    "fill_collection_completed_at",
+    "command_execution_completed_at",
+]
 
 
 async def stamp_phase_completion(handle: InvocationHandle, *, column: _PhaseColumn) -> None:
     """Set the bound invocation row's phase-completion column to now (UTC).
 
-    Phase 1 / Phase 2 write paths call this as the final step inside the
-    phase's open session so the surrounding commit flips the row from
-    "in flight" to "committed". The SQL repository's snapshot-isolation
-    guard reads ``phase1_completed_at`` and raises
-    ``RepositoryConsistencyError`` when it remains NULL.
+    Fill-collection / command-execution write paths call this as the final
+    step inside the phase's open session so the surrounding commit flips the
+    row from "in flight" to "committed". The SQL repository's
+    snapshot-isolation guard reads ``fill_collection_completed_at`` and
+    raises ``RepositoryConsistencyError`` when it remains NULL.
     """
     row = await handle.session.get(InvocationRow, handle.invocation_id)
     if row is None:

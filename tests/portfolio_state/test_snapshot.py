@@ -389,16 +389,16 @@ class TestIntraInvocationChangelogValidator:
 
 class TestTimestampOrderingValidator:
     def test_phase1_before_assembled_passes(self) -> None:
-        snap = _make_snapshot(phase1_committed_at=_T0, snapshot_assembled_at=_T1)
-        assert snap.phase1_committed_at <= snap.snapshot_assembled_at
+        snap = _make_snapshot(fill_collection_committed_at=_T0, snapshot_assembled_at=_T1)
+        assert snap.fill_collection_committed_at <= snap.snapshot_assembled_at
 
     def test_phase1_equal_assembled_passes(self) -> None:
-        snap = _make_snapshot(phase1_committed_at=_T0, snapshot_assembled_at=_T0)
-        assert snap.phase1_committed_at == snap.snapshot_assembled_at
+        snap = _make_snapshot(fill_collection_committed_at=_T0, snapshot_assembled_at=_T0)
+        assert snap.fill_collection_committed_at == snap.snapshot_assembled_at
 
     def test_phase1_after_assembled_raises(self) -> None:
         with pytest.raises((ValueError, TypeError)):
-            _make_snapshot(phase1_committed_at=_T1, snapshot_assembled_at=_T0)
+            _make_snapshot(fill_collection_committed_at=_T1, snapshot_assembled_at=_T0)
 
     def test_pipeline_start_after_assembled_passes(self) -> None:
         snap = _make_snapshot(
@@ -513,16 +513,16 @@ class TestInvocationIdValidator:
 
 
 class TestTimestampTzAwarenessValidator:
-    def test_naive_phase1_committed_at_raises(self) -> None:
+    def test_naive_fill_collection_committed_at_raises(self) -> None:
         naive = _T0.replace(tzinfo=None)
         with pytest.raises((ValueError, TypeError)):
-            _make_snapshot(phase1_committed_at=naive)
+            _make_snapshot(fill_collection_committed_at=naive)
 
     def test_naive_snapshot_assembled_at_raises(self) -> None:
         naive = _T1.replace(tzinfo=None)
         with pytest.raises((ValueError, TypeError)):
             _make_snapshot(
-                phase1_committed_at=_T0,
+                fill_collection_committed_at=_T0,
                 snapshot_assembled_at=naive,
             )
 
@@ -569,7 +569,7 @@ class TestEmptyPortfolio:
     def test_empty_portfolio_constructs_without_error(self) -> None:
         snap = PortfolioStateSnapshot(
             invocation_id="inv-empty-001",
-            phase1_committed_at=_T0,
+            fill_collection_committed_at=_T0,
             snapshot_assembled_at=_T1,
             pipeline_invocation_started_at=None,
             open_positions=(),

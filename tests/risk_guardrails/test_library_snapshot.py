@@ -225,7 +225,7 @@ def _make_pydantic_snapshot(
     )
     return PortfolioStateSnapshot(
         invocation_id=_INV_ID,
-        phase1_committed_at=_PHASE1,
+        fill_collection_committed_at=_PHASE1,
         snapshot_assembled_at=_NOW,
         open_positions=tuple(open_positions),
         pending_positions=tuple(pending_positions),

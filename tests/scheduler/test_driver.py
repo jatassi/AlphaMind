@@ -106,14 +106,14 @@ def _make_invocation_record(
     *,
     invocation_id: str,
     start_at: str,
-    phase2_completed_at: str | None,
+    command_execution_completed_at: str | None,
 ) -> InvocationRecord:
     return InvocationRecord(
         invocation_id=invocation_id,
         process_lifetime_id="proc-driver-1",
         start_at=start_at,
-        phase1_completed_at=None,
-        phase2_completed_at=phase2_completed_at,
+        fill_collection_completed_at=None,
+        command_execution_completed_at=command_execution_completed_at,
         trigger_type="scheduled",
         trigger_source="market_hours_rolling",
         trigger_reason="30 9,11,13,15 * * mon-fri",
@@ -371,7 +371,7 @@ async def _insert_completed_invocation(
     invocation_id: str,
     completed_at: datetime,
 ) -> None:
-    """Insert a row with ``phase2_completed_at`` stamped at *completed_at*."""
+    """Insert a row with ``command_execution_completed_at`` stamped at *completed_at*."""
     completed_iso = completed_at.isoformat().replace("+00:00", "Z")
     async with factory() as session:
         session.add(
@@ -379,7 +379,7 @@ async def _insert_completed_invocation(
                 _make_invocation_record(
                     invocation_id=invocation_id,
                     start_at=completed_iso,
-                    phase2_completed_at=completed_iso,
+                    command_execution_completed_at=completed_iso,
                 )
             )
         )

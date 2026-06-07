@@ -317,7 +317,7 @@ def _patch_no_op_pipeline(
             )
         if phase1_raises is not None:
             raise phase1_raises
-        # Production ``process_unprocessed_fills`` stamps ``phase1_completed_at``
+        # Production ``process_unprocessed_fills`` stamps ``fill_collection_completed_at``
         # on the bound row before returning (write_paths/phase1.py:294) AND
         # seeds the ``cash_ledger`` + ``drawdown_state`` singletons as a side
         # effect of fill integration. The stub mirrors both so the
@@ -329,7 +329,7 @@ def _patch_no_op_pipeline(
 
         handle = args[0]
         await _seed_singletons_via_handle(handle)
-        await stamp_phase_completion(handle, column="phase1_completed_at")
+        await stamp_phase_completion(handle, column="fill_collection_completed_at")
         return phase1_summary or _make_phase1_summary()
 
     async def _analysis_stub(**kw: Any) -> Any:
@@ -423,7 +423,7 @@ class TestPhase1WriteLockResilience:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A transient ``database is locked`` on the first write attempt retries; the
-        invocation completes with fills processed and ``phase1_completed_at`` stamped."""
+        invocation completes with fills processed and ``fill_collection_completed_at`` stamped."""
         from alphamind.scheduler.orchestrator import run_invocation
 
         phase1 = Phase1Summary(
@@ -447,8 +447,8 @@ class TestPhase1WriteLockResilience:
 
         async with async_factory() as session:
             row = (await session.execute(select(InvocationRow))).scalar_one()
-        assert row.phase1_completed_at is not None
-        assert row.phase2_completed_at is not None
+        assert row.fill_collection_completed_at is not None
+        assert row.command_execution_completed_at is not None
         assert row.fill_collection_summary_json is not None
         payload = json.loads(row.fill_collection_summary_json)
         assert payload["fills_processed"] == 2
@@ -518,8 +518,8 @@ class TestRunInvocationHappyPath:
         assert len(rows) == 1
         row = rows[0]
         assert row.invocation_id == summary.invocation_id
-        assert row.phase1_completed_at is not None
-        assert row.phase2_completed_at is not None
+        assert row.fill_collection_completed_at is not None
+        assert row.command_execution_completed_at is not None
         assert row.fill_collection_summary_json is not None
         assert row.command_execution_summary_json is not None
         assert row.active_overlays_json is not None
@@ -662,19 +662,19 @@ class TestRunInvocationHappyPath:
 
 
 class TestRunInvocationFailures:
-    async def test_phase1_exception_leaves_row_with_phase1_completed_at_null(
+    async def test_phase1_exception_leaves_row_with_fill_collection_completed_at_null(
         self,
         async_factory: async_sessionmaker[AsyncSession],
         env_path: Path,
         archive_root: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Phase 1 abort: row stays (committed up-front), phase1_completed_at is NULL.
+        """Phase 1 abort: row stays (committed up-front), fill_collection_completed_at is NULL.
 
         Under the three-transaction model the invocation row is committed by
         ``insert_invocation_record`` before Phase 1 opens. A Phase 1 abort
         rolls back Phase 1's own transaction only; the row persists with
-        ``phase1_completed_at IS NULL`` so the SQL repository's consistency
+        ``fill_collection_completed_at IS NULL`` so the SQL repository's consistency
         guard refuses snapshot reads against this invocation, and the next
         invocation retries fills.
         """
@@ -699,8 +699,8 @@ class TestRunInvocationFailures:
             rows = (await session.execute(select(InvocationRow))).scalars().all()
         assert len(rows) == 1
         row = rows[0]
-        assert row.phase1_completed_at is None
-        assert row.phase2_completed_at is None
+        assert row.fill_collection_completed_at is None
+        assert row.command_execution_completed_at is None
 
     async def test_decision_exception_leaves_phase1_committed_skips_phase2(
         self,
@@ -714,7 +714,7 @@ class TestRunInvocationFailures:
         Per ``docs/design/mid-pipeline-failure-handling.md`` an analysis /
         decision-pipeline failure leaves the already-committed Phase 1
         writes durable and skips Phase 2. The row carries
-        ``phase1_completed_at`` set, ``phase2_completed_at`` NULL.
+        ``fill_collection_completed_at`` set, ``command_execution_completed_at`` NULL.
         """
         from alphamind.scheduler.orchestrator import run_invocation
 
@@ -742,8 +742,8 @@ class TestRunInvocationFailures:
             rows = (await session.execute(select(InvocationRow))).scalars().all()
         assert len(rows) == 1
         row = rows[0]
-        assert row.phase1_completed_at is not None
-        assert row.phase2_completed_at is None
+        assert row.fill_collection_completed_at is not None
+        assert row.command_execution_completed_at is None
         assert "dispatch" not in captured
 
 
@@ -886,7 +886,7 @@ async def _seed_singletons_via_handle(handle: Any) -> None:
 
     Mimics what production ``process_unprocessed_fills`` does as a side
     effect of fill integration; joins the Phase 1 transaction so the
-    singletons commit together with ``phase1_completed_at``.
+    singletons commit together with ``fill_collection_completed_at``.
     """
     from alphamind.state.tables.cash_ledger_codec import (
         cash_ledger_record_to_row,
@@ -905,7 +905,7 @@ class TestRunInvocationSnapshotWiring:
 
     Pre-ALP-449 the orchestrator wired a deferred ``_EmptySynthesizerReader``
     stub because the unified-transaction model prevented a fresh-session
-    snapshot read from seeing the open transaction's ``phase1_completed_at``
+    snapshot read from seeing the open transaction's ``fill_collection_completed_at``
     write. The three-transaction refactor commits Phase 1 before the snapshot
     read, so ``SnapshotBackedSynthesizerReader`` wires correctly.
     """
@@ -960,7 +960,7 @@ class TestRunInvocationSnapshotWiring:
 
         Forces the three-transaction restructure: Phase 1 commits, then the
         orchestrator assembles a snapshot via fresh sessions (which now see
-        committed ``phase1_completed_at``), then wires that snapshot through
+        committed ``fill_collection_completed_at``), then wires that snapshot through
         the synthesizer reader into the analysis pipeline.
         """
         from alphamind.portfolio_state.consumers.synthesizer import (
@@ -1142,7 +1142,7 @@ class TestRunInvocationFailuresThreeTxBoundaries:
 
     ``TestRunInvocationFailures`` covers Phase 1 abort and between-phase
     abort already; this class fills in the Phase 2 boundary — a
-    dispatch-side raise must leave Phase 1 durable and ``phase2_completed_at``
+    dispatch-side raise must leave Phase 1 durable and ``command_execution_completed_at``
     NULL (matches the design's "commands submitted before the abort
     remain committed" semantic; the per-envelope mechanics themselves
     are tested in ``tests/scheduler/test_phase2_dispatch.py``).
@@ -1185,8 +1185,8 @@ class TestRunInvocationFailuresThreeTxBoundaries:
             rows = (await session.execute(select(InvocationRow))).scalars().all()
         assert len(rows) == 1
         row = rows[0]
-        assert row.phase1_completed_at is not None
-        assert row.phase2_completed_at is None
+        assert row.fill_collection_completed_at is not None
+        assert row.command_execution_completed_at is None
 
     async def test_pending_submit_strand_withholds_phase2_stamp_and_warns(
         self,
@@ -1196,7 +1196,7 @@ class TestRunInvocationFailuresThreeTxBoundaries:
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """FL4 — a residual PENDING_SUBMIT strand withholds ``phase2_completed_at``
+        """FL4 — a residual PENDING_SUBMIT strand withholds ``command_execution_completed_at``
         AND surfaces an operator-visible warning (not silent withholding).
 
         The dispatch stub seeds the lost-backfill signature this invocation: an
@@ -1258,7 +1258,7 @@ class TestRunInvocationFailuresThreeTxBoundaries:
         async with async_factory() as session:
             row = (await session.execute(select(InvocationRow))).scalar_one()
         # The strand withholds the stamp …
-        assert row.phase2_completed_at is None
+        assert row.command_execution_completed_at is None
         # … and the residual strand is surfaced for operator follow-up.
         warnings = [
             r
@@ -1268,7 +1268,7 @@ class TestRunInvocationFailuresThreeTxBoundaries:
             and "PENDING_SUBMIT" in r.getMessage()
         ]
         assert len(warnings) == 1
-        assert "phase2_completed_at withheld" in warnings[0].getMessage()
+        assert "command_execution_completed_at withheld" in warnings[0].getMessage()
 
 
 def _stub_only_llm_and_broker(
@@ -1313,8 +1313,8 @@ _REQUIRED_INVOCATION_ROW_COLUMNS: tuple[str, ...] = (
     "invocation_id",
     "process_lifetime_id",
     "start_at",
-    "phase1_completed_at",
-    "phase2_completed_at",
+    "fill_collection_completed_at",
+    "command_execution_completed_at",
     "trigger_type",
     "trigger_source",
     "trigger_reason",
@@ -1669,8 +1669,8 @@ def _make_invocation_row(
         invocation_id=invocation_id,
         process_lifetime_id="proc-driver-1",
         start_at=iso,
-        phase1_completed_at=iso,
-        phase2_completed_at=iso if phase2_completed else None,
+        fill_collection_completed_at=iso,
+        command_execution_completed_at=iso if phase2_completed else None,
         trigger_type="manual",
         trigger_source="cli",
         trigger_reason="prior",
@@ -1775,7 +1775,7 @@ class TestRunInvocationLastInvocationTimeResolution:
         db_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """An aborted prior (phase2_completed_at IS NULL) is skipped.
+        """An aborted prior (command_execution_completed_at IS NULL) is skipped.
 
         The resolver anchors the digest window to the last *successful*
         invocation so headlines published between that success and a later

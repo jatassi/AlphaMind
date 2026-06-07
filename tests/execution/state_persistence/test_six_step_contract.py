@@ -4,11 +4,11 @@ Per ``docs/design/05-execution-layer/state-persistence.md`` § Read paths the
 snapshot-isolation contract is::
 
     1. Phase 1 begins a write transaction.
-    2. Phase 1 commits (fills integrate, ``phase1_completed_at`` stamped).
+    2. Phase 1 commits (fills integrate, ``fill_collection_completed_at`` stamped).
     3. The ingestion layer reads a snapshot.
     4. The ingestion layer completes its read.
     5. Phase 2 begins a write transaction.
-    6. Phase 2 commits (envelope writebacks land, ``phase2_completed_at``
+    6. Phase 2 commits (envelope writebacks land, ``command_execution_completed_at``
        stamped).
 
 This module exercises steps 1, 2, 5, and 6 plus the snapshot reads bracketing
@@ -260,8 +260,8 @@ def _invocation_record(invocation_id: str = _INV_ID) -> InvocationRecord:
         invocation_id=invocation_id,
         process_lifetime_id=_PROCESS_ID,
         start_at=_NOW.isoformat().replace("+00:00", "Z"),
-        phase1_completed_at=None,
-        phase2_completed_at=None,
+        fill_collection_completed_at=None,
+        command_execution_completed_at=None,
         trigger_type="scheduled",
         trigger_source="cron",
         trigger_reason="0 9 * * 1-5",
