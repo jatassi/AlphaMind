@@ -497,3 +497,87 @@ async def test_empty_then_valid_retries_and_succeeds(
     # The retry count reaches the persisted metadata, not just errors.json.
     assert meta["retry_count"] == 1
     assert (diag_dir / "response.md").read_text(encoding="utf-8") == _SYNTHESIS_TEXT
+
+
+# ---------------------------------------------------------------------------
+# agent_calls telemetry capture (ALP-880) — narrative agent: null output.json
+# ---------------------------------------------------------------------------
+
+_INV_TELEM_SYNTH = "inv-telem-synth"
+_PLT_TELEM_SYNTH = "plt-telem-synth"
+
+
+@pytest.fixture()
+async def telemetry_factory(tmp_path: Path):  # type: ignore[no-untyped-def]
+    """On-disk SQLite with the invocation FK target for the capture row seeded."""
+    from collections.abc import AsyncIterator
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    import alphamind.state.tables  # noqa: F401 — register all tables on Base.metadata
+    from alphamind.persistence.models import Base
+    from alphamind.persistence.session import (
+        make_async_engine,
+        make_async_session_factory,
+        make_engine,
+        make_session_factory,
+    )
+    from tests.state._fk_substrate import stub_invocation_row, stub_process_lifetime_row
+
+    db_path = tmp_path / "telem.db"
+    sync_engine = make_engine(str(db_path))
+    Base.metadata.create_all(sync_engine)
+    with make_session_factory(sync_engine)() as sess:
+        sess.add(stub_process_lifetime_row(_PLT_TELEM_SYNTH))
+        sess.flush()
+        sess.add(stub_invocation_row(_INV_TELEM_SYNTH, process_lifetime_id=_PLT_TELEM_SYNTH))
+        sess.commit()
+    sync_engine.dispose()
+
+    async_engine = make_async_engine(str(db_path))
+    factory: async_sessionmaker[AsyncSession] = make_async_session_factory(async_engine)
+    yield factory
+    await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_synthesizer_capture_writes_row_with_null_output_payload(
+    agent_config: BaseAgentConfig,
+    archive_root: Path,
+    portfolio_reader: _StubPortfolioReader,
+    tmp_path: Path,
+    telemetry_factory: Any,
+) -> None:
+    """The narrative synthesizer persists one agent_calls row; with no
+    structured-output contract, output.json is null and output_schema_ref is
+    null — proving the shared capture seam fires for a non-structured agent."""
+    from alphamind.state.repository.agent_calls_queries import read_agent_calls_for_invocation
+
+    stub = _make_stub_query([_make_sdk_response(_SYNTHESIS_TEXT)])
+    provenance_root = tmp_path / "provenance"
+
+    async with telemetry_factory() as session:
+        await invoke_synthesizer(
+            agent_config=agent_config,
+            user_message="Synthesize.",
+            invocation_id=_INV_TELEM_SYNTH,
+            portfolio_reader=portfolio_reader,
+            archive_root=archive_root,
+            as_of=_AS_OF,
+            sdk_query_fn=stub,
+            telemetry_session=session,
+            provenance_root=provenance_root,
+        )
+        await session.commit()
+
+    async with telemetry_factory() as session:
+        rows = await read_agent_calls_for_invocation(session, _INV_TELEM_SYNTH)
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.agent_name == "synthesizer"
+    assert row.success is True
+    assert row.output_schema_ref is None  # no structured-output contract
+    pdir = Path(row.output_artifact_ref)
+    assert json.loads((pdir / "output.json").read_text()) is None
+    assert (pdir / "system_prompt.md").read_text(encoding="utf-8")  # non-empty prompt
