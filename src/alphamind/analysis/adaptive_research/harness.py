@@ -32,6 +32,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
@@ -47,6 +48,7 @@ from alphamind.analysis._harness_core import (
     _build_retry_message,
     _load_prompt,
     _render_raw_response,
+    capture_agent_call,
     invoke_sdk,
 )
 from alphamind.analysis._schema_tightening import _tighten_conditional_schema
@@ -353,6 +355,7 @@ async def _run_retry_attempt(
     diag.response_retry = raw_response_retry
     diag.tokens_used = _add_tokens(tokens1, tokens2)
     diag.tool_calls_used = tool_calls1 + tool_calls2
+    diag.output_payload = payload2
 
     brief2, _ = _parse_and_validate(
         payload2,
@@ -412,6 +415,8 @@ async def invoke_adaptive_researcher(
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "adaptive",
+    telemetry_session: AsyncSession | None = None,
+    provenance_root: Path | None = None,
 ) -> HarnessSuccess:
     """Invoke the adaptive-researcher agent and return a validated :class:`HarnessSuccess`.
 
@@ -446,6 +451,10 @@ async def invoke_adaptive_researcher(
         archive_root=archive_root,
         as_of=as_of,
         record_tool_calls=True,
+        prompt_path=agent_config.prompt,
+        output_schema=_build_adaptive_brief_schema(),
+        tools_definition=list(allowed_tools),
+        sampling_params={"max_tokens": agent_config.output_token_budget},
     )
     wall_start = time.monotonic()
 
@@ -482,65 +491,71 @@ async def invoke_adaptive_researcher(
             outcome.session_id,
         )
 
-    # ------------------------------------------------------------------
-    # Attempt 1: initial call
-    # ------------------------------------------------------------------
-    payload1, text1, stop_reason1, tokens1, tool_calls1, session_id1 = await _invoke(user_message)
-    raw_response_initial = _render_raw_response(payload1, text1)
-    diag.response_initial = raw_response_initial
-    diag.tokens_used = tokens1
-    diag.tool_calls_used = tool_calls1
+    async with capture_agent_call(
+        diag, telemetry_session=telemetry_session, provenance_root=provenance_root
+    ):
+        # --------------------------------------------------------------
+        # Attempt 1: initial call
+        # --------------------------------------------------------------
+        payload1, text1, stop_reason1, tokens1, tool_calls1, session_id1 = await _invoke(
+            user_message
+        )
+        raw_response_initial = _render_raw_response(payload1, text1)
+        diag.response_initial = raw_response_initial
+        diag.tokens_used = tokens1
+        diag.tool_calls_used = tool_calls1
+        diag.output_payload = payload1
 
-    try:
-        brief, retry_message = _parse_and_validate(
-            payload1,
-            text1,
-            invocation_id,
-            universe,
-            sector_briefs,
-            qualitative_brief,
-            correlation_regime_brief,
-            validator_tool_allowlist,
-            stop_reason1,
-            attempt=1,
+        try:
+            brief, retry_message = _parse_and_validate(
+                payload1,
+                text1,
+                invocation_id,
+                universe,
+                sector_briefs,
+                qualitative_brief,
+                correlation_regime_brief,
+                validator_tool_allowlist,
+                stop_reason1,
+                attempt=1,
+                diag=diag,
+            )
+        except ContextOverflowFailure:
+            diag.write(
+                success=False,
+                wall_clock_seconds=time.monotonic() - wall_start,
+                stop_reason=stop_reason1,
+            )
+            raise
+
+        if brief is not None:
+            wall_elapsed = time.monotonic() - wall_start
+            diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason1)
+            return HarnessSuccess(
+                brief=brief,
+                raw_response=raw_response_initial,
+                retry_count=0,
+                tokens_used=tokens1,
+                tool_calls_used=tool_calls1,
+                wall_clock_seconds=wall_elapsed,
+            )
+
+        # --------------------------------------------------------------
+        # Attempt 2: corrective retry
+        # --------------------------------------------------------------
+        assert retry_message is not None
+        return await _run_retry_attempt(
+            retry_message=retry_message,
+            raw_response_initial=raw_response_initial,
+            tokens1=tokens1,
+            tool_calls1=tool_calls1,
+            session_id_initial=session_id1,
+            universe=universe,
+            sector_briefs=sector_briefs,
+            qualitative_brief=qualitative_brief,
+            correlation_regime_brief=correlation_regime_brief,
+            validator_tool_allowlist=validator_tool_allowlist,
             diag=diag,
+            wall_start=wall_start,
+            invoke=_invoke,
         )
-    except ContextOverflowFailure:
-        diag.write(
-            success=False,
-            wall_clock_seconds=time.monotonic() - wall_start,
-            stop_reason=stop_reason1,
-        )
-        raise
-
-    if brief is not None:
-        wall_elapsed = time.monotonic() - wall_start
-        diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason1)
-        return HarnessSuccess(
-            brief=brief,
-            raw_response=raw_response_initial,
-            retry_count=0,
-            tokens_used=tokens1,
-            tool_calls_used=tool_calls1,
-            wall_clock_seconds=wall_elapsed,
-        )
-
-    # ------------------------------------------------------------------
-    # Attempt 2: corrective retry
-    # ------------------------------------------------------------------
-    assert retry_message is not None
-    return await _run_retry_attempt(
-        retry_message=retry_message,
-        raw_response_initial=raw_response_initial,
-        tokens1=tokens1,
-        tool_calls1=tool_calls1,
-        session_id_initial=session_id1,
-        universe=universe,
-        sector_briefs=sector_briefs,
-        qualitative_brief=qualitative_brief,
-        correlation_regime_brief=correlation_regime_brief,
-        validator_tool_allowlist=validator_tool_allowlist,
-        diag=diag,
-        wall_start=wall_start,
-        invoke=_invoke,
-    )

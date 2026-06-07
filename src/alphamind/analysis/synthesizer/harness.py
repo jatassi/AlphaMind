@@ -39,6 +39,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._harness_core import (
     _PROMPT_CACHE,
@@ -49,6 +51,7 @@ from alphamind.analysis._harness_core import (
     TimeoutFailure,
     _add_tokens,
     _load_prompt,
+    capture_agent_call,
     invoke_sdk,
 )
 from alphamind.analysis._shared import TokensUsed
@@ -205,6 +208,8 @@ async def invoke_synthesizer(  # noqa: PLR0913 — signature dictated by synthes
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "synthesizer",
+    telemetry_session: AsyncSession | None = None,
+    provenance_root: Path | None = None,
 ) -> HarnessSuccess:
     """Invoke the synthesizer agent and return :class:`HarnessSuccess`.
 
@@ -250,9 +255,46 @@ async def invoke_synthesizer(  # noqa: PLR0913 — signature dictated by synthes
         as_of=as_of,
         response_filename="response.md",
         record_tool_calls=True,
+        prompt_path=agent_config.prompt,
+        tools_definition=list(allowed_tools),
+        sampling_params={"max_tokens": agent_config.output_token_budget},
     )
     wall_start = time.monotonic()
 
+    async with capture_agent_call(
+        diag, telemetry_session=telemetry_session, provenance_root=provenance_root
+    ):
+        return await _drive_synthesizer(
+            agent_config=agent_config,
+            agent_name=agent_name,
+            model_name=model_name,
+            user_message=user_message,
+            invocation_id=invocation_id,
+            options=options,
+            sdk_query_fn=sdk_query_fn,
+            diag=diag,
+            wall_start=wall_start,
+            progress=progress,
+            phase=phase,
+        )
+
+
+async def _drive_synthesizer(  # noqa: PLR0913 — internal helper threading the driver state
+    *,
+    agent_config: BaseAgentConfig,
+    agent_name: str,
+    model_name: str,
+    user_message: str,
+    invocation_id: str,
+    options: Any,
+    sdk_query_fn: Callable[..., AsyncIterator[Any]],
+    diag: DiagState,
+    wall_start: float,
+    progress: ProgressEmitter,
+    phase: str,
+) -> HarnessSuccess:
+    """Drive the synthesizer empty-response retry loop (extracted so the
+    capture context manager wraps it as a single scope)."""
     tokens = TokensUsed(input_tokens=0, output_tokens=0, cache_read_tokens=0, cache_write_tokens=0)
     tool_calls = 0
 
