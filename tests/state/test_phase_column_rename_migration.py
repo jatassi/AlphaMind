@@ -237,7 +237,8 @@ class TestPhaseColumnRenameMigration:
         assert row[1] == "2026-01-01T00:04:00Z"
 
     def test_downgrade_restores_old_column_names(self, tmp_path: Path) -> None:
-        """After downgrading past b001fc0000ee, the invocations table has the original column names."""
+        """After downgrading past b001fc0000ee, the invocations table has the original
+        column names."""
         db_path = tmp_path / "down.db"
         cfg = _alembic_config(db_path)
         command.upgrade(cfg, "head")
