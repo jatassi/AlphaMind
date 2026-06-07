@@ -228,6 +228,9 @@ class TestEnumMembers:
             # ALP-899 — the analysis pipeline's thesis-resolution step emits
             # THESIS_RESOLVED under this source.
             "ANALYSIS_PIPELINE",
+            # ALP-918 — the option-lifecycle poll emits POSITION_CLOSED on
+            # expiry / assignment / exercise under this source.
+            "ACCOUNT_ACTIVITIES_PROCESSOR",
         }
         assert {m.name for m in EventSource} == expected
 
@@ -240,6 +243,10 @@ class TestEnumMembers:
             "MARGIN_LIQUIDATION",
             "FORCED_BUY_IN",
             "CORPORATE_ACTION_CASH_MERGER",
+            # ALP-918 — the three option-lifecycle close exit methods.
+            "OPTION_EXPIRY",
+            "OPTION_ASSIGNMENT",
+            "OPTION_EXERCISE",
         }
         assert {m.name for m in PositionExitMethod} == expected
 

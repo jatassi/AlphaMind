@@ -134,6 +134,12 @@ class EventSource(StrEnum):
     # ``ck_activity_log_source`` CHECK is built from this enum, so a companion
     # migration widens it on alembic-managed DBs created before this member.
     ANALYSIS_PIPELINE = "ANALYSIS_PIPELINE"
+    # The option-lifecycle poll (ALP-918): emits POSITION_CLOSED on an option
+    # expiry / assignment / exercise so the closed-position thesis resolver can
+    # resolve the thesis. ``account_activities/`` emits no other activity-log
+    # entry, so no existing source fits. Like ANALYSIS_PIPELINE, the source
+    # CHECK is enum-built and a companion migration widens it.
+    ACCOUNT_ACTIVITIES_PROCESSOR = "ACCOUNT_ACTIVITIES_PROCESSOR"
 
 
 class PositionExitMethod(StrEnum):
@@ -146,6 +152,13 @@ class PositionExitMethod(StrEnum):
     MARGIN_LIQUIDATION = "MARGIN_LIQUIDATION"
     FORCED_BUY_IN = "FORCED_BUY_IN"
     CORPORATE_ACTION_CASH_MERGER = "CORPORATE_ACTION_CASH_MERGER"
+    # Option-lifecycle close exit methods (ALP-918), mirroring the
+    # ``OPEXP``/``OPASN``/``OPEXC`` broker-event distinction. Stored inside the
+    # ``PositionClosedDetail.exit_method`` JSON blob (not a CHECK-constrained
+    # column), so no migration is required for these members.
+    OPTION_EXPIRY = "OPTION_EXPIRY"
+    OPTION_ASSIGNMENT = "OPTION_ASSIGNMENT"
+    OPTION_EXERCISE = "OPTION_EXERCISE"
 
 
 class PositionOpenMechanism(StrEnum):
