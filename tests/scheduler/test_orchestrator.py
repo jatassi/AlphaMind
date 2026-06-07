@@ -534,7 +534,8 @@ class TestRunInvocationHappyPath:
         archive_root: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The row's ``fill_collection_summary_json`` is the fill collection summary JSON-serialized."""
+        """The row's ``fill_collection_summary_json`` is the fill collection summary
+        JSON-serialized."""
         from alphamind.scheduler.orchestrator import run_invocation
 
         fc_summary = FillCollectionSummary(
@@ -671,7 +672,8 @@ class TestRunInvocationFailures:
         archive_root: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Fill collection abort: row stays (committed up-front), fill_collection_completed_at is NULL.
+        """Fill collection abort: row stays (committed up-front),
+        fill_collection_completed_at is NULL.
 
         Under the three-transaction model the invocation row is committed by
         ``insert_invocation_record`` before fill collection opens. A fill collection abort
@@ -1157,7 +1159,8 @@ class TestRunInvocationFailuresThreeTxBoundaries:
         archive_root: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A dispatch_command_execution raise propagates; the row keeps fill collection, drops command execution."""
+        """A dispatch_command_execution raise propagates; the row keeps fill collection,
+        drops command execution."""
         from alphamind.scheduler import orchestrator as module
         from alphamind.scheduler.orchestrator import run_invocation
 
@@ -1276,7 +1279,8 @@ class TestRunInvocationFailuresThreeTxBoundaries:
 def _stub_only_llm_and_broker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Stub LLM + broker callees; leave fill collection / command execution writers in production form.
+    """Stub LLM + broker callees; leave fill collection / command execution writers
+    in production form.
 
     Differs from :func:`_patch_no_op_pipeline` by NOT stubbing
     ``process_unprocessed_fills`` and ``dispatch_command_execution`` — those are the

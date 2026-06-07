@@ -255,7 +255,7 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # changed; the resolved budgets/roster are identical.
     # Pin updated 2026-06-05 (borrow_accrual_tick_local_time removed, ALP-855):
     # the borrow-accrual daily timer was relocated out of the always-on monitor
-    # into the pipeline's Phase-1 write unit (ADR-0004/0005), so the monitor's
+    # into the pipeline's fill-collection write unit (ADR-0004/0005), so the monitor's
     # configured wall-clock tick time is dead config and was dropped from
     # config/continuous_monitor.yaml and ContinuousMonitorConfig, shifting the
     # resolved-config canonical bytes.

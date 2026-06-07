@@ -1019,7 +1019,7 @@ def _add_pm_skeleton_position(session: Session, *, idx: int) -> None:
 
     Models the row shape ``_writeback_open`` produces when PM dispatches an
     OPEN command to the log-only broker: the skeleton position lands in
-    PENDING status with a null ``entry_timestamp`` (Phase 1 would set it
+    PENDING status with a null ``entry_timestamp`` (fill collection would set it
     on fill — but log-only never produces a fill, so it stays null forever).
     The check must filter these out via the ``entry_timestamp IS NOT NULL``
     predicate so it does not falsely fail any run where the analyst
