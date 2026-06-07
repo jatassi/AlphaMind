@@ -1,9 +1,11 @@
-"""Thesis-resolution primitives for the analysis layer (ALP-897, ALP-898).
+"""Thesis-resolution primitives for the analysis layer (ALP-897, ALP-898, ALP-899).
 
 Exposes the programmatic component-outcome assessor used by the analysis
 pipeline to resolve falsifiable quantitative thesis components without LLM
-tokens (story 04c), and the targeted LLM evaluator (story 04d) that resolves
-the ambiguous/qualitative components the assessor leaves ``INCONCLUSIVE``.
+tokens (story 04c), the targeted LLM evaluator (story 04d) that resolves the
+ambiguous/qualitative components the assessor leaves ``INCONCLUSIVE``, and the
+closed-position resolver (story 04e) that composes both — plus the relocated
+classifier — to author the ``ACTIVE → RESOLVED`` transition.
 """
 
 from __future__ import annotations
@@ -15,9 +17,15 @@ from alphamind.analysis.thesis_resolution.llm_evaluator import (
 from alphamind.analysis.thesis_resolution.programmatic import (
     assess_component_programmatically,
 )
+from alphamind.analysis.thesis_resolution.resolver import (
+    ResolvedThesis,
+    resolve_closed_position_theses,
+)
 
 __all__ = [
     "ComponentLLMOutcome",
+    "ResolvedThesis",
     "assess_component_programmatically",
     "evaluate_component_llm",
+    "resolve_closed_position_theses",
 ]

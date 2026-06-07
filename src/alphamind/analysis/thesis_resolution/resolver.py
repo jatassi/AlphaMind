@@ -58,14 +58,13 @@ from alphamind.portfolio_state.events.activity_log import (
 )
 from alphamind.portfolio_state.events.thesis import ThesisResolvedDetail
 from alphamind.portfolio_state.records.positions import PositionStatus
-from alphamind.portfolio_state.records.thesis_resolution import (
-    classify_thesis_resolution,
-)
 from alphamind.portfolio_state.records.theses import (
-    ThesisComponent,
     ThesisComponentOutcome,
     ThesisRecord,
     ThesisRecordStatus,
+)
+from alphamind.portfolio_state.records.thesis_resolution import (
+    classify_thesis_resolution,
 )
 from alphamind.state.invocation_context.activity_log import (
     activity_log_entry_from_row,
@@ -98,6 +97,22 @@ class ResolvedThesis:
     detail: ThesisResolvedDetail
 
 
+@dataclass(frozen=True, slots=True)
+class _LLMEvalContext:
+    """The harness kwargs the LLM-fallback evaluator (04d) needs, bundled once.
+
+    Threaded unchanged through the per-thesis loop so the assessment helper
+    stays a 3-argument function rather than re-listing the harness contract.
+    """
+
+    evaluator_config: BaseAgentConfig
+    invocation_id: str
+    sdk_query_fn: Callable[..., AsyncIterator[Any]] | None
+    archive_root: Path | None
+    now: datetime
+    progress: ProgressEmitter
+
+
 async def resolve_closed_position_theses(
     handle: InvocationHandle,
     *,
@@ -124,6 +139,14 @@ async def resolve_closed_position_theses(
         now = datetime.now(UTC)
 
     session = handle.session
+    llm_context = _LLMEvalContext(
+        evaluator_config=evaluator_config,
+        invocation_id=handle.invocation_id,
+        sdk_query_fn=sdk_query_fn,
+        archive_root=archive_root,
+        now=now,
+        progress=progress,
+    )
     active_thesis_rows = await _read_active_theses_with_closed_positions(session)
 
     resolved: list[ResolvedThesis] = []
@@ -136,12 +159,7 @@ async def resolve_closed_position_theses(
             record,
             exit_method=exit_method,
             realized_pnl_usd=realized_pnl_usd,
-            evaluator_config=evaluator_config,
-            invocation_id=handle.invocation_id,
-            sdk_query_fn=sdk_query_fn,
-            archive_root=archive_root,
-            now=now,
-            progress=progress,
+            llm_context=llm_context,
         )
 
         category = classify_thesis_resolution(
@@ -236,12 +254,7 @@ async def _assess_components(
     *,
     exit_method: PositionExitMethod,
     realized_pnl_usd: float,
-    evaluator_config: BaseAgentConfig,
-    invocation_id: str,
-    sdk_query_fn: Callable[..., AsyncIterator[Any]] | None,
-    archive_root: Path | None,
-    now: datetime,
-    progress: ProgressEmitter,
+    llm_context: _LLMEvalContext,
 ) -> dict[str, ThesisComponentOutcome]:
     """Map each component_id to a resolved outcome.
 
@@ -261,21 +274,19 @@ async def _assess_components(
         llm_outcome = await evaluate_component_llm(
             component,
             market_data,
-            agent_config=evaluator_config,
-            invocation_id=invocation_id,
-            as_of=now,
-            archive_root=archive_root,
-            sdk_query_fn=sdk_query_fn,
-            progress=progress,
+            agent_config=llm_context.evaluator_config,
+            invocation_id=llm_context.invocation_id,
+            as_of=llm_context.now,
+            archive_root=llm_context.archive_root,
+            sdk_query_fn=llm_context.sdk_query_fn,
+            progress=llm_context.progress,
             telemetry_session=None,
         )
         outcomes[component.component_id] = llm_outcome.outcome
     return outcomes
 
 
-def _render_market_data_slice(
-    *, exit_method: PositionExitMethod, realized_pnl_usd: float
-) -> str:
+def _render_market_data_slice(*, exit_method: PositionExitMethod, realized_pnl_usd: float) -> str:
     """Render the focused market-data slice for the LLM evaluator (pure).
 
     The lowest-coupling seam (story 04d takes ``market_data`` as ``str``): at
@@ -283,10 +294,7 @@ def _render_market_data_slice(
     method and the realized P/L outcome — which together let the evaluator
     judge whether a qualitative component held.
     """
-    return (
-        f"Position closed via {exit_method.value} with realized P/L "
-        f"${realized_pnl_usd:,.2f}."
-    )
+    return f"Position closed via {exit_method.value} with realized P/L ${realized_pnl_usd:,.2f}."
 
 
 # ---------------------------------------------------------------------------

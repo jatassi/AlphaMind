@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind.analysis.thesis_resolution.resolver import (
     resolve_closed_position_theses,
@@ -155,3 +155,131 @@ async def test_closed_position_thesis_resolves_to_valid_record(
             .all()
         )
         assert len(log_rows) == 1
+
+
+async def test_llm_fallback_fires_only_for_ambiguous_components(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """STOP_TRIGGERED resolves TARGET + INVALIDATION programmatically; only the
+    qualitative ENTRY_RATIONALE component (always INCONCLUSIVE programmatically)
+    falls back to the LLM evaluator — so the SDK is invoked exactly once."""
+    _, factory = db
+    thesis = make_active_thesis()
+    await seed_closed_position_thesis(
+        factory,
+        thesis=thesis,
+        realized_pnl_usd=-100.0,
+        exit_method=PositionExitMethod.STOP_TRIGGERED,
+        invocation_id=_INV_ID,
+    )
+    stub = _make_sdk_stub("WRONG")
+
+    async with factory() as session:
+        handle = InvocationHandle(session=session, invocation_id=_INV_ID)
+        await resolve_closed_position_theses(
+            handle,
+            evaluator_config=make_evaluator_config(),
+            sdk_query_fn=stub,
+        )
+        await session.commit()
+
+    # Exactly one SDK call — for the single ambiguous (ENTRY_RATIONALE) component.
+    assert stub.calls["n"] == 1
+
+
+async def test_no_closed_position_theses_is_a_noop(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """With no closed-position ACTIVE theses the resolver returns empty, makes
+    no SDK call, and emits no THESIS_RESOLVED entry."""
+    _, factory = db
+
+    def _no_sdk(**_kwargs: Any) -> Any:
+        raise AssertionError("no-op path must not call the SDK")
+
+    async with factory() as session:
+        handle = InvocationHandle(session=session, invocation_id=_INV_ID)
+        resolved = await resolve_closed_position_theses(
+            handle,
+            evaluator_config=make_evaluator_config(),
+            sdk_query_fn=_no_sdk,
+        )
+        await session.commit()
+
+    assert resolved == ()
+
+    async with factory() as session:
+        log_rows = (
+            (
+                await session.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.THESIS_RESOLVED.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert log_rows == []
+
+
+async def test_active_thesis_with_open_position_is_not_resolved(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """An ACTIVE thesis whose position is still OPEN is not eligible — the
+    resolver leaves it ACTIVE and resolves nothing."""
+    from tests.analysis.thesis_resolution.conftest import seed_open_position_thesis
+
+    _, factory = db
+    thesis = make_active_thesis()
+    await seed_open_position_thesis(factory, thesis=thesis, invocation_id=_INV_ID)
+
+    def _no_sdk(**_kwargs: Any) -> Any:
+        raise AssertionError("open-position thesis must not be assessed")
+
+    async with factory() as session:
+        handle = InvocationHandle(session=session, invocation_id=_INV_ID)
+        resolved = await resolve_closed_position_theses(
+            handle,
+            evaluator_config=make_evaluator_config(),
+            sdk_query_fn=_no_sdk,
+        )
+        await session.commit()
+
+    assert resolved == ()
+    async with factory() as session:
+        thesis_row = (
+            await session.execute(select(ThesisRow).where(ThesisRow.thesis_id == "thesis-1"))
+        ).scalar_one()
+        assert thesis_row.status == ThesisRecordStatus.ACTIVE.value
+
+
+async def test_target_reached_profitable_thesis_classifies_validated(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """TARGET_REACHED + positive P/L with the LLM confirming the qualitative
+    components VALIDATED classifies the thesis VALIDATED — the classifier's
+    positive branch, fed programmatic + LLM outcomes."""
+    _, factory = db
+    thesis = make_active_thesis()
+    await seed_closed_position_thesis(
+        factory,
+        thesis=thesis,
+        realized_pnl_usd=500.0,
+        exit_method=PositionExitMethod.TARGET_REACHED,
+        invocation_id=_INV_ID,
+    )
+
+    async with factory() as session:
+        handle = InvocationHandle(session=session, invocation_id=_INV_ID)
+        resolved = await resolve_closed_position_theses(
+            handle,
+            evaluator_config=make_evaluator_config(),
+            sdk_query_fn=_make_sdk_stub("VALIDATED"),
+        )
+        await session.commit()
+
+    assert len(resolved) == 1
+    assert resolved[0].record.resolution_category == ThesisResolutionCategory.VALIDATED
+    assert resolved[0].record.resolution_pnl_usd == 500.0
+    assert resolved[0].detail.resolution_category == ThesisResolutionCategory.VALIDATED.value

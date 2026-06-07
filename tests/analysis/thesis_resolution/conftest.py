@@ -207,3 +207,30 @@ async def seed_closed_position_thesis(
         )
         sess.add(activity_log_entry_to_row(entry))
         await sess.commit()
+
+
+async def seed_open_position_thesis(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    thesis: ThesisRecord,
+    invocation_id: str,
+) -> None:
+    """Seed an ACTIVE thesis whose linked position is still OPEN (not eligible)."""
+    position_id = str(thesis.position_id)
+    thesis_row, component_rows = record_to_rows(thesis)
+    async with factory() as sess:
+        sess.add(stub_process_lifetime_row())
+        await sess.flush()
+        sess.add(stub_invocation_row(invocation_id))
+        await sess.flush()
+        sess.add(
+            stub_position_row(
+                position_id,
+                thesis_id=str(thesis.thesis_id),
+                status="OPEN",
+            )
+        )
+        sess.add(thesis_row)
+        for crow in component_rows:
+            sess.add(crow)
+        await sess.commit()
