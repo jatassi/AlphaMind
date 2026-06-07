@@ -14,7 +14,7 @@ Covers:
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -77,7 +77,7 @@ def engine() -> Engine:
 
 
 @pytest.fixture()
-def session(engine: Engine) -> Session:
+def session(engine: Engine) -> Iterator[Session]:
     factory = make_session_factory(engine)
     with factory() as sess:
         yield sess

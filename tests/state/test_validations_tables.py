@@ -257,7 +257,7 @@ class TestValidationOutcomeCodecRoundTrip:
         insert_validation(session, _make_validation())
         session.flush()
 
-        nested = {
+        nested: dict[str, object] = {
             "metrics": [
                 {"id": "win_rate_30d", "delta": 0.06, "significant": True},
             ],

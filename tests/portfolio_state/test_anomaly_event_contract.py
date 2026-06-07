@@ -218,8 +218,7 @@ class TestSchemaAdmission:
         engine = self._make_engine()
         with Session(engine) as session:
             _cols = (
-                "entry_id, invocation_id, entry_at, "
-                "event_type, event_group, source, detail_json"
+                "entry_id, invocation_id, entry_at, event_type, event_group, source, detail_json"
             )
             session.execute(
                 sa.text(
@@ -249,10 +248,7 @@ class TestSchemaAdmission:
     def test_unknown_event_type_is_rejected_by_check(self) -> None:
         """The CHECK constraint rejects an unrecognized event_type value."""
         engine = self._make_engine()
-        _cols = (
-            "entry_id, invocation_id, entry_at, "
-            "event_type, event_group, source, detail_json"
-        )
+        _cols = "entry_id, invocation_id, entry_at, event_type, event_group, source, detail_json"
         with Session(engine) as session, pytest.raises(Exception):  # noqa: B017
             session.execute(
                 sa.text(
