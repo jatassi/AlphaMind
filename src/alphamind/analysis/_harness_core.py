@@ -39,12 +39,10 @@ from __future__ import annotations
 #                   #  per-harness names retained for API stability.
 import asyncio
 import contextlib
-import hashlib
 import json
 import logging
 import os
 import random
-import subprocess
 import time
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
@@ -60,7 +58,7 @@ from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._shared import TokensUsed
 
 if TYPE_CHECKING:
-    from alphamind.analysis._agent_call_capture import AgentCallCapture
+    from alphamind.analysis._agent_call_capture import CaptureSignals
 
 __all__ = [
     "_PROMPT_CACHE",
@@ -182,32 +180,6 @@ async def _load_prompt(prompt_path: str) -> str:
         if prompt_path not in _PROMPT_CACHE:
             _PROMPT_CACHE[prompt_path] = (_REPO_ROOT / prompt_path).read_text(encoding="utf-8")
         return _PROMPT_CACHE[prompt_path]
-
-
-def _content_hash(text: str) -> str:
-    """SHA-256 of the prompt text actually sent to the API (hex digest)."""
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _prompt_git_sha(prompt_path: str) -> str:
-    """Git blob SHA of the committed prompt file, or ``""`` if unavailable.
-
-    Computes ``git hash-object`` against the working-tree file so the value
-    confirms which committed prompt version was on disk for the call. A
-    detached / non-git environment (or a deleted prompt) yields ``""`` — the
-    capture stays best-effort and never fails the call it observes.
-    """
-    try:
-        completed = subprocess.run(
-            ["git", "hash-object", prompt_path],
-            cwd=_REPO_ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return ""
-    return completed.stdout.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -479,7 +451,10 @@ class DiagState:
     # row + provenance artifacts. When these stay at their defaults the call
     # carries no schema / no tools (a narrative agent) and the capture emits
     # null payloads for those artifacts. ``output_payload`` is the structured
-    # output dict the harness assigns alongside ``response_initial``.
+    # output dict the harness assigns alongside ``response_initial``. These
+    # plus the outcome stamps below satisfy the ``CaptureSignals`` Protocol in
+    # ``_agent_call_capture`` so ``build_capture_from_diag`` projects this diag
+    # without a per-class capture builder.
     prompt_path: str | None = None
     output_schema: dict[str, Any] | None = None
     tools_definition: list[str] | None = None
@@ -487,11 +462,16 @@ class DiagState:
     output_payload: dict[str, Any] | None = None
     # Stable per-agent-call id, generated once on first ``write`` so retries
     # aggregate into one record/provenance dir rather than one per attempt.
-    _agent_call_id: str | None = None
-    # Last terminal outcome recorded by ``write`` — drives ``build_capture``.
-    _last_success: bool | None = None
-    _last_wall_clock_seconds: float | None = None
-    _last_stop_reason: str | None = None
+    agent_call_id: str | None = None
+    # Last terminal outcome stamped by ``write`` — drives the capture build.
+    last_success: bool | None = None
+    last_wall_clock_seconds: float | None = None
+    last_stop_reason: str | None = None
+
+    @property
+    def attempt_number(self) -> int:
+        """1-indexed attempt count of the aggregated call (``retry_count`` + 1)."""
+        return self.retry_count + 1
 
     @property
     def diag_dir(self) -> Path | None:
@@ -531,11 +511,11 @@ class DiagState:
         independent of ``archive_root`` — the diag archive and the agent_calls
         provenance are separate layouts.
         """
-        if self._agent_call_id is None:
-            self._agent_call_id = f"ac-{uuid.uuid4().hex}"
-        self._last_success = success
-        self._last_wall_clock_seconds = wall_clock_seconds
-        self._last_stop_reason = stop_reason
+        if self.agent_call_id is None:
+            self.agent_call_id = f"ac-{uuid.uuid4().hex}"
+        self.last_success = success
+        self.last_wall_clock_seconds = wall_clock_seconds
+        self.last_stop_reason = stop_reason
 
         diag_dir = self.diag_dir
         if diag_dir is None:
@@ -569,55 +549,10 @@ class DiagState:
             metadata["tool_calls_used"] = self.tool_calls_used
         (diag_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
-    def build_capture(
-        self, *, error: HarnessFailure | None = None
-    ) -> AgentCallCapture | None:
-        """Assemble the single aggregated agent_calls capture for this call.
-
-        Returns ``None`` when :meth:`write` has not run (no terminal outcome to
-        record). The accumulated ``tokens_used`` / ``retry_count`` / outcome
-        reflect every constituent API call (tool loop + below-boundary
-        retries), so the capture is exactly one aggregated record per agent
-        call. ``error`` is the raised :class:`HarnessFailure` on a failure
-        path; its subclass selects the persisted ``error_class``.
-        """
-        from alphamind.analysis._agent_call_capture import (
-            AgentCallCapture,
-            error_class_for_failure,
-        )
-
-        if self._agent_call_id is None or self._last_success is None:
-            return None
-        wall_clock_seconds = self._last_wall_clock_seconds or 0.0
-        return AgentCallCapture(
-            agent_call_id=self._agent_call_id,
-            invocation_id=self.invocation_id,
-            agent_name=self.agent_name,
-            attempt_number=self.retry_count + 1,
-            model_id=self.model,
-            prompt_path=self.prompt_path or "",
-            prompt_git_sha=_prompt_git_sha(self.prompt_path) if self.prompt_path else "",
-            prompt_content_hash=_content_hash(self.prompt_text),
-            system_prompt_text=self.prompt_text,
-            sampling_params=dict(self.sampling_params),
-            output_schema=self.output_schema,
-            tools_definition=self.tools_definition,
-            output_payload=self.output_payload,
-            input_tokens=self.tokens_used.input_tokens,
-            output_tokens=self.tokens_used.output_tokens,
-            cache_read_tokens=self.tokens_used.cache_read_tokens,
-            cache_write_tokens=self.tokens_used.cache_write_tokens,
-            wall_clock_ms=int(wall_clock_seconds * 1000),
-            stop_reason=self._last_stop_reason or "",
-            success=self._last_success,
-            error_class=error_class_for_failure(error) if error is not None else None,
-            error_message=str(error) if error is not None else None,
-        )
-
 
 @contextlib.asynccontextmanager
 async def capture_agent_call(
-    diag: DiagState,
+    diag: CaptureSignals,
     *,
     telemetry_session: AsyncSession | None,
     provenance_root: Path | None,
@@ -629,6 +564,10 @@ async def capture_agent_call(
     and persists the row + four provenance artifacts. A no-op when telemetry
     is not wired (``telemetry_session`` or ``provenance_root`` is ``None``), so
     the production-without-telemetry and unit-test paths are unchanged.
+
+    Accepts any *diag* satisfying the ``CaptureSignals`` Protocol — the shared
+    :class:`DiagState` and the decision harnesses' private ``_DiagState`` both
+    qualify — so the single drain serves all nine agents.
 
     Capture must never break the call it observes: a persistence error is
     swallowed (the harness result / failure propagates regardless), mirroring
@@ -650,16 +589,19 @@ async def capture_agent_call(
 
 
 async def _drain_capture(
-    diag: DiagState,
+    diag: CaptureSignals,
     *,
     telemetry_session: AsyncSession,
     provenance_root: Path,
     error: HarnessFailure | None,
 ) -> None:
     """Build + persist *diag*'s capture; swallow persistence errors."""
-    from alphamind.analysis._agent_call_capture import persist_agent_call
+    from alphamind.analysis._agent_call_capture import (
+        build_capture_from_diag,
+        persist_agent_call,
+    )
 
-    capture = diag.build_capture(error=error)
+    capture = build_capture_from_diag(diag, error=error)
     if capture is None:
         return
     try:

@@ -29,8 +29,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
+from alphamind.analysis._agent_call_capture import new_agent_call_id
 from alphamind.analysis._harness_core import (
     ContextOverflowFailure,
     HarnessFailure,
@@ -40,6 +43,7 @@ from alphamind.analysis._harness_core import (
     _add_tokens,
     _build_retry_message,
     _render_raw_response,
+    capture_agent_call,
     invoke_sdk,
 )
 from alphamind.analysis._shared import TokensUsed
@@ -194,6 +198,22 @@ class _DiagState:
     tool_calls_used: int = 0
     mode: str | None = None
 
+    # --- agent_calls capture signals (ALP-880) — satisfy ``CaptureSignals`` --
+    prompt_path: str | None = None
+    output_schema: dict[str, Any] | None = None
+    tools_definition: list[str] | None = None
+    sampling_params: dict[str, Any] = field(default_factory=dict)
+    output_payload: dict[str, Any] | None = None
+    agent_call_id: str | None = None
+    last_success: bool | None = None
+    last_wall_clock_seconds: float | None = None
+    last_stop_reason: str | None = None
+
+    @property
+    def attempt_number(self) -> int:
+        """1-indexed aggregated attempt count (the strategist counts ``attempts``)."""
+        return max(self.attempts, 1)
+
     def write(
         self,
         *,
@@ -204,8 +224,17 @@ class _DiagState:
         """Flush the diagnostic record to disk if archive_root is set.
 
         Path: ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/decision/strategist/``
-        — date-partitioned canonical layout per ALP-689 followup.
+        — date-partitioned canonical layout per ALP-689 followup. Also stamps
+        the terminal outcome + mints the ``agent_call_id`` so the shared
+        ``capture_agent_call`` drain can build the one aggregated agent_calls
+        record (ALP-880), independent of whether the archive is enabled.
         """
+        if self.agent_call_id is None:
+            self.agent_call_id = new_agent_call_id()
+        self.last_success = success
+        self.last_wall_clock_seconds = wall_clock_seconds
+        self.last_stop_reason = stop_reason
+
         if self.archive_root is None:
             return
         if self.as_of is None:
@@ -507,6 +536,7 @@ async def _run_retry_attempt(
     diag.response_retry = raw_response_retry
     diag.tokens_used = _add_tokens(tokens1, tokens2)
     diag.tool_calls_used = tool_calls1 + tool_calls2
+    diag.output_payload = payload2
 
     output2, validation2, _ = _parse_and_validate(
         payload2,
@@ -553,6 +583,8 @@ async def run_strategist_harness(  # noqa: PLR0913 — public signature is fixed
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "strategist",
+    telemetry_session: AsyncSession | None = None,
+    provenance_root: Path | None = None,
 ) -> HarnessSuccess:
     """Invoke the strategist agent and return :class:`HarnessSuccess`.
 
@@ -629,6 +661,9 @@ async def run_strategist_harness(  # noqa: PLR0913 — public signature is fixed
             archive_root=archive_root,
             progress=progress,
             phase=phase,
+            allowed_tools=allowed_tools,
+            telemetry_session=telemetry_session,
+            provenance_root=provenance_root,
         )
 
 
@@ -646,6 +681,9 @@ async def _run_invocation(  # noqa: PLR0913 — internal helper threading runner
     archive_root: Path | None,
     progress: ProgressEmitter,
     phase: str,
+    allowed_tools: list[str],
+    telemetry_session: AsyncSession | None,
+    provenance_root: Path | None,
 ) -> HarnessSuccess:
     """Drive the two-attempt SDK loop with *options* already constructed.
 
@@ -665,6 +703,10 @@ async def _run_invocation(  # noqa: PLR0913 — internal helper threading runner
         archive_root=archive_root,
         agent_config_snapshot=_agent_config_snapshot(agent_config),
         as_of=as_of,
+        prompt_path=agent_config.prompt,
+        output_schema=_strip_anthropic_incompat_keys(StrategistOutput.model_json_schema()),
+        tools_definition=list(allowed_tools),
+        sampling_params={"max_tokens": agent_config.output_token_budget},
     )
     wall_start = time.monotonic()
 
@@ -695,76 +737,80 @@ async def _run_invocation(  # noqa: PLR0913 — internal helper threading runner
             outcome.tool_calls,
         )
 
-    # ------------------------------------------------------------------
-    # Attempt 1: initial call
-    # ------------------------------------------------------------------
-    diag.attempts = 1
-    payload1, text1, stop_reason1, tokens1, tool_calls1 = await _invoke(user_message)
-    raw_response_initial = _render_raw_response(payload1, text1)
-    diag.response_initial = raw_response_initial
-    diag.tokens_used = tokens1
-    diag.tool_calls_used = tool_calls1
+    async with capture_agent_call(
+        diag, telemetry_session=telemetry_session, provenance_root=provenance_root
+    ):
+        # --------------------------------------------------------------
+        # Attempt 1: initial call
+        # --------------------------------------------------------------
+        diag.attempts = 1
+        payload1, text1, stop_reason1, tokens1, tool_calls1 = await _invoke(user_message)
+        raw_response_initial = _render_raw_response(payload1, text1)
+        diag.response_initial = raw_response_initial
+        diag.tokens_used = tokens1
+        diag.tool_calls_used = tool_calls1
+        diag.output_payload = payload1
 
-    try:
-        output, validation, retry_message = _parse_and_validate(
-            payload1,
-            text1,
-            invocation_id,
-            validator,
-            stop_reason1,
-            attempt=1,
+        try:
+            output, validation, retry_message = _parse_and_validate(
+                payload1,
+                text1,
+                invocation_id,
+                validator,
+                stop_reason1,
+                attempt=1,
+                diag=diag,
+            )
+        except ContextOverflowFailure:
+            diag.write(
+                success=False,
+                wall_clock_seconds=time.monotonic() - wall_start,
+                stop_reason=stop_reason1,
+            )
+            raise
+
+        if output is not None and validation is not None:
+            wall_elapsed = time.monotonic() - wall_start
+            diag.mode = output.mode
+            diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason1)
+            return HarnessSuccess(
+                output=output,
+                validation_result=validation,
+                tokens_used=tokens1,
+                metadata=_build_metadata(
+                    invocation_id=invocation_id,
+                    mode=output.mode,
+                    agent_config=agent_config,
+                    tokens_used=tokens1,
+                    attempts=1,
+                ),
+            )
+
+        # --------------------------------------------------------------
+        # Attempt 2: corrective retry
+        # --------------------------------------------------------------
+        assert retry_message is not None
+        output2, validation2, stop_reason2 = await _run_retry_attempt(
+            retry_message=retry_message,
+            raw_response_initial=raw_response_initial,
+            tokens1=tokens1,
+            tool_calls1=tool_calls1,
+            validator=validator,
             diag=diag,
+            wall_start=wall_start,
+            invoke=_invoke,
         )
-    except ContextOverflowFailure:
-        diag.write(
-            success=False,
-            wall_clock_seconds=time.monotonic() - wall_start,
-            stop_reason=stop_reason1,
-        )
-        raise
-
-    if output is not None and validation is not None:
         wall_elapsed = time.monotonic() - wall_start
-        diag.mode = output.mode
-        diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason1)
+        diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason2)
         return HarnessSuccess(
-            output=output,
-            validation_result=validation,
-            tokens_used=tokens1,
+            output=output2,
+            validation_result=validation2,
+            tokens_used=diag.tokens_used,
             metadata=_build_metadata(
                 invocation_id=invocation_id,
-                mode=output.mode,
+                mode=output2.mode,
                 agent_config=agent_config,
-                tokens_used=tokens1,
-                attempts=1,
+                tokens_used=diag.tokens_used,
+                attempts=2,
             ),
         )
-
-    # ------------------------------------------------------------------
-    # Attempt 2: corrective retry
-    # ------------------------------------------------------------------
-    assert retry_message is not None
-    output2, validation2, stop_reason2 = await _run_retry_attempt(
-        retry_message=retry_message,
-        raw_response_initial=raw_response_initial,
-        tokens1=tokens1,
-        tool_calls1=tool_calls1,
-        validator=validator,
-        diag=diag,
-        wall_start=wall_start,
-        invoke=_invoke,
-    )
-    wall_elapsed = time.monotonic() - wall_start
-    diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason2)
-    return HarnessSuccess(
-        output=output2,
-        validation_result=validation2,
-        tokens_used=diag.tokens_used,
-        metadata=_build_metadata(
-            invocation_id=invocation_id,
-            mode=output2.mode,
-            agent_config=agent_config,
-            tokens_used=diag.tokens_used,
-            attempts=2,
-        ),
-    )
