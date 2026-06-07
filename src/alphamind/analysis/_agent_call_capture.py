@@ -118,19 +118,31 @@ def provenance_dir(*, provenance_root: Path, invocation_id: str, agent_call_id: 
 def error_class_for_failure(exc: HarnessFailure) -> AgentCallErrorClass:
     """Map a :class:`HarnessFailure` subclass to its persisted ``error_class``.
 
-    The harness taxonomy and the storage vocabulary differ in one place: an
-    :class:`SDKFailure` (auth / non-recoverable SDK / CLI-error result) records
-    as ``model_api_error``. ``TimeoutFailure`` / ``MalformedOutputFailure`` /
-    ``ContextOverflowFailure`` map to their like-named members. Any future
+    ``TimeoutFailure`` / ``MalformedOutputFailure`` / ``ContextOverflowFailure``
+    map to their like-named members. An :class:`EmptyResponseFailure` (the
+    synthesizer's exhausted-empty-response transient) records as
+    ``empty_response`` so a recoverable empty turn is not conflated with a real
+    model-API error. An :class:`SDKFailure` (auth / non-recoverable SDK /
+    CLI-error result) records as ``model_api_error``; any other future
     ``HarnessFailure`` subclass falls through to ``model_api_error`` — the
-    fail-closed bucket for a non-recoverable call.
+    fail-closed bucket for a non-recoverable call. ``internal_error`` is not
+    produced here — it is stamped by the capture wrapper when a
+    non-:class:`HarnessFailure` exception escapes the wrapped body.
     """
+    # Lazy import: ``EmptyResponseFailure`` lives in the synthesizer sub-package;
+    # importing it at module scope would pull a heavy harness module (with its
+    # SDK-deferred imports) into this functional-core layer. The failure path is
+    # rare and the module is cached after first import, so the cost is trivial.
+    from alphamind.analysis.synthesizer.harness import EmptyResponseFailure
+
     if isinstance(exc, TimeoutFailure):
         return AgentCallErrorClass.timeout
     if isinstance(exc, MalformedOutputFailure):
         return AgentCallErrorClass.malformed_output
     if isinstance(exc, ContextOverflowFailure):
         return AgentCallErrorClass.context_overflow
+    if isinstance(exc, EmptyResponseFailure):
+        return AgentCallErrorClass.empty_response
     return AgentCallErrorClass.model_api_error
 
 

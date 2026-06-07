@@ -134,6 +134,14 @@ def test_error_class_sdk_failure_maps_to_model_api_error() -> None:
     assert error_class_for_failure(exc) is AgentCallErrorClass.model_api_error
 
 
+def test_error_class_empty_response_maps_to_empty_response() -> None:
+    """``EmptyResponseFailure`` is its own class — not conflated with model_api_error (ALP-909 C4)."""
+    from alphamind.analysis.synthesizer.harness import EmptyResponseFailure
+
+    exc = EmptyResponseFailure("e", agent_name="a", invocation_id=_INV)
+    assert error_class_for_failure(exc) is AgentCallErrorClass.empty_response
+
+
 # ---------------------------------------------------------------------------
 # Record assembly + artifact write (functional core + fs shell)
 # ---------------------------------------------------------------------------
