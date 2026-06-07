@@ -2236,9 +2236,7 @@ class TestRunInvocationThesisResolution:
                 raise OperationalError("BEGIN IMMEDIATE", {}, Exception("database is locked"))
             await real_begin(session)
 
-        monkeypatch.setattr(
-            "alphamind.scheduler.orchestrator.begin_write_immediate", _flaky_begin
-        )
+        monkeypatch.setattr("alphamind.scheduler.orchestrator.begin_write_immediate", _flaky_begin)
 
         await module._run_thesis_resolution_step(
             session_factory=async_factory,
