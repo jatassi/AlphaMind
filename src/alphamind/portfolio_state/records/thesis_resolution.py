@@ -44,13 +44,19 @@ def classify_thesis_resolution(
 
     Mapping rules per docs/design/05-execution-layer/thesis-model.md:
 
-    * VALIDATED — most components VALIDATED AND realized_pnl_usd > 0.
-      Thesis played out, catalyst fired, position hit the target. The ideal
-      outcome — reasoning was sound.
+    * VALIDATED — most components VALIDATED AND realized_pnl_usd > 0 AND
+      exit_method is TARGET_REACHED. Thesis played out, catalyst fired, and the
+      position actually hit the target. The ideal outcome — reasoning was sound.
+      The TARGET_REACHED gate is what distinguishes this from a merely profitable
+      forced-out thesis: a position closed by a stop, time limit, PM decision, or
+      any non-target exit did not hit the target, so it cannot be VALIDATED.
 
-    * PROFITABLE_BUT_WRONG — realized_pnl_usd > 0 but most components are
-      WRONG or INCONCLUSIVE. Lucky outcome that shouldn't reinforce the
-      reasoning patterns that produced it.
+    * PROFITABLE_BUT_WRONG — realized_pnl_usd > 0 but the thesis did not validate
+      with affirmative weight on a target exit: either most components are WRONG
+      or INCONCLUSIVE, or the components were majority-VALIDATED but the position
+      exited via a non-TARGET_REACHED method (stop-triggered, time-expired,
+      pm-decision, or any other exit). A lucky or forced-out outcome that
+      shouldn't reinforce the reasoning patterns that produced it.
 
     * INVALIDATED_STOPPED_CORRECTLY — realized_pnl_usd <= 0 AND exit_method
       indicates a mechanically-triggered exit (stop-triggered, time-expired,
@@ -65,9 +71,12 @@ def classify_thesis_resolution(
       closed.
 
     The "most components" predicate counts VALIDATED vs WRONG; INCONCLUSIVE
-    components do not weigh either side. A tie (equal validated and wrong
-    counts) classifies as PROFITABLE_BUT_WRONG when P/L > 0 (the validated
-    case requires affirmative weight) and INVALIDATED_STOPPED_CORRECTLY or
+    components do not weigh either side. When P/L > 0, VALIDATED additionally
+    requires exit_method is TARGET_REACHED — majority-VALIDATED alone is not
+    enough, because a profitable thesis that was forced out short of its target
+    did not play out as predicted. A tie (equal validated and wrong counts)
+    classifies as PROFITABLE_BUT_WRONG when P/L > 0 (the validated case requires
+    affirmative weight) and INVALIDATED_STOPPED_CORRECTLY or
     INVALIDATED_WRONG_ON_EXIT (per exit_method) when P/L <= 0.
 
     Raises ValueError if component_outcomes is empty (a resolved thesis must
@@ -84,7 +93,11 @@ def classify_thesis_resolution(
     if realized_pnl_usd > 0:
         validated_count = sum(o == ThesisComponentOutcome.VALIDATED for o in component_outcomes)
         wrong_count = sum(o == ThesisComponentOutcome.WRONG for o in component_outcomes)
-        if validated_count > wrong_count:
+        # VALIDATED requires an affirmative target reach: a profitable thesis forced
+        # out by a stop, time limit, PM decision, or any non-target exit did not play
+        # out as predicted (ALP-920), so it is PROFITABLE_BUT_WRONG even when its
+        # components are majority-VALIDATED.
+        if validated_count > wrong_count and exit_method is PositionExitMethod.TARGET_REACHED:
             return ThesisResolutionCategory.VALIDATED
         return ThesisResolutionCategory.PROFITABLE_BUT_WRONG
 
