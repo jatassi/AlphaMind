@@ -27,7 +27,9 @@ doc table are folded in here (see :class:`CitationSource`):
 from __future__ import annotations
 
 import enum
+import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -38,10 +40,13 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CitationSource",
+    "ComponentCitation",
     "ExtractedRef",
     "RefChain",
+    "assemble_chains",
     "classify_source",
     "extract_citations",
+    "extract_payload_citations",
 ]
 
 
@@ -136,14 +141,118 @@ def extract_citations(text: str) -> tuple[str, ...]:
     (``[REC-3]``) and bare prefixes (``[CR]``) are dropped — only resolvable
     upstream refs survive.
     """
+    return _dedupe_upstream(match.group(1) for match in re.finditer(REF_ID_RE, text))
+
+
+# Bare (un-bracketed) upstream ref token, e.g. the ``source_references`` array
+# entries the analyst/strategist emit as plain ``"QR-1"`` strings rather than
+# bracketed prose markers. ``classify_source`` is the authoritative filter.
+_BARE_REF_RE = re.compile(r"\b([A-Z][A-Z0-9-]*-[0-9]+)\b")
+
+
+def extract_payload_citations(payload: object) -> tuple[str, ...]:
+    """Return upstream refs cited anywhere in an agent's structured output *payload*.
+
+    An agent's ``output.json`` carries citations in two wire shapes: bracketed
+    ``[SA-TECH-1]`` markers in narrative prose (synthesis text, thesis
+    narratives) and bare ``"QR-1"`` entries in ``source_references``-style
+    arrays. Both reduce to the same question — which upstream refs does this
+    artifact cite — so the payload is serialized to text and scanned for every
+    upstream ref token (bracketed or bare). :func:`classify_source` discards
+    consumer-layer and malformed tokens, so over-matching bare tokens is safe.
+    Returns document-ordered, first-occurrence-deduplicated upstream ref IDs.
+    """
+    text = _payload_to_text(payload)
+    return _dedupe_upstream(match.group(1) for match in _BARE_REF_RE.finditer(text))
+
+
+def _payload_to_text(payload: object) -> str:
+    """Flatten a JSON-ish *payload* to a single scannable string.
+
+    ``json.dumps`` would wrap every ref in quotes/escapes but keeps all values
+    in one string; the bare-token regex tolerates the surrounding punctuation.
+    Falls back to ``str`` for non-serializable inputs so the scan never raises.
+    """
+    try:
+        return json.dumps(payload)
+    except (TypeError, ValueError):
+        return str(payload)
+
+
+def _dedupe_upstream(ref_ids: Iterable[str]) -> tuple[str, ...]:
+    """Keep upstream-source refs in first-occurrence order, deduplicated."""
     seen: set[str] = set()
     out: list[str] = []
-    for match in re.finditer(REF_ID_RE, text):
-        ref_id = match.group(1)
-        if classify_source(ref_id) is None:
-            continue
-        if ref_id in seen:
+    for ref_id in ref_ids:
+        if classify_source(ref_id) is None or ref_id in seen:
             continue
         seen.add(ref_id)
         out.append(ref_id)
     return tuple(out)
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentCitation:
+    """A resolved thesis component plus the upstream refs its narrative cites.
+
+    The chain terminus: a thesis component carries the upstream refs that
+    survived into it (cited in its narrative / supporting signals) and the
+    ``resolution_outcome`` those refs are scored against.
+    """
+
+    cited_refs: frozenset[str]
+    resolution_outcome: ThesisComponentOutcome | None
+
+
+def assemble_chains(
+    *,
+    universe: Iterable[str],
+    synthesis_text: str,
+    decision_citations: Iterable[str],
+    components: Iterable[ComponentCitation],
+) -> tuple[RefChain, ...]:
+    """Build the per-ref citation chains (pure) from the parsed layer signals.
+
+    Parameters
+    ----------
+    universe:
+        Every upstream ref available this window — the denominator for the
+        per-source rates. The synthesizer's retrieval-store keys are the
+        authoritative universe; refs cited downstream but absent from it are
+        unioned in so a directly-retrieved ref is never lost.
+    synthesis_text:
+        The synthesizer brief body; a ref cited here is ``cited_in_synthesis``.
+    decision_citations:
+        Upstream refs cited across the decision-layer artifacts (analyst /
+        strategist / PM); membership sets ``cited_in_decision``.
+    components:
+        Resolved thesis components and the refs each cites; a ref appearing in
+        one carries that component's ``resolution_outcome`` as its chain terminus.
+    """
+    synth_cited = set(extract_citations(synthesis_text))
+    decision_cited = {r for r in decision_citations if classify_source(r) is not None}
+    outcome_by_ref: dict[str, ThesisComponentOutcome | None] = {}
+    for component in components:
+        for ref_id in component.cited_refs:
+            if classify_source(ref_id) is None:
+                continue
+            # First resolved outcome wins; a None never overwrites a real outcome.
+            if outcome_by_ref.get(ref_id) is None:
+                outcome_by_ref[ref_id] = component.resolution_outcome
+
+    all_refs = {r for r in universe if classify_source(r) is not None}
+    all_refs |= synth_cited | decision_cited | set(outcome_by_ref)
+
+    chains: list[RefChain] = []
+    for ref_id in sorted(all_refs):
+        source = classify_source(ref_id)
+        assert source is not None  # filtered above
+        chains.append(
+            RefChain(
+                ref=ExtractedRef(ref_id=ref_id, source=source),
+                cited_in_synthesis=ref_id in synth_cited,
+                cited_in_decision=ref_id in decision_cited,
+                thesis_component_outcome=outcome_by_ref.get(ref_id),
+            )
+        )
+    return tuple(chains)

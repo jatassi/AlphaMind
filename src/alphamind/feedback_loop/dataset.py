@@ -27,21 +27,37 @@ imports ``execution`` (enforced by ``.importlinter``).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from alphamind.portfolio_state.records.theses import ThesisRecord
+from sqlalchemy import select
+
+from alphamind.config.models.agents import AgentName
+from alphamind.feedback_loop.citation.parser import (
+    ComponentCitation,
+    assemble_chains,
+    extract_payload_citations,
+)
+from alphamind.portfolio_state.records.theses import (
+    ThesisComponentOutcome,
+    ThesisRecord,
+)
 from alphamind.state.repository.activity_log_queries import read_recent_pm_decision_log
 from alphamind.state.repository.agent_calls_queries import read_agent_calls_in_window
 from alphamind.state.repository.outcome_queries import read_resolved_theses_in_window
 from alphamind.state.repository.validation_queries import read_pending_validations
+from alphamind.state.tables.thesis_components import ThesisComponentRow
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import Session
 
     from alphamind._kernel.ids import PositionId, ThesisId
     from alphamind.config.models.feedback import FeedbackLoopConfig
+    from alphamind.feedback_loop.citation.parser import RefChain
     from alphamind.feedback_loop.validation.records import ValidationRecord
     from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
     from alphamind.portfolio_state.records.theses import ThesisResolutionCategory
@@ -70,13 +86,16 @@ _SECONDS_PER_HOUR = 3600.0
 
 @dataclass(frozen=True, slots=True)
 class RefsBundle:
-    """Citation reference IDs and their chains (story 06d fills this).
+    """Citation reference IDs and their cross-layer chains (story 06d / ALP-886).
 
-    Pre-declared empty so the citation-chain metrics can build against the shape
-    without 06d and this story colliding on ``dataset.py``.
+    One :class:`~alphamind.feedback_loop.citation.parser.RefChain` per upstream
+    reference available in the window — its source, whether it was cited in the
+    synthesizer brief and in a decision-layer narrative, and the resolution of
+    the thesis component it ended in. The citation-chain metrics
+    (:mod:`alphamind.feedback_loop.citation.chain`) compute purely over this.
     """
 
-    citations: tuple[object, ...] = ()
+    citations: tuple[RefChain, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,18 +221,125 @@ class WindowDataset:
 # ---------------------------------------------------------------------------
 
 
-async def _load_refs(
-    session: AsyncSession,  # noqa: ARG001 — pre-declared seam; story 06d uses it
-    start: datetime,  # noqa: ARG001 — pre-declared seam; story 06d uses it
-    end: datetime,  # noqa: ARG001 — pre-declared seam; story 06d uses it
-) -> RefsBundle:
-    """Citation-reference sub-bundle loader hook (story 06d fills this).
+async def _load_refs(session: AsyncSession, start: datetime, end: datetime) -> RefsBundle:
+    """Citation-reference sub-bundle loader hook (story 06d / ALP-886).
 
-    Stubbed to return an empty :class:`RefsBundle`. Story 06d parses agent-call
-    output artifacts here; the seam is pre-declared so that work edits only this
-    function and :class:`RefsBundle`, not the rest of the loader.
+    The imperative shell for the citation chain: reads each in-window agent
+    call's ``output.json`` provenance artifact, extracts the cited upstream refs
+    per layer (synthesizer brief vs. decision-layer narratives), joins to the
+    resolved thesis components, and delegates the pure assembly to
+    :func:`~alphamind.feedback_loop.citation.parser.assemble_chains`. The file
+    read is the sole impurity; parsing and chain assembly are pure.
     """
-    return RefsBundle()
+    agent_calls = await read_agent_calls_in_window(session, start, end)
+    synthesis_text = ""
+    universe: set[str] = set()
+    decision_citations: set[str] = set()
+    for call in agent_calls:
+        payload = _read_output_payload(call.output_artifact_ref)
+        if payload is None:
+            continue
+        if call.agent_name == AgentName.synthesizer.value:
+            synthesis_text = _synthesis_text(payload)
+            universe |= _retrieval_store_refs(payload)
+        elif call.agent_name in _DECISION_AGENT_NAMES:
+            decision_citations |= set(extract_payload_citations(payload))
+    components = await session.run_sync(
+        lambda sync_session: _read_component_citations(sync_session)
+    )
+    citations = assemble_chains(
+        universe=universe,
+        synthesis_text=synthesis_text,
+        decision_citations=decision_citations,
+        components=components,
+    )
+    return RefsBundle(citations=citations)
+
+
+#: The decision-layer agents whose narratives cite upstream refs (the chain's
+#: "cited in decision narrative" measurement point).
+_DECISION_AGENT_NAMES: frozenset[str] = frozenset(
+    {
+        AgentName.analyst.value,
+        AgentName.strategist.value,
+        AgentName.portfolio_manager.value,
+    }
+)
+
+
+def _read_output_payload(output_artifact_ref: str | None) -> object | None:
+    """Read the ``output.json`` structured payload under *output_artifact_ref*.
+
+    ``output_artifact_ref`` is the per-call provenance directory; the structured
+    output lives in ``output.json`` (see ``analysis/_agent_call_capture.py``).
+    Returns ``None`` when the ref is absent, the file is missing, or its payload
+    is ``null`` / unreadable — the citation read is best-effort and never fails
+    the loader on a malformed artifact.
+    """
+    if output_artifact_ref is None:
+        return None
+    output_path = Path(output_artifact_ref) / "output.json"
+    try:
+        raw = output_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+def _synthesis_text(payload: object) -> str:
+    """Extract the synthesizer brief body from its output payload."""
+    if isinstance(payload, dict):
+        text = payload.get("synthesis_text")
+        if isinstance(text, str):
+            return text
+    return ""
+
+
+def _retrieval_store_refs(payload: object) -> set[str]:
+    """Extract the universe of upstream refs from the synthesizer retrieval store.
+
+    The retrieval store is keyed by full prefixed ref ID; its keys are the
+    authoritative set of upstream refs available that window (the per-source
+    rate denominators).
+    """
+    if not isinstance(payload, dict):
+        return set()
+    store = payload.get("retrieval_store")
+    if not isinstance(store, dict):
+        return set()
+    entries = store.get("entries")
+    if not isinstance(entries, dict):
+        return set()
+    return {key for key in entries if isinstance(key, str)}
+
+
+def _read_component_citations(session: Session) -> tuple[ComponentCitation, ...]:
+    """Read resolved thesis components and the upstream refs each narrative cites.
+
+    The chain terminus. ``feedback_loop`` is read-only over trading state, so
+    this is a plain windowless read of the component rows (a component's
+    resolution is point-in-time, not window-bounded); the per-ref join filters
+    to refs the component actually cites.
+    """
+    rows = session.execute(select(ThesisComponentRow)).scalars().all()
+    citations: list[ComponentCitation] = []
+    for row in rows:
+        cited = set(extract_payload_citations(row.narrative))
+        cited |= set(extract_payload_citations(row.supporting_signals_json))
+        if not cited:
+            continue
+        outcome = (
+            ThesisComponentOutcome(row.resolution_outcome)
+            if row.resolution_outcome is not None
+            else None
+        )
+        citations.append(
+            ComponentCitation(cited_refs=frozenset(cited), resolution_outcome=outcome)
+        )
+    return tuple(citations)
 
 
 async def _load_replays(
