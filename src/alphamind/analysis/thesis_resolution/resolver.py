@@ -454,9 +454,7 @@ def _decode_exit_method(row: ActivityLogRow) -> PositionExitMethod | None:
     return detail.exit_method
 
 
-async def _read_realized_pnls(
-    session: AsyncSession, *, thesis_ids: list[str]
-) -> dict[str, float]:
+async def _read_realized_pnls(session: AsyncSession, *, thesis_ids: list[str]) -> dict[str, float]:
     """Map each thesis_id to its realized P/L from ``thesis_pnl_ledger``.
 
     A thesis with no ledger row is absent from the result (skipped with a

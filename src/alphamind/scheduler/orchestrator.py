@@ -53,7 +53,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -67,7 +67,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind._kernel.mode import PipelineMode
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
-from alphamind.analysis.thesis_resolution import resolve_closed_position_theses
+from alphamind.analysis.thesis_resolution import (
+    persist_thesis_resolutions,
+    prepare_closed_position_resolutions,
+)
 from alphamind.config.assets_views import (
     build_sector_resolver,
     sectors_config_from_assets,
@@ -815,6 +818,11 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         archive_root=archive_root,
         progress=progress,
         now=now,
+        # ALP-914 finding 5 — the invocation's resolution-time underlying prices
+        # (a primitive Mapping[str, float], not the MarketInputs type — the
+        # analysis-layer resolver must not import a risk_guardrails type) feed
+        # the LLM evaluator's entry-vs-resolution market-data slice.
+        underlying_prices=fill_collection_inputs.market_inputs.underlying_prices,
     )
 
     # Step 4 — Between-phase snapshot read.
@@ -1002,26 +1010,54 @@ async def _run_thesis_resolution_step(
     archive_root: Path,
     progress: ProgressEmitter,
     now: datetime,
+    underlying_prices: Mapping[str, float],
 ) -> None:
-    """Resolve closed-position theses in their own transaction (ALP-899).
+    """Resolve closed-position theses in two phases (ALP-899 / ALP-914 finding 2).
 
-    Opens a fresh session, runs the resolver (which persists ACTIVE → RESOLVED
-    and appends the ``THESIS_RESOLVED`` entries), and commits. A failure rolls
-    back the resolution writes and propagates — resolution authorship is part
-    of the deliberative invocation, not a best-effort side task.
+    Phase 1 (no write lock): on a fresh read session, bulk-fetch + assess the
+    eligible theses — the slow LLM component evaluation and the
+    exit-method/ledger reads run here, OUTSIDE any write transaction, so they
+    never sit inside the SQLite write lock that races the continuous monitor.
+    A per-thesis data gap logs a WARNING and skips that thesis (finding 1)
+    rather than aborting the invocation. The evaluator config is built lazily,
+    only if a component needs the LLM fallback (finding 4).
+
+    Phase 2 (short IMMEDIATE write transaction, busy-retry): if anything was
+    prepared, persist the ACTIVE → RESOLVED rows + ``THESIS_RESOLVED`` entries
+    through ``run_with_sqlite_busy_retry`` — a write unit that opens a fresh
+    session, calls ``begin_write_immediate`` first (so ``busy_timeout`` governs
+    monitor contention), persists, and commits. No LLM I/O or POSITION_CLOSED /
+    ledger read occurs inside it, so a busy-retry re-runs only the persist.
     """
     progress.phase_start("thesis_resolution")
-    async with session_factory() as session:
-        handle = InvocationHandle(session=session, invocation_id=invocation_id)
-        resolved = await resolve_closed_position_theses(
-            handle,
-            evaluator_config=_build_thesis_evaluator_config(),
+    async with session_factory() as read_session:
+        prepared = await prepare_closed_position_resolutions(
+            read_session,
+            invocation_id=invocation_id,
+            evaluator_config_factory=_build_thesis_evaluator_config,
             now=now,
+            underlying_prices=underlying_prices,
             archive_root=archive_root,
             progress=progress,
         )
-        await session.commit()
-    progress.phase_done("thesis_resolution", theses_resolved=len(resolved))
+
+    if not prepared:
+        progress.phase_done("thesis_resolution", theses_resolved=0)
+        return
+
+    async def _run_resolution_write_unit() -> int:
+        # Fresh session per attempt so the identity map is clean on retry;
+        # ``begin_write_immediate`` takes the SQLite write lock before the first
+        # write, mirroring the fill-collection write unit (ALP-824).
+        async with session_factory() as write_session:
+            await begin_write_immediate(write_session)
+            write_handle = InvocationHandle(session=write_session, invocation_id=invocation_id)
+            resolved = await persist_thesis_resolutions(write_handle, prepared, now=now)
+            await write_session.commit()
+            return len(resolved)
+
+    theses_resolved = await run_with_sqlite_busy_retry(_run_resolution_write_unit)
+    progress.phase_done("thesis_resolution", theses_resolved=theses_resolved)
 
 
 def _assemble_fill_collection_snapshot(

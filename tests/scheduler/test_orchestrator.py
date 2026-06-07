@@ -2192,3 +2192,107 @@ class TestRunInvocationThesisResolution:
             ).scalar_one()
             assert row.status == "RESOLVED"
             assert row.resolution_category is not None
+
+    async def test_busy_retry_on_write_does_not_re_invoke_the_llm(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The slow LLM component assessment and the exit-method/ledger reads
+        happen OUTSIDE the IMMEDIATE write transaction (ALP-914 finding 2). A
+        transient SQLITE_BUSY on the FIRST write attempt re-runs only the write
+        unit — so the SDK is invoked exactly once across the retry: proof the
+        LLM is not inside the retried write transaction."""
+        import claude_agent_sdk
+
+        from alphamind.portfolio_state.events.activity_log import PositionExitMethod
+        from alphamind.scheduler import orchestrator as module
+        from alphamind.state.tables.theses import ThesisRow
+
+        await _seed_closed_position_active_thesis(
+            async_factory, exit_method=PositionExitMethod.STOP_TRIGGERED
+        )
+
+        sdk_calls = {"n": 0}
+        base_stub = _thesis_resolved_sdk_stub("WRONG")
+
+        def _counting_sdk(**kwargs: Any) -> Any:
+            sdk_calls["n"] += 1
+            return base_stub(**kwargs)
+
+        monkeypatch.setattr(claude_agent_sdk, "query", _counting_sdk)
+
+        # Inject one transient SQLITE_BUSY on the resolution write unit's first
+        # ``begin_write_immediate`` (a sanctioned DB-boundary primitive), forcing
+        # ``run_with_sqlite_busy_retry`` to re-run the write unit once.
+        real_begin = module.begin_write_immediate
+        begin_calls = {"n": 0}
+
+        async def _flaky_begin(session: Any) -> None:
+            begin_calls["n"] += 1
+            if begin_calls["n"] == 1:
+                raise OperationalError("BEGIN IMMEDIATE", {}, Exception("database is locked"))
+            await real_begin(session)
+
+        monkeypatch.setattr(module, "begin_write_immediate", _flaky_begin)
+
+        await module._run_thesis_resolution_step(
+            session_factory=async_factory,
+            invocation_id=_CLOSER_INV_ID,
+            archive_root=archive_root,
+            progress=NOOP_PROGRESS_EMITTER,
+            now=_NOW,
+            underlying_prices={},
+        )
+
+        # The write unit ran twice (one transient + one success) but the SDK —
+        # outside the write transaction — fired exactly once.
+        assert begin_calls["n"] == 2
+        assert sdk_calls["n"] == 1
+        async with async_factory() as session:
+            row = (
+                await session.execute(
+                    select(ThesisRow).where(ThesisRow.thesis_id == "thesis-res-1")
+                )
+            ).scalar_one()
+            assert row.status == "RESOLVED"
+
+    async def test_underlying_prices_threaded_into_resolution_slice(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The invocation's ``underlying_prices`` reach the LLM evaluator's
+        market-data slice (ALP-914 finding 5) — the step threads the primitive
+        price map through to the read/assess phase."""
+        import claude_agent_sdk
+
+        from alphamind.portfolio_state.events.activity_log import PositionExitMethod
+        from alphamind.scheduler import orchestrator as module
+
+        await _seed_closed_position_active_thesis(
+            async_factory, exit_method=PositionExitMethod.STOP_TRIGGERED
+        )
+
+        captured: dict[str, str] = {}
+        base_stub = _thesis_resolved_sdk_stub("WRONG")
+
+        def _capturing_sdk(**kwargs: Any) -> Any:
+            captured["prompt"] = str(kwargs.get("prompt", ""))
+            return base_stub(**kwargs)
+
+        monkeypatch.setattr(claude_agent_sdk, "query", _capturing_sdk)
+
+        # The seeded position's underlying is "STUB" (stub_position_row default).
+        await module._run_thesis_resolution_step(
+            session_factory=async_factory,
+            invocation_id=_CLOSER_INV_ID,
+            archive_root=archive_root,
+            progress=NOOP_PROGRESS_EMITTER,
+            now=_NOW,
+            underlying_prices={"STUB": 175.0},
+        )
+
+        assert "175.0" in captured["prompt"]

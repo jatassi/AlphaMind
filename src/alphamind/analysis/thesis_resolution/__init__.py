@@ -18,14 +18,20 @@ from alphamind.analysis.thesis_resolution.programmatic import (
     assess_component_programmatically,
 )
 from alphamind.analysis.thesis_resolution.resolver import (
+    PreparedResolution,
     ResolvedThesis,
+    persist_thesis_resolutions,
+    prepare_closed_position_resolutions,
     resolve_closed_position_theses,
 )
 
 __all__ = [
     "ComponentLLMOutcome",
+    "PreparedResolution",
     "ResolvedThesis",
     "assess_component_programmatically",
     "evaluate_component_llm",
+    "persist_thesis_resolutions",
+    "prepare_closed_position_resolutions",
     "resolve_closed_position_theses",
 ]

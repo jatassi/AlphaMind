@@ -498,7 +498,8 @@ async def test_market_data_slice_includes_entry_and_resolution_prices(
         factory,
         thesis=thesis,
         realized_pnl_usd=-250.0,
-        exit_method=PositionExitMethod.PM_DECISION,  # ENTRY+TARGET+INVALIDATION all INCONCLUSIVE → LLM
+        # PM_DECISION → all three components INCONCLUSIVE programmatically → LLM.
+        exit_method=PositionExitMethod.PM_DECISION,
         invocation_id=_INV_ID,
         entry_ticker="NVDA",
         entry_cost_basis_per_share=100.0,
