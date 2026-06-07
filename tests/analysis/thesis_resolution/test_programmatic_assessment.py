@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from alphamind._kernel.ids import ThesisId
 from alphamind.analysis.thesis_resolution.programmatic import (
     assess_component_programmatically,
 )
@@ -41,7 +42,7 @@ def _make_component(
 ) -> ThesisComponent:
     return ThesisComponent(
         component_id=component_id,
-        thesis_id="t1",
+        thesis_id=ThesisId("t1"),
         component_type=component_type,
         linked_bracket_leg_type=None,
         instrument_reference="NVDA",
