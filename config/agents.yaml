@@ -24,7 +24,7 @@ agents:
     # the production-faithful synthetic portfolio. Raised 300s → 500s.
     # 2026-06-02: decision-layer budgets bumped +50% (operator directive) after
     # the strategist hit a 900s TimeoutFailure on the 06-02 market_open (905s wall,
-    # 0 tokens, invocation aborted pre-Phase-2). Applies to analyst/strategist/PM.
+    # 0 tokens, invocation aborted pre-command-execution). Applies to analyst/strategist/PM.
     latency_budget_seconds: 750
     context_token_budget: 12000
     # Each recommendation serializes to ~500–800 tokens with the rich nested

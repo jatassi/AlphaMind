@@ -352,7 +352,7 @@ class TestSectionCAssemblerCorrectness:
 
 
 class TestSectionDFreshness:
-    """Stale, unknown-ticker, all-fresh, and phase1→snapshot boundary tests."""
+    """Stale, unknown-ticker, all-fresh, and fill_collection→snapshot boundary tests."""
 
     def test_stale_positions_reported(self) -> None:
         result = _assemble(build_stale_pricing_snapshot_inputs())
@@ -391,7 +391,7 @@ class TestSectionDFreshness:
         assert result.freshness.count_unknown_ticker == 0
 
     def test_phase1_to_snapshot_two_seconds(self) -> None:
-        """now = phase1_at + 2s → phase1_to_snapshot_seconds == 2.0."""
+        """now = phase1_at + 2s → fill_collection_to_snapshot_seconds == 2.0."""
         phase1_at = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
         now = phase1_at + timedelta(seconds=2)
 
@@ -413,13 +413,13 @@ class TestSectionDFreshness:
             config=config,
             now=now,
         )
-        assert abs(result.freshness.phase1_to_snapshot_seconds - 2.0) < 1e-9
-        assert result.freshness.phase1_to_snapshot_within_threshold is True
+        assert abs(result.freshness.fill_collection_to_snapshot_seconds - 2.0) < 1e-9
+        assert result.freshness.fill_collection_to_snapshot_within_threshold is True
 
     def test_phase1_boundary_exactly_at_threshold(self) -> None:
         """now = phase1_at + max_seconds → within_threshold True."""
         config = _make_config()
-        max_s = config.snapshot_freshness_max_phase1_to_snapshot_seconds  # 300.0
+        max_s = config.snapshot_freshness_max_fill_collection_to_snapshot_seconds  # 300.0
         phase1_at = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
         now = phase1_at + timedelta(seconds=max_s)
 
@@ -440,12 +440,12 @@ class TestSectionDFreshness:
             config=config,
             now=now,
         )
-        assert result.freshness.phase1_to_snapshot_within_threshold is True
+        assert result.freshness.fill_collection_to_snapshot_within_threshold is True
 
     def test_phase1_boundary_one_ms_past_threshold(self) -> None:
         """now = phase1_at + max_seconds + 1ms → within_threshold False."""
         config = _make_config()
-        max_s = config.snapshot_freshness_max_phase1_to_snapshot_seconds  # 300.0
+        max_s = config.snapshot_freshness_max_fill_collection_to_snapshot_seconds  # 300.0
         phase1_at = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
         now = phase1_at + timedelta(seconds=max_s) + timedelta(milliseconds=1)
 
@@ -466,7 +466,7 @@ class TestSectionDFreshness:
             config=config,
             now=now,
         )
-        assert result.freshness.phase1_to_snapshot_within_threshold is False
+        assert result.freshness.fill_collection_to_snapshot_within_threshold is False
 
 
 # ---------------------------------------------------------------------------

@@ -44,7 +44,7 @@ from alphamind.config.models.venue import (
 # Side-effect import to break the submit_envelope_mcp ↔ portfolio_manager
 # circular import: PMEnvelope first, then submit_envelope_mcp.
 from alphamind.decision.portfolio_manager.models import PMEnvelope  # noqa: F401
-from alphamind.execution.write_paths.phase1 import Phase1Summary
+from alphamind.execution.write_paths.fill_collection import FillCollectionSummary
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -156,14 +156,14 @@ def _make_context(
 
 
 def _make_phase1_inputs(*, staleness_flag: bool = False) -> Any:
-    """Build a minimal ``Phase1Inputs`` with no positions / no CA activities."""
+    """Build a minimal ``FillCollectionInputs`` with no positions / no CA activities."""
     from alphamind.risk_guardrails.guardrail_evaluation import (
         FixtureIvProvider,
         MarketInputs,
     )
-    from alphamind.scheduler.phase1_inputs import Phase1Inputs
+    from alphamind.scheduler.fill_collection_inputs import FillCollectionInputs
 
-    return Phase1Inputs(
+    return FillCollectionInputs(
         ca_activities=(),
         alpaca_positions=(),
         alpaca_account=None,
@@ -177,8 +177,8 @@ def _make_phase1_inputs(*, staleness_flag: bool = False) -> Any:
     )
 
 
-def _make_phase1_summary() -> Phase1Summary:
-    return Phase1Summary(
+def _make_phase1_summary() -> FillCollectionSummary:
+    return FillCollectionSummary(
         fills_processed=0,
         fills_quarantined=0,
         ca_activities_processed=0,
@@ -262,7 +262,7 @@ def _make_activities_poll_stub(
     """Build a no-op ``run_account_activities_poll`` stub (ALP-846).
 
     The account-activities poll is a composition-root stage like
-    ``gather_phase1_inputs``; stubbing it keeps the production default factory
+    ``gather_fill_collection_inputs``; stubbing it keeps the production default factory
     from building a live Alpaca client during orchestration tests. Hoisted to
     module scope so the heavy stub-patcher stays under the complexity ceiling.
     """
@@ -279,10 +279,11 @@ def _make_activities_poll_stub(
 def _patch_no_op_pipeline(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    phase1_summary: Phase1Summary | None = None,
+    fill_collection_summary: FillCollectionSummary | None = None,
     analysis_result: Any | None = None,
     decision_result: Any | None = None,
-    phase1_raises: Exception | None = None,
+    fill_collection_raises: Exception | None = None,
+    phase1_raises: Exception | None = None,  # alias for fill_collection_raises
     phase1_transient_failures: int = 0,
     decision_raises: Exception | None = None,
     captured: dict[str, Any] | None = None,
@@ -308,17 +309,18 @@ def _patch_no_op_pipeline(
         captured["gather"] = kw
         return _make_phase1_inputs(staleness_flag=staleness_flag)
 
-    async def _process_stub(*args: Any, **kw: Any) -> Phase1Summary:
-        captured["phase1"] = {"args": args, "kwargs": kw}
+    async def _process_stub(*args: Any, **kw: Any) -> FillCollectionSummary:
+        captured["fill_collection"] = {"args": args, "kwargs": kw}
         phase1_calls["n"] += 1
         if phase1_calls["n"] <= phase1_transient_failures:
             raise OperationalError(
                 "INSERT INTO activity_log ...", {}, Exception("database is locked")
             )
-        if phase1_raises is not None:
-            raise phase1_raises
-        # Production ``process_unprocessed_fills`` stamps ``phase1_completed_at``
-        # on the bound row before returning (write_paths/phase1.py:294) AND
+        _raises = fill_collection_raises or phase1_raises
+        if _raises is not None:
+            raise _raises
+        # Production ``process_unprocessed_fills`` stamps ``fill_collection_completed_at``
+        # on the bound row before returning (write_paths/fill_collection.py:294) AND
         # seeds the ``cash_ledger`` + ``drawdown_state`` singletons as a side
         # effect of fill integration. The stub mirrors both so the
         # orchestrator's post-Phase-1 snapshot read finds the singletons + a
@@ -329,8 +331,8 @@ def _patch_no_op_pipeline(
 
         handle = args[0]
         await _seed_singletons_via_handle(handle)
-        await stamp_phase_completion(handle, column="phase1_completed_at")
-        return phase1_summary or _make_phase1_summary()
+        await stamp_phase_completion(handle, column="fill_collection_completed_at")
+        return fill_collection_summary or _make_phase1_summary()
 
     async def _analysis_stub(**kw: Any) -> Any:
         captured["analysis"] = kw
@@ -343,16 +345,16 @@ def _patch_no_op_pipeline(
         return decision_result or _make_decision_result()
 
     async def _dispatch_stub(**kw: Any) -> Any:
-        from alphamind.scheduler.phase2_dispatch import Phase2Summary
+        from alphamind.scheduler.command_execution_dispatch import CommandExecutionSummary
 
         captured["dispatch"] = kw
-        return Phase2Summary(commands_submitted=0, commands_rejected=0)
+        return CommandExecutionSummary(commands_submitted=0, commands_rejected=0)
 
     def _regime_stub(**kw: Any) -> Any:
         captured["regime"] = kw
         return make_regime_output(now=_NOW)
 
-    monkeypatch.setattr(module, "gather_phase1_inputs", _gather_stub)
+    monkeypatch.setattr(module, "gather_fill_collection_inputs", _gather_stub)
     monkeypatch.setattr(module, "process_unprocessed_fills", _process_stub)
     monkeypatch.setattr(
         module,
@@ -361,7 +363,7 @@ def _patch_no_op_pipeline(
     )
     monkeypatch.setattr(module, "run_analysis_pipeline", _analysis_stub)
     monkeypatch.setattr(module, "run_decision_pipeline", _decision_stub)
-    monkeypatch.setattr(module, "dispatch_phase2", _dispatch_stub)
+    monkeypatch.setattr(module, "dispatch_command_execution", _dispatch_stub)
     monkeypatch.setattr(module, "_resolve_regime_adaptation_for_invocation", _regime_stub)
 
 
@@ -376,7 +378,7 @@ class TestPhase1WriteLockResilience:
         archive_root: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """``gather_phase1_inputs`` runs (in a read session) before
+        """``gather_fill_collection_inputs`` runs (in a read session) before
         ``begin_write_immediate`` and in a *different* session — so no write lock is
         held across the Alpaca fetch (AC: write lock taken only after gather)."""
         from alphamind.persistence.session import begin_write_immediate as real_begin
@@ -412,7 +414,7 @@ class TestPhase1WriteLockResilience:
         # The read (gather) session and the write-unit session are distinct objects,
         # so the IMMEDIATE write lock is never held while gather does its fetch.
         read_session = captured["gather"]["handle"].session
-        write_session = captured["phase1"]["args"][0].session
+        write_session = captured["fill_collection"]["args"][0].session
         assert read_session is not write_session
 
     async def test_transient_lock_during_write_unit_retries_to_completion(
@@ -423,16 +425,18 @@ class TestPhase1WriteLockResilience:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A transient ``database is locked`` on the first write attempt retries; the
-        invocation completes with fills processed and ``phase1_completed_at`` stamped."""
+        invocation completes with fills processed and ``fill_collection_completed_at`` stamped."""
         from alphamind.scheduler.orchestrator import run_invocation
 
-        phase1 = Phase1Summary(
+        phase1 = FillCollectionSummary(
             fills_processed=2,
             fills_quarantined=0,
             ca_activities_processed=0,
             reconciliation_alerts=0,
         )
-        _patch_no_op_pipeline(monkeypatch, phase1_transient_failures=1, phase1_summary=phase1)
+        _patch_no_op_pipeline(
+            monkeypatch, phase1_transient_failures=1, fill_collection_summary=phase1
+        )
 
         await run_invocation(
             context=_make_context(
@@ -447,8 +451,8 @@ class TestPhase1WriteLockResilience:
 
         async with async_factory() as session:
             row = (await session.execute(select(InvocationRow))).scalar_one()
-        assert row.phase1_completed_at is not None
-        assert row.phase2_completed_at is not None
+        assert row.fill_collection_completed_at is not None
+        assert row.command_execution_completed_at is not None
         assert row.fill_collection_summary_json is not None
         payload = json.loads(row.fill_collection_summary_json)
         assert payload["fills_processed"] == 2
@@ -518,8 +522,8 @@ class TestRunInvocationHappyPath:
         assert len(rows) == 1
         row = rows[0]
         assert row.invocation_id == summary.invocation_id
-        assert row.phase1_completed_at is not None
-        assert row.phase2_completed_at is not None
+        assert row.fill_collection_completed_at is not None
+        assert row.command_execution_completed_at is not None
         assert row.fill_collection_summary_json is not None
         assert row.command_execution_summary_json is not None
         assert row.active_overlays_json is not None
@@ -535,13 +539,13 @@ class TestRunInvocationHappyPath:
         """The row's ``fill_collection_summary_json`` is the Phase 1 summary JSON-serialized."""
         from alphamind.scheduler.orchestrator import run_invocation
 
-        phase1 = Phase1Summary(
+        phase1 = FillCollectionSummary(
             fills_processed=3,
             fills_quarantined=1,
             ca_activities_processed=2,
             reconciliation_alerts=0,
         )
-        _patch_no_op_pipeline(monkeypatch, phase1_summary=phase1)
+        _patch_no_op_pipeline(monkeypatch, fill_collection_summary=phase1)
         await run_invocation(
             context=_make_context(
                 session_factory=async_factory,
@@ -662,19 +666,19 @@ class TestRunInvocationHappyPath:
 
 
 class TestRunInvocationFailures:
-    async def test_phase1_exception_leaves_row_with_phase1_completed_at_null(
+    async def test_phase1_exception_leaves_row_with_fill_collection_completed_at_null(
         self,
         async_factory: async_sessionmaker[AsyncSession],
         env_path: Path,
         archive_root: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Phase 1 abort: row stays (committed up-front), phase1_completed_at is NULL.
+        """Phase 1 abort: row stays (committed up-front), fill_collection_completed_at is NULL.
 
         Under the three-transaction model the invocation row is committed by
         ``insert_invocation_record`` before Phase 1 opens. A Phase 1 abort
         rolls back Phase 1's own transaction only; the row persists with
-        ``phase1_completed_at IS NULL`` so the SQL repository's consistency
+        ``fill_collection_completed_at IS NULL`` so the SQL repository's consistency
         guard refuses snapshot reads against this invocation, and the next
         invocation retries fills.
         """
@@ -699,8 +703,8 @@ class TestRunInvocationFailures:
             rows = (await session.execute(select(InvocationRow))).scalars().all()
         assert len(rows) == 1
         row = rows[0]
-        assert row.phase1_completed_at is None
-        assert row.phase2_completed_at is None
+        assert row.fill_collection_completed_at is None
+        assert row.command_execution_completed_at is None
 
     async def test_decision_exception_leaves_phase1_committed_skips_phase2(
         self,
@@ -714,7 +718,7 @@ class TestRunInvocationFailures:
         Per ``docs/design/mid-pipeline-failure-handling.md`` an analysis /
         decision-pipeline failure leaves the already-committed Phase 1
         writes durable and skips Phase 2. The row carries
-        ``phase1_completed_at`` set, ``phase2_completed_at`` NULL.
+        ``fill_collection_completed_at`` set, ``command_execution_completed_at`` NULL.
         """
         from alphamind.scheduler.orchestrator import run_invocation
 
@@ -742,8 +746,8 @@ class TestRunInvocationFailures:
             rows = (await session.execute(select(InvocationRow))).scalars().all()
         assert len(rows) == 1
         row = rows[0]
-        assert row.phase1_completed_at is not None
-        assert row.phase2_completed_at is None
+        assert row.fill_collection_completed_at is not None
+        assert row.command_execution_completed_at is None
         assert "dispatch" not in captured
 
 
@@ -886,7 +890,7 @@ async def _seed_singletons_via_handle(handle: Any) -> None:
 
     Mimics what production ``process_unprocessed_fills`` does as a side
     effect of fill integration; joins the Phase 1 transaction so the
-    singletons commit together with ``phase1_completed_at``.
+    singletons commit together with ``fill_collection_completed_at``.
     """
     from alphamind.state.tables.cash_ledger_codec import (
         cash_ledger_record_to_row,
@@ -905,7 +909,7 @@ class TestRunInvocationSnapshotWiring:
 
     Pre-ALP-449 the orchestrator wired a deferred ``_EmptySynthesizerReader``
     stub because the unified-transaction model prevented a fresh-session
-    snapshot read from seeing the open transaction's ``phase1_completed_at``
+    snapshot read from seeing the open transaction's ``fill_collection_completed_at``
     write. The three-transaction refactor commits Phase 1 before the snapshot
     read, so ``SnapshotBackedSynthesizerReader`` wires correctly.
     """
@@ -960,7 +964,7 @@ class TestRunInvocationSnapshotWiring:
 
         Forces the three-transaction restructure: Phase 1 commits, then the
         orchestrator assembles a snapshot via fresh sessions (which now see
-        committed ``phase1_completed_at``), then wires that snapshot through
+        committed ``fill_collection_completed_at``), then wires that snapshot through
         the synthesizer reader into the analysis pipeline.
         """
         from alphamind.portfolio_state.consumers.synthesizer import (
@@ -1142,20 +1146,20 @@ class TestRunInvocationFailuresThreeTxBoundaries:
 
     ``TestRunInvocationFailures`` covers Phase 1 abort and between-phase
     abort already; this class fills in the Phase 2 boundary — a
-    dispatch-side raise must leave Phase 1 durable and ``phase2_completed_at``
+    dispatch-side raise must leave Phase 1 durable and ``command_execution_completed_at``
     NULL (matches the design's "commands submitted before the abort
     remain committed" semantic; the per-envelope mechanics themselves
-    are tested in ``tests/scheduler/test_phase2_dispatch.py``).
+    are tested in ``tests/scheduler/test_command_execution_dispatch.py``).
     """
 
-    async def test_phase2_dispatch_failure_leaves_phase1_committed_phase2_null(
+    async def test_command_execution_dispatch_failure_leaves_phase1_committed_phase2_null(
         self,
         async_factory: async_sessionmaker[AsyncSession],
         env_path: Path,
         archive_root: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A dispatch_phase2 raise propagates; the row keeps Phase 1, drops Phase 2."""
+        """A dispatch_command_execution raise propagates; the row keeps Phase 1, drops Phase 2."""
         from alphamind.scheduler import orchestrator as module
         from alphamind.scheduler.orchestrator import run_invocation
 
@@ -1165,7 +1169,7 @@ class TestRunInvocationFailuresThreeTxBoundaries:
         async def _raising_dispatch(**kw: Any) -> Any:
             raise RuntimeError("phase 2 boom")
 
-        monkeypatch.setattr(module, "dispatch_phase2", _raising_dispatch)
+        monkeypatch.setattr(module, "dispatch_command_execution", _raising_dispatch)
 
         with pytest.raises(RuntimeError, match="phase 2 boom"):
             await run_invocation(
@@ -1185,8 +1189,8 @@ class TestRunInvocationFailuresThreeTxBoundaries:
             rows = (await session.execute(select(InvocationRow))).scalars().all()
         assert len(rows) == 1
         row = rows[0]
-        assert row.phase1_completed_at is not None
-        assert row.phase2_completed_at is None
+        assert row.fill_collection_completed_at is not None
+        assert row.command_execution_completed_at is None
 
     async def test_pending_submit_strand_withholds_phase2_stamp_and_warns(
         self,
@@ -1196,7 +1200,7 @@ class TestRunInvocationFailuresThreeTxBoundaries:
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """FL4 — a residual PENDING_SUBMIT strand withholds ``phase2_completed_at``
+        """FL4 — a residual PENDING_SUBMIT strand withholds ``command_execution_completed_at``
         AND surfaces an operator-visible warning (not silent withholding).
 
         The dispatch stub seeds the lost-backfill signature this invocation: an
@@ -1217,7 +1221,7 @@ class TestRunInvocationFailuresThreeTxBoundaries:
         )
 
         async def _dispatch_seeds_strand(**kw: Any) -> Any:
-            from alphamind.scheduler.phase2_dispatch import Phase2Summary
+            from alphamind.scheduler.command_execution_dispatch import CommandExecutionSummary
 
             invocation_id = kw["invocation_id"]
             # The lost-backfill strand: position + bracket + a PENDING_SUBMIT order
@@ -1236,10 +1240,10 @@ class TestRunInvocationFailuresThreeTxBoundaries:
                     )
                 )
                 await session.commit()
-            return Phase2Summary(commands_submitted=0, commands_rejected=0)
+            return CommandExecutionSummary(commands_submitted=0, commands_rejected=0)
 
         _patch_no_op_pipeline(monkeypatch)
-        monkeypatch.setattr(module, "dispatch_phase2", _dispatch_seeds_strand)
+        monkeypatch.setattr(module, "dispatch_command_execution", _dispatch_seeds_strand)
 
         with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.orchestrator"):
             await run_invocation(
@@ -1258,7 +1262,7 @@ class TestRunInvocationFailuresThreeTxBoundaries:
         async with async_factory() as session:
             row = (await session.execute(select(InvocationRow))).scalar_one()
         # The strand withholds the stamp …
-        assert row.phase2_completed_at is None
+        assert row.command_execution_completed_at is None
         # … and the residual strand is surfaced for operator follow-up.
         warnings = [
             r
@@ -1268,7 +1272,7 @@ class TestRunInvocationFailuresThreeTxBoundaries:
             and "PENDING_SUBMIT" in r.getMessage()
         ]
         assert len(warnings) == 1
-        assert "phase2_completed_at withheld" in warnings[0].getMessage()
+        assert "command_execution_completed_at withheld" in warnings[0].getMessage()
 
 
 def _stub_only_llm_and_broker(
@@ -1277,7 +1281,7 @@ def _stub_only_llm_and_broker(
     """Stub LLM + broker callees; leave Phase 1/2 writers in production form.
 
     Differs from :func:`_patch_no_op_pipeline` by NOT stubbing
-    ``process_unprocessed_fills`` and ``dispatch_phase2`` — those are the
+    ``process_unprocessed_fills`` and ``dispatch_command_execution`` — those are the
     DB writers the verify-script-style checks expect to land their rows
     and activity-log entries in production form.
     """
@@ -1297,12 +1301,12 @@ def _stub_only_llm_and_broker(
 
     async def _activities_poll_stub(*_args: Any, **_kw: Any) -> Any:
         # ALP-846 — the activity poll touches the broker, so it joins the
-        # broker callees this helper stubs (alongside gather_phase1_inputs).
+        # broker callees this helper stubs (alongside gather_fill_collection_inputs).
         from alphamind.execution.account_activities.poll import PollResult
 
         return PollResult(activities_booked=0, cursor=None)
 
-    monkeypatch.setattr(module, "gather_phase1_inputs", _gather_stub)
+    monkeypatch.setattr(module, "gather_fill_collection_inputs", _gather_stub)
     monkeypatch.setattr(module, "run_account_activities_poll", _activities_poll_stub)
     monkeypatch.setattr(module, "run_analysis_pipeline", _analysis_stub)
     monkeypatch.setattr(module, "run_decision_pipeline", _decision_stub)
@@ -1313,8 +1317,8 @@ _REQUIRED_INVOCATION_ROW_COLUMNS: tuple[str, ...] = (
     "invocation_id",
     "process_lifetime_id",
     "start_at",
-    "phase1_completed_at",
-    "phase2_completed_at",
+    "fill_collection_completed_at",
+    "command_execution_completed_at",
     "trigger_type",
     "trigger_source",
     "trigger_reason",
@@ -1338,8 +1342,8 @@ class TestRunInvocationProductionPathArtifacts:
     """Pin the invocation-row + activity-log invariants against a unit invocation.
 
     The other test classes in this file stub every heavy callee
-    (``gather_phase1_inputs``, ``process_unprocessed_fills``,
-    ``run_analysis_pipeline``, ``run_decision_pipeline``, ``dispatch_phase2``)
+    (``gather_fill_collection_inputs``, ``process_unprocessed_fills``,
+    ``run_analysis_pipeline``, ``run_decision_pipeline``, ``dispatch_command_execution``)
     so the orchestrator wiring is exercised without hitting the broker or
     LLM. That coverage previously missed two blockers
     (``snapshot_metadata_json`` column population, baseline ``activity_log``
@@ -1347,7 +1351,7 @@ class TestRunInvocationProductionPathArtifacts:
     code — not from the stubbed inner stages.
 
     This class re-runs the orchestrator with the LLM + broker stages
-    stubbed but ``process_unprocessed_fills`` / ``dispatch_phase2`` in
+    stubbed but ``process_unprocessed_fills`` / ``dispatch_command_execution`` in
     production form, then asserts directly against the resulting DB
     state. ALP-502 retired the per-feature verify scripts; the
     invariants the deleted ``check_invocation_row_population`` and
@@ -1456,11 +1460,11 @@ class TestRunInvocationProductionPathArtifacts:
 
 
 class TestRunInvocationDebugE2EWiring:
-    """Story ALP-501 — ``debug_e2e`` settings thread through ``gather_phase1_inputs``.
+    """Story ALP-501 — ``debug_e2e`` settings thread through ``gather_fill_collection_inputs``.
 
     The orchestrator must detect debug-e2e mode by ``context.debug_e2e is not
     None`` (P3 — no parallel boolean flag) and route the bundle's
-    ``account_queries`` / ``ca_queries`` to ``gather_phase1_inputs`` via the
+    ``account_queries`` / ``ca_queries`` to ``gather_fill_collection_inputs`` via the
     Protocol-typed factory kwargs (the seam ALP-494 carved out). Production
     callers (``context.debug_e2e is None``) must continue to pass ``None`` so
     the gatherer falls back to its inline Alpaca-backed defaults.
@@ -1669,8 +1673,8 @@ def _make_invocation_row(
         invocation_id=invocation_id,
         process_lifetime_id="proc-driver-1",
         start_at=iso,
-        phase1_completed_at=iso,
-        phase2_completed_at=iso if phase2_completed else None,
+        fill_collection_completed_at=iso,
+        command_execution_completed_at=iso if phase2_completed else None,
         trigger_type="manual",
         trigger_source="cli",
         trigger_reason="prior",
@@ -1775,7 +1779,7 @@ class TestRunInvocationLastInvocationTimeResolution:
         db_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """An aborted prior (phase2_completed_at IS NULL) is skipped.
+        """An aborted prior (command_execution_completed_at IS NULL) is skipped.
 
         The resolver anchors the digest window to the last *successful*
         invocation so headlines published between that success and a later

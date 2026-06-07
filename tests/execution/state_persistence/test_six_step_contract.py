@@ -4,11 +4,11 @@ Per ``docs/design/05-execution-layer/state-persistence.md`` § Read paths the
 snapshot-isolation contract is::
 
     1. Phase 1 begins a write transaction.
-    2. Phase 1 commits (fills integrate, ``phase1_completed_at`` stamped).
+    2. Phase 1 commits (fills integrate, ``fill_collection_completed_at`` stamped).
     3. The ingestion layer reads a snapshot.
     4. The ingestion layer completes its read.
     5. Phase 2 begins a write transaction.
-    6. Phase 2 commits (envelope writebacks land, ``phase2_completed_at``
+    6. Phase 2 commits (envelope writebacks land, ``command_execution_completed_at``
        stamped).
 
 This module exercises steps 1, 2, 5, and 6 plus the snapshot reads bracketing
@@ -20,8 +20,8 @@ independently persist new fill records" guarantee from the design doc) is
 out of surface for this test — it is exercised in
 ``test_fill_records_table.py``.
 
-Per-step unit tests live in ``test_phase1_write_path.py``,
-``test_phase2_write_path.py``, and ``test_sql_repository.py``. This module
+Per-step unit tests live in ``test_fill_collection_write_path.py``,
+``test_command_execution_write_path.py``, and ``test_sql_repository.py``. This module
 runs the full sequence inside a single invocation cycle to guard against
 read/write surfaces drifting out of contract once Phase 1 + Phase 2 share
 real state.
@@ -84,14 +84,14 @@ from alphamind.execution.oms.command_ids import (
     derive_open_thesis_id,
     derive_pm_command_id,
 )
-from alphamind.execution.write_paths.fill_persistence import (
-    append_fill_record,
+from alphamind.execution.write_paths.command_execution import (
+    persist_envelope_outcome,
 )
-from alphamind.execution.write_paths.phase1 import (
+from alphamind.execution.write_paths.fill_collection import (
     process_unprocessed_fills,
 )
-from alphamind.execution.write_paths.phase2 import (
-    persist_envelope_outcome,
+from alphamind.execution.write_paths.fill_persistence import (
+    append_fill_record,
 )
 from alphamind.persistence.session import (
     make_async_engine,
@@ -260,8 +260,8 @@ def _invocation_record(invocation_id: str = _INV_ID) -> InvocationRecord:
         invocation_id=invocation_id,
         process_lifetime_id=_PROCESS_ID,
         start_at=_NOW.isoformat().replace("+00:00", "Z"),
-        phase1_completed_at=None,
-        phase2_completed_at=None,
+        fill_collection_completed_at=None,
+        command_execution_completed_at=None,
         trigger_type="scheduled",
         trigger_source="cron",
         trigger_reason="0 9 * * 1-5",

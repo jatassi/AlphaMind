@@ -11,9 +11,9 @@ preset with ``status ∈ {failed, partial}`` pre-applied.
 **Status derivation** — ``invocations`` carries no ``status`` column;
 the view derives it from phase-completion timestamps:
 
-* ``completed`` — ``phase2_completed_at IS NOT NULL``
-* ``partial``   — ``phase1_completed_at IS NOT NULL`` and
-                  ``phase2_completed_at IS NULL``
+* ``completed`` — ``command_execution_completed_at IS NOT NULL``
+* ``partial``   — ``fill_collection_completed_at IS NOT NULL`` and
+                  ``command_execution_completed_at IS NULL``
 * ``failed``    — both completion timestamps are ``NULL``
 
 Story 05d (ALP-674) extends this module with per-invocation detail
@@ -145,8 +145,8 @@ def _extract_abort_reason(snapshot_json: str | None) -> str | None:
 
 def _row_to_run_row(row: InvocationRow) -> RunRow:
     """Convert an ORM row to a ``RunRow`` response model."""
-    status = _derive_status(row.phase1_completed_at, row.phase2_completed_at)
-    ended_at = row.phase2_completed_at or row.phase1_completed_at
+    status = _derive_status(row.fill_collection_completed_at, row.command_execution_completed_at)
+    ended_at = row.command_execution_completed_at or row.fill_collection_completed_at
     duration_seconds = _compute_duration(row.start_at, ended_at) if ended_at else None
     return RunRow(
         invocation_id=row.invocation_id,
@@ -187,16 +187,16 @@ def _status_predicates(
     """Build phase-timestamp predicates for the given status set."""
     predicates: list[ColumnElement[bool]] = []
     if _STATUS_COMPLETED in statuses:
-        predicates.append(InvocationRow.phase2_completed_at.is_not(None))
+        predicates.append(InvocationRow.command_execution_completed_at.is_not(None))
     if _STATUS_PARTIAL in statuses:
         predicates.append(
-            InvocationRow.phase1_completed_at.is_not(None)
-            & InvocationRow.phase2_completed_at.is_(None)
+            InvocationRow.fill_collection_completed_at.is_not(None)
+            & InvocationRow.command_execution_completed_at.is_(None)
         )
     if _STATUS_FAILED in statuses:
         predicates.append(
-            InvocationRow.phase1_completed_at.is_(None)
-            & InvocationRow.phase2_completed_at.is_(None)
+            InvocationRow.fill_collection_completed_at.is_(None)
+            & InvocationRow.command_execution_completed_at.is_(None)
         )
     return predicates
 
@@ -322,8 +322,8 @@ class InvocationDetailHeader(BaseModel):
     started_at: str
     ended_at: str | None
     status: str
-    phase1_completed_at: str | None
-    phase2_completed_at: str | None
+    fill_collection_completed_at: str | None
+    command_execution_completed_at: str | None
     duration_seconds: float | None
     trigger_type: str
     trigger_reason: str
@@ -458,8 +458,8 @@ async def _invocation_detail_fetch(
         return None
 
     # Derive header fields.
-    status = _derive_status(row.phase1_completed_at, row.phase2_completed_at)
-    ended_at = row.phase2_completed_at or row.phase1_completed_at
+    status = _derive_status(row.fill_collection_completed_at, row.command_execution_completed_at)
+    ended_at = row.command_execution_completed_at or row.fill_collection_completed_at
     duration = _compute_duration(row.start_at, ended_at) if ended_at else None
     abort_reason = _extract_abort_reason(row.snapshot_metadata_json)
     error_summary: str | None = None
@@ -477,8 +477,8 @@ async def _invocation_detail_fetch(
         started_at=row.start_at,
         ended_at=ended_at,
         status=status,
-        phase1_completed_at=row.phase1_completed_at,
-        phase2_completed_at=row.phase2_completed_at,
+        fill_collection_completed_at=row.fill_collection_completed_at,
+        command_execution_completed_at=row.command_execution_completed_at,
         duration_seconds=duration,
         trigger_type=row.trigger_type,
         trigger_reason=row.trigger_reason,

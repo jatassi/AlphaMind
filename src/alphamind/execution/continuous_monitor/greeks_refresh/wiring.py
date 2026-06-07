@@ -63,7 +63,7 @@ from alphamind.state.tables.position_greeks_codec import (
 
 log = logging.getLogger(__name__)
 
-# Mirrors ``alphamind.scheduler.phase1_inputs._DEFAULT_RISK_FREE_RATE`` — the
+# Mirrors ``alphamind.scheduler.fill_collection_inputs._DEFAULT_RISK_FREE_RATE`` — the
 # conservative mid-cycle scalar used when ``macro_observations`` has no
 # DTB3 row (bootstrap path).
 _DEFAULT_RISK_FREE_RATE = 0.045

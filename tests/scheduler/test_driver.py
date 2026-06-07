@@ -106,14 +106,14 @@ def _make_invocation_record(
     *,
     invocation_id: str,
     start_at: str,
-    phase2_completed_at: str | None,
+    command_execution_completed_at: str | None,
 ) -> InvocationRecord:
     return InvocationRecord(
         invocation_id=invocation_id,
         process_lifetime_id="proc-driver-1",
         start_at=start_at,
-        phase1_completed_at=None,
-        phase2_completed_at=phase2_completed_at,
+        fill_collection_completed_at=None,
+        command_execution_completed_at=command_execution_completed_at,
         trigger_type="scheduled",
         trigger_source="market_hours_rolling",
         trigger_reason="30 9,11,13,15 * * mon-fri",
@@ -206,8 +206,8 @@ def _patch_run_invocation(
     invocation_id: str = "inv-driver-1",
 ) -> dict[str, Any]:
     """Stub ``alphamind.scheduler.driver.run_invocation`` with a recording fake."""
-    from alphamind.execution.write_paths.phase1 import (
-        Phase1Summary,
+    from alphamind.execution.write_paths.fill_collection import (
+        FillCollectionSummary,
     )
     from alphamind.scheduler import driver as module
     from alphamind.scheduler.orchestrator import InvocationSummary
@@ -224,7 +224,7 @@ def _patch_run_invocation(
             trigger_type=kwargs["trigger_type"],
             trigger_source=kwargs.get("trigger_source", "scheduled"),
             firing_run_type=kwargs["firing_run_type"],
-            phase1_summary=Phase1Summary(
+            fill_collection_summary=FillCollectionSummary(
                 fills_processed=0,
                 fills_quarantined=0,
                 ca_activities_processed=0,
@@ -371,7 +371,7 @@ async def _insert_completed_invocation(
     invocation_id: str,
     completed_at: datetime,
 ) -> None:
-    """Insert a row with ``phase2_completed_at`` stamped at *completed_at*."""
+    """Insert a row with ``command_execution_completed_at`` stamped at *completed_at*."""
     completed_iso = completed_at.isoformat().replace("+00:00", "Z")
     async with factory() as session:
         session.add(
@@ -379,7 +379,7 @@ async def _insert_completed_invocation(
                 _make_invocation_record(
                     invocation_id=invocation_id,
                     start_at=completed_iso,
-                    phase2_completed_at=completed_iso,
+                    command_execution_completed_at=completed_iso,
                 )
             )
         )

@@ -10,32 +10,32 @@ it runs three separate transactions per invocation:
      its own short transaction so the row is durable + visible to fresh-session
      reads from the moment Phase 1 starts.
   2. Phase 1: one transaction wrapping fill integration + activity-log writes
-     + the ``phase1_completed_at`` stamp. Commits at the close of the phase.
+     + the ``fill_collection_completed_at`` stamp. Commits at the close of the phase.
   3. Snapshot read between phases: ``assemble_snapshot`` uses fresh sessions
      via the repository factory; it now correctly sees the committed
-     ``phase1_completed_at`` and produces a real :class:`AssembledSnapshot`.
+     ``fill_collection_completed_at`` and produces a real :class:`AssembledSnapshot`.
      The snapshot feeds :class:`SnapshotBackedSynthesizerReader` (consumed by
      the analysis pipeline) and the decision pipeline. The analysis subtree
      opens its own sync ``Session`` (the distillation orchestrator threads it
      through ``asyncio.to_thread`` into sync SQLAlchemy callsites) from the
      context's ``sync_session_factory``.
-  4. Phase 2: one transaction wrapping envelope dispatch + the
-     ``phase2_completed_at`` stamp + row summary writeback.
+  4. command execution: one transaction wrapping envelope dispatch + the
+     ``command_execution_completed_at`` stamp + row summary writeback.
 
 Per ``docs/design/mid-pipeline-failure-handling.md``:
   * A Phase 1 abort rolls back Phase 1's writes; the invocation row stays
-    with ``phase1_completed_at IS NULL``, and the repository's consistency
+    with ``fill_collection_completed_at IS NULL``, and the repository's consistency
     guard refuses snapshot reads against it — next invocation retries fills.
   * Between-phase aborts (snapshot assembly, analysis, decision) leave Phase
-    1 committed and skip Phase 2; the next scheduled invocation regenerates
+    1 committed and skip command execution; the next scheduled invocation regenerates
     briefs from current state.
-  * Phase 2 aborts roll back the in-flight envelope; already-committed work
+  * command execution aborts roll back the in-flight envelope; already-committed work
     from prior envelopes remains durable.
 
 The function composes existing layer primitives without inventing new
-submission paths: ``gather_phase1_inputs`` (story 03b / ALP-445),
+submission paths: ``gather_fill_collection_inputs`` (story 03b / ALP-445),
 ``process_unprocessed_fills`` (story 07 / ALP-365), ``run_analysis_pipeline``
-(ALP-276), ``run_decision_pipeline`` (ALP-403), and ``dispatch_phase2``
+(ALP-276), ``run_decision_pipeline`` (ALP-403), and ``dispatch_command_execution``
 (story 03b).
 
 ALP-472 lifted the layer-spanning helpers out of this file into their
@@ -86,13 +86,13 @@ from alphamind.config.models.run_types import RunType
 from alphamind.config.models.scheduler import SchedulerConfig
 from alphamind.config.models.venue import VenueConfig
 from alphamind.distillation.regime import RegimeLabel as DistillationRegimeLabel
-from alphamind.execution.write_paths.phase1 import (
-    Phase1Summary,
+from alphamind.execution.write_paths.command_execution.atomic import (
+    invocation_has_pending_submit_strand,
+)
+from alphamind.execution.write_paths.fill_collection import (
+    FillCollectionSummary,
     process_unprocessed_fills,
     rederive_thesis_ledgers,
-)
-from alphamind.execution.write_paths.phase2.atomic import (
-    invocation_has_pending_submit_strand,
 )
 from alphamind.persistence.retry import run_with_sqlite_busy_retry
 from alphamind.persistence.session import begin_write_immediate
@@ -139,6 +139,10 @@ from alphamind.risk_guardrails.state_delivery.config import (
 )
 from alphamind.scheduler.account_activities_poll import run_account_activities_poll
 from alphamind.scheduler.borrow_accrual import run_borrow_accrual
+from alphamind.scheduler.command_execution_dispatch import (
+    CommandExecutionSummary,
+    dispatch_command_execution,
+)
 from alphamind.scheduler.control.events import SSEEventEmitter
 from alphamind.scheduler.control.models import (
     InvocationEndedEvent,
@@ -150,12 +154,8 @@ from alphamind.scheduler.control.sse_progress_bridge import (
     PipelineSSEProgressBridge,
     make_latency_budget_lookup,
 )
+from alphamind.scheduler.fill_collection_inputs import gather_fill_collection_inputs
 from alphamind.scheduler.invocation import insert_invocation_record
-from alphamind.scheduler.phase1_inputs import gather_phase1_inputs
-from alphamind.scheduler.phase2_dispatch import (
-    Phase2Summary,
-    dispatch_phase2,
-)
 from alphamind.scheduler.run_context import RunInvocationContext
 from alphamind.scheduler.runtime import resolve_runtime_dimensions
 from alphamind.scripts._common import load_distillation_config
@@ -197,7 +197,7 @@ class InvocationSummary:
     trigger_type: TriggerType
     trigger_source: str
     firing_run_type: RunType
-    phase1_summary: Phase1Summary
+    fill_collection_summary: FillCollectionSummary
     commands_submitted: int
     commands_rejected: int
     staleness_flag: bool
@@ -288,10 +288,10 @@ def _load_base_profile_rule_values(config_dir: Path) -> dict[str, float]:
 # ---------------------------------------------------------------------------
 
 
-async def _update_row_phase1(
+async def _update_row_fill_collection(
     handle: InvocationHandle,
     *,
-    phase1_summary: Phase1Summary,
+    fill_collection_summary: FillCollectionSummary,
     staleness_flag: bool,
 ) -> None:
     """Persist Phase 1 outcomes onto the bound invocation row."""
@@ -304,22 +304,22 @@ async def _update_row_phase1(
         raise RuntimeError(msg)
     row.fill_collection_summary_json = json.dumps(
         {
-            "fills_processed": phase1_summary.fills_processed,
-            "fills_quarantined": phase1_summary.fills_quarantined,
-            "ca_activities_processed": phase1_summary.ca_activities_processed,
-            "reconciliation_alerts": phase1_summary.reconciliation_alerts,
+            "fills_processed": fill_collection_summary.fills_processed,
+            "fills_quarantined": fill_collection_summary.fills_quarantined,
+            "ca_activities_processed": fill_collection_summary.ca_activities_processed,
+            "reconciliation_alerts": fill_collection_summary.reconciliation_alerts,
         },
         sort_keys=True,
     )
     row.staleness_flag = 1 if staleness_flag else 0
 
 
-async def _update_row_phase2(
+async def _update_row_command_execution(
     handle: InvocationHandle,
     *,
-    phase2_summary: Phase2Summary,
+    command_execution_summary: CommandExecutionSummary,
 ) -> None:
-    """Persist Phase 2 outcomes onto the bound invocation row."""
+    """Persist command execution outcomes onto the bound invocation row."""
     row = await handle.session.get(InvocationRow, handle.invocation_id)
     if row is None:
         msg = (
@@ -329,8 +329,8 @@ async def _update_row_phase2(
         raise RuntimeError(msg)
     row.command_execution_summary_json = json.dumps(
         {
-            "commands_submitted": phase2_summary.commands_submitted,
-            "commands_rejected": phase2_summary.commands_rejected,
+            "commands_submitted": command_execution_summary.commands_submitted,
+            "commands_rejected": command_execution_summary.commands_rejected,
         },
         sort_keys=True,
     )
@@ -346,7 +346,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     invocation_id: str,
     pipeline_config: PipelineConfig,
     analysis_result: Any,
-    phase1_market_inputs: MarketInputs,
+    fill_collection_market_inputs: MarketInputs,
     pipeline_mode: PipelineMode,
     halt_state: HaltState | None,
     now: datetime,
@@ -384,7 +384,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
         "sector_resolver": sector_resolver,
         "borrow_cost_resolver": borrow_cost_resolver,
         "library_config": library_config,
-        "library_market": phase1_market_inputs,
+        "library_market": fill_collection_market_inputs,
         "profile_feature_flags": library_config.feature_flags,
         "state_delivery_config": state_delivery_config,
         "state_persistence_config": state_persistence_config,
@@ -413,7 +413,7 @@ def _account_queries_factory_from_debug_e2e(
     """``AccountStateQueriesP`` factory derived from ``context.debug_e2e``.
 
     Returns ``None`` on the production daemon path so
-    ``gather_phase1_inputs`` falls back to its inline Alpaca-backed
+    ``gather_fill_collection_inputs`` falls back to its inline Alpaca-backed
     default. Returns a closure over the bundle's log-only queries when
     debug-e2e is active (story ALP-501).
     """
@@ -461,7 +461,7 @@ def _quote_source_factory_from_debug_e2e(
     """``BatchQuoteSource`` factory derived from ``context.debug_e2e`` (ALP-753).
 
     Mirrors :func:`_account_queries_factory_from_debug_e2e`; ``None`` on the
-    production path (``gather_phase1_inputs`` builds the Alpaca-backed batch
+    production path (``gather_fill_collection_inputs`` builds the Alpaca-backed batch
     quote source), the bundle's log-only quote source on debug-e2e. Without this
     the debug-e2e run would fall through to the default factory and fire a live
     Alpaca quote request for the whole active universe — breaking the harness's
@@ -473,7 +473,7 @@ def _quote_source_factory_from_debug_e2e(
     return lambda _venue, _mode: debug_settings.quote_source
 
 
-def _price_provider_from_phase1(
+def _price_provider_from_fill_collection(
     market_inputs: MarketInputs,
 ) -> StubCurrentPriceProvider:
     """Wrap Phase 1's underlying-price map in the canonical stub price provider."""
@@ -558,7 +558,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     failure semantics. The sequence in this function: resolve runtime
     dimensions → ``insert_invocation_record`` → Phase 1 (one session) →
     snapshot assembly (fresh sessions) → analysis + decision (read-only) →
-    Phase 2 (per-envelope sessions + final row stamp) → return
+    command execution (per-envelope sessions + final row stamp) → return
     :class:`InvocationSummary`.
     """
     session_factory = context.session_factory
@@ -695,7 +695,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
 
     # Step 3 — Phase 1 transaction.
     _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="collect")
-    progress.phase_start("phase1")
+    progress.phase_start("fill_collection")
     # ALP-824 — Phase-1 and the continuous monitor are two writers on one WAL DB.
     # Gather inputs FIRST in a read-only (deferred) session so no write lock is
     # held across the Alpaca network fetch; then run the write unit under an
@@ -706,10 +706,10 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     #
     # Story ALP-501 — ``context.debug_e2e`` is the SOLE signal the orchestrator is
     # in debug-e2e mode (P3 — no parallel boolean flag). The helpers resolve to
-    # ``None`` on the production path so ``gather_phase1_inputs`` falls through to
+    # ``None`` on the production path so ``gather_fill_collection_inputs`` falls through to
     # its inline Alpaca-backed defaults.
     async with session_factory() as read_session:
-        phase1_inputs = await gather_phase1_inputs(
+        fill_collection_inputs = await gather_fill_collection_inputs(
             handle=InvocationHandle(session=read_session, invocation_id=invocation_id),
             venue_config=venue_config,
             execution_mode=execution_mode,
@@ -727,7 +727,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     with context.sync_session_factory() as borrow_session:
         borrow_cost_resolver = build_borrow_cost_resolver(borrow_session)
 
-    async def _run_phase1_write_unit() -> Phase1Summary:
+    async def _run_fill_collection_write_unit() -> FillCollectionSummary:
         # Fresh session per attempt so the identity map is clean on retry;
         # ``begin_write_immediate`` takes the SQLite write lock before the first
         # read/write, and rollback on failure leaves the fills ``unprocessed`` so
@@ -742,10 +742,10 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
             )
             summary = await process_unprocessed_fills(
                 write_handle,
-                phase1_inputs.ca_activities,
-                phase1_inputs.alpaca_positions,
-                phase1_inputs.alpaca_account,
-                market_inputs=phase1_inputs.market_inputs,
+                fill_collection_inputs.ca_activities,
+                fill_collection_inputs.alpaca_positions,
+                fill_collection_inputs.alpaca_account,
+                market_inputs=fill_collection_inputs.market_inputs,
                 config=state_persistence_config,
                 borrow_cost_resolver=borrow_cost_resolver,
             )
@@ -786,29 +786,29 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
             # broker facts from the *fill* log, but a thesis-ledger derived there
             # would miss a same-invocation lifecycle event (it is not on the log
             # until the poll runs). Re-deriving here, still inside the single
-            # Phase-1 write transaction, folds the complete log into the ledger.
+            # fill-collection write transaction, folds the complete log into the ledger.
             await rederive_thesis_ledgers(write_handle)
-            await _update_row_phase1(
+            await _update_row_fill_collection(
                 write_handle,
-                phase1_summary=summary,
-                staleness_flag=phase1_inputs.staleness_flag,
+                fill_collection_summary=summary,
+                staleness_flag=fill_collection_inputs.staleness_flag,
             )
             await write_session.commit()
             return summary
 
-    phase1_summary = await run_with_sqlite_busy_retry(_run_phase1_write_unit)
-    progress.phase_done("phase1", fills_processed=phase1_summary.fills_processed)
+    fill_collection_summary = await run_with_sqlite_busy_retry(_run_fill_collection_write_unit)
+    progress.phase_done("fill_collection", fills_processed=fill_collection_summary.fills_processed)
 
     # Step 4 — Between-phase snapshot read.
     _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="distill")
     progress.phase_start("snapshot_assembly")
     sector_resolver = build_sector_resolver(pipeline_config.resolved)
-    assembled, snapshot_repository = _assemble_phase1_snapshot(
+    assembled, snapshot_repository = _assemble_fill_collection_snapshot(
         session_factory=session_factory,
         invocation_id=invocation_id,
         state_persistence_config=state_persistence_config,
         active_risk_parameters=active_risk_parameters,
-        phase1_market_inputs=phase1_inputs.market_inputs,
+        fill_collection_market_inputs=fill_collection_inputs.market_inputs,
         sector_resolver=sector_resolver,
     )
     portfolio_reader = SnapshotBackedSynthesizerReader(
@@ -866,7 +866,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         invocation_id=invocation_id,
         pipeline_config=pipeline_config,
         analysis_result=analysis_result,
-        phase1_market_inputs=phase1_inputs.market_inputs,
+        fill_collection_market_inputs=fill_collection_inputs.market_inputs,
         pipeline_mode=pipeline_mode,
         halt_state=halt_state,
         now=now,
@@ -890,20 +890,23 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="decide")
     decision_result = await run_decision_pipeline(**decision_kwargs, progress=progress)
 
-    # Step 6 — Phase 2.
+    # Step 6 — command execution.
     _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="execute")
-    progress.phase_start("phase2")
-    phase2_summary = await dispatch_phase2(
+    progress.phase_start("command_execution")
+    command_execution_summary = await dispatch_command_execution(
         session_factory=session_factory,
         invocation_id=invocation_id,
         pm_result=decision_result.pm_result,
         state_persistence_config=state_persistence_config,
     )
     async with session_factory() as session:
-        phase2_handle = InvocationHandle(session=session, invocation_id=invocation_id)
-        await _update_row_phase2(phase2_handle, phase2_summary=phase2_summary)
+        command_execution_handle = InvocationHandle(session=session, invocation_id=invocation_id)
+        await _update_row_command_execution(
+            command_execution_handle,
+            command_execution_summary=command_execution_summary,
+        )
         # ALP-836 integrity guard — the single authoritative phase-2 stamp. Withhold
-        # it (leaving phase2_completed_at NULL) when any order is stuck in
+        # it (leaving command_execution_completed_at NULL) when any order is stuck in
         # PENDING_SUBMIT for this invocation: a lost post-submit backfill behind a
         # live broker order. The invocation reads as incomplete rather than papering
         # over the strand by marking the phase done. The normal abandon path drives
@@ -913,16 +916,21 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         # silently withheld — there is no order-backfill that self-heals it next run.
         if await invocation_has_pending_submit_strand(session, invocation_id=invocation_id):
             log.warning(
-                "phase2_completed_at withheld for invocation %s — an unresolved "
+                "command_execution_completed_at withheld for invocation %s — an unresolved "
                 "PENDING_SUBMIT order strand (a lost post-submit backfill behind a "
                 "live broker order) remains; operator follow-up required, there is "
                 "no automatic recovery sweep",
                 invocation_id,
             )
         else:
-            await stamp_phase_completion(phase2_handle, column="phase2_completed_at")
+            await stamp_phase_completion(
+                command_execution_handle, column="command_execution_completed_at"
+            )
         await session.commit()
-    progress.phase_done("phase2", commands_submitted=phase2_summary.commands_submitted)
+    progress.phase_done(
+        "command_execution",
+        commands_submitted=command_execution_summary.commands_submitted,
+    )
 
     if sse_emitter is not None:
         try:
@@ -930,7 +938,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
                 InvocationEndedEvent(
                     invocation_id=invocation_id,
                     status="completed",
-                    commands_issued=phase2_summary.commands_submitted,
+                    commands_issued=command_execution_summary.commands_submitted,
                 )
             )
         except Exception:
@@ -942,28 +950,28 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         trigger_type=trigger_type,
         trigger_source=trigger_source,
         firing_run_type=firing_run_type,
-        phase1_summary=phase1_summary,
-        commands_submitted=phase2_summary.commands_submitted,
-        commands_rejected=phase2_summary.commands_rejected,
-        staleness_flag=phase1_inputs.staleness_flag,
+        fill_collection_summary=fill_collection_summary,
+        commands_submitted=command_execution_summary.commands_submitted,
+        commands_rejected=command_execution_summary.commands_rejected,
+        staleness_flag=fill_collection_inputs.staleness_flag,
         duration_seconds=duration,
     )
 
 
-def _assemble_phase1_snapshot(
+def _assemble_fill_collection_snapshot(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     invocation_id: str,
     state_persistence_config: StatePersistenceConfig,
     active_risk_parameters: ActiveRiskParameterSet,
-    phase1_market_inputs: MarketInputs,
+    fill_collection_market_inputs: MarketInputs,
     sector_resolver: Callable[[str], str],
 ) -> tuple[AssembledSnapshot, Any]:
     """Build the post-Phase-1 portfolio snapshot once per invocation.
 
     Opens fresh sessions through the repository factory; relies on Phase 1
     having already committed so the repository's bound invocation row has
-    a non-NULL ``phase1_completed_at`` (the fallback-to-prior-invocation
+    a non-NULL ``fill_collection_completed_at`` (the fallback-to-prior-invocation
     path in ``get_current_invocation_metadata`` is never reached here).
     The same ``AssembledSnapshot`` feeds the synthesizer reader and the
     decision pipeline.
@@ -982,9 +990,9 @@ def _assemble_phase1_snapshot(
         prior_active_risk_parameters_provider=prior_provider,
         config=state_persistence_config,
     )
-    price_provider = _price_provider_from_phase1(phase1_market_inputs)
+    price_provider = _price_provider_from_fill_collection(fill_collection_market_inputs)
     option_price_provider = SqlOptionPriceProvider(session_factory=session_factory)
-    # ``snapshot_assembled_at`` must be >= ``phase1_committed_at`` per
+    # ``snapshot_assembled_at`` must be >= ``fill_collection_committed_at`` per
     # ``PortfolioStateSnapshot``'s ordering validator. Phase 1 stamps the row
     # with wall-clock-at-stamp-time; using a fresh ``datetime.now(UTC)`` here
     # guarantees the snapshot reflects post-Phase-1 reality even when the
@@ -1030,8 +1038,8 @@ def _warn_if_pre_close_projected_late(
 
     with sync_session_factory() as session:
         rows = session.execute(
-            select(InvocationRow.start_at, InvocationRow.phase2_completed_at)
-            .where(InvocationRow.phase2_completed_at.is_not(None))
+            select(InvocationRow.start_at, InvocationRow.command_execution_completed_at)
+            .where(InvocationRow.command_execution_completed_at.is_not(None))
             .where(InvocationRow.trigger_source == "pre_close")
             .order_by(InvocationRow.start_at.desc())
             .limit(_PRE_CLOSE_TIMING_RECENT_N)
@@ -1111,7 +1119,7 @@ def _resolve_last_invocation_time(
     The qualitative researcher's news-digest window covers
     ``[last_invocation_time, as_of]`` per
     ``docs/design/03-analysis-layer/qualitative-research.md`` § News digest.
-    The filter ``phase2_completed_at IS NOT NULL`` mirrors
+    The filter ``command_execution_completed_at IS NOT NULL`` mirrors
     :func:`alphamind.scheduler.runtime._resolve_active_regime`: an aborted
     prior invocation's ``start_at`` would otherwise truncate the next
     invocation's digest window, hiding headlines published between the last
@@ -1127,7 +1135,7 @@ def _resolve_last_invocation_time(
         select(InvocationRow.start_at)
         .where(
             InvocationRow.invocation_id != current_invocation_id,
-            InvocationRow.phase2_completed_at.is_not(None),
+            InvocationRow.command_execution_completed_at.is_not(None),
         )
         .order_by(InvocationRow.start_at.desc())
         .limit(1)

@@ -1,4 +1,4 @@
-"""Tests for ``alphamind.scheduler.phase2_dispatch.dispatch_phase2`` (ALP-449).
+"""Tests for ``dispatch_command_execution`` (``scheduler.command_execution_dispatch``, ALP-449).
 
 The dispatcher iterates the PM result's ``submission_log`` and persists each
 envelope's outcome via the Phase 2 write path — **each envelope in its own
@@ -6,7 +6,7 @@ transaction** per the design's "each command's mutations commit atomically"
 guarantee
 (``docs/design/05-execution-layer/state-persistence.md`` § Phase 2 write
 path). Aggregates accepted / rejected counts into the
-:class:`Phase2Summary` the orchestrator records. Per the parent issue's
+:class:`CommandExecutionSummary` the orchestrator records. Per the parent issue's
 fail-closed invariant, any submission exception propagates so the
 in-flight envelope's transaction rolls back — earlier envelopes' commits
 stand.
@@ -88,20 +88,20 @@ class TestDispatchPhase2:
         self,
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        """No PM envelopes submitted → ``Phase2Summary(0, 0)``; persistence not invoked."""
-        from alphamind.scheduler.phase2_dispatch import (
-            Phase2Summary,
-            dispatch_phase2,
+        """No PM envelopes submitted → ``CommandExecutionSummary(0, 0)``; no persistence."""
+        from alphamind.scheduler.command_execution_dispatch import (
+            CommandExecutionSummary,
+            dispatch_command_execution,
         )
 
-        summary = await dispatch_phase2(
+        summary = await dispatch_command_execution(
             session_factory=async_factory,
             invocation_id=_INVOCATION_ID,
             pm_result=_make_pm_result(submission_log=()),
             state_persistence_config=_make_state_persistence_config(),
         )
 
-        assert summary == Phase2Summary(commands_submitted=0, commands_rejected=0)
+        assert summary == CommandExecutionSummary(commands_submitted=0, commands_rejected=0)
 
     async def test_aggregates_accepted_and_rejected_counts(
         self,
@@ -109,7 +109,7 @@ class TestDispatchPhase2:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """One envelope with two accepted + one rejected commands → 2 submitted, 1 rejected."""
-        from alphamind.scheduler import phase2_dispatch as module
+        from alphamind.scheduler import command_execution_dispatch as module
 
         persist_mock = AsyncMock(return_value=None)
         monkeypatch.setattr(module, "persist_envelope_outcome", persist_mock)
@@ -123,9 +123,9 @@ class TestDispatchPhase2:
         entry = SubmissionLogEntry(
             envelope=cast(Any, envelope), submission_results=submission_results
         )
-        from alphamind.scheduler.phase2_dispatch import dispatch_phase2
+        from alphamind.scheduler.command_execution_dispatch import dispatch_command_execution
 
-        summary = await dispatch_phase2(
+        summary = await dispatch_command_execution(
             session_factory=async_factory,
             invocation_id=_INVOCATION_ID,
             pm_result=_make_pm_result(submission_log=(entry,)),
@@ -142,8 +142,8 @@ class TestDispatchPhase2:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """An exception from ``persist_envelope_outcome`` propagates."""
-        from alphamind.scheduler import phase2_dispatch as module
-        from alphamind.scheduler.phase2_dispatch import dispatch_phase2
+        from alphamind.scheduler import command_execution_dispatch as module
+        from alphamind.scheduler.command_execution_dispatch import dispatch_command_execution
 
         async def _raising_persist(*args: object, **kwargs: object) -> None:
             msg = "phase 2 write failed"
@@ -158,7 +158,7 @@ class TestDispatchPhase2:
         entry = SubmissionLogEntry(envelope=cast(Any, envelope), submission_results=results)
 
         with pytest.raises(RuntimeError, match="phase 2 write failed"):
-            await dispatch_phase2(
+            await dispatch_command_execution(
                 session_factory=async_factory,
                 invocation_id=_INVOCATION_ID,
                 pm_result=_make_pm_result(submission_log=(entry,)),
@@ -171,8 +171,8 @@ class TestDispatchPhase2:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Each ``SubmissionLogEntry`` triggers one ``persist_envelope_outcome``."""
-        from alphamind.scheduler import phase2_dispatch as module
-        from alphamind.scheduler.phase2_dispatch import dispatch_phase2
+        from alphamind.scheduler import command_execution_dispatch as module
+        from alphamind.scheduler.command_execution_dispatch import dispatch_command_execution
 
         persist_mock = AsyncMock(return_value=None)
         monkeypatch.setattr(module, "persist_envelope_outcome", persist_mock)
@@ -196,7 +196,7 @@ class TestDispatchPhase2:
             ),
         )
 
-        summary = await dispatch_phase2(
+        summary = await dispatch_command_execution(
             session_factory=async_factory,
             invocation_id=_INVOCATION_ID,
             pm_result=_make_pm_result(submission_log=entries),
@@ -217,8 +217,8 @@ class TestDispatchPhase2:
         so the writeback persists the broker's real ``alpaca_order_id``
         instead of falling back to ``alp-{order_id}`` synthetic placeholders.
         """
-        from alphamind.scheduler import phase2_dispatch as module
-        from alphamind.scheduler.phase2_dispatch import dispatch_phase2
+        from alphamind.scheduler import command_execution_dispatch as module
+        from alphamind.scheduler.command_execution_dispatch import dispatch_command_execution
 
         captured_dispatch_results: list[Any] = []
 
@@ -254,7 +254,7 @@ class TestDispatchPhase2:
             dispatch_results=(sentinel,),
         )
 
-        await dispatch_phase2(
+        await dispatch_command_execution(
             session_factory=async_factory,
             invocation_id=_INVOCATION_ID,
             pm_result=_make_pm_result(submission_log=(entry,)),
@@ -270,11 +270,11 @@ class TestDispatchPhase2:
     ) -> None:
         """``SubmissionLogEntry.dispatch_results`` defaults to ``None`` for
         callers that don't run broker routing (debug-e2e / non-prod log-only
-        path). ``dispatch_phase2`` forwards ``None`` so the synthetic-ID
+        path). ``dispatch_command_execution`` forwards ``None`` so the synthetic-ID
         fallback in ``persist_envelope_outcome`` still fires for those runs.
         """
-        from alphamind.scheduler import phase2_dispatch as module
-        from alphamind.scheduler.phase2_dispatch import dispatch_phase2
+        from alphamind.scheduler import command_execution_dispatch as module
+        from alphamind.scheduler.command_execution_dispatch import dispatch_command_execution
 
         captured_dispatch_results: list[Any] = []
 
@@ -301,7 +301,7 @@ class TestDispatchPhase2:
             submission_results=submission_results,
         )
 
-        await dispatch_phase2(
+        await dispatch_command_execution(
             session_factory=async_factory,
             invocation_id=_INVOCATION_ID,
             pm_result=_make_pm_result(submission_log=(entry,)),
@@ -318,14 +318,14 @@ class TestDispatchPhase2:
         """ALP-711 — abandoned entries on the log entry trigger one
         ``COMMAND_ABANDONED`` activity-log row per entry. The orchestrator's
         PM-submit path uses ``defer_writeback=True`` so the submit_envelope
-        wrapper's in-tool emit is suppressed; dispatch_phase2 takes over and
+        wrapper's in-tool emit is suppressed; dispatch_command_execution takes over and
         emits the abandoned-command audit trail from the data carried on
         ``SubmissionLogEntry.abandoned_entries``.
         """
         from types import SimpleNamespace
 
-        from alphamind.scheduler import phase2_dispatch as module
-        from alphamind.scheduler.phase2_dispatch import dispatch_phase2
+        from alphamind.scheduler import command_execution_dispatch as module
+        from alphamind.scheduler.command_execution_dispatch import dispatch_command_execution
 
         persist_envelope_mock = AsyncMock(return_value=None)
         abandoned_calls: list[dict[str, Any]] = []
@@ -355,7 +355,7 @@ class TestDispatchPhase2:
             abandoned_entries=(abandoned_entry,),
         )
 
-        await dispatch_phase2(
+        await dispatch_command_execution(
             session_factory=async_factory,
             invocation_id=_INVOCATION_ID,
             pm_result=_make_pm_result(submission_log=(entry,)),
@@ -377,13 +377,13 @@ class TestDispatchPhase2:
     ) -> None:
         """Each envelope's persist call receives a distinct session.
 
-        Per ALP-449 Slice 3, ``dispatch_phase2`` opens a fresh session per
+        Per ALP-449 Slice 3, ``dispatch_command_execution`` opens a fresh session per
         envelope so that envelope-N abort cannot roll back envelope
         0..N-1's writes (matches the design's "each command's mutations
         commit atomically" guarantee).
         """
-        from alphamind.scheduler import phase2_dispatch as module
-        from alphamind.scheduler.phase2_dispatch import dispatch_phase2
+        from alphamind.scheduler import command_execution_dispatch as module
+        from alphamind.scheduler.command_execution_dispatch import dispatch_command_execution
 
         captured_sessions: list[AsyncSession] = []
 
@@ -413,7 +413,7 @@ class TestDispatchPhase2:
             for i in range(3)
         )
 
-        await dispatch_phase2(
+        await dispatch_command_execution(
             session_factory=async_factory,
             invocation_id=_INVOCATION_ID,
             pm_result=_make_pm_result(submission_log=entries),
@@ -438,8 +438,8 @@ class TestDispatchPhase2:
         """
         from sqlalchemy import select, text
 
-        from alphamind.scheduler import phase2_dispatch as module
-        from alphamind.scheduler.phase2_dispatch import dispatch_phase2
+        from alphamind.scheduler import command_execution_dispatch as module
+        from alphamind.scheduler.command_execution_dispatch import dispatch_command_execution
         from alphamind.state.invocation_context.context import (
             insert_invocation_row,
         )
@@ -455,8 +455,8 @@ class TestDispatchPhase2:
             invocation_id=_INVOCATION_ID,
             process_lifetime_id="proc-driver-1",
             start_at="2026-05-07T14:30:00Z",
-            phase1_completed_at="2026-05-07T14:30:01Z",
-            phase2_completed_at=None,
+            fill_collection_completed_at="2026-05-07T14:30:01Z",
+            command_execution_completed_at=None,
             trigger_type="manual",
             trigger_source="cli",
             trigger_reason="test",
@@ -517,7 +517,7 @@ class TestDispatchPhase2:
         )
 
         with pytest.raises(RuntimeError, match="simulated failure on envelope 2"):
-            await dispatch_phase2(
+            await dispatch_command_execution(
                 session_factory=async_factory,
                 invocation_id=_INVOCATION_ID,
                 pm_result=_make_pm_result(submission_log=entries),
@@ -572,8 +572,8 @@ async def _seed_for_real_writeback(
         invocation_id=_INV_IDEMPOTENT,
         process_lifetime_id="proc-driver-1",
         start_at=now.isoformat().replace("+00:00", "Z"),
-        phase1_completed_at=None,
-        phase2_completed_at=None,
+        fill_collection_completed_at=None,
+        command_execution_completed_at=None,
         trigger_type="scheduled",
         trigger_source="cron",
         trigger_reason="0 9 * * 1-5",
@@ -603,7 +603,7 @@ async def _persist_one_envelope_in_turn(
 ) -> SubmissionLogEntry:
     """Run the in-turn (broker-active) writeback once — mirrors what the PM turn
     does in production — and return the resulting ``SubmissionLogEntry`` for
-    ``dispatch_phase2`` to re-process. The envelope is fully persisted +
+    ``dispatch_command_execution`` to re-process. The envelope is fully persisted +
     committed by the time this returns."""
     import uuid
     from unittest.mock import MagicMock
@@ -690,7 +690,7 @@ async def _persist_one_envelope_in_turn(
     return log_entry
 
 
-class TestDispatchPhase2OriginatingProposal:
+class TestDispatchCommandExecutionOriginatingProposal:
     """ALP-557 — the full bundle → submit_envelope → activity-log path threads the
     originating proposal body into the persisted ``pm_decision`` row."""
 
@@ -728,8 +728,8 @@ class TestDispatchPhase2OriginatingProposal:
         assert detail.originating_proposal_json["recommendation_id"] == "REC-1"
 
 
-class TestDispatchPhase2Idempotency:
-    """ALP-763 — ``dispatch_phase2`` skips an envelope already persisted by the
+class TestDispatchCommandExecutionIdempotency:
+    """ALP-763 — ``dispatch_command_execution`` skips an envelope already persisted by the
     in-turn (broker-active) writeback: no double-write, no double capital
     reservation, no duplicate ``pm_decision``/audit emits — while still counting
     the summary and emitting ``command_abandoned`` for abandoned entries."""
@@ -740,7 +740,7 @@ class TestDispatchPhase2Idempotency:
     ) -> None:
         from sqlalchemy import func, select
 
-        from alphamind.scheduler.phase2_dispatch import dispatch_phase2
+        from alphamind.scheduler.command_execution_dispatch import dispatch_command_execution
         from alphamind.state.tables.activity_log import ActivityLogRow
         from alphamind.state.tables.cash_ledger import (
             CASH_LEDGER_SINGLETON_ID,
@@ -767,7 +767,7 @@ class TestDispatchPhase2Idempotency:
         assert before[0] > 0  # the in-turn writeback wrote order rows
         assert before[2] > 0.0  # and reserved capital once
 
-        summary = await dispatch_phase2(
+        summary = await dispatch_command_execution(
             session_factory=async_factory,
             invocation_id=_INV_IDEMPOTENT,
             pm_result=_make_pm_result(submission_log=(log_entry,)),
@@ -790,14 +790,14 @@ class TestDispatchPhase2Idempotency:
 
         On the broker-active in-turn path, ``submit_envelope`` Step 6 already
         emitted one ``COMMAND_ABANDONED`` row per abandoned entry (and committed
-        it) alongside the order/pm_decision graph. ``dispatch_phase2`` detects the
+        it) alongside the order/pm_decision graph. ``dispatch_command_execution`` detects the
         in-turn writeback (``already_persisted``) and must NOT re-emit those rows,
         else every broker-dispatch failure on the production path would produce two
         identical audit rows (ALP-763 review finding)."""
         from types import SimpleNamespace
 
-        from alphamind.scheduler import phase2_dispatch as module
-        from alphamind.scheduler.phase2_dispatch import dispatch_phase2
+        from alphamind.scheduler import command_execution_dispatch as module
+        from alphamind.scheduler.command_execution_dispatch import dispatch_command_execution
 
         await _seed_for_real_writeback(async_factory)
         log_entry = await _persist_one_envelope_in_turn(async_factory)
@@ -823,7 +823,7 @@ class TestDispatchPhase2Idempotency:
             abandoned_entries=(abandoned_entry,),
         )
 
-        await dispatch_phase2(
+        await dispatch_command_execution(
             session_factory=async_factory,
             invocation_id=_INV_IDEMPOTENT,
             pm_result=_make_pm_result(submission_log=(entry_with_abandon,)),
@@ -840,15 +840,15 @@ class TestDispatchPhase2Idempotency:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """The non-broker deferred path (no in-turn writeback) still emits exactly
-        one ``COMMAND_ABANDONED`` row per abandoned entry via ``dispatch_phase2``.
+        one ``COMMAND_ABANDONED`` row per abandoned entry via ``dispatch_command_execution``.
 
         Here ``submit_envelope`` Step 6 never ran (no broker triple), so the
-        envelope is NOT already-persisted and ``dispatch_phase2`` is the sole
+        envelope is NOT already-persisted and ``dispatch_command_execution`` is the sole
         emitter of both the writeback and the abandoned audit (ALP-763)."""
         from types import SimpleNamespace
 
-        from alphamind.scheduler import phase2_dispatch as module
-        from alphamind.scheduler.phase2_dispatch import dispatch_phase2
+        from alphamind.scheduler import command_execution_dispatch as module
+        from alphamind.scheduler.command_execution_dispatch import dispatch_command_execution
 
         persist_envelope_mock = AsyncMock(return_value=None)
         abandoned_calls: list[dict[str, Any]] = []
@@ -875,7 +875,7 @@ class TestDispatchPhase2Idempotency:
             abandoned_entries=(abandoned_entry,),
         )
 
-        await dispatch_phase2(
+        await dispatch_command_execution(
             session_factory=async_factory,
             invocation_id=_INV_IDEMPOTENT,
             pm_result=_make_pm_result(submission_log=(entry,)),

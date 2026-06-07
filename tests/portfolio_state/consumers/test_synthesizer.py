@@ -338,7 +338,7 @@ def _make_snapshot(**overrides: object) -> PortfolioStateSnapshot:
     mod_entry = _make_changelog_entry("ENTRY-MOD-001", "POS-001")
     base: dict[str, Any] = {
         "invocation_id": _INV_ID,
-        "phase1_committed_at": _T0,
+        "fill_collection_committed_at": _T0,
         "snapshot_assembled_at": _T1,
         "pipeline_invocation_started_at": _T2,
         "open_positions": (pos1, pos2),
@@ -367,7 +367,7 @@ def _make_empty_snapshot() -> PortfolioStateSnapshot:
     """Snapshot with no positions, no theses, no orders."""
     return PortfolioStateSnapshot(
         invocation_id=_INV_ID,
-        phase1_committed_at=_T0,
+        fill_collection_committed_at=_T0,
         snapshot_assembled_at=_T1,
         pipeline_invocation_started_at=None,
         open_positions=(),

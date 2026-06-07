@@ -48,7 +48,7 @@ pipeline, ADR-0005):
 
 The per-thesis PnL ledger is **not** re-derived here (CR1-cleanup): that is the
 sole responsibility of the orchestrator's post-poll
-:func:`alphamind.execution.write_paths.phase1.rederive_thesis_ledgers`, which runs
+:func:`alphamind.execution.write_paths.fill_collection.rederive_thesis_ledgers`, which runs
 after the account-activities poll so it folds the *complete* log. Re-deriving the
 ledgers in the rebuild too — before the poll — was a redundant double-write the
 post-poll pass overwrote.
@@ -71,7 +71,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from alphamind._kernel.money import price
 from alphamind.execution.broker_adapter.queries import PositionSnapshot, TradeAccountSnapshot
-from alphamind.execution.write_paths.phase2 import (
+from alphamind.execution.write_paths.command_execution import (
     persist_entry_window_cancel,
     persist_entry_window_reprice,
 )
@@ -184,7 +184,7 @@ class ProjectionRebuildSummary:
 
     The rebuild does **not** re-derive the per-thesis PnL ledgers (CR1-cleanup):
     that is the sole responsibility of the orchestrator's post-poll
-    :func:`alphamind.execution.write_paths.phase1.rederive_thesis_ledgers`, which
+    :func:`alphamind.execution.write_paths.fill_collection.rederive_thesis_ledgers`, which
     folds the *complete* log (after the account-activities poll). Re-deriving here
     too would be a redundant pre-poll double-write the post-poll pass overwrites.
     """

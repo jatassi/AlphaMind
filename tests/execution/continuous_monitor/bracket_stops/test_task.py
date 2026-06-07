@@ -39,7 +39,7 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
     UnderlyingPriceCache,
     UnderlyingQuote,
 )
-from alphamind.execution.write_paths.phase2.open import _wire_leg_to_bracket_leg
+from alphamind.execution.write_paths.command_execution.open import _wire_leg_to_bracket_leg
 from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventSource,

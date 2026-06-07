@@ -460,7 +460,7 @@ def _build_entry_order_row(
     encoded as the order direction. The position's
     ``execution_history_json`` is left empty (the seed does not fabricate
     a matching ``fill_records`` row); the close write-path in
-    :mod:`alphamind.execution.write_paths.phase2.close` reads only
+    :mod:`alphamind.execution.write_paths.command_execution.close` reads only
     ``position.share_count`` / ``position.contract_count`` to size the
     close, so a missing fill record doesn't affect command persistence.
 

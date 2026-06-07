@@ -138,7 +138,7 @@ def _build_assembled_snapshot(
     oldest_price_as_of: datetime | None,
     config: PortfolioStateConfig,
     price_map: dict[str, PriceQuote],
-    warn_on_phase1_latency: bool = True,
+    warn_on_fill_collection_latency: bool = True,
 ) -> AssembledSnapshot:
     """Build and return the AssembledSnapshot; emit structured warnings when needed."""
     fetch_outcomes = PriceFetchOutcomes(
@@ -148,11 +148,13 @@ def _build_assembled_snapshot(
         oldest_price_as_of=oldest_price_as_of,
     )
     freshness = compute_snapshot_freshness(snapshot, fetch_outcomes=fetch_outcomes, config=config)
-    if warn_on_phase1_latency and not freshness.phase1_to_snapshot_within_threshold:
+    if warn_on_fill_collection_latency and (
+        not freshness.fill_collection_to_snapshot_within_threshold
+    ):
         log.warning(
-            "phase1→snapshot latency exceeded threshold: %.3fs > %.3fs",
-            freshness.phase1_to_snapshot_seconds,
-            freshness.max_phase1_to_snapshot_seconds,
+            "fill_collection→snapshot latency exceeded threshold: %.3fs > %.3fs",
+            freshness.fill_collection_to_snapshot_seconds,
+            freshness.max_fill_collection_to_snapshot_seconds,
         )
     stale_count = freshness.count_priced_stale + freshness.count_unknown_ticker
     if stale_count > 0:
@@ -528,7 +530,7 @@ def assemble_snapshot(
     sector_resolver: SectorResolver,
     config: PortfolioStateConfig,
     now: datetime,
-    warn_on_phase1_latency: bool = True,
+    warn_on_fill_collection_latency: bool = True,
 ) -> AssembledSnapshot:
     """Assemble an AssembledSnapshot (snapshot + freshness sidecar) from repository and prices.
 
@@ -793,7 +795,7 @@ def assemble_snapshot(
     # ------------------------------------------------------------------
     snapshot = PortfolioStateSnapshot(
         invocation_id=metadata.invocation_id,
-        phase1_committed_at=metadata.phase1_committed_at,
+        fill_collection_committed_at=metadata.fill_collection_committed_at,
         snapshot_assembled_at=now,
         pipeline_invocation_started_at=metadata.pipeline_invocation_started_at,
         open_positions=tuple(final_open),
@@ -826,5 +828,5 @@ def assemble_snapshot(
         _oldest_price_as_of,
         config,
         price_map,
-        warn_on_phase1_latency=warn_on_phase1_latency,
+        warn_on_fill_collection_latency=warn_on_fill_collection_latency,
     )

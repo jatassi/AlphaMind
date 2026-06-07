@@ -1,7 +1,7 @@
 """Tests for the SPLIT handler via the public ``integrate_ca_activity`` entry point.
 
 Exercises the same state transitions as
-``tests/execution/state_persistence/test_phase1_write_path.py::test_corporate_action_split_emits_events_and_ledger_anchor``
+``tests/execution/state_persistence/test_fill_collection_write_path.py::test_corporate_action_split_emits_events_and_ledger_anchor``
 but calls ``integrate_ca_activity`` directly (bypassing the
 ``process_unprocessed_fills`` shim) to verify the moved internals compose
 correctly with the new public entry point.

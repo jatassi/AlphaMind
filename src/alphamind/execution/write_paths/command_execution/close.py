@@ -7,7 +7,7 @@ from typing import Any
 
 from alphamind.commands.command_models import CloseCommand
 from alphamind.commands.submission_results import SubmissionResult
-from alphamind.execution.write_paths.phase2._shared import (
+from alphamind.execution.write_paths.command_execution._shared import (
     _build_pending_order,
     _close_order_direction_for_position,
     _emit_order_submitted,

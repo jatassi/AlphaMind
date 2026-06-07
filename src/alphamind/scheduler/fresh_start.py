@@ -115,7 +115,7 @@ def _default_account_queries_factory(
 ) -> AccountStateQueriesP:
     """Construct an Alpaca-backed ``AccountStateQueries`` from the venue config.
 
-    Mirrors :func:`alphamind.scheduler.phase1_inputs._default_account_queries_factory`
+    Mirrors :func:`alphamind.scheduler.fill_collection_inputs._default_account_queries_factory`
     inline rather than importing the phase1-private helper — keeping each
     module's broker construction in-module avoids tightening the coupling
     between the bootstrap path and the in-invocation gatherer.

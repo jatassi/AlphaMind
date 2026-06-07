@@ -92,7 +92,7 @@ class PortfolioStateSnapshot:
 
     # Identity / scaffolding
     invocation_id: str
-    phase1_committed_at: datetime
+    fill_collection_committed_at: datetime
     snapshot_assembled_at: datetime
 
     # Category 1 — Position inventory
@@ -150,7 +150,7 @@ class PortfolioStateSnapshot:
 
     def _check_timestamp_tz_awareness(self) -> None:
         for name, value in [
-            ("phase1_committed_at", self.phase1_committed_at),
+            ("fill_collection_committed_at", self.fill_collection_committed_at),
             ("snapshot_assembled_at", self.snapshot_assembled_at),
         ]:
             if value.tzinfo is None or value.utcoffset() is None:
@@ -163,10 +163,10 @@ class PortfolioStateSnapshot:
                 raise ValueError(msg)
 
     def _check_timestamp_ordering(self) -> None:
-        if self.phase1_committed_at > self.snapshot_assembled_at:
+        if self.fill_collection_committed_at > self.snapshot_assembled_at:
             msg = (
-                "phase1_committed_at must be <= snapshot_assembled_at; "
-                f"got {self.phase1_committed_at} > {self.snapshot_assembled_at}"
+                "fill_collection_committed_at must be <= snapshot_assembled_at; "
+                f"got {self.fill_collection_committed_at} > {self.snapshot_assembled_at}"
             )
             raise ValueError(msg)
         if (

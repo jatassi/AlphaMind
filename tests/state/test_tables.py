@@ -73,8 +73,8 @@ def _invocation_kwargs(
         "invocation_id": invocation_id,
         "process_lifetime_id": process_lifetime_id,
         "start_at": "2026-05-07T14:30:00Z",
-        "phase1_completed_at": None,
-        "phase2_completed_at": None,
+        "fill_collection_completed_at": None,
+        "command_execution_completed_at": None,
         "trigger_type": "scheduled",
         "trigger_source": "morning-cron",
         "trigger_reason": "0 9 * * 1-5",
@@ -224,4 +224,4 @@ class TestInvocationsTable:
         assert readback.trigger_type == "scheduled"
         assert readback.active_mode == "normal"
         assert readback.active_overlays_json == '["pre-event"]'
-        assert readback.phase1_completed_at is None
+        assert readback.fill_collection_completed_at is None

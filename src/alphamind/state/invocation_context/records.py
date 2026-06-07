@@ -55,9 +55,9 @@ class InvocationRecord(BaseModel):
     """Frozen typed handle for an ``invocations`` row.
 
     Mirrors the field list in ``state-persistence.md`` § Invocation
-    records. Phase 1 / Phase 2 timestamps and their summary JSON columns
-    are ``None`` at insert time and filled later by the Phase 1 / Phase 2
-    write paths.
+    records. Fill-collection / command-execution timestamps and their
+    summary JSON columns are ``None`` at insert time and filled later by
+    the fill-collection / command-execution write paths.
     """
 
     model_config = ConfigDict(frozen=True, strict=True)
@@ -65,8 +65,8 @@ class InvocationRecord(BaseModel):
     invocation_id: str
     process_lifetime_id: str
     start_at: str
-    phase1_completed_at: str | None
-    phase2_completed_at: str | None
+    fill_collection_completed_at: str | None
+    command_execution_completed_at: str | None
     trigger_type: TriggerType
     trigger_source: str
     trigger_reason: str
@@ -137,8 +137,8 @@ def invocation_record_to_row(record: InvocationRecord) -> InvocationRow:
         invocation_id=record.invocation_id,
         process_lifetime_id=record.process_lifetime_id,
         start_at=record.start_at,
-        phase1_completed_at=record.phase1_completed_at,
-        phase2_completed_at=record.phase2_completed_at,
+        fill_collection_completed_at=record.fill_collection_completed_at,
+        command_execution_completed_at=record.command_execution_completed_at,
         trigger_type=record.trigger_type,
         trigger_source=record.trigger_source,
         trigger_reason=record.trigger_reason,
@@ -165,8 +165,8 @@ def invocation_record_from_row(row: InvocationRow) -> InvocationRecord:
         invocation_id=row.invocation_id,
         process_lifetime_id=row.process_lifetime_id,
         start_at=row.start_at,
-        phase1_completed_at=row.phase1_completed_at,
-        phase2_completed_at=row.phase2_completed_at,
+        fill_collection_completed_at=row.fill_collection_completed_at,
+        command_execution_completed_at=row.command_execution_completed_at,
         trigger_type=_assert_member(row.trigger_type, TriggerType, field="trigger_type"),
         trigger_source=row.trigger_source,
         trigger_reason=row.trigger_reason,

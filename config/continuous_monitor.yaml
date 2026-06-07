@@ -69,7 +69,7 @@ supervisor_shutdown_timeout_seconds: 5
 # Cadence (seconds) of the periodic fill-backfill backstop (ALP-763). Each
 # sweep reuses the disconnect-recovery primitive with an independent `since`
 # bound to recover any Alpaca fill missing from fill_records — even when no
-# websocket disconnect occurred. A fast Phase-2 entry fill can be quarantined
+# websocket disconnect occurred. A fast command-execution entry fill can be quarantined
 # before its order row commits and the reconnect-driven recovery (which keys
 # off max(fill_timestamp)) permanently excludes it once a later fill lands;
 # this interval-driven sweep is the backstop. 15 min keeps the divergence

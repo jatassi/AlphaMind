@@ -186,7 +186,7 @@ async def _route_through_broker(
     """
     # Lazy import — atomic ships an alpaca-py-adjacent dependency we don't want
     # loaded for the fixture-only path; only the handle-present path reaches it.
-    from alphamind.execution.write_paths.phase2.atomic import session_factory_from_handle
+    from alphamind.execution.write_paths.command_execution.atomic import session_factory_from_handle
 
     dispatch: BrokerDispatch
     if broker_dispatch is not None:
@@ -455,7 +455,7 @@ async def _precommit_if_atomic(
         or isinstance(command, CancelCommand)
     ):
         return
-    from alphamind.execution.write_paths.phase2.atomic import precommit_command
+    from alphamind.execution.write_paths.command_execution.atomic import precommit_command
 
     await run_with_sqlite_busy_retry(
         partial(
@@ -481,7 +481,7 @@ async def _abandon_if_atomic(
         or isinstance(command, CancelCommand)
     ):
         return
-    from alphamind.execution.write_paths.phase2.atomic import abandon_command
+    from alphamind.execution.write_paths.command_execution.atomic import abandon_command
 
     await abandon_command(
         ctx.session_factory,
@@ -505,7 +505,7 @@ async def _finalize_dispatch_if_persisting(
     """
     if ctx.session_factory is None or ctx.invocation_id is None:
         return
-    from alphamind.execution.write_paths.phase2.atomic import (
+    from alphamind.execution.write_paths.command_execution.atomic import (
         backfill_command_broker_ids,
         persist_cancel_writeback,
     )
@@ -549,7 +549,7 @@ async def _route_monitor_enforced_local(
     dispatch entry and no abandoned entry.
     """
     if ctx.session_factory is not None and ctx.invocation_id is not None:
-        from alphamind.execution.write_paths.phase2.atomic import (
+        from alphamind.execution.write_paths.command_execution.atomic import (
             persist_cancel_writeback,
             precommit_command,
         )

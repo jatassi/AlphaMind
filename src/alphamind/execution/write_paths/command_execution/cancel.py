@@ -9,7 +9,7 @@ from alphamind._kernel.ids import OrderId
 from alphamind._kernel.money import Money, money
 from alphamind.commands.command_models import CancelCommand
 from alphamind.commands.submission_results import SubmissionResult
-from alphamind.execution.write_paths.phase2._shared import (
+from alphamind.execution.write_paths.command_execution._shared import (
     _assert_bracket_readable,
     _cancel_all_bracket_legs,
     _cancel_pending_protective_orders,

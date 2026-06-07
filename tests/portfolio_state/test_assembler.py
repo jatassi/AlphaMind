@@ -128,7 +128,7 @@ def _make_config() -> PortfolioStateConfig:
         pm_decision_log_sliding_window_invocations=5,
         thesis_resolutions_lookback_trading_days=10,
         thesis_quality_aggregates_trailing_windows_days=(5, 20),
-        snapshot_freshness_max_phase1_to_snapshot_seconds=300.0,
+        snapshot_freshness_max_fill_collection_to_snapshot_seconds=300.0,
         snapshot_freshness_max_price_age_seconds=60.0,
         snapshot_freshness_max_option_price_age_seconds=300.0,
     )
@@ -183,7 +183,7 @@ def _make_thesis_quality_aggregates() -> ThesisQualityAggregate:
 def _make_invocation_metadata(invocation_id: str = _INV_ID) -> CurrentInvocationMetadata:
     return CurrentInvocationMetadata(
         invocation_id=invocation_id,
-        phase1_committed_at=_PHASE1_AT,
+        fill_collection_committed_at=_PHASE1_AT,
         pipeline_invocation_started_at=None,
     )
 
@@ -195,12 +195,12 @@ def _make_prior_context(
         return PriorInvocationContext(
             prior_invocation_id=None,
             prior_active_risk_parameters=None,
-            prior_phase1_committed_at=None,
+            prior_fill_collection_committed_at=None,
         )
     return PriorInvocationContext(
         prior_invocation_id="inv-000",
         prior_active_risk_parameters=prior_params,
-        prior_phase1_committed_at=_PHASE1_AT,
+        prior_fill_collection_committed_at=_PHASE1_AT,
     )
 
 
@@ -1367,7 +1367,9 @@ def test_assemble_snapshot_returns_assembled_snapshot_bundle() -> None:
 
     # Freshness sidecar corresponds to the snapshot
     assert assembled.freshness.snapshot_assembled_at == assembled.snapshot.snapshot_assembled_at
-    assert assembled.freshness.phase1_committed_at == assembled.snapshot.phase1_committed_at
+    assert assembled.freshness.fill_collection_committed_at == (
+        assembled.snapshot.fill_collection_committed_at
+    )
     assert assembled.freshness.total_open_positions == len(assembled.snapshot.open_positions)
     assert assembled.freshness.total_positions == (
         len(assembled.snapshot.open_positions) + len(assembled.snapshot.pending_positions)
@@ -2030,7 +2032,7 @@ def test_strategy_position_with_bracket_assembles_without_crash() -> None:
 def test_phase1_latency_warning_suppressed_on_monitor_path(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """check_phase1_latency=False suppresses the phase1→snapshot warning.
+    """check_phase1_latency=False suppresses the fill_collection→snapshot warning.
 
     _PHASE1_AT is 30 min before _NOW (1800s), which exceeds the 300s config
     threshold — so without the flag the warning would fire.  The monitor passes
@@ -2048,7 +2050,7 @@ def test_phase1_latency_warning_suppressed_on_monitor_path(
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
-            warn_on_phase1_latency=False,
+            warn_on_fill_collection_latency=False,
         )
 
     assert not any("latency exceeded" in r.message for r in caplog.records)

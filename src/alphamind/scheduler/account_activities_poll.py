@@ -8,7 +8,7 @@ broker activities source and drives
 :func:`alphamind.execution.account_activities.poll.poll_account_activities`.
 
 ``activities_source_factory`` mirrors the ``account_queries_factory`` seam in
-``phase1_inputs``: ``None`` on the production daemon path builds the inline
+``fill_collection_inputs``: ``None`` on the production daemon path builds the inline
 Alpaca-backed ``AccountStateQueries``; the test suite and the debug-e2e harness
 pass their own factory to substitute the broker without monkey-patching.
 """
@@ -53,7 +53,7 @@ def _default_activities_source_factory(
     """Default Alpaca-backed ``AccountActivitiesSource`` (the production path).
 
     Builds an :class:`AccountStateQueries` over the venue's trading client — the
-    same wrapper ``phase1_inputs`` uses for the other read endpoints. Its
+    same wrapper ``fill_collection_inputs`` uses for the other read endpoints. Its
     ``get_account_activities`` generator is the previously-dead endpoint this
     story wires up.
     """

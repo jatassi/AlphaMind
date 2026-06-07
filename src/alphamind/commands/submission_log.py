@@ -6,7 +6,7 @@ The PM-side submit_envelope wrapper
 to a :class:`PMEnvelope`, and one :class:`FailedSubmissionEntry` per call
 that failed Layer-1 (Pydantic) coercion. Both logs are surfaced on the
 harness's ``HarnessSuccess`` and consumed by the execution-side Phase 2
-write path (:mod:`alphamind.execution.write_paths.phase2`).
+write path (:mod:`alphamind.execution.write_paths.command_execution`).
 
 Living in :mod:`alphamind.commands` lets both decision-side producers and
 execution-side consumers reference these shapes without re-opening the
@@ -45,7 +45,7 @@ class SubmissionLogEntry:
     never a synthetic placeholder) in that case.
 
     ``abandoned_entries`` (also ALP-711) carries per-broker-failure markers
-    the scheduler's ``dispatch_phase2`` uses to emit ``COMMAND_ABANDONED``
+    the scheduler's ``dispatch_command_execution`` uses to emit ``COMMAND_ABANDONED``
     activity-log rows. Same ``Any`` rationale: the originating dataclass
     (``_AbandonedCommandEntry``) lives in the decision layer; downstream
     consumers read ``.command_id`` / ``.command_type`` / ``.failure_reason``
@@ -54,14 +54,14 @@ class SubmissionLogEntry:
     ``reprice_markers`` (ALP-765) carries one ``{"ticker", "analyst_price",
     "marketable_price"}`` dict per enter-now entry that was repriced by the
     execution-layer deterministic step. Empty when no enter-now repricing
-    occurred. Forwarded by ``dispatch_phase2`` to ``persist_envelope_outcome``
+    occurred. Forwarded by ``dispatch_command_execution`` to ``persist_envelope_outcome``
     so the ``pm_decision`` audit row reflects the execution-layer movement.
 
     ``originating_proposal_json`` (ALP-557) carries the ``model_dump(mode="json")``
     body of the analyst Recommendation / strategist assessment this envelope
     wraps, resolved at envelope-construction time in the submit_envelope handler
     (where the pre-processor bundle is in scope) via
-    ``lookup_originating_proposal_json``. Forwarded by ``dispatch_phase2`` (and
+    ``lookup_originating_proposal_json``. Forwarded by ``dispatch_command_execution`` (and
     the in-turn / in-tool writeback paths) into the ``pm_decision`` row so the
     counterfactual-replay engine (ALP-129) can reconstruct the originating
     proposal. The empty-dict default covers legacy constructions that never

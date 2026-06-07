@@ -1,4 +1,4 @@
-"""Tests for ``alphamind.scheduler.phase1_inputs.gather_phase1_inputs`` (story 03b).
+"""Tests for ``gather_fill_collection_inputs`` (``scheduler.fill_collection_inputs``, story 03b).
 
 The gatherer assembles the typed bundle that ``process_unprocessed_fills``
 consumes: ``ca_activities`` from the v1beta1 fetcher, ``alpaca_positions`` /
@@ -132,7 +132,7 @@ class _StubQueries:
         until: datetime | None = None,
         symbols: tuple[str, ...] | None = None,
     ) -> AsyncIterator[OrderSnapshot]:
-        # gather_phase1_inputs does not consume orders; the method is present
+        # gather_fill_collection_inputs does not consume orders; the method is present
         # only to satisfy the AccountStateQueriesP protocol surface.
         return
         yield  # pragma: no cover — makes this an async generator
@@ -296,7 +296,7 @@ class TestReadActiveUniversePrices:
         """The freshest bar's ``unadj_close`` is returned per active ticker — an
         intraday bar more recent than the daily close wins (ALP-747); the
         *unadjusted* close is selected, inactive tickers are dropped."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
         async with async_factory() as seed_session:
             seed_session.add_all(
@@ -353,7 +353,7 @@ class TestReadActiveUniversePrices:
         """On an equal ``period_start`` across timeframes the coarser-grained bar
         wins: its window closes later, so its close is the more recent price.
         Selection stays deterministic and reproducible (ALP-747 AC4)."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
         async with async_factory() as seed_session:
             seed_session.add_all([_make_universe_row("NVDA")])
@@ -390,7 +390,7 @@ class TestReadActiveUniversePrices:
     ) -> None:
         """A ticker whose only daily bar is older than the staleness bound is
         omitted — it falls back to the validation tool's UNAVAILABLE path."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
         async with async_factory() as seed_session:
             seed_session.add_all([_make_universe_row("FRESH"), _make_universe_row("STALE")])
@@ -423,7 +423,7 @@ class TestMergeQuoteAndBarPrices:
     """
 
     def test_quote_mid_primary_bar_fallback_quote_wins_neither_absent(self) -> None:
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
         active_tickers = ("AAA", "BBB", "CCC", "DDD")
         quotes = {
@@ -448,7 +448,7 @@ class TestMergeQuoteAndBarPrices:
     def test_no_quotes_degrades_to_pure_bar_layer(self) -> None:
         """An empty quote map (the degraded path) reproduces the bar-based
         layer exactly: every active ticker with a bar keeps its close."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
         merged = module._merge_quote_and_bar_prices(
             active_tickers=("AAA", "BBB"),
@@ -464,9 +464,9 @@ class TestMergeQuoteAndBarPrices:
         recorded bar is used as the reference and a warning is logged. The quote's
         spread is tight here so the divergence check — not the spread floor — is
         the gate that fires."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
-        with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.phase1_inputs"):
+        with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.fill_collection_inputs"):
             merged = module._merge_quote_and_bar_prices(
                 active_tickers=("MU",),
                 bar_prices={"MU": 964.0},
@@ -484,9 +484,9 @@ class TestMergeQuoteAndBarPrices:
         a $457.65 mid vs a $446 bar, ~2.6%, and a ~5.4% spread) passes both
         distrust checks untouched, is still preferred over the bar, and logs no
         distrust warning."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
-        with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.phase1_inputs"):
+        with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.fill_collection_inputs"):
             merged = module._merge_quote_and_bar_prices(
                 active_tickers=("AVGO",),
                 bar_prices={"AVGO": 446.0},
@@ -501,9 +501,9 @@ class TestMergeQuoteAndBarPrices:
         relative spread is pathological (INTU-style: a $450 ask vs a $302 bid on a
         ~$331 stock, a ~39% spread while the $376 mid is only ~13.5% off the bar)
         is distrusted by the spread floor and resolves to the recorded bar."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
-        with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.phase1_inputs"):
+        with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.fill_collection_inputs"):
             merged = module._merge_quote_and_bar_prices(
                 active_tickers=("INTU",),
                 bar_prices={"INTU": 331.0},
@@ -522,9 +522,9 @@ class TestMergeQuoteAndBarPrices:
         let slip through. The ``|ask - bid|`` distance gates it: a bid $964 / ask
         $52 quote (mid $508) with no bar is distrusted and marked unavailable
         rather than trusted as a $508 reference."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
-        with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.phase1_inputs"):
+        with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.fill_collection_inputs"):
             merged = module._merge_quote_and_bar_prices(
                 active_tickers=("XSED",),
                 bar_prices={},
@@ -543,9 +543,9 @@ class TestMergeQuoteAndBarPrices:
         """ALP-759 — a distrusted quote with no recorded bar to fall back to is
         omitted entirely (the validation tool's ``UNAVAILABLE`` path) rather than
         anchoring the agents on a meaningless mid."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
-        with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.phase1_inputs"):
+        with caplog.at_level(logging.WARNING, logger="alphamind.scheduler.fill_collection_inputs"):
             merged = module._merge_quote_and_bar_prices(
                 active_tickers=("WIDE",),
                 bar_prices={},
@@ -562,7 +562,7 @@ class TestMergeQuoteAndBarPrices:
         """ALP-759 — the divergence bound is a module default the caller may
         override. A 10%-off quote is trusted under the generous default but gated
         once the caller tightens the bound below that divergence."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
         active_tickers = ("XYZ",)
         # mid 110.0 vs bar 100.0 -> 10% divergence; tight spread.
@@ -586,7 +586,7 @@ class TestMergeQuoteAndBarPrices:
         """ALP-759 — the relative-spread bound is likewise a module default the
         caller may override. A ~15%-spread quote is trusted under the generous 25%
         default but gated once the caller tightens the bound below that spread."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
         active_tickers = ("WIDE",)
         # bid 92.50 / ask 107.50 -> mid 100.0, spread 15/100 = 15%; ~0% divergence.
@@ -613,9 +613,9 @@ class TestMergeQuoteAndBarPrices:
         active total, splitting the two gated outcomes (gated→bar vs gated→
         unavailable) so a distrusted quote with no bar is not double-counted as a
         bar fallback and the unpriced remainder stays accurate."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
-        with caplog.at_level(logging.INFO, logger="alphamind.scheduler.phase1_inputs"):
+        with caplog.at_level(logging.INFO, logger="alphamind.scheduler.fill_collection_inputs"):
             module._merge_quote_and_bar_prices(
                 # GOOD: trusted quote. GBAR: divergent quote, has bar -> gated→bar.
                 # GNONE: divergent (crossed) quote, no bar -> gated→unavailable.
@@ -648,7 +648,7 @@ class TestBuildMarketInputs:
     def test_held_position_price_overrides_universe_close(self) -> None:
         """On overlap the live broker ``current_price`` wins; unheld universe
         tickers still surface from the EOD-close base layer (ALP-587)."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
         positions = (_make_position_snapshot("AAPL", 175.0),)
         market = module._build_market_inputs(
@@ -662,7 +662,7 @@ class TestBuildMarketInputs:
         assert dict(market.underlying_prices) == {"AAPL": 175.0, "CSCO": 48.5}
 
 
-class TestGatherPhase1Inputs:
+class TestGatherFillCollectionInputs:
     async def test_returns_populated_bundle_on_happy_path(
         self,
         async_factory: async_sessionmaker[AsyncSession],
@@ -671,7 +671,7 @@ class TestGatherPhase1Inputs:
         archive_root: Path,
     ) -> None:
         """Happy path: alpaca account+positions present, no CA activities, no degradation."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
         positions = (_make_position_snapshot(),)
         account = _make_account_snapshot()
@@ -682,7 +682,7 @@ class TestGatherPhase1Inputs:
             archive_root=archive_root,
         )
         try:
-            inputs = await module.gather_phase1_inputs(
+            inputs = await module.gather_fill_collection_inputs(
                 handle=handle,
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
@@ -713,7 +713,7 @@ class TestGatherPhase1Inputs:
         """A ``RuntimeError`` from ``get_account`` returns a bundle with
         ``alpaca_account=None`` and ``staleness_flag=True``; the function does
         not raise."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
         class _FailingQueries:
             def get_account(self) -> TradeAccountSnapshot:
@@ -740,7 +740,7 @@ class TestGatherPhase1Inputs:
             archive_root=archive_root,
         )
         try:
-            inputs = await module.gather_phase1_inputs(
+            inputs = await module.gather_fill_collection_inputs(
                 handle=handle,
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
@@ -764,7 +764,7 @@ class TestGatherPhase1Inputs:
     ) -> None:
         """When the broker-adapter factory itself raises (missing creds),
         both account and positions degrade to defaults."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
         def _failing_account_factory(*args: object, **kwargs: object) -> AccountStateQueries:
             msg = "Alpaca paper credentials not set"
@@ -776,7 +776,7 @@ class TestGatherPhase1Inputs:
             archive_root=archive_root,
         )
         try:
-            inputs = await module.gather_phase1_inputs(
+            inputs = await module.gather_fill_collection_inputs(
                 handle=handle,
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
@@ -801,7 +801,7 @@ class TestGatherPhase1Inputs:
     ) -> None:
         """``market_inputs.underlying_prices`` is built from position
         ``current_price`` values when available."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
         positions = (
             _make_position_snapshot("AAPL", 175.0),
@@ -814,7 +814,7 @@ class TestGatherPhase1Inputs:
             archive_root=archive_root,
         )
         try:
-            inputs = await module.gather_phase1_inputs(
+            inputs = await module.gather_fill_collection_inputs(
                 handle=handle,
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
@@ -849,7 +849,7 @@ class TestGatherPhase1Inputs:
         terminates correctly via the SQL surface lookup + realized-vol
         fallback)."""
         from alphamind.persistence.models import AssetUniverse, TickerRealizedVolRow
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
         positions = (
             _make_position_snapshot("AAPL", 175.0),
@@ -891,7 +891,7 @@ class TestGatherPhase1Inputs:
             )
             await seed_session.commit()
         try:
-            inputs = await module.gather_phase1_inputs(
+            inputs = await module.gather_fill_collection_inputs(
                 handle=handle,
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
@@ -927,7 +927,7 @@ class TestGatherPhase1Inputs:
         """ALP-587 — an active-universe ticker that is *not* held surfaces in
         ``underlying_prices`` from its latest EOD bar, so the validation tool
         no longer returns UNAVAILABLE / missing_market_price for it."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
         positions = (_make_position_snapshot("AAPL", 175.0),)
 
@@ -954,7 +954,7 @@ class TestGatherPhase1Inputs:
             archive_root=archive_root,
         )
         try:
-            inputs = await module.gather_phase1_inputs(
+            inputs = await module.gather_fill_collection_inputs(
                 handle=handle,
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
@@ -983,7 +983,7 @@ class TestGatherPhase1Inputs:
     ) -> None:
         """ALP-587 — when a ticker is both held and present in ``ohlcv_bars``,
         the live broker ``current_price`` overrides the staler EOD close."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
         positions = (_make_position_snapshot("AAPL", 175.0),)
 
@@ -1001,7 +1001,7 @@ class TestGatherPhase1Inputs:
             archive_root=archive_root,
         )
         try:
-            inputs = await module.gather_phase1_inputs(
+            inputs = await module.gather_fill_collection_inputs(
                 handle=handle,
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
@@ -1028,7 +1028,7 @@ class TestGatherPhase1Inputs:
         """ALP-753 — an unheld active-universe ticker with a live quote anchors on
         the captured quote **mid** (not its recorded bar); a ticker with no live
         quote falls back to its freshest recorded bar's ``unadj_close``."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
         async with async_factory() as seed_session:
             seed_session.add_all([_make_universe_row("ORCL"), _make_universe_row("CSCO")])
@@ -1058,7 +1058,7 @@ class TestGatherPhase1Inputs:
             archive_root=archive_root,
         )
         try:
-            inputs = await module.gather_phase1_inputs(
+            inputs = await module.gather_fill_collection_inputs(
                 handle=handle,
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
@@ -1090,7 +1090,7 @@ class TestGatherPhase1Inputs:
         """ALP-753 — a broker-side failure of the batch fetch degrades the entire
         universe layer to recorded bars and sets ``staleness_flag``; the
         invocation never aborts."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
         async with async_factory() as seed_session:
             seed_session.add_all([_make_universe_row("ORCL"), _make_universe_row("CSCO")])
@@ -1113,7 +1113,7 @@ class TestGatherPhase1Inputs:
             archive_root=archive_root,
         )
         try:
-            inputs = await module.gather_phase1_inputs(
+            inputs = await module.gather_fill_collection_inputs(
                 handle=handle,
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
@@ -1142,7 +1142,7 @@ class TestGatherPhase1Inputs:
         """ALP-753 — the held-position overlay still wins on overlap: a held
         ticker keeps its broker ``current_price`` even when a phase-1 live quote
         mid is captured for it in the universe layer."""
-        from alphamind.scheduler import phase1_inputs as module
+        from alphamind.scheduler import fill_collection_inputs as module
 
         positions = (_make_position_snapshot("AAPL", 175.0),)
 
@@ -1166,7 +1166,7 @@ class TestGatherPhase1Inputs:
             archive_root=archive_root,
         )
         try:
-            inputs = await module.gather_phase1_inputs(
+            inputs = await module.gather_fill_collection_inputs(
                 handle=handle,
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,

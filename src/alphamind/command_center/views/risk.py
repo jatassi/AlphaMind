@@ -577,14 +577,14 @@ async def _read_recent_invocations(
 ) -> list[str]:
     """Return the ``invocation_id`` values for the most-recent completed invocations.
 
-    Uses ``phase2_completed_at`` as the completion timestamp (nullable;
+    Uses ``command_execution_completed_at`` as the completion timestamp (nullable;
     completed invocations have this set).  Falls back to ``start_at`` ordering
-    when ``phase2_completed_at`` is NULL so in-flight invocations sort last.
+    when ``command_execution_completed_at`` is NULL so in-flight invocations sort last.
     """
     stmt = (
         select(InvocationRow.invocation_id)
-        .where(InvocationRow.phase2_completed_at.is_not(None))
-        .order_by(InvocationRow.phase2_completed_at.desc())
+        .where(InvocationRow.command_execution_completed_at.is_not(None))
+        .order_by(InvocationRow.command_execution_completed_at.desc())
         .limit(limit)
     )
     result = await session.execute(stmt)

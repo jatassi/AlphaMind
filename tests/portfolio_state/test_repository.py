@@ -157,7 +157,7 @@ def test_portfolio_pnl_inputs_nonfinite_rolling_raises() -> None:
 def test_current_invocation_metadata_valid() -> None:
     obj = CurrentInvocationMetadata(
         invocation_id="inv-001",
-        phase1_committed_at=_NOW_UTC,
+        fill_collection_committed_at=_NOW_UTC,
         pipeline_invocation_started_at=_NOW_UTC,
     )
     assert obj.invocation_id == "inv-001"
@@ -165,7 +165,9 @@ def test_current_invocation_metadata_valid() -> None:
 
 def test_current_invocation_metadata_nullable_started_at() -> None:
     obj = CurrentInvocationMetadata(
-        invocation_id="inv-001", phase1_committed_at=_NOW_UTC, pipeline_invocation_started_at=None
+        invocation_id="inv-001",
+        fill_collection_committed_at=_NOW_UTC,
+        pipeline_invocation_started_at=None,
     )
     assert obj.pipeline_invocation_started_at is None
 
@@ -173,7 +175,9 @@ def test_current_invocation_metadata_nullable_started_at() -> None:
 def test_current_invocation_metadata_empty_id_raises() -> None:
     with pytest.raises((ValueError, TypeError)):
         CurrentInvocationMetadata(
-            invocation_id="", phase1_committed_at=_NOW_UTC, pipeline_invocation_started_at=None
+            invocation_id="",
+            fill_collection_committed_at=_NOW_UTC,
+            pipeline_invocation_started_at=None,
         )
 
 
@@ -181,7 +185,7 @@ def test_current_invocation_metadata_naive_phase1_raises() -> None:
     with pytest.raises((ValueError, TypeError)):
         CurrentInvocationMetadata(
             invocation_id="inv-001",
-            phase1_committed_at=_NAIVE_DT,
+            fill_collection_committed_at=_NAIVE_DT,
             pipeline_invocation_started_at=None,
         )
 
@@ -190,7 +194,7 @@ def test_current_invocation_metadata_naive_started_at_raises() -> None:
     with pytest.raises((ValueError, TypeError)):
         CurrentInvocationMetadata(
             invocation_id="inv-001",
-            phase1_committed_at=_NOW_UTC,
+            fill_collection_committed_at=_NOW_UTC,
             pipeline_invocation_started_at=_NAIVE_DT,
         )
 
@@ -202,7 +206,9 @@ def test_current_invocation_metadata_naive_started_at_raises() -> None:
 
 def test_prior_invocation_context_both_none() -> None:
     obj = PriorInvocationContext(
-        prior_invocation_id=None, prior_active_risk_parameters=None, prior_phase1_committed_at=None
+        prior_invocation_id=None,
+        prior_active_risk_parameters=None,
+        prior_fill_collection_committed_at=None,
     )
     assert obj.prior_invocation_id is None
 
@@ -212,7 +218,7 @@ def test_prior_invocation_context_both_non_none() -> None:
     obj = PriorInvocationContext(
         prior_invocation_id="inv-000",
         prior_active_risk_parameters=params,
-        prior_phase1_committed_at=_NOW_UTC,
+        prior_fill_collection_committed_at=_NOW_UTC,
     )
     assert obj.prior_invocation_id == "inv-000"
 
@@ -223,7 +229,7 @@ def test_prior_invocation_context_id_none_params_set_raises() -> None:
         PriorInvocationContext(
             prior_invocation_id=None,
             prior_active_risk_parameters=params,
-            prior_phase1_committed_at=None,
+            prior_fill_collection_committed_at=None,
         )
 
 
@@ -232,7 +238,7 @@ def test_prior_invocation_context_id_set_params_none_raises() -> None:
         PriorInvocationContext(
             prior_invocation_id="inv-000",
             prior_active_risk_parameters=None,
-            prior_phase1_committed_at=_NOW_UTC,
+            prior_fill_collection_committed_at=_NOW_UTC,
         )
 
 
@@ -242,7 +248,7 @@ def test_prior_invocation_context_naive_committed_at_raises() -> None:
         PriorInvocationContext(
             prior_invocation_id="inv-000",
             prior_active_risk_parameters=params,
-            prior_phase1_committed_at=_NAIVE_DT,
+            prior_fill_collection_committed_at=_NAIVE_DT,
         )
 
 
@@ -338,13 +344,17 @@ def _make_bracket_record(position_id: str) -> BracketRecord:
 
 def _make_current_invocation_metadata() -> CurrentInvocationMetadata:
     return CurrentInvocationMetadata(
-        invocation_id="inv-001", phase1_committed_at=_NOW_UTC, pipeline_invocation_started_at=None
+        invocation_id="inv-001",
+        fill_collection_committed_at=_NOW_UTC,
+        pipeline_invocation_started_at=None,
     )
 
 
 def _make_prior_invocation_context() -> PriorInvocationContext:
     return PriorInvocationContext(
-        prior_invocation_id=None, prior_active_risk_parameters=None, prior_phase1_committed_at=None
+        prior_invocation_id=None,
+        prior_active_risk_parameters=None,
+        prior_fill_collection_committed_at=None,
     )
 
 

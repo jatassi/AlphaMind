@@ -95,7 +95,7 @@ def _insert_invocation(
         invocation_id=invocation_id,
         process_lifetime_id="proc-test-timing",
         start_at=start_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        phase2_completed_at=phase2_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        command_execution_completed_at=phase2_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
         trigger_type="scheduled",
         trigger_source="pre_close",
         trigger_reason="0 15 * * mon-fri",
@@ -238,7 +238,7 @@ class TestPreCloseTimingGuard:
                 invocation_id=f"inv-mhr-{i}",
                 process_lifetime_id="proc-test-timing",
                 start_at=_TRADING_DAY.replace(hour=18).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                phase2_completed_at=(
+                command_execution_completed_at=(
                     _TRADING_DAY.replace(hour=18) + timedelta(seconds=600)
                 ).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 trigger_type="scheduled",

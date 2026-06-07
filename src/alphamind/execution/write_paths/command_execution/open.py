@@ -35,7 +35,7 @@ from alphamind.execution.broker_adapter.order_options import (
 )
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.oms.command_ids import parse_pm_command_id, synthesize_id_suffix
-from alphamind.execution.write_paths.phase2._shared import (
+from alphamind.execution.write_paths.command_execution._shared import (
     _OMS_COMPONENT_TYPE_TO_PERSISTED,
     _build_entry_order_from_command,
     _build_pending_order,

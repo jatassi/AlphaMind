@@ -10,7 +10,7 @@ skeleton validation without the overhead of a full async/DB fixture suite.
 from __future__ import annotations
 
 from alphamind.commands.command_models import EquityInstrument
-from alphamind.execution.write_paths.phase2.open import _build_pending_position
+from alphamind.execution.write_paths.command_execution.open import _build_pending_position
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,

@@ -42,20 +42,20 @@ def _make_invocation_record(
     invocation_id: str,
     start_at: str,
     trigger_type: TriggerType = "scheduled",
-    phase2_completed_at: str | None = None,
+    command_execution_completed_at: str | None = None,
 ) -> InvocationRecord:
     """Build a minimal invocation record (FK target for activity_log).
 
     Defaults to a not-yet-completed ``scheduled`` invocation; callers seeding a
     completed-emergency for the cooldown read override ``trigger_type`` and
-    ``phase2_completed_at``.
+    ``command_execution_completed_at``.
     """
     return InvocationRecord(
         invocation_id=invocation_id,
         process_lifetime_id=_PROCESS_LIFETIME_ID,
         start_at=start_at,
-        phase1_completed_at=None,
-        phase2_completed_at=phase2_completed_at,
+        fill_collection_completed_at=None,
+        command_execution_completed_at=command_execution_completed_at,
         trigger_type=trigger_type,
         trigger_source="test",
         trigger_reason="seed",
@@ -319,13 +319,13 @@ class TestCooldownRemainingSeconds:
                     invocation_id="inv-emerg",
                     start_at="2026-05-07T14:40:00Z",
                     trigger_type="emergency",
-                    phase2_completed_at="2026-05-07T14:50:00Z",
+                    command_execution_completed_at="2026-05-07T14:50:00Z",
                 ),
                 _make_invocation_record(
                     invocation_id="inv-sched-recent",
                     start_at="2026-05-07T14:55:00Z",
                     trigger_type="scheduled",
-                    phase2_completed_at="2026-05-07T14:58:00Z",
+                    command_execution_completed_at="2026-05-07T14:58:00Z",
                 ),
             ],
         )
@@ -343,7 +343,7 @@ class TestCooldownRemainingSeconds:
                     invocation_id="inv-emerg",
                     start_at="2026-05-07T14:15:00Z",
                     trigger_type="emergency",
-                    phase2_completed_at="2026-05-07T14:20:00Z",
+                    command_execution_completed_at="2026-05-07T14:20:00Z",
                 )
             ],
         )

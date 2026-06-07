@@ -695,8 +695,8 @@ class TestPhase1IntegrationOnDrain:
         and flips the bracket leg PENDING_ACTIVATION→ACTIVE in one cycle."""
         from alphamind._kernel.money import money
         from alphamind._kernel.money import price as mk_price
+        from alphamind.execution.write_paths.fill_collection import integrate_recovered_fills
         from alphamind.execution.write_paths.fill_persistence import append_fill_record
-        from alphamind.execution.write_paths.phase1 import integrate_recovered_fills
         from alphamind.portfolio_state.records.orders import (
             BracketLegStatus,
             BracketStatus,

@@ -438,7 +438,7 @@ async def _assemble_for_breach_loop_tick(  # noqa: PLR0913 — substrate-level s
         sector_resolver=position_sector_resolver,
         config=portfolio_state_config,
         now=as_of,
-        warn_on_phase1_latency=False,
+        warn_on_fill_collection_latency=False,
     )
 
 

@@ -126,7 +126,7 @@ _ENTRY_ROLES: frozenset[OrderRole] = frozenset({OrderRole.ENTRY, OrderRole.ADD_E
 def _build_position_reservations(
     pending_orders: Sequence[OrderRecord],
 ) -> dict[str, float]:
-    """Mirror ``_order_reserved_notional`` in ``execution/write_paths/phase2/_shared.py``
+    """Mirror ``_order_reserved_notional`` in ``execution/write_paths/command_execution/_shared.py``
     so each position's view of "what the OMS reserved / will release" matches what
     the write path actually subtracts. The OMS uses
     ``limit_price (or stop_trigger_price) * remaining_quantity`` for ENTRY/ADD_ENTRY

@@ -35,8 +35,8 @@ from alphamind.execution.continuous_monitor.fill_stream_consumer.translation imp
     fill_report_to_fill_record,
 )
 from alphamind.execution.write_paths.broker_event_persistence import append_broker_event
+from alphamind.execution.write_paths.fill_collection import integrate_recovered_fills
 from alphamind.execution.write_paths.fill_persistence import append_fill_record
-from alphamind.execution.write_paths.phase1 import integrate_recovered_fills
 from alphamind.execution.write_paths.unattributed_fill_persistence import (
     delete_unattributed_fill,
     list_unattributed_fills,

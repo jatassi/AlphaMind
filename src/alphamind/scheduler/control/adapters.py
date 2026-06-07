@@ -266,12 +266,12 @@ class ActivityLogEmergencyTrigger:
         with the invocation-id binding.
         """
         stmt = (
-            select(InvocationRow.phase2_completed_at)
+            select(InvocationRow.command_execution_completed_at)
             .where(
                 InvocationRow.trigger_type == "emergency",
-                InvocationRow.phase2_completed_at.is_not(None),
+                InvocationRow.command_execution_completed_at.is_not(None),
             )
-            .order_by(InvocationRow.phase2_completed_at.desc())
+            .order_by(InvocationRow.command_execution_completed_at.desc())
             .limit(1)
         )
         text = (await session.execute(stmt)).scalar_one_or_none()

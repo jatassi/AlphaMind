@@ -53,7 +53,7 @@ log = logging.getLogger(__name__)
 
 
 # The capital-floor leg's id form, minted by
-# ``write_paths.phase2.open._capital_floor_bracket_leg`` as
+# ``write_paths.command_execution.open._capital_floor_bracket_leg`` as
 # ``f"{bracket_id}-leg-floor"``. The closer matches the floor by this suffix so
 # cancel-on-monitor-fire targets ONLY the always-on capital floor — never the
 # equity native-bracket children (take-profit ``-leg-target`` / stop

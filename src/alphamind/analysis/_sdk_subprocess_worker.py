@@ -545,7 +545,7 @@ async def _run_portfolio_manager(payload: dict[str, Any]) -> dict[str, Any]:
         # every ``_dispatcher_context_for`` call shares one read-only view.
         # ``defer_writeback=True`` (set inside ``_build_mcp_wiring``) makes
         # the in-tool writeback a no-op so the orchestrator's separate
-        # ``dispatch_phase2`` stage remains the sole writer.
+        # ``dispatch_command_execution`` stage remains the sole writer.
         invocation_handle: Any | None = None
         async_session = async_session_factory() if async_session_factory is not None else None
         try:
