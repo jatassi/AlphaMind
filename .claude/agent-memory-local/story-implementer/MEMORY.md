@@ -1,0 +1,2 @@
+- [Feedback-loop metric sourcing gaps](feedback_loop_metric_sourcing_gaps.md) — anti_patterns_identified + analyst proposal/inaction counts are NOT in WindowDataset's existing bundles; verify persistence before promising a metric
+- [Metric-core purity + dynamic registry](feedback_loop_metric_core_conventions.md) — metrics/*.py expose module-level METRICS tuple, no sqlalchemy import (importlinter), pure compute(WindowDataset, Conditioning)->MetricResult

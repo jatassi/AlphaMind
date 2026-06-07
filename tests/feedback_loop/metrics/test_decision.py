@@ -165,14 +165,40 @@ def _compute(metric_id: str, dataset: WindowDataset, conditioning: Conditioning 
     return metric.compute(dataset, conditioning)
 
 
-class TestPmApprovalRate:
+def _four_verdict_log() -> tuple[ActivityLogEntry, ...]:
+    return (
+        _pm_entry(verdict=PMVerdict.APPROVE),
+        _pm_entry(verdict=PMVerdict.APPROVE_WITH_MODIFICATION),
+        _pm_entry(verdict=PMVerdict.REJECT),
+        _pm_entry(verdict=PMVerdict.OVERRIDE_WITH_CORRECTIVE_ACTION),
+    )
+
+
+class TestPmVerdictMetrics:
     def test_approval_rate_counts_approve_and_modify(self) -> None:
+        result = _compute("pm_approval_rate", _dataset(_four_verdict_log()))
+        assert result.value == 0.5
+        assert result.sample_size == 4
+
+    def test_modification_rate_counts_only_modify(self) -> None:
+        result = _compute("pm_modification_rate", _dataset(_four_verdict_log()))
+        assert result.value == 0.25
+        assert result.sample_size == 4
+
+    def test_verdict_distribution_one_bin_per_verdict(self) -> None:
         log = (
             _pm_entry(verdict=PMVerdict.APPROVE),
-            _pm_entry(verdict=PMVerdict.APPROVE_WITH_MODIFICATION),
+            _pm_entry(verdict=PMVerdict.APPROVE),
             _pm_entry(verdict=PMVerdict.REJECT),
             _pm_entry(verdict=PMVerdict.OVERRIDE_WITH_CORRECTIVE_ACTION),
         )
-        result = _compute("pm_approval_rate", _dataset(log))
-        assert result.value == 0.5
-        assert result.sample_size == 4
+        dataset = _dataset(log)
+        assert _compute("pm_verdict_rate__approve", dataset).value == 0.5
+        assert _compute("pm_verdict_rate__reject", dataset).value == 0.25
+        assert _compute("pm_verdict_rate__approve_with_modification", dataset).value == 0.0
+        assert _compute("pm_verdict_rate__override_with_corrective_action", dataset).value == 0.25
+
+    def test_empty_log_gives_none_value(self) -> None:
+        result = _compute("pm_approval_rate", _dataset(()))
+        assert result.value is None
+        assert result.sample_size == 0
