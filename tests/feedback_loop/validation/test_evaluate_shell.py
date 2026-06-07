@@ -29,15 +29,20 @@ import alphamind.state.tables  # noqa: F401 — register all tables on Base.meta
 from alphamind.feedback_loop.metrics.types import MetricId
 from alphamind.feedback_loop.validation.evaluate import (
     EvaluationJudgments,
+    EvaluationResult,
     evaluate_validation,
 )
 from alphamind.feedback_loop.validation.records import (
     ExpectedDirection,
     RollbackStatus,
+    SupersededReason,
     ValidationId,
     Verdict,
 )
-from alphamind.feedback_loop.validation.register import register_validation
+from alphamind.feedback_loop.validation.register import (
+    RegistrationRequest,
+    register_validation,
+)
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -45,12 +50,10 @@ from alphamind.persistence.session import (
     make_engine,
     make_session_factory,
 )
-from alphamind.state.repository.agent_calls_queries import insert_agent_call
 from alphamind.state.repository.validation_queries import (
     mark_validation_superseded,
     read_outcomes_by_artifact,
 )
-from alphamind.feedback_loop.validation.records import SupersededReason
 from alphamind.state.tables.agent_calls import AgentCallRecord, AgentCallsRow
 from tests.state._fk_substrate import stub_invocation_row, stub_process_lifetime_row
 
@@ -196,20 +199,22 @@ class _Harness:
             sess.flush()
             register_validation(
                 sess,
-                validation_id=validation_id,
-                registering_invocation_id="inv-reg",
-                registered_at=_REGISTERED_AT,
-                edited_artifact=_ARTIFACT,
-                pre_edit_version="abc1234",
-                post_edit_version="def5678",
-                watched_metric_ids=(_PROBE_ID,),
-                window_length_days=_WINDOW_DAYS,
-                expected_direction=expected_direction,
-                expected_magnitude="more",
-                success_criterion="count up",
-                failure_criterion="count down",
-                registered_regime="normal",
-                registered_model_id="claude-opus-4-8",
+                RegistrationRequest(
+                    validation_id=validation_id,
+                    registering_invocation_id="inv-reg",
+                    registered_at=_REGISTERED_AT,
+                    edited_artifact=_ARTIFACT,
+                    pre_edit_version="abc1234",
+                    post_edit_version="def5678",
+                    watched_metric_ids=(_PROBE_ID,),
+                    window_length_days=_WINDOW_DAYS,
+                    expected_direction=expected_direction,
+                    expected_magnitude="more",
+                    success_criterion="count up",
+                    failure_criterion="count down",
+                    registered_regime="normal",
+                    registered_model_id="claude-opus-4-8",
+                ),
             )
             if prior_outcome_artifact_verdict is not None:
                 from alphamind.feedback_loop.validation.records import (
@@ -221,20 +226,22 @@ class _Harness:
 
                 register_validation(
                     sess,
-                    validation_id=f"{validation_id}-prior",
-                    registering_invocation_id="inv-reg",
-                    registered_at=_REGISTERED_AT - timedelta(days=60),
-                    edited_artifact=_ARTIFACT,
-                    pre_edit_version="000",
-                    post_edit_version="111",
-                    watched_metric_ids=(_PROBE_ID,),
-                    window_length_days=_WINDOW_DAYS,
-                    expected_direction=expected_direction,
-                    expected_magnitude="more",
-                    success_criterion="count up",
-                    failure_criterion="count down",
-                    registered_regime="normal",
-                    registered_model_id="claude-opus-4-8",
+                    RegistrationRequest(
+                        validation_id=f"{validation_id}-prior",
+                        registering_invocation_id="inv-reg",
+                        registered_at=_REGISTERED_AT - timedelta(days=60),
+                        edited_artifact=_ARTIFACT,
+                        pre_edit_version="000",
+                        post_edit_version="111",
+                        watched_metric_ids=(_PROBE_ID,),
+                        window_length_days=_WINDOW_DAYS,
+                        expected_direction=expected_direction,
+                        expected_magnitude="more",
+                        success_criterion="count up",
+                        failure_criterion="count down",
+                        registered_regime="normal",
+                        registered_model_id="claude-opus-4-8",
+                    ),
                 )
                 sess.flush()
                 insert_validation_outcome(
@@ -296,7 +303,7 @@ async def _evaluate(
     validation_id: str = "val-eval",
     judgments: EvaluationJudgments,
     outcome_id: str = "out-1",
-):  # noqa: ANN202 — returns EvaluationResult; inferred at call sites
+) -> EvaluationResult:
     async with harness.session() as sess:
         result = await evaluate_validation(
             sess,
@@ -323,21 +330,15 @@ class TestEvaluateVerdict:
         self, harness: _Harness, planted_metric: MetricId
     ) -> None:
         harness.seed_validation(pre_calls=5, post_calls=1)
-        result = await _evaluate(
-            harness, judgments=_judgments(failure_criterion_crossed=True)
-        )
+        result = await _evaluate(harness, judgments=_judgments(failure_criterion_crossed=True))
         assert result.outcome is not None
         assert result.outcome.verdict is Verdict.DEGRADED
 
-    async def test_outcome_persisted(
-        self, harness: _Harness, planted_metric: MetricId
-    ) -> None:
+    async def test_outcome_persisted(self, harness: _Harness, planted_metric: MetricId) -> None:
         harness.seed_validation(pre_calls=1, post_calls=5)
         await _evaluate(harness, judgments=_judgments())
         async with harness.session() as sess:
-            outcomes = await sess.run_sync(
-                lambda s: read_outcomes_by_artifact(s, _ARTIFACT)
-            )
+            outcomes = await sess.run_sync(lambda s: read_outcomes_by_artifact(s, _ARTIFACT))
         assert any(o.outcome_id == "out-1" for o in outcomes)
 
     async def test_posterior_summary_carries_pre_post_readings(
@@ -355,9 +356,7 @@ class TestEvaluateRollbackStatus:
         self, harness: _Harness, planted_metric: MetricId
     ) -> None:
         harness.seed_validation(pre_calls=5, post_calls=1)
-        result = await _evaluate(
-            harness, judgments=_judgments(failure_criterion_crossed=True)
-        )
+        result = await _evaluate(harness, judgments=_judgments(failure_criterion_crossed=True))
         assert result.outcome is not None
         assert result.outcome.rollback_status is RollbackStatus.MANDATORY_CLEAN_FAILURE
 
@@ -370,9 +369,7 @@ class TestEvaluateRollbackStatus:
             prior_outcome_artifact_verdict=Verdict.INCONCLUSIVE,
         )
         # Equal counts → no_change movement, but confounder makes it inconclusive.
-        result = await _evaluate(
-            harness, judgments=_judgments(confounder_flagged=True)
-        )
+        result = await _evaluate(harness, judgments=_judgments(confounder_flagged=True))
         assert result.outcome is not None
         assert result.outcome.verdict is Verdict.INCONCLUSIVE
         assert result.outcome.rollback_status is RollbackStatus.OPTIONAL_PENDING_RETROSPECTIVE
@@ -396,9 +393,7 @@ class TestEvaluateSuperseded:
         harness.supersede("val-eval")
         await _evaluate(harness, judgments=_judgments())
         async with harness.session() as sess:
-            outcomes = await sess.run_sync(
-                lambda s: read_outcomes_by_artifact(s, _ARTIFACT)
-            )
+            outcomes = await sess.run_sync(lambda s: read_outcomes_by_artifact(s, _ARTIFACT))
         assert outcomes == ()
 
 

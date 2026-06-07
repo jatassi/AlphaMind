@@ -23,9 +23,8 @@ from alphamind.feedback_loop.metrics.types import MetricId
 from alphamind.feedback_loop.validation import cli
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine, make_session_factory
-from alphamind.state.tables.agent_calls import AgentCallRecord
+from alphamind.state.tables.agent_calls import AgentCallRecord, AgentCallsRow
 from alphamind.state.tables.agent_calls_codec import record_to_row
-from alphamind.state.tables.agent_calls import AgentCallsRow
 from tests.state._fk_substrate import stub_invocation_row, stub_process_lifetime_row
 
 _PROBE_MODULE = "cli_probe"
@@ -215,13 +214,15 @@ class TestListCommand:
         planted_metric: MetricId,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        cli.main([
-            "register",
-            "--db-path",
-            db_path,
-            "--input",
-            _write_json(tmp_path, "reg.json", _registration_payload()),
-        ])
+        cli.main(
+            [
+                "register",
+                "--db-path",
+                db_path,
+                "--input",
+                _write_json(tmp_path, "reg.json", _registration_payload()),
+            ]
+        )
         capsys.readouterr()
         rc = cli.main(["list", "--db-path", db_path])
         assert rc == 0
@@ -247,27 +248,31 @@ class TestEvaluateCommand:
         planted_metric: MetricId,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        cli.main([
-            "register",
-            "--db-path",
-            db_path,
-            "--input",
-            _write_json(tmp_path, "reg.json", _registration_payload()),
-        ])
+        cli.main(
+            [
+                "register",
+                "--db-path",
+                db_path,
+                "--input",
+                _write_json(tmp_path, "reg.json", _registration_payload()),
+            ]
+        )
         capsys.readouterr()
-        rc = cli.main([
-            "evaluate",
-            "--db-path",
-            db_path,
-            "--validation-id",
-            "val-cli-1",
-            "--outcome-id",
-            "out-cli-1",
-            "--evaluated-at",
-            _iso(_REGISTERED_AT + timedelta(days=21)),
-            "--input",
-            _write_json(tmp_path, "judge.json", self._judgments()),
-        ])
+        rc = cli.main(
+            [
+                "evaluate",
+                "--db-path",
+                db_path,
+                "--validation-id",
+                "val-cli-1",
+                "--outcome-id",
+                "out-cli-1",
+                "--evaluated-at",
+                _iso(_REGISTERED_AT + timedelta(days=21)),
+                "--input",
+                _write_json(tmp_path, "judge.json", self._judgments()),
+            ]
+        )
         assert rc == 0
         emitted = json.loads(capsys.readouterr().out)
         # post window has 3 + 1 (reg) calls vs pre window 1 → improved.
@@ -282,26 +287,30 @@ class TestEvaluateCommand:
         planted_metric: MetricId,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        cli.main([
-            "register",
-            "--db-path",
-            db_path,
-            "--input",
-            _write_json(tmp_path, "reg.json", _registration_payload()),
-        ])
-        cli.main([
-            "evaluate",
-            "--db-path",
-            db_path,
-            "--validation-id",
-            "val-cli-1",
-            "--outcome-id",
-            "out-cli-1",
-            "--evaluated-at",
-            _iso(_REGISTERED_AT + timedelta(days=21)),
-            "--input",
-            _write_json(tmp_path, "judge.json", self._judgments()),
-        ])
+        cli.main(
+            [
+                "register",
+                "--db-path",
+                db_path,
+                "--input",
+                _write_json(tmp_path, "reg.json", _registration_payload()),
+            ]
+        )
+        cli.main(
+            [
+                "evaluate",
+                "--db-path",
+                db_path,
+                "--validation-id",
+                "val-cli-1",
+                "--outcome-id",
+                "out-cli-1",
+                "--evaluated-at",
+                _iso(_REGISTERED_AT + timedelta(days=21)),
+                "--input",
+                _write_json(tmp_path, "judge.json", self._judgments()),
+            ]
+        )
         capsys.readouterr()
         cli.main(["list", "--db-path", db_path])
         listed = json.loads(capsys.readouterr().out)

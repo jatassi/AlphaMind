@@ -130,8 +130,7 @@ def derive_verdict(
         return Verdict.INCONCLUSIVE
 
     movements = tuple(
-        _classify_movement(p, q, expected_direction)
-        for p, q in zip(pre, post, strict=True)
+        _classify_movement(p, q, expected_direction) for p, q in zip(pre, post, strict=True)
     )
     if any(m is _Movement.UNREADABLE for m in movements):
         return Verdict.INCONCLUSIVE
@@ -268,9 +267,7 @@ def _posterior_summary(
             "pre": _result_summary(pre_result),
             "post": _result_summary(post_result),
         }
-        for metric_id, pre_result, post_result in zip(
-            watched_metric_ids, pre, post, strict=True
-        )
+        for metric_id, pre_result, post_result in zip(watched_metric_ids, pre, post, strict=True)
     }
 
 
@@ -355,9 +352,7 @@ async def evaluate_validation(
         narrative=narrative,
         rollback_status=rollback_status,
     )
-    await session.run_sync(
-        lambda sync_session: insert_validation_outcome(sync_session, outcome)
-    )
+    await session.run_sync(lambda sync_session: insert_validation_outcome(sync_session, outcome))
     return EvaluationResult(outcome=outcome, superseded=False, superseded_reason=None)
 
 

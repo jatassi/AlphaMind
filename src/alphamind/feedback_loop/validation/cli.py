@@ -37,7 +37,10 @@ from alphamind.feedback_loop.validation.records import (
     ValidationOutcomeRecord,
     ValidationRecord,
 )
-from alphamind.feedback_loop.validation.register import register_validation
+from alphamind.feedback_loop.validation.register import (
+    RegistrationRequest,
+    register_validation,
+)
 from alphamind.persistence.session import (
     make_async_engine,
     make_async_session_factory,
@@ -59,7 +62,7 @@ def _read_payload(path: str) -> Mapping[str, object]:
     parsed: object = json.loads(raw)
     if not isinstance(parsed, dict):
         msg = "input payload must be a JSON object"
-        raise ValueError(msg)
+        raise TypeError(msg)
     return parsed
 
 
@@ -127,29 +130,27 @@ def _emit(payload: object) -> None:
 
 def _cmd_register(args: argparse.Namespace) -> int:
     payload = _read_payload(args.input)
+    request = RegistrationRequest(
+        validation_id=str(payload["validation_id"]),
+        registering_invocation_id=_opt_str(payload.get("registering_invocation_id")),
+        registered_at=_parse_dt(str(payload["registered_at"])),
+        edited_artifact=str(payload["edited_artifact"]),
+        pre_edit_version=str(payload["pre_edit_version"]),
+        post_edit_version=str(payload["post_edit_version"]),
+        watched_metric_ids=tuple(MetricId(m) for m in _str_list(payload["watched_metric_ids"])),
+        window_length_days=_int(payload["window_length_days"]),
+        expected_direction=ExpectedDirection(str(payload["expected_direction"])),
+        expected_magnitude=str(payload["expected_magnitude"]),
+        success_criterion=str(payload["success_criterion"]),
+        failure_criterion=str(payload["failure_criterion"]),
+        session_id=_opt_str(payload.get("session_id")),
+        registered_regime=_opt_str(payload.get("registered_regime")),
+        registered_model_id=_opt_str(payload.get("registered_model_id")),
+    )
     engine = make_engine(args.db_path)
     try:
         with make_session_factory(engine)() as session:
-            validation_id = register_validation(
-                session,
-                validation_id=str(payload["validation_id"]),
-                registering_invocation_id=_opt_str(payload.get("registering_invocation_id")),
-                registered_at=_parse_dt(str(payload["registered_at"])),
-                edited_artifact=str(payload["edited_artifact"]),
-                pre_edit_version=str(payload["pre_edit_version"]),
-                post_edit_version=str(payload["post_edit_version"]),
-                watched_metric_ids=tuple(
-                    MetricId(str(m)) for m in payload["watched_metric_ids"]  # type: ignore[union-attr]
-                ),
-                window_length_days=int(payload["window_length_days"]),  # type: ignore[call-overload]
-                expected_direction=ExpectedDirection(str(payload["expected_direction"])),
-                expected_magnitude=str(payload["expected_magnitude"]),
-                success_criterion=str(payload["success_criterion"]),
-                failure_criterion=str(payload["failure_criterion"]),
-                session_id=_opt_str(payload.get("session_id")),
-                registered_regime=_opt_str(payload.get("registered_regime")),
-                registered_model_id=_opt_str(payload.get("registered_model_id")),
-            )
+            validation_id = register_validation(session, request)
             session.commit()
     finally:
         engine.dispose()
@@ -222,6 +223,22 @@ def _opt_str(value: object) -> str | None:
     return None if value is None else str(value)
 
 
+def _str_list(value: object) -> list[str]:
+    """Coerce a JSON value into a list of strings, rejecting non-sequences."""
+    if not isinstance(value, list):
+        msg = "expected a JSON array of strings"
+        raise TypeError(msg)
+    return [str(item) for item in value]
+
+
+def _int(value: object) -> int:
+    """Coerce a JSON value into an int, rejecting non-numeric input."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        msg = f"expected an integer, got {value!r}"
+        raise TypeError(msg)
+    return int(value)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m alphamind.feedback_loop.validation.cli",
@@ -265,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         handler = args.handler
         return int(handler(args))
-    except (KeyError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR
 

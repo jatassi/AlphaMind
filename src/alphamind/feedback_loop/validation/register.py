@@ -19,6 +19,7 @@ registering invocation. ``session_id`` is nullable — ALP-686 supplies it later
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
@@ -33,6 +34,34 @@ from alphamind.feedback_loop.validation.records import (
 from alphamind.state.repository.validation_queries import insert_validation
 from alphamind.state.tables.agent_calls import AgentCallsRow
 from alphamind.state.tables.invocations import InvocationRow
+
+
+@dataclass(frozen=True, slots=True)
+class RegistrationRequest:
+    """The pre-registered operator contract a REGISTER call freezes.
+
+    A cohesive value object so the registration surface is one parameter, not
+    sixteen. ``registering_invocation_id`` drives the provenance snapshot;
+    ``registered_regime`` / ``registered_model_id`` (both ``None`` by default)
+    override the snapshot for the seeded post-rollback path. ``session_id`` is
+    nullable — ALP-686 supplies it later.
+    """
+
+    validation_id: str
+    registering_invocation_id: str | None
+    registered_at: datetime
+    edited_artifact: str
+    pre_edit_version: str
+    post_edit_version: str
+    watched_metric_ids: tuple[MetricId, ...]
+    window_length_days: int
+    expected_direction: ExpectedDirection
+    expected_magnitude: str
+    success_criterion: str
+    failure_criterion: str
+    session_id: str | None = None
+    registered_regime: str | None = None
+    registered_model_id: str | None = None
 
 
 class ProvenanceLookupError(Exception):
@@ -67,68 +96,57 @@ def _snapshot_provenance(
         .limit(1)
     ).scalar_one_or_none()
     if model_id is None:
-        msg = f"invocation id={registering_invocation_id!r} has no agent_calls to snapshot a model id from"
+        msg = (
+            f"invocation id={registering_invocation_id!r} has no agent_calls "
+            "to snapshot a model id from"
+        )
         raise ProvenanceLookupError(msg)
     return invocation.active_regime, model_id
 
 
 def register_validation(
     session: Session,
-    *,
-    validation_id: str,
-    registering_invocation_id: str | None,
-    registered_at: datetime,
-    edited_artifact: str,
-    pre_edit_version: str,
-    post_edit_version: str,
-    watched_metric_ids: tuple[MetricId, ...],
-    window_length_days: int,
-    expected_direction: ExpectedDirection,
-    expected_magnitude: str,
-    success_criterion: str,
-    failure_criterion: str,
-    session_id: str | None = None,
-    registered_regime: str | None = None,
-    registered_model_id: str | None = None,
+    request: RegistrationRequest,
 ) -> ValidationId:
     """Snapshot provenance, freeze the contract, and persist the validation.
 
-    Provenance: when ``registered_regime`` / ``registered_model_id`` are both
-    supplied (the seeded post-rollback path) they are used verbatim; otherwise
-    they are snapshotted from ``registering_invocation_id`` — which must then be
-    non-``None`` and resolvable, or :class:`ProvenanceLookupError` is raised.
+    Provenance: when ``request.registered_regime`` / ``request.registered_model_id``
+    are both supplied (the seeded post-rollback path) they are used verbatim;
+    otherwise they are snapshotted from ``request.registering_invocation_id`` —
+    which must then be non-``None`` and resolvable, or
+    :class:`ProvenanceLookupError` is raised.
 
     The validation is queued on *session* for insert; the caller owns the commit
     boundary. Returns the ``ValidationId``.
     """
-    if registered_regime is None or registered_model_id is None:
-        if registering_invocation_id is None:
+    regime = request.registered_regime
+    model_id = request.registered_model_id
+    if regime is None or model_id is None:
+        if request.registering_invocation_id is None:
             msg = (
                 "register_validation requires either a registering_invocation_id "
                 "to snapshot provenance from, or both registered_regime and "
                 "registered_model_id seeded directly"
             )
             raise ProvenanceLookupError(msg)
-        registered_regime, registered_model_id = _snapshot_provenance(
-            session, registering_invocation_id
-        )
+        regime, model_id = _snapshot_provenance(session, request.registering_invocation_id)
 
     record = ValidationRecord(
-        validation_id=ValidationId(validation_id),
-        registered_at=registered_at,
-        registered_by_session_id=session_id,
-        edited_artifact=edited_artifact,
-        pre_edit_version=pre_edit_version,
-        post_edit_version=post_edit_version,
-        registered_regime=registered_regime,
-        registered_model_id=registered_model_id,
-        watched_metric_ids=watched_metric_ids,
-        window_length_days=window_length_days,
-        expected_direction=expected_direction,
-        expected_magnitude=expected_magnitude,
-        success_criterion=success_criterion,
-        failure_criterion=failure_criterion,
-        evaluation_due_at=registered_at + timedelta(days=window_length_days),
+        validation_id=ValidationId(request.validation_id),
+        registered_at=request.registered_at,
+        registered_by_session_id=request.session_id,
+        edited_artifact=request.edited_artifact,
+        pre_edit_version=request.pre_edit_version,
+        post_edit_version=request.post_edit_version,
+        registered_regime=regime,
+        registered_model_id=model_id,
+        watched_metric_ids=request.watched_metric_ids,
+        window_length_days=request.window_length_days,
+        expected_direction=request.expected_direction,
+        expected_magnitude=request.expected_magnitude,
+        success_criterion=request.success_criterion,
+        failure_criterion=request.failure_criterion,
+        evaluation_due_at=request.registered_at + timedelta(days=request.window_length_days),
         superseded_at=None,
         superseded_reason=None,
     )
@@ -138,5 +156,6 @@ def register_validation(
 
 __all__ = [
     "ProvenanceLookupError",
+    "RegistrationRequest",
     "register_validation",
 ]

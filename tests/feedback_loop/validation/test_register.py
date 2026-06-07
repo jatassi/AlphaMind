@@ -18,9 +18,10 @@ from sqlalchemy.orm import Session
 
 import alphamind.state.tables  # noqa: F401 — register all tables on Base.metadata
 from alphamind.feedback_loop.metrics.types import MetricId
-from alphamind.feedback_loop.validation.records import ExpectedDirection
+from alphamind.feedback_loop.validation.records import ExpectedDirection, ValidationId
 from alphamind.feedback_loop.validation.register import (
     ProvenanceLookupError,
+    RegistrationRequest,
     register_validation,
 )
 from alphamind.persistence.models import Base
@@ -77,7 +78,7 @@ def session(tmp_path: Path) -> Iterator[Session]:
     engine.dispose()
 
 
-def _register(session: Session, **overrides: object) -> str:
+def _register(session: Session, **overrides: object) -> ValidationId:
     kwargs: dict[str, object] = {
         "validation_id": "val-1",
         "registering_invocation_id": _INV,
@@ -93,35 +94,35 @@ def _register(session: Session, **overrides: object) -> str:
         "failure_criterion": "rejection rate stays above 35%",
     }
     kwargs.update(overrides)
-    return register_validation(session, **kwargs)  # type: ignore[arg-type]
+    return register_validation(session, RegistrationRequest(**kwargs))  # type: ignore[arg-type]
 
 
 class TestRegisterValidation:
     def test_snapshots_regime_from_invocation(self, session: Session) -> None:
         vid = _register(session)
         session.commit()
-        record = read_validation(session, vid)  # type: ignore[arg-type]
+        record = read_validation(session, vid)
         assert record is not None
         assert record.registered_regime == "elevated"
 
     def test_snapshots_model_id_from_agent_calls(self, session: Session) -> None:
         vid = _register(session)
         session.commit()
-        record = read_validation(session, vid)  # type: ignore[arg-type]
+        record = read_validation(session, vid)
         assert record is not None
         assert record.registered_model_id == "claude-opus-4-8"
 
     def test_evaluation_due_at_is_registered_at_plus_window(self, session: Session) -> None:
         vid = _register(session)
         session.commit()
-        record = read_validation(session, vid)  # type: ignore[arg-type]
+        record = read_validation(session, vid)
         assert record is not None
         assert record.evaluation_due_at == _REGISTERED_AT + timedelta(days=21)
 
     def test_freezes_criteria_and_watched_metrics(self, session: Session) -> None:
         vid = _register(session)
         session.commit()
-        record = read_validation(session, vid)  # type: ignore[arg-type]
+        record = read_validation(session, vid)
         assert record is not None
         assert record.success_criterion == "rejection rate below 30%"
         assert record.failure_criterion == "rejection rate stays above 35%"
@@ -130,21 +131,21 @@ class TestRegisterValidation:
     def test_session_id_optional_and_nullable(self, session: Session) -> None:
         vid = _register(session)
         session.commit()
-        record = read_validation(session, vid)  # type: ignore[arg-type]
+        record = read_validation(session, vid)
         assert record is not None
         assert record.registered_by_session_id is None
 
     def test_session_id_persisted_when_supplied(self, session: Session) -> None:
         vid = _register(session, session_id="sess-42")
         session.commit()
-        record = read_validation(session, vid)  # type: ignore[arg-type]
+        record = read_validation(session, vid)
         assert record is not None
         assert record.registered_by_session_id == "sess-42"
 
     def test_not_superseded_on_registration(self, session: Session) -> None:
         vid = _register(session)
         session.commit()
-        record = read_validation(session, vid)  # type: ignore[arg-type]
+        record = read_validation(session, vid)
         assert record is not None
         assert record.superseded_at is None
         assert record.superseded_reason is None
@@ -154,23 +155,25 @@ class TestRegisterValidation:
         so registration does not depend on a live registering invocation."""
         vid = register_validation(
             session,
-            validation_id="val-seeded",
-            registering_invocation_id=None,
-            registered_at=_REGISTERED_AT,
-            edited_artifact="prompts/decision/strategist.md",
-            pre_edit_version="def5678",
-            post_edit_version="ghi9012",
-            watched_metric_ids=(MetricId("pm_approval_rate"),),
-            window_length_days=21,
-            expected_direction=ExpectedDirection.IMPROVED,
-            expected_magnitude="restore to baseline",
-            success_criterion="metric returns to baseline band",
-            failure_criterion="metric stays at failed-edit value",
-            registered_regime="crisis",
-            registered_model_id="claude-sonnet-4-5",
+            RegistrationRequest(
+                validation_id="val-seeded",
+                registering_invocation_id=None,
+                registered_at=_REGISTERED_AT,
+                edited_artifact="prompts/decision/strategist.md",
+                pre_edit_version="def5678",
+                post_edit_version="ghi9012",
+                watched_metric_ids=(MetricId("pm_approval_rate"),),
+                window_length_days=21,
+                expected_direction=ExpectedDirection.IMPROVED,
+                expected_magnitude="restore to baseline",
+                success_criterion="metric returns to baseline band",
+                failure_criterion="metric stays at failed-edit value",
+                registered_regime="crisis",
+                registered_model_id="claude-sonnet-4-5",
+            ),
         )
         session.commit()
-        record = read_validation(session, vid)  # type: ignore[arg-type]
+        record = read_validation(session, vid)
         assert record is not None
         assert record.registered_regime == "crisis"
         assert record.registered_model_id == "claude-sonnet-4-5"
