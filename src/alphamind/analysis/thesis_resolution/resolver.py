@@ -52,7 +52,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +75,8 @@ from alphamind.portfolio_state.events.activity_log import (
 )
 from alphamind.portfolio_state.events.thesis import ThesisResolvedDetail
 from alphamind.portfolio_state.records.positions import (
+    EquityPositionDetails,
+    OptionsPositionDetails,
     PositionStatus,
     resolve_ticker,
 )
@@ -138,17 +140,39 @@ class PreparedResolution:
 
 
 @dataclass(frozen=True, slots=True)
+class _OptionEntryContext:
+    """The contract terms of an option-expiry thesis's closed position.
+
+    Carried on :class:`_EntryReference` for an option position so the slice can
+    render the contract (type / strike / premium / expiry) and read moneyness
+    against the strike. The option entry premium and the underlying spot are
+    different instruments — the slice never computes a premium-vs-spot delta
+    (ALP-921).
+    """
+
+    contract_type: str
+    strike_price: float
+    premium_paid_per_contract: float
+    expiration_date: date
+
+
+@dataclass(frozen=True, slots=True)
 class _EntryReference:
     """The closed position's entry reference for the market-data slice.
 
-    ``symbol`` is the key into ``underlying_prices``; ``entry_price`` is the
-    average cost basis per share at entry. ``None`` when the position's details
-    carry no equity entry reference (e.g. a multi-leg strategy) — the slice then
+    ``symbol`` is the key into ``underlying_prices``. ``entry_price`` is the
+    equity average cost basis per share at entry — ``None`` for an option
+    (whose entry premium is a different instrument from the underlying spot, so
+    no entry-vs-resolution delta is computable) or when the details carry no
+    equity entry reference (e.g. a multi-leg strategy). ``option_context`` is
+    populated only for an option position; the slice renders the contract terms
+    and reads moneyness against the strike. When both are absent the slice
     degrades to the assumptions-only framing.
     """
 
     symbol: str | None
     entry_price: float | None
+    option_context: _OptionEntryContext | None = None
 
 
 class _LazyEvaluatorConfig:
@@ -492,11 +516,15 @@ async def _read_realized_pnls(session: AsyncSession, *, thesis_ids: list[str]) -
 async def _read_entry_references(
     session: AsyncSession, *, position_ids: list[str]
 ) -> dict[str, _EntryReference]:
-    """Map each closed position_id to its entry reference (symbol + entry price).
+    """Map each closed position_id to its entry reference (symbol + price path).
 
-    Reads the position's average cost basis per share + underlying symbol for
-    the market-data slice (ALP-914 finding 5). One ``IN`` query; a position
-    whose details carry no equity entry reference maps to a null reference.
+    Reads the underlying symbol and an instrument-correct entry reference for
+    the market-data slice (ALP-914 finding 5; ALP-921). One ``IN`` query.
+    Dispatches on the details type (mirroring ``resolve_ticker``): an equity
+    position carries its average cost basis per share as ``entry_price``; an
+    option carries an ``option_context`` (contract terms) and no ``entry_price``
+    (its entry premium and the underlying spot are different instruments); any
+    other shape (e.g. a multi-leg strategy) maps to a symbol-only reference.
     """
     if not position_ids:
         return {}
@@ -513,11 +541,28 @@ async def _read_entry_references(
             # — skip it; the slice falls back to assumptions-only for that thesis.
             continue
         symbol = resolve_ticker(record.details)
-        entry_price = getattr(record.details, "average_cost_basis_per_share", None)
-        refs[row.position_id] = _EntryReference(
-            symbol=str(symbol) if symbol is not None else None,
-            entry_price=float(entry_price) if entry_price is not None else None,
-        )
+        symbol_str = str(symbol) if symbol is not None else None
+        details = record.details
+        if isinstance(details, EquityPositionDetails):
+            refs[row.position_id] = _EntryReference(
+                symbol=symbol_str,
+                entry_price=float(details.average_cost_basis_per_share),
+            )
+        elif isinstance(details, OptionsPositionDetails):
+            refs[row.position_id] = _EntryReference(
+                symbol=symbol_str,
+                entry_price=None,
+                option_context=_OptionEntryContext(
+                    contract_type=details.contract_type.value,
+                    strike_price=float(details.strike_price),
+                    premium_paid_per_contract=float(details.premium_paid_per_contract),
+                    expiration_date=details.expiration_date,
+                ),
+            )
+        else:
+            # StrategyPositionDetails (out of scope, ALP-921) — symbol-only
+            # reference; the slice degrades to assumptions-only framing.
+            refs[row.position_id] = _EntryReference(symbol=symbol_str, entry_price=None)
     return refs
 
 

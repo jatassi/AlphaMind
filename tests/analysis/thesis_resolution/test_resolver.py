@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind.analysis.thesis_resolution.resolver import (
+    _read_entry_references,
     resolve_closed_position_theses,
 )
 from alphamind.portfolio_state.events.activity_log import (
@@ -37,6 +38,7 @@ from alphamind.state.tables.thesis_components import ThesisComponentRow
 from tests.analysis.thesis_resolution.conftest import (
     make_active_thesis,
     make_evaluator_config,
+    make_option_details,
     seed_closed_position_thesis,
 )
 
@@ -564,3 +566,52 @@ async def test_market_data_slice_missing_price_falls_back_without_raising(
 
     assert len(resolved) == 1
     assert "resolution-time price unavailable" in captured["prompt"].lower()
+
+
+async def test_read_entry_references_dispatches_on_instrument(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """``_read_entry_references`` maps an option position to a null ``entry_price``
+    plus a populated ``option_context`` (contract terms), and an equity position
+    to its cost-basis ``entry_price`` with ``option_context is None`` (ALP-921 A)."""
+    _, factory = db
+    equity_thesis = make_active_thesis(thesis_id="thesis-eq", position_id="pos-eq")
+    await seed_closed_position_thesis(
+        factory,
+        thesis=equity_thesis,
+        realized_pnl_usd=-250.0,
+        exit_method=PositionExitMethod.PM_DECISION,
+        invocation_id=_INV_ID,
+        entry_ticker="NVDA",
+        entry_cost_basis_per_share=100.0,
+    )
+    option_thesis = make_active_thesis(thesis_id="thesis-opt", position_id="pos-opt")
+    await seed_closed_position_thesis(
+        factory,
+        thesis=option_thesis,
+        realized_pnl_usd=-1250.0,
+        exit_method=PositionExitMethod.OPTION_EXPIRY,
+        invocation_id=_INV_ID,
+        entry_option=make_option_details(
+            underlying_ticker="AAPL",
+            strike_price=150.0,
+            contract_type="CALL",
+            premium_paid_per_contract=250.0,
+        ),
+    )
+
+    async with factory() as session:
+        refs = await _read_entry_references(session, position_ids=["pos-eq", "pos-opt"])
+
+    equity_ref = refs["pos-eq"]
+    assert equity_ref.symbol == "NVDA"
+    assert equity_ref.entry_price == 100.0
+    assert equity_ref.option_context is None
+
+    option_ref = refs["pos-opt"]
+    assert option_ref.symbol == "AAPL"
+    assert option_ref.entry_price is None
+    assert option_ref.option_context is not None
+    assert option_ref.option_context.contract_type == "CALL"
+    assert option_ref.option_context.strike_price == 150.0
+    assert option_ref.option_context.premium_paid_per_contract == 250.0

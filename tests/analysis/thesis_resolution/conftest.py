@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -157,6 +157,53 @@ def _equity_details_json(*, ticker: str, average_cost_basis_per_share: float) ->
     )
 
 
+def make_option_details(
+    *,
+    underlying_ticker: str = "AAPL",
+    strike_price: float = 150.0,
+    contract_type: str = "CALL",
+    premium_paid_per_contract: float = 250.0,
+    expiration_date: date | None = None,
+) -> object:
+    """A real ``OptionsPositionDetails`` for an option entry reference (ALP-921).
+
+    Mirrors the equity helper but for the option arm: the resolver's
+    entry-reference read dispatches on details type, so an option position must
+    rehydrate into a real ``OptionsPositionDetails`` carrying the contract terms.
+    """
+    from alphamind._kernel.ids import Symbol
+    from alphamind.portfolio_state.records.positions import (
+        OptionContractType,
+        OptionGreeks,
+        OptionsPositionDetails,
+    )
+
+    return OptionsPositionDetails(
+        underlying_ticker=Symbol(underlying_ticker),
+        strike_price=strike_price,
+        expiration_date=expiration_date or date(2026, 9, 18),
+        contract_type=OptionContractType(contract_type),
+        contract_count=5.0,
+        contract_multiplier=100.0,
+        premium_paid_per_contract=premium_paid_per_contract,
+        greeks=OptionGreeks(delta=0.45, gamma=0.02, theta=-0.05, vega=0.10),
+    )
+
+
+def _options_details_json(details: object) -> str:
+    """Serialize an ``OptionsPositionDetails`` to a position-row ``details_json``.
+
+    Uses the real positions codec so the blob is authoritative — the resolver
+    reads it back through ``row_to_record`` and dispatches on the typed payload.
+    """
+    import json
+
+    from alphamind._kernel.money import decimal_json_default
+    from alphamind.state.tables.positions_codec import _details_to_dict
+
+    return json.dumps(_details_to_dict(details), default=decimal_json_default)  # type: ignore[arg-type]
+
+
 async def seed_closed_position_thesis(
     factory: async_sessionmaker[AsyncSession],
     *,
@@ -170,6 +217,7 @@ async def seed_closed_position_thesis(
     malformed_position_closed_detail: bool = False,
     entry_ticker: str | None = None,
     entry_cost_basis_per_share: float | None = None,
+    entry_option: object | None = None,
 ) -> None:
     """Seed the CLOSED position + ACTIVE thesis + ledger row + POSITION_CLOSED entry.
 
@@ -187,6 +235,9 @@ async def seed_closed_position_thesis(
 
     Entry reference (ALP-914 finding 5): pass ``entry_ticker`` +
     ``entry_cost_basis_per_share`` to seed a real equity entry price + symbol.
+    Pass ``entry_option`` (an ``OptionsPositionDetails`` from
+    :func:`make_option_details`) instead to seed an option entry reference
+    (ALP-921) — the position then rehydrates as a CLOSED option.
     """
     position_id = str(thesis.position_id)
     closer_inv = closed_in_invocation_id or invocation_id
@@ -212,6 +263,11 @@ async def seed_closed_position_thesis(
             ticker=entry_ticker,
             average_cost_basis_per_share=entry_cost_basis_per_share,
         )
+    if entry_option is not None:
+        from alphamind.portfolio_state.records.positions import InstrumentType
+
+        position_row.details_json = _options_details_json(entry_option)
+        position_row.instrument_type = InstrumentType.OPTIONS.value
     async with factory() as sess:
         # ``merge`` (not ``add``) so seeding a SECOND thesis into the same DB
         # re-uses the existing process-lifetime / invocation parent rows instead
