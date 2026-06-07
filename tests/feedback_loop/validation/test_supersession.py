@@ -155,6 +155,36 @@ def _add_validation(db_path: str, row: ValidationsRow) -> None:
     engine.dispose()
 
 
+def _add_outcome(db_path: str, outcome_id: str, validation_id: str) -> None:
+    from alphamind.feedback_loop.validation.records import (
+        OutcomeId,
+        RollbackStatus,
+        ValidationId,
+        ValidationOutcomeRecord,
+        Verdict,
+    )
+    from alphamind.state.repository.validation_queries import insert_validation_outcome
+
+    engine = make_engine(db_path)
+    with make_session_factory(engine)() as sess:
+        insert_validation_outcome(
+            sess,
+            ValidationOutcomeRecord(
+                outcome_id=OutcomeId(outcome_id),
+                validation_id=ValidationId(validation_id),
+                evaluated_at=_DUE_AT,
+                evaluated_by_session_id=None,
+                verdict=Verdict.NO_CHANGE,
+                posterior_summary={},
+                confounder_notes=None,
+                narrative="n",
+                rollback_status=RollbackStatus.NOT_APPLICABLE,
+            ),
+        )
+        sess.commit()
+    engine.dispose()
+
+
 def _read(db_path: str, validation_id: str) -> object:
     engine = make_engine(db_path)
     try:
@@ -309,3 +339,56 @@ class TestConcurrentEdit:
             env_at=_REGISTERED_AT + timedelta(days=2),
         )
         assert _run_detect(db_path, repo_root=temp_repo) == 0
+
+
+class TestFirstFiringAndSkips:
+    def test_only_first_firing_trigger_recorded(self, db_path: str) -> None:
+        # Both regime and model shift in the window; regime is documented first.
+        _add_validation(db_path, _validation_row("val-both"))
+        _add_invocation(
+            db_path,
+            "inv-post",
+            start_at=_REGISTERED_AT + timedelta(days=3),
+            regime="defensive",
+        )
+        _add_agent_call(db_path, "call-post", "inv-post", model_id="claude-opus-4-9")
+        assert _run_detect(db_path) == 1
+        record = _read(db_path, "val-both")
+        assert record is not None
+        assert record.superseded_reason is SupersededReason.REGIME_TRANSITION  # type: ignore[attr-defined]
+
+    def test_already_superseded_validation_is_skipped(self, db_path: str) -> None:
+        # A regime shift is present, but the row is already superseded — leave it.
+        _add_validation(
+            db_path,
+            _validation_row(
+                "val-done",
+                superseded_at=_iso(_REGISTERED_AT + timedelta(days=1)),
+                superseded_reason=SupersededReason.MODEL_VERSION_CHANGE.value,
+            ),
+        )
+        _add_invocation(
+            db_path,
+            "inv-post",
+            start_at=_REGISTERED_AT + timedelta(days=3),
+            regime="defensive",
+        )
+        assert _run_detect(db_path) == 0
+        record = _read(db_path, "val-done")
+        assert record is not None
+        # The original reason is preserved, not overwritten by the regime trigger.
+        assert record.superseded_reason is SupersededReason.MODEL_VERSION_CHANGE  # type: ignore[attr-defined]
+
+    def test_already_evaluated_validation_is_skipped(self, db_path: str) -> None:
+        _add_validation(db_path, _validation_row("val-eval"))
+        _add_outcome(db_path, "out-1", "val-eval")
+        _add_invocation(
+            db_path,
+            "inv-post",
+            start_at=_REGISTERED_AT + timedelta(days=3),
+            regime="defensive",
+        )
+        assert _run_detect(db_path) == 0
+        record = _read(db_path, "val-eval")
+        assert record is not None
+        assert record.superseded_at is None  # type: ignore[attr-defined]
