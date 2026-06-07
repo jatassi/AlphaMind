@@ -192,7 +192,7 @@ def _git_log_commits(
         edited_artifact,
     ]
     try:
-        completed = subprocess.run(  # noqa: S603 — fixed argv, no shell, path is a column value
+        completed = subprocess.run(
             args,
             cwd=None if repo_root is None else str(repo_root),
             capture_output=True,

@@ -42,6 +42,7 @@ from alphamind.feedback_loop.validation.register import (
     RegistrationRequest,
     register_validation,
 )
+from alphamind.feedback_loop.validation.supersession import detect_supersessions
 from alphamind.persistence.session import (
     make_async_engine,
     make_async_session_factory,
@@ -169,6 +170,18 @@ def _cmd_list(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_detect_supersessions(args: argparse.Namespace) -> int:
+    engine = make_engine(args.db_path)
+    try:
+        with make_session_factory(engine)() as session:
+            marked = detect_supersessions(session)
+            session.commit()
+    finally:
+        engine.dispose()
+    _emit({"marked": marked})
+    return EXIT_OK
+
+
 def _cmd_evaluate(args: argparse.Namespace) -> int:
     payload = _read_payload(args.input)
     judgments = EvaluationJudgments(
@@ -272,6 +285,13 @@ def _build_parser() -> argparse.ArgumentParser:
     list_cmd = sub.add_parser("list", help="List pending (unevaluated, un-superseded) validations.")
     list_cmd.add_argument("--db-path", default=None, metavar="PATH")
     list_cmd.set_defaults(handler=_cmd_list)
+
+    detect = sub.add_parser(
+        "detect-supersessions",
+        help="Mark active validations crossed by a mid-window conditioning shift.",
+    )
+    detect.add_argument("--db-path", default=None, metavar="PATH")
+    detect.set_defaults(handler=_cmd_detect_supersessions)
 
     return parser
 

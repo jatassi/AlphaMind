@@ -142,7 +142,8 @@ def _add_agent_call(
 ) -> None:
     engine = make_engine(db_path)
     with make_session_factory(engine)() as sess:
-        sess.add(AgentCallsRow(**record_to_row(_agent_call(call_id, invocation_id, model_id=model_id))))
+        record = _agent_call(call_id, invocation_id, model_id=model_id)
+        sess.add(AgentCallsRow(**record_to_row(record)))
         sess.commit()
     engine.dispose()
 
@@ -288,9 +289,7 @@ class TestModelVersionChange:
 
 
 class TestConcurrentEdit:
-    def test_commit_to_artifact_in_window_supersedes(
-        self, db_path: str, temp_repo: Path
-    ) -> None:
+    def test_commit_to_artifact_in_window_supersedes(self, db_path: str, temp_repo: Path) -> None:
         _add_validation(db_path, _validation_row("val-edit"))
         # A new commit to the watched artifact lands inside the post-edit window.
         (temp_repo / _ARTIFACT).write_text("v2\n", encoding="utf-8")
@@ -312,9 +311,7 @@ class TestConcurrentEdit:
             is SupersededReason.CONCURRENT_EDIT_ON_WATCHED_ARTIFACT
         )
 
-    def test_no_commit_in_window_is_not_superseded(
-        self, db_path: str, temp_repo: Path
-    ) -> None:
+    def test_no_commit_in_window_is_not_superseded(self, db_path: str, temp_repo: Path) -> None:
         # Only the pre-window baseline commit exists; nothing lands in the window.
         _add_validation(db_path, _validation_row("val-clean"))
         assert _run_detect(db_path, repo_root=temp_repo) == 0
@@ -392,3 +389,31 @@ class TestFirstFiringAndSkips:
         record = _read(db_path, "val-eval")
         assert record is not None
         assert record.superseded_at is None  # type: ignore[attr-defined]
+
+
+class TestDetectSupersessionsCommand:
+    def test_runs_detector_and_reports_count(
+        self, db_path: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _add_validation(db_path, _validation_row("val-cli"))
+        _add_invocation(
+            db_path,
+            "inv-post",
+            start_at=_REGISTERED_AT + timedelta(days=3),
+            regime="defensive",
+        )
+        rc = cli.main(["detect-supersessions", "--db-path", db_path])
+        assert rc == 0
+        emitted = json.loads(capsys.readouterr().out)
+        assert emitted["marked"] == 1
+        record = _read(db_path, "val-cli")
+        assert record is not None
+        assert record.superseded_reason is SupersededReason.REGIME_TRANSITION  # type: ignore[attr-defined]
+
+    def test_reports_zero_when_nothing_supersedes(
+        self, db_path: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _add_validation(db_path, _validation_row("val-cli-clean"))
+        rc = cli.main(["detect-supersessions", "--db-path", db_path])
+        assert rc == 0
+        assert json.loads(capsys.readouterr().out)["marked"] == 0
