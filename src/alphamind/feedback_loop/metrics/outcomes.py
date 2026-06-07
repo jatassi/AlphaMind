@@ -391,7 +391,12 @@ METRICS: tuple[Metric, ...] = (
         metric_id=METRIC_PL_PER_TOKEN,
         po_type="outcome",
         default_window=Window.MONTHLY,
-        supported_conditioning=_ALL_CONDITIONING,
+        # Conditioning intentionally disabled: the token denominator is the window
+        # total (unconditioned) until the thesis→invocation token-attribution join
+        # lands (04e / 06f), so a conditioned slice would divide a conditioned
+        # numerator by an unconditioned denominator (an unsound ratio). Re-enable
+        # with _ALL_CONDITIONING once per-thesis token attribution is wired.
+        supported_conditioning=(),
         compute=_compute_pl_per_token,
     ),
     Metric(

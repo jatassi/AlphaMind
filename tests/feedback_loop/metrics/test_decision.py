@@ -497,6 +497,21 @@ class TestConditioning:
         assert metric is not None
         assert ConditioningDimension.MODEL_VERSION in metric.supported_conditioning
 
+    def test_unsupported_conditioning_dimension_degrades_to_no_data(self) -> None:
+        # A dimension with no reachable agent_call field (e.g. REGIME) must not raise
+        # KeyError — the registry does not enforce supported_conditioning on compute
+        # callers, so the slice degrades to an empty (no-data) reading.
+        log = (_pm_entry(verdict=PMVerdict.APPROVE, invocation_id="inv-1"),)
+        calls = (_agent_call(invocation_id="inv-1", model_id="claude-opus-4-8"),)
+        dataset = _dataset(log, calls)
+        result = _compute(
+            "pm_approval_rate",
+            dataset,
+            Conditioning(dimension=ConditioningDimension.REGIME, value="elevated"),
+        )
+        assert result.value is None
+        assert result.sample_size == 0
+
 
 class TestRegistryDiscovery:
     def test_decision_metrics_are_listed_and_process_tier(self) -> None:

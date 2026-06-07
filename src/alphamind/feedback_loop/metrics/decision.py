@@ -69,8 +69,17 @@ def _conditioned(dataset: WindowDataset, conditioning: Conditioning) -> WindowDa
 
 
 def _invocations_matching(dataset: WindowDataset, conditioning: Conditioning) -> frozenset[str]:
-    """Invocation ids whose ``portfolio_manager`` agent call matches the slice value."""
-    field = _CONDITIONING_AGENT_CALL_FIELD[conditioning.dimension]
+    """Invocation ids whose ``portfolio_manager`` agent call matches the slice value.
+
+    A conditioning dimension with no reachable ``AgentCallRecord`` field (anything
+    other than ``MODEL_VERSION`` / ``PROMPT_VERSION``) yields an empty set, so the
+    metric degrades to a no-data reading rather than raising ``KeyError`` —
+    ``supported_conditioning`` is descriptive metadata the registry does not enforce
+    on ``compute`` callers.
+    """
+    field = _CONDITIONING_AGENT_CALL_FIELD.get(conditioning.dimension)
+    if field is None:
+        return frozenset()
     return frozenset(
         call.invocation_id
         for call in dataset.agent_calls
