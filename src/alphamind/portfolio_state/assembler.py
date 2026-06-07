@@ -583,7 +583,7 @@ def assemble_snapshot(
     recent_pm_decision_log: tuple[ActivityLogEntry, ...] = repository.get_recent_pm_decision_log(
         sliding_window_invocations=config.pm_decision_log_sliding_window_invocations
     )
-    thesis_quality_aggregates: ThesisQualityAggregate = repository.get_thesis_quality_aggregates()
+    thesis_quality_aggregates: ThesisQualityAggregate = repository.get_thesis_quality_aggregates(now)
     regt_excess_aggregates: RegTExcessAggregates = repository.get_regt_excess_aggregates(now)
 
     # ------------------------------------------------------------------

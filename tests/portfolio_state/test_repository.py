@@ -529,7 +529,7 @@ def test_stub_get_recent_pm_decision_log() -> None:
 
 def test_stub_get_thesis_quality_aggregates() -> None:
     stub = StubPortfolioStateRepository(_make_fixture())
-    result = stub.get_thesis_quality_aggregates()
+    result = stub.get_thesis_quality_aggregates(now=datetime.now(UTC))
     assert result.resolution_counts_by_window == ()
 
 

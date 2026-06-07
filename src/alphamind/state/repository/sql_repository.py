@@ -571,17 +571,20 @@ class SqlPortfolioStateRepository:
             realized_pnls = session.execute(stmt).scalars().all()
         return _aggregate_pnl_inputs(realized_pnls)
 
-    def get_thesis_quality_aggregates(self) -> ThesisQualityAggregate:
+    def get_thesis_quality_aggregates(self, now: datetime) -> ThesisQualityAggregate:
         # Imperative shell (ALP-878): read + decode RESOLVED theses, then hand
         # the typed records + config trailing windows to the pure compute helper.
-        # ``datetime.now(UTC)`` is the read-time ``as_of`` for the trailing
-        # windows — the aggregate is recomputed each snapshot, never persisted.
+        # ``now`` — the invocation's logical clock (ALP-914 finding 3) — is the
+        # ``as_of`` for the trailing windows, shared with the resolver's
+        # resolution timestamp so a thesis resolved this invocation lands inside
+        # the same invocation's trailing-window aggregate. The aggregate is
+        # recomputed each snapshot, never persisted.
         with self._sync_session_factory() as session:
             resolved = self._read_theses_by_status(session, ThesisRecordStatus.RESOLVED)
         return compute_thesis_quality_aggregate(
             resolved_theses=resolved,
             trailing_windows_days=self._thesis_quality_trailing_windows_days,
-            as_of=datetime.now(UTC),
+            as_of=now,
         )
 
     def get_active_risk_parameters(self) -> ActiveRiskParameterSet:

@@ -661,7 +661,8 @@ class _RaisingRepo:
         del position_ids
         self._raise()
 
-    def get_thesis_quality_aggregates(self) -> NoReturn:
+    def get_thesis_quality_aggregates(self, now: datetime) -> NoReturn:
+        del now
         self._raise()
 
     def get_brackets_for_positions(self, *, position_ids: tuple[str, ...]) -> NoReturn:

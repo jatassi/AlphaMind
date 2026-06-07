@@ -197,7 +197,7 @@ class PortfolioStateRepository(Protocol):
     ) -> dict[str, tuple[ActivityLogEntry, ...]]: ...
 
     # Category 6 — Thesis quality
-    def get_thesis_quality_aggregates(self) -> ThesisQualityAggregate: ...
+    def get_thesis_quality_aggregates(self, now: datetime) -> ThesisQualityAggregate: ...
 
     # Brackets
     def get_brackets_for_positions(
@@ -307,7 +307,8 @@ class StubPortfolioStateRepository:
         trail = self._fixture.position_modification_trail
         return {pid: trail[pid] for pid in position_ids if pid in trail}
 
-    def get_thesis_quality_aggregates(self) -> ThesisQualityAggregate:
+    def get_thesis_quality_aggregates(self, now: datetime) -> ThesisQualityAggregate:
+        del now
         return self._fixture.thesis_quality_aggregates
 
     def get_brackets_for_positions(
