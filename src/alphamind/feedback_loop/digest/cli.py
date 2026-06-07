@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 from alphamind.feedback_loop.digest.codec import serialize_digest
 from alphamind.feedback_loop.digest.generator import WeekInput, generate_digest
+from alphamind.feedback_loop.digest.snapshot import SnapshotOutcome, snapshot_week
 from alphamind.feedback_loop.digest.windows import (
     load_week_inputs,
     trailing_weeks,
@@ -155,6 +156,29 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser("metrics-list", help="Emit the registered metric ids as JSON.")
+
+    snapshot_p = sub.add_parser(
+        "snapshot", help="Snapshot the week's WeeklyDigest into weekly_digest_snapshots."
+    )
+    snapshot_p.add_argument(
+        "--week",
+        metavar="ISO-DATE",
+        default=None,
+        help=(
+            "Any date in the target week (YYYY-MM-DD). Defaults to the most recent "
+            "completed week (the cron's Sunday-8am-ET producer week)."
+        ),
+    )
+    snapshot_p.add_argument(
+        "--trajectory-weeks",
+        type=int,
+        default=_DEFAULT_TRAJECTORY_WEEKS,
+        metavar="N",
+        help=(
+            "Trailing weeks to load for trajectory/baselines "
+            f"(default: {_DEFAULT_TRAJECTORY_WEEKS})."
+        ),
+    )
     return parser
 
 
@@ -247,6 +271,53 @@ def _run_metric(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_snapshot_monday(week_arg: str | None) -> date | None:
+    """Resolve the snapshot's target week-Monday, or ``None`` on a parse error.
+
+    With an explicit ``--week``, the week containing it. Without one, the most
+    recent *completed* week — the prior week's Monday — since the producer runs at
+    the start of the following week (Sunday 8am ET) to snapshot the week just closed.
+    """
+    if week_arg is None:
+        return week_monday(datetime.now(UTC).date()) - timedelta(weeks=1)
+    try:
+        return week_monday(date.fromisoformat(week_arg))
+    except ValueError:
+        return None
+
+
+def _run_snapshot(args: argparse.Namespace) -> int:
+    week_start = _resolve_snapshot_monday(args.week)
+    if week_start is None:
+        print(f"--week: {args.week!r} is not a valid ISO date (YYYY-MM-DD).")
+        return 1
+    if args.trajectory_weeks < 1:
+        print("--trajectory-weeks must be >= 1.")
+        return 1
+
+    try:
+        digest_config, feedback_config = _load_configs(Path(args.config_dir))
+    except Exception:
+        log.exception("Configuration load failed")
+        return 2
+
+    try:
+        outcome = _open_and_snapshot(
+            args.db_path,
+            week_start,
+            digest_config,
+            feedback_config,
+            args.trajectory_weeks,
+        )
+    except Exception:
+        log.exception("Snapshot failed")
+        return 2
+
+    verb = "written" if outcome.written else "skipped (already snapshotted)"
+    print(f"snapshot for week {week_start.isoformat()}: {verb} [{outcome.snapshot_id}]")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Session orchestration (shell)
 # ---------------------------------------------------------------------------
@@ -296,6 +367,35 @@ def _open_and_compute(
     return asyncio.run(_run())
 
 
+def _open_and_snapshot(
+    db_path: str | None,
+    week_start: date,
+    digest_config: DigestConfig,
+    feedback: FeedbackLoopConfig,
+    trajectory_weeks: int,
+) -> SnapshotOutcome:
+    """Open an async session and snapshot the week — the producer's engine shell."""
+
+    async def _run() -> SnapshotOutcome:
+        from alphamind.persistence.session import make_async_engine, make_async_session_factory
+
+        engine = make_async_engine(db_path)
+        try:
+            factory = make_async_session_factory(engine)
+            async with factory() as session:
+                return await snapshot_week(
+                    session,
+                    week_start,
+                    digest_config=digest_config,
+                    feedback_config=feedback,
+                    trajectory_weeks=trajectory_weeks,
+                )
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_run())
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns the exit code (0 success, 1 arg error, 2 runtime)."""
     logging.basicConfig(
@@ -316,6 +416,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_digest(args)
     if args.command == "metric":
         return _run_metric(args)
+    if args.command == "snapshot":
+        return _run_snapshot(args)
     # argparse's required=True subparsers guarantee one of the above.
     return 1
 
