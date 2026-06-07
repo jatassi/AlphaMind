@@ -1,6 +1,6 @@
-"""ALP-467: timing test for Phase 2 TaskGroup parallelization.
+"""ALP-467: timing test for per-category indicator compute TaskGroup parallelization.
 
-The orchestrator splits Phase 2 into:
+The orchestrator splits the per-category indicator compute step into:
 
 - Shell: load Q1 inputs sequentially under the shared Session.
 - Core: TaskGroup with two concurrent tasks — Q1's pure compute and a
@@ -24,7 +24,7 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_phase2_taskgroup_runs_q1_and_legacy_in_parallel() -> None:
+async def test_category_indicator_compute_taskgroup_runs_q1_and_legacy_in_parallel() -> None:
     """Replace the two thread-bound tasks with sleepers; total wall clock < sum."""
     from alphamind.distillation import orchestrator as orch_mod
 
@@ -39,10 +39,10 @@ async def test_phase2_taskgroup_runs_q1_and_legacy_in_parallel() -> None:
         # Legacy subtask returns (q7, q12) after ALP-485 lifted q6 out.
         return ([], [])
 
-    # Build an emulation of the TaskGroup phase identical to the
+    # Build an emulation of the TaskGroup step identical to the
     # orchestrator's structure but isolated so the test doesn't need a
     # populated SQLite database.
-    async def _run_phase2() -> tuple[float, tuple[Any, ...]]:
+    async def _run_category_indicator_compute() -> tuple[float, tuple[Any, ...]]:
         started = time.monotonic()
         async with asyncio.TaskGroup() as tg:
             q1_task = tg.create_task(asyncio.to_thread(_slow_q1))
@@ -54,15 +54,16 @@ async def test_phase2_taskgroup_runs_q1_and_legacy_in_parallel() -> None:
     # contract without monkey-patching at import time.
     with (
         patch.object(orch_mod, "_compute_q1_blocks_from_inputs", _slow_q1),
-        patch.object(orch_mod, "_compute_legacy_phase2_blocks", _slow_legacy),
+        patch.object(orch_mod, "_compute_legacy_session_bound_blocks", _slow_legacy),
     ):
-        elapsed, results = await _run_phase2()
+        elapsed, results = await _run_category_indicator_compute()
 
     # The parallel wall clock must be substantially less than the sum.
     # Threshold: max(sleep) + thread-spawn budget (50% headroom).
     assert elapsed < sleep_s * 1.5, (
-        f"Phase 2 wall clock {elapsed:.3f}s exceeds parallel-execution budget "
-        f"({sleep_s * 1.5:.3f}s); the TaskGroup is likely serializing tasks."
+        f"Per-category indicator compute wall clock {elapsed:.3f}s exceeds "
+        f"parallel-execution budget ({sleep_s * 1.5:.3f}s); the TaskGroup is "
+        f"likely serializing tasks."
     )
     # Sanity: both tasks ran and returned their declared shapes.
     q1_result, legacy_result = results
