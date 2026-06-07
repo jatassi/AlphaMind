@@ -129,6 +129,11 @@ class EventSource(StrEnum):
     CONFIG_RELOAD = "CONFIG_RELOAD"
     OPERATOR_CONSOLE = "OPERATOR_CONSOLE"
     DISTILLATION_ORCHESTRATOR = "DISTILLATION_ORCHESTRATOR"
+    # The deliberative analysis pipeline's thesis-resolution step (ALP-834 /
+    # ALP-899): authors ACTIVE → RESOLVED and emits THESIS_RESOLVED. The
+    # ``ck_activity_log_source`` CHECK is built from this enum, so a companion
+    # migration widens it on alembic-managed DBs created before this member.
+    ANALYSIS_PIPELINE = "ANALYSIS_PIPELINE"
 
 
 class PositionExitMethod(StrEnum):
