@@ -9,8 +9,8 @@ non-calibrated fallback was active during the invocation; the command center's
 calibration-mix panel renders the same file
 (``docs/design/command-center.md`` § E. Risk and guardrails).
 
-The writer is invoked from the orchestrator's phase 6 (invocation-archive
-write) so the snapshot lands alongside the markdown archive on the same
+The writer is invoked from the orchestrator's invocation-archive write step
+so the snapshot lands alongside the markdown archive on the same
 fail-closed path. Determinism is load-bearing — same input must produce
 byte-identical output — and the write is atomic (temp file + rename) so a
 mid-write process death does not leave a torn JSON document on disk.

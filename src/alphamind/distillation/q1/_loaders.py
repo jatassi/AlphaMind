@@ -8,9 +8,9 @@ load bars, baselines, sector classification, gap-fill event counts, and
 the SPY/sector-ETF window returns that the relative-performance compute
 consumes.
 
-The shell-vs-core split is what lets the orchestrator Phase 2 run
-``compute_*`` in ``asyncio.TaskGroup`` over pre-loaded frozen inputs —
-no shared mutable session means no "Session is already flushing"
+The shell-vs-core split is what lets the per-category indicator compute
+step run ``compute_*`` in ``asyncio.TaskGroup`` over pre-loaded frozen
+inputs — no shared mutable session means no "Session is already flushing"
 InvalidRequestError.
 """
 

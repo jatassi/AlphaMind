@@ -1,4 +1,6 @@
-"""ALP-484: timing test for Phase 2 TaskGroup parallelization (q1 + q3 + legacy).
+"""ALP-484: timing test for per-category indicator compute TaskGroup parallelization.
+
+Tests q1 + q3 + legacy subtask concurrency.
 
 ALP-467 piloted Q1 + a single-task legacy subtask; ALP-484 lifts q3 into
 its own TaskGroup task. The structural property the lift unlocks is that
@@ -21,7 +23,7 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_phase2_taskgroup_runs_q1_q3_and_legacy_in_parallel() -> None:
+async def test_category_indicator_compute_taskgroup_runs_q1_q3_and_legacy_in_parallel() -> None:
     """Replace the three thread-bound tasks with sleepers; total wall clock < sum."""
     sleep_s = 0.2
 
@@ -41,7 +43,7 @@ async def test_phase2_taskgroup_runs_q1_q3_and_legacy_in_parallel() -> None:
     # the test does not need a populated SQLite database. The shape under
     # test is the structural concurrency, not the orchestrator's own
     # session-bound preamble.
-    async def _run_phase2() -> tuple[float, tuple[Any, ...]]:
+    async def _run_category_indicator_compute() -> tuple[float, tuple[Any, ...]]:
         started = time.monotonic()
         async with asyncio.TaskGroup() as tg:
             q1_task = tg.create_task(asyncio.to_thread(_slow_q1))
@@ -50,13 +52,14 @@ async def test_phase2_taskgroup_runs_q1_q3_and_legacy_in_parallel() -> None:
         elapsed = time.monotonic() - started
         return elapsed, (q1_task.result(), q3_task.result(), legacy_task.result())
 
-    elapsed, results = await _run_phase2()
+    elapsed, results = await _run_category_indicator_compute()
 
     # The parallel wall clock must be substantially less than 3x sleep.
     # Threshold: max(sleep) + thread-spawn budget (50% headroom).
     assert elapsed < sleep_s * 1.5, (
-        f"Phase 2 wall clock {elapsed:.3f}s exceeds parallel-execution budget "
-        f"({sleep_s * 1.5:.3f}s); the TaskGroup is likely serializing tasks."
+        f"Per-category indicator compute wall clock {elapsed:.3f}s exceeds "
+        f"parallel-execution budget ({sleep_s * 1.5:.3f}s); the TaskGroup is "
+        f"likely serializing tasks."
     )
     # Sanity: all three tasks ran and returned their declared shapes.
     q1_result, q3_result, legacy_result = results

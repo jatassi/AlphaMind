@@ -3,9 +3,9 @@
 ALP-485 split this module along the compute/load boundary:
 
 * :func:`assemble_q6_blocks_from_inputs` — pure compute over a frozen
-  :class:`alphamind.distillation.q6._loaders.Q6Inputs`. The orchestrator's
-  Phase 2 calls this under ``asyncio.TaskGroup`` + ``asyncio.to_thread``
-  in parallel with q1 / q3 / qualitative.
+  :class:`alphamind.distillation.q6._loaders.Q6Inputs`. The per-category
+  indicator compute step calls this under ``asyncio.TaskGroup`` +
+  ``asyncio.to_thread`` in parallel with q1 / q3 / qualitative.
 * :func:`compute_q6_blocks` — thin session-accepting shim that wraps the
   session in :func:`load_q6_inputs` and delegates to the pure compute.
 
@@ -278,9 +278,9 @@ def assemble_q6_blocks_from_inputs(inputs: Q6Inputs) -> list[OutputBlock]:
     """Pure-compute assembly of every Q6 :class:`OutputBlock`.
 
     Operates entirely on the pre-loaded :class:`Q6Inputs`; no DB access.
-    This is the function the orchestrator's Phase 2 calls under
-    ``asyncio.TaskGroup`` + ``asyncio.to_thread`` parallel with q1 / q3 /
-    qualitative.
+    This is the function the per-category indicator compute step calls
+    under ``asyncio.TaskGroup`` + ``asyncio.to_thread`` parallel with q1
+    / q3 / qualitative.
 
     When all three label-input classifiers (yield-curve, inflation,
     dollar) produced a result, the calibrated path runs through

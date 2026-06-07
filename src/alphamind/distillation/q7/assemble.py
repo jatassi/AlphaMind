@@ -3,9 +3,9 @@
 ALP-486 split this module along the compute/load boundary:
 
 * :func:`assemble_q7_blocks_from_inputs` — pure compute over a frozen
-  :class:`alphamind.distillation.q7._loaders.Q7Inputs`. The orchestrator's
-  Phase 2 calls this under ``asyncio.TaskGroup`` + ``asyncio.to_thread`` in
-  parallel with q1 / q3 / q6 / qualitative.
+  :class:`alphamind.distillation.q7._loaders.Q7Inputs`. The per-category
+  indicator compute step calls this under ``asyncio.TaskGroup`` +
+  ``asyncio.to_thread`` in parallel with q1 / q3 / q6 / qualitative.
 * :func:`assemble_q7_blocks` — thin session-accepting shim that wraps
   :func:`load_q7_inputs` then delegates to the pure compute.
 
@@ -29,9 +29,9 @@ def assemble_q7_blocks_from_inputs(inputs: Q7Inputs) -> list[OutputBlock]:
     """Pure-compute assembly of every Q7 :class:`OutputBlock`.
 
     Operates entirely on the pre-loaded :class:`Q7Inputs`; no DB access.
-    This is the function the orchestrator's Phase 2 calls under
-    ``asyncio.TaskGroup`` + ``asyncio.to_thread`` parallel with q1 / q3 /
-    q6 / qualitative.
+    This is the function the per-category indicator compute step calls
+    under ``asyncio.TaskGroup`` + ``asyncio.to_thread`` parallel with q1
+    / q3 / q6 / qualitative.
 
     The loader has already invoked the per-sub pure computes and persisted
     the intra-sector divergence events; this function concatenates the

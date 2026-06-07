@@ -6,7 +6,8 @@ consumes. The composition root in
 :mod:`alphamind.distillation.orchestrator` calls
 :func:`load_qualitative_inputs` sequentially under the shared SQLAlchemy
 session (this is the IO shell half) and then dispatches the pure compute
-inside an ``asyncio.to_thread`` call inside the Phase 2 ``TaskGroup``.
+inside an ``asyncio.to_thread`` call inside the per-category indicator
+compute ``TaskGroup``.
 
 The sector → audience map is resolved once here and threaded into the
 per-ticker sub-loaders so the news/price divergence and sentiment-percentile

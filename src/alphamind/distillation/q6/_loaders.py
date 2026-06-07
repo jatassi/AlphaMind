@@ -2,7 +2,7 @@
 
 The compute path is :func:`assemble_q6_blocks_from_inputs` — a pure
 function over :class:`Q6Inputs` (frozen). This module is the only place
-Q6 reaches the database for the Phase 2 dispatch.
+Q6 reaches the database for the per-category indicator compute dispatch.
 
 Responsibilities:
 
@@ -445,7 +445,8 @@ def _try_dollar_result(
 
 
 # ---------------------------------------------------------------------------
-# Composite-refresh writers (the load-bearing flushes Phase 2 was waiting on)
+# Composite-refresh writers (load-bearing flushes the per-category indicator
+# compute step was waiting on)
 # ---------------------------------------------------------------------------
 
 

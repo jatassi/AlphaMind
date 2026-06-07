@@ -87,7 +87,7 @@ ignore_imports =
     alphamind.distillation.calibration -> sqlalchemy
     alphamind.distillation.contract_scope -> sqlalchemy
     alphamind.distillation.orchestrator -> sqlalchemy
-    # ALP-709: orchestrator phase-6 invokes
+    # ALP-709: the invocation-archive write step invokes
     # ``analysis.qualitative_research.loaders.compute_sentiment_inflow_metrics``
     # so the operator data-health snapshot carries inter-baseline news-flow
     # telemetry. The helper reuses three private loader functions
@@ -238,9 +238,9 @@ ignore_imports =
 
 # Forbidden contract (ALP-467 pilot): pure-compute cores split out by the
 # distillation compute/load boundary pilot must never import sqlalchemy.
-# This is the architectural seam that lets the distillation orchestrator run
-# ``asyncio.TaskGroup``-parallel over ``asyncio.to_thread(compute_*)`` calls
-# — no shared mutable session means no "Session is already flushing"
+# This is the architectural seam that lets the per-category indicator compute
+# step run ``asyncio.TaskGroup``-parallel over ``asyncio.to_thread(compute_*)``
+# calls — no shared mutable session means no "Session is already flushing"
 # InvalidRequestError. Compute modules expand here as further sub-modules
 # split out per the multi-quarter propagation tracked as ALP-467
 # follow-ups (q6 / q7 / qualitative / remaining q3 categories).
