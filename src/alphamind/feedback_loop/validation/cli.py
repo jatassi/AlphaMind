@@ -22,6 +22,7 @@ import asyncio
 import json
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from alphamind.feedback_loop.metrics.types import MetricId
@@ -67,8 +68,7 @@ def _read_payload(path: str) -> Mapping[str, object]:
 
 
 def _read_file(path: str) -> str:
-    with open(path, encoding="utf-8") as handle:  # noqa: PTH123 — explicit text read
-        return handle.read()
+    return Path(path).read_text(encoding="utf-8")
 
 
 def _parse_dt(value: str) -> datetime:
