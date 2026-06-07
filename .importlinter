@@ -354,6 +354,24 @@ source_modules =
 forbidden_modules =
     alphamind.execution
 
+# Forbidden contract: ``alphamind.feedback_loop.metrics`` holds the pure metric
+# cores (ALP-882). Functional core / imperative shell: a metric's ``compute`` is
+# a pure function over a ``WindowDataset``; all DB I/O lives in the loader shell
+# (``feedback_loop.dataset.load_window``). The cores therefore never reach the
+# session / persistence / repository layer. The registry's dynamic discovery
+# (``importlib.import_module``) is not a static import, so it is invisible here —
+# only a metric module that *statically* imports sqlalchemy trips this.
+[importlinter:contract:feedback-loop-metric-cores-no-sqlalchemy]
+name = feedback_loop metric cores are pure — no sqlalchemy / session / repository imports
+type = forbidden
+source_modules =
+    alphamind.feedback_loop.metrics
+forbidden_modules =
+    sqlalchemy
+    alphamind.persistence.models
+    alphamind.persistence.session
+    alphamind.state.repository
+
 # Layered contract: ``alphamind.distillation`` sits above
 # ``alphamind.persistence.models``. The forbidden shape that would
 # directly ban ``distillation -> persistence.models`` carries 23
