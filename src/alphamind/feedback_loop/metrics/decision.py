@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, get_args
 from alphamind.commands.pm_envelope import (
     AdjustmentCategory,
     PositionActionEvaluation,
+    SourceProvenance,
     ThesisQualityEvaluation,
 )
 from alphamind.feedback_loop.metrics.types import (
@@ -197,16 +198,30 @@ def _compute_pm_modification_rate(
 # PM per-criterion fail rate (per source agent x criterion)
 # ---------------------------------------------------------------------------
 
+#: The two source-provenance variants, named off the ``SourceProvenance`` Literal so the
+#: filters and metric registration below carry no bare ``"pm_analyst"`` / ``"pm_strategist"``
+#: strings. ``get_args(SourceProvenance)`` is the authoritative member set; if a variant is
+#: added to the Literal, the completeness assert on ``_CRITERIA_BY_PROVENANCE`` fails until
+#: it is wired here rather than being silently dropped from the per-criterion denominators.
+_PM_ANALYST: SourceProvenance = "pm_analyst"
+_PM_STRATEGIST: SourceProvenance = "pm_strategist"
+
 #: Canonical criterion keys per source provenance — derived from the field names on the
 #: ``ThesisQualityEvaluation`` (analyst) / ``PositionActionEvaluation`` (strategist)
 #: models that produce ``evaluation_json``, so they cannot drift from the envelope
 #: contract.
-_ANALYST_CRITERIA: tuple[str, ...] = tuple(ThesisQualityEvaluation.model_fields)
-_STRATEGIST_CRITERIA: tuple[str, ...] = tuple(PositionActionEvaluation.model_fields)
+_CRITERIA_BY_PROVENANCE: dict[SourceProvenance, tuple[str, ...]] = {
+    _PM_ANALYST: tuple(ThesisQualityEvaluation.model_fields),
+    _PM_STRATEGIST: tuple(PositionActionEvaluation.model_fields),
+}
+
+# Completeness guard: every ``SourceProvenance`` variant must register a criteria set, so
+# a variant added to the Literal cannot be silently dropped from the fail-rate metrics.
+assert set(_CRITERIA_BY_PROVENANCE) == set(get_args(SourceProvenance))
 
 
 def _criterion_fail_rate_compute(
-    metric_id: MetricId, source_provenance: str, criterion: str
+    metric_id: MetricId, source_provenance: SourceProvenance, criterion: str
 ) -> Callable[[WindowDataset, Conditioning], MetricResult]:
     def _compute(dataset: WindowDataset, conditioning: Conditioning) -> MetricResult:
         decisions = [
@@ -223,7 +238,7 @@ def _criterion_fail_rate_compute(
 
 
 def _criterion_fail_rate_metrics(
-    source_provenance: str, criteria: tuple[str, ...]
+    source_provenance: SourceProvenance, criteria: tuple[str, ...]
 ) -> tuple[Metric, ...]:
     id_prefix = f"pm_{source_provenance.removeprefix('pm_')}_criterion_fail_rate"
     metrics: list[Metric] = []
@@ -288,8 +303,11 @@ _PM_METRICS: tuple[Metric, ...] = (
         bins=_VERDICT_BINS,
         population=_verdicts,
     ),
-    *_criterion_fail_rate_metrics("pm_analyst", _ANALYST_CRITERIA),
-    *_criterion_fail_rate_metrics("pm_strategist", _STRATEGIST_CRITERIA),
+    *(
+        metric
+        for provenance, criteria in _CRITERIA_BY_PROVENANCE.items()
+        for metric in _criterion_fail_rate_metrics(provenance, criteria)
+    ),
     *_distribution_metrics(
         id_prefix="pm_modification_category_rate",
         bins=tuple((c, c) for c in _ADJUSTMENT_CATEGORIES),
@@ -314,7 +332,7 @@ def _analyst_convictions(dataset: WindowDataset) -> tuple[int, ...]:
     """
     convictions: list[int] = []
     for d in _pm_decisions(dataset):
-        if d.source_provenance_json.get("source_provenance") != "pm_analyst":
+        if d.source_provenance_json.get("source_provenance") != _PM_ANALYST:
             continue
         level = d.originating_proposal_json.get("conviction_level")
         if isinstance(level, int):
@@ -362,7 +380,7 @@ def _strategist_assessments(dataset: WindowDataset) -> tuple[dict[str, object], 
     return tuple(
         d.originating_proposal_json
         for d in _pm_decisions(dataset)
-        if d.source_provenance_json.get("source_provenance") == "pm_strategist"
+        if d.source_provenance_json.get("source_provenance") == _PM_STRATEGIST
     )
 
 
