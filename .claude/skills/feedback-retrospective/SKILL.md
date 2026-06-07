@@ -5,54 +5,99 @@ description: Use to conduct an open-ended quarterly LLM-driven deep retrospectiv
 
 # Feedback retrospective session
 
-A long-form, calendar-anchored retrospective in which Claude reads a large window of AlphaMind's operating history end-to-end and surfaces patterns the deterministic metrics could not catch on their own. The output: a structured retrospective report, plus a list of promotion candidates (patterns worth instrumenting as new deterministic metrics) and follow-up actions (validations to register, prompt edits to consider).
+The quarterly open-ended job from
+[`feedback-loop.md` § Skills](../../../docs/design/feedback-loop.md#skills): read a large
+window of AlphaMind's operating history end-to-end and surface patterns the deterministic
+metrics could not catch on their own. The output is a structured retrospective report —
+promotion candidates (patterns worth instrumenting as new deterministic metrics) and
+follow-up actions (validations to register, pending rollback decisions to resolve).
 
-This is the most expensive feedback-loop activity: it consumes substantial tokens reading raw agent outputs across the window. Calendar-anchored (typically once per quarter) keeps the cost contained.
+Read [`docs/agents/feedback-loop-skills.md`](../../../docs/agents/feedback-loop-skills.md)
+first — it defines the headless CLI surface, the review discipline, the rollback-evidence
+protocol, the MetricId catalog pointer, and the dashboard affordances deferred to
+[ALP-686](https://linear.app/alphamind-jatassi/issue/ALP-686). The metric inventory, the
+confounder list, and the framing for what the LLM retrospective is meant to find that the
+deterministic layer cannot live in
+[`docs/design/feedback-loop.md`](../../../docs/design/feedback-loop.md); read it on first
+invocation, particularly the metric inventory and the citation-chain section.
 
-The discipline: open-ended pattern discovery, conditioning context required for every claim, promotion candidates over prescriptions, "noticed but unexplained" as a valid finding.
+This is the most expensive feedback-loop activity: it consumes substantial tokens reading
+raw agent outputs across the window. The calendar anchor (typically once per quarter) keeps
+the cost contained.
 
-The full design context is in [`docs/design/feedback-loop.md`](../../../docs/design/feedback-loop.md) — read it on first invocation, particularly the metric inventory and the citation-chain section.
-
-This skill assumes the AlphaMind dashboard exposes the review-session tools (used for the walkthrough phase) and the analytics-query surface (used for the data-ingestion phase), plus the Chrome browser automation tools for opening the dashboard URL.
+This skill runs headlessly. The command-center dashboard and its review-session shared
+canvas — including the retrospective view — are deferred to
+[ALP-686](https://linear.app/alphamind-jatassi/issue/ALP-686). The report is saved as
+markdown the operator reads; decisions are captured through the CLI. When that surface
+lands, the same report renders on the dashboard and the deferred affordances ground it
+visually.
 
 ---
 
 ## 1. The phases
 
-The session has four distinct phases. Run them in order.
+Four phases, in order. Phases 1–3 are Claude-only; Phase 4 is interactive. Each of Phases
+1, 3, and 4 drives one subcommand of the retrospective CLI
+(`python -m alphamind.feedback_loop.retrospective.cli`, ALP-890):
+
+| Phase | Subcommand | Drives |
+|---|---|---|
+| 1 — Data ingestion | `ingest` | the in-window data set |
+| 3 — Report rendering | `save-report` | persist the rendered markdown |
+| 4 — Walkthrough | `capture-decision` | record each operator decision |
+
+Pass `--db-path` against the production DB read-only per the
+[environment policy](../../../CLAUDE.md); omit it to fall back to the configured production
+path (the CLI warns when it does). Exit codes: `0` success, `1` argument error, `2`
+infrastructure error.
 
 ### Phase 1 — Data ingestion (Claude-only, no operator interaction)
 
-Claude reads the operating record for the window. Default window: the prior calendar quarter. Operator can override.
+Default window: the prior calendar quarter; the operator can override. Run:
 
-The ingestion pulls:
-- All invocation records in the window with their provenance (active regime, prompt versions, model versions, mode/overlay activations)
-- All thesis resolutions with component-level outcomes
-- All PM decision envelopes with verdicts, criterion pass/fail, modifications, identified anti-patterns
-- All counterfactual replays with verdicts and confidence
-- All anti-pattern occurrences across all PM envelopes
-- Cost and latency aggregates per agent
-- All validation outcomes with `rollback_status = optional_pending_retrospective` that have not yet been resolved by a `decision_type: follow_up` entry on a prior retrospective (per [feedback-loop.md § Rollback evidence protocol](../../../docs/design/feedback-loop.md#rollback-evidence-protocol))
+```
+python -m alphamind.feedback_loop.retrospective.cli ingest \
+    --start <ISO-8601> --end <ISO-8601> [--db-path <path>]
+```
 
-This is heavy. It will consume substantial tokens. Confirm at the start that the operator is OK with a several-minute pause, then proceed without further interaction until Phase 2 completes.
+`--start`/`--end` are tz-aware ISO-8601 (a naive datetime exits 1). The command prints the
+in-window counts you read in this phase: `agent_calls`, `thesis_resolutions`, `pm_decisions`,
+`validations`, `replays`, and `pending_rollbacks` — the
+`rollback_status = optional_pending_retrospective` outcomes not yet resolved by a prior
+`decision_type: follow_up`, per
+[`feedback-loop-skills.md` § Rollback evidence protocol](../../../docs/agents/feedback-loop-skills.md#rollback-evidence-protocol).
+
+This is heavy and will consume substantial tokens. Confirm at the start that the operator is
+OK with a several-minute pause, then proceed without further interaction until Phase 2
+completes.
 
 ### Phase 2 — Pattern surfacing (Claude-only)
 
-Read the ingested data with the goal of finding patterns the deterministic metrics did not surface. Categories worth looking for:
+Read the ingested data to find patterns the deterministic metrics did not surface — the
+purpose this skill exists for. Look across cross-agent interactions, regime-conditioned
+behavior shifts, repeating thesis-failure narratives, synthesizer drop patterns, PM
+modification stickiness, adaptive-researcher productivity, and prompt-edit drift; the metric
+inventory and citation-chain section of
+[`feedback-loop.md`](../../../docs/design/feedback-loop.md#metric-inventory) bound what the
+deterministic layer already covers, so aim past it.
 
-- **Cross-agent interaction patterns.** When agent X said Y, agent Z usually responded with W — and the combination is associated with a particular outcome distribution.
-- **Regime-conditioned behavior shifts.** An agent's reasoning style or output shape changed in a particular regime in a way no single metric flagged.
-- **Repeating thesis-failure narratives.** Many invalidated theses share a structural failure not caught by any anti-pattern detector.
-- **Synthesizer drop patterns.** Categories of upstream findings the synthesizer systematically deprioritizes that turn out to have predictive value.
-- **PM modification stickiness.** Modifications PM applies to certain proposal shapes that turn out to be systematic improvements (or systematic over-corrections).
-- **Adaptive researcher productivity patterns.** Tool budget allocation patterns that correlate with downstream citation rates.
-- **Prompt edit drift.** Behavior changes that don't trace to a specific edit but accumulated across multiple ones.
-
-Some categories will be empty. "Noticed but no clear pattern" is a valid finding to record — the absence of pattern in a place you looked is itself information.
+Some categories yield nothing. "Noticed but no clear pattern" is a valid finding — the
+absence of pattern in a place you looked is itself information.
 
 ### Phase 3 — Report rendering
 
-Produce a structured report with these sections:
+Render the report as markdown, then persist it:
+
+```
+python -m alphamind.feedback_loop.retrospective.cli save-report \
+    --start <ISO-8601> --end <ISO-8601> --markdown-file <path> \
+    [--session-id <id>] [--db-path <path>] [--data-root <path>]
+```
+
+The command writes the markdown to `data/retrospective_reports/{report_id}/report.md`,
+writes the metadata row, and prints the new `report_id`. Carry that `report_id` into Phase 4.
+
+Structure the report with these sections:
 
 ```
 # Quarterly retrospective: {window}
@@ -90,67 +135,98 @@ Produce a structured report with these sections:
 - {candidate_2}: ...
 
 ## Suggested follow-ups
-- Pending rollback decisions: one bullet per ingested `optional_pending_retrospective` validation outcome — the failed validation's edited artifact, watched metric, verdict, the rule that produced the deferred status, and a recommended accept/reject framing. Item identifier prefix `follow_up.rollback_<artifact_slug>` so the decision rail's accept/reject capture routes through the existing `decision_type: follow_up` mechanism.
+- Pending rollback decisions: one bullet per `pending_rollbacks` entry from Phase 1 — the
+  failed validation's edited artifact, watched metric, verdict, the rule that produced the
+  deferred status, and a recommended accept/reject framing. Prefix each item identifier
+  `follow_up.rollback_<artifact_slug>` so Phase 4's capture routes through the
+  `decision_type: follow_up` mechanism.
 - Validations to register (for changes the operator might consider)
 - Investigations to schedule
 - Open questions for the next retrospective
 ```
 
-Save the report as a `retrospective_reports` entity per [state-persistence.md § Retrospective reports](../../../docs/design/05-execution-layer/state-persistence.md) (record metadata in the entity, long-form markdown to `data/retrospective_reports/{report_id}/report.md`) and render it in the dedicated [retrospective view](../../../docs/design/command-center.md#retrospective-view).
-
 ### Phase 4 — Walkthrough (operator + Claude interactive)
 
-Open a review session via `create_review_session()` (backed by `POST /review-sessions`) and `mcp__claude-in-chrome__tabs_create_mcp(url=dashboard_url)`. Navigate the operator to the rendered retrospective report and walk through it top-to-bottom using the standard affordances (`highlight_metric`, `highlight_chart_point`, `navigate_to_view`, `annotate`, `pin_for_comparison`) plus the retrospective-view-specific affordances `scroll_to_section(section_anchor)` and `highlight_decision_row(item_identifier)` per [command-center.md § Retrospective view](../../../docs/design/command-center.md#retrospective-view).
+Walk the operator through the saved `report.md` top-to-bottom — they read the markdown; the
+dashboard retrospective view (`scroll_to_section` / `highlight_decision_row` and the
+review-session canvas) is deferred to
+[ALP-686](https://linear.app/alphamind-jatassi/issue/ALP-686), catalogued in
+[`feedback-loop-skills.md` § Deferred dashboard affordances](../../../docs/agents/feedback-loop-skills.md#deferred-dashboard-affordances-alp-686).
 
-Capture decisions in real-time via `POST /api/retrospective/{report_id}/decisions` with body `{item_identifier, decision_type, verdict, rationale, linked_validation_id?}` per [command-center.md § Retrospective view](../../../docs/design/command-center.md#retrospective-view), which writes a `retrospective_decisions` record per [state-persistence.md § Retrospective decisions](../../../docs/design/05-execution-layer/state-persistence.md):
-- Promotion candidates accepted (`decision_type: promotion_candidate`, `verdict: accepted`) → operator implements the new metric separately
-- Promotion candidates rejected (`decision_type: promotion_candidate`, `verdict: rejected`) → record with rationale
-- Suggested follow-ups accepted (`decision_type: follow_up`, `verdict: accepted`) → some may convert to validation registrations (handoff to `/feedback-validate`); when they do, capture the resulting validation ID as `linked_validation_id`. For pending rollback decisions, an accept verdict means the operator will execute the rollback; route the registration handoff to the paired post-rollback validation flow per [`feedback-validate` § The evaluation walk](../feedback-validate/SKILL.md#the-evaluation-walk) step 10, and capture the resulting validation ID as `linked_validation_id`.
+Capture each decision as the operator makes it:
 
-End the session via `end_review_session()` (backed by `DELETE /review-sessions/{id}`). The report itself persists; the session state is transient.
+```
+python -m alphamind.feedback_loop.retrospective.cli capture-decision \
+    --report-id <id> --item-identifier <id> \
+    --decision-type {promotion_candidate,follow_up} \
+    --verdict {accepted,rejected} --rationale <text> \
+    [--linked-validation-id <id>] [--db-path <path>]
+```
+
+The command writes a `retrospective_decisions` row and prints the `decision_id`. Map the
+report sections onto its arguments:
+
+- **Promotion candidates** → `--decision-type promotion_candidate`. An `accepted` verdict
+  means the operator implements the new metric separately; a `rejected` verdict records the
+  rationale.
+- **Suggested follow-ups** → `--decision-type follow_up`. When an accepted follow-up converts
+  to a validation registration, hand off to [`/feedback-validate`](../feedback-validate/SKILL.md)
+  REGISTER and pass the resulting validation id back as `--linked-validation-id`.
+- **Pending rollback decisions** (the `follow_up.rollback_<artifact_slug>` items) →
+  `--decision-type follow_up`. An `accepted` verdict means the operator will execute the
+  rollback; route the paired post-rollback registration through
+  [`/feedback-validate`](../feedback-validate/SKILL.md) and pass its validation id back as
+  `--linked-validation-id`. The rule that produced each deferred status is fixed by the
+  [rollback evidence protocol](../../../docs/agents/feedback-loop-skills.md#rollback-evidence-protocol)
+  — no new judgment is introduced when resolving it here.
+
+The saved report persists; there is no session state to tear down.
 
 ---
 
 ## 2. Discipline you maintain throughout
 
-**Open-endedness.** This is not a checklist exercise. The patterns Claude finds are the patterns Claude finds. If a category yields nothing, write "nothing notable in this category" and move on. Inventing patterns to fill space wastes operator attention and pollutes the historical retrospective record.
+Apply the shared review discipline from
+[`feedback-loop-skills.md` § Review discipline](../../../docs/agents/feedback-loop-skills.md#review-discipline)
+— confounder conditioning, sample-size honesty, Goodhart framing, no auto-prescription.
+Three applications are specific to an open-ended retrospective:
 
-**Conditioning context for every claim.** Every pattern observation must name the conditioning under which it holds: which regime(s), which prompt versions, which model versions, which sectors. Unconditioned patterns are usually noise.
-
-**Promotion candidates, not prescriptions.** Phase 3's "Promotion candidates" section proposes new metrics worth instrumenting. The retrospective surfaces what to MEASURE; the operator decides what to CHANGE in subsequent sessions (typically `/feedback-validate` for proposed changes).
-
-**"Noticed but unexplained" is a valid finding.** Some patterns will resist explanation in the available data. Record them honestly. They become hypotheses for the next quarter.
-
-**Sample-size honesty.** If a pattern is based on three data points, say so. A small sample is a hint, not a signal.
-
----
-
-## 3. Using the dashboard affordances
-
-Phase 4 uses the same review-session affordances as `/feedback-review`. The retrospective report itself is rendered as a dedicated view; navigate to it as the starting point.
-
-Phases 1–3 are Claude-only and do not use the dashboard. They produce the report which Phase 4 walks through.
+- **Open-endedness.** The patterns Claude finds are the patterns Claude finds. If a category
+  yields nothing, write "nothing notable in this category" and move on. Inventing patterns to
+  fill space wastes operator attention and pollutes the historical record.
+- **Promotion candidates, not prescriptions.** The retrospective surfaces what to MEASURE; the
+  operator decides what to CHANGE in subsequent sessions (typically `/feedback-validate` for a
+  proposed change). The "Promotion candidates" section proposes new metrics; it does not
+  direct edits.
+- **"Noticed but unexplained" is a valid finding.** Some patterns resist explanation in the
+  available data. Record them honestly — they become hypotheses for the next quarter.
 
 ---
 
-## 4. Anti-patterns
+## 3. Anti-patterns specific to running a retrospective
 
-**Filling sections to look thorough.** If the citation-chain analysis produced no notable shifts, write "no notable shifts" — do not pad with restating the metric definitions.
-
-**Rebrand of the dashboard's existing metrics.** The retrospective adds value by surfacing things the metrics didn't catch. If the report's "Patterns observed" section reads like the dashboard's monthly view, you've done it wrong — re-read the section with fresh eyes and find the things behind the numbers.
-
-**Prescriptive language.** "The strategist should tighten its at-risk criteria." Replace with: "Strategist `at-risk` classifications in elevated-vol regimes had 38% forward invalidation rate vs. 62% in normal-vol; worth investigating whether the criteria need regime-conditioning." Findings, not prescriptions.
-
-**Drowning the operator in detail.** The Phase 4 walkthrough should be navigable in 60–90 minutes. If the report is too long to walk through, the report is too long. Cut.
-
-**Confounder hand-waving.** "PM rejection rate of analyst proposals declined 8pp this quarter" is useless without: what was the regime distribution, which prompt versions were active, were there other concurrent edits.
+- **Filling sections to look thorough.** If the citation-chain analysis produced no notable
+  shifts, write "no notable shifts" — do not pad with restated metric definitions.
+- **Rebranding the existing metrics.** The retrospective adds value by surfacing what the
+  metrics didn't catch. If "Patterns observed" reads like the digest's weekly view, re-read
+  the section and find the things behind the numbers.
+- **Drowning the operator in detail.** The Phase 4 walkthrough should stay navigable in one
+  sitting. If the report is too long to walk through, the report is too long. Cut.
+- **Confounder hand-waving.** "PM rejection rate of analyst proposals declined 8pp" is useless
+  without the regime distribution, the active prompt versions, and any concurrent edits over
+  the window.
 
 ---
 
-## 5. Cross-references
+## 4. Cross-references
 
-- [`docs/design/feedback-loop.md`](../../../docs/design/feedback-loop.md) — full metric inventory, confounder list, citation-chain methodology, the framing for what the LLM retrospective is meant to find that the deterministic layer cannot
-- [`docs/design/command-center.md § Review sessions`](../../../docs/design/command-center.md#review-sessions) — session API surface used in Phase 4
-- [`docs/design/05-execution-layer/state-persistence.md`](../../../docs/design/05-execution-layer/state-persistence.md) — agent_calls, counterfactual_replays, activity log entries, thesis records that Phase 1 ingests
-- [`feedback-review`](../feedback-review/SKILL.md) — sibling skill for routine review
-- [`feedback-validate`](../feedback-validate/SKILL.md) — sibling skill for validation registration; Phase 4 may hand off to it for follow-ups
+- [`docs/agents/feedback-loop-skills.md`](../../../docs/agents/feedback-loop-skills.md) —
+  shared reference: headless CLI surface, review discipline, rollback-evidence protocol,
+  MetricId catalog pointer, deferred dashboard affordances
+- [`docs/design/feedback-loop.md`](../../../docs/design/feedback-loop.md) — full metric
+  inventory, confounder list, citation-chain methodology, and the framing for what the LLM
+  retrospective finds that the deterministic layer cannot
+- [`feedback-review`](../feedback-review/SKILL.md) — sibling skill for routine performance
+  review
+- [`feedback-validate`](../feedback-validate/SKILL.md) — sibling skill for validation
+  registration; Phase 4 hands off to it for follow-ups and pending rollback decisions
