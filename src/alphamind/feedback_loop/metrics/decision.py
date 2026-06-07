@@ -310,13 +310,15 @@ def _anti_pattern_frequency_compute(
     return _compute
 
 
-# The conditioning dimensions reachable from the existing WindowDataset bundles: the
+# The conditioning dimensions reachable from the WindowDataset bundles: the
 # pm_decision_log↔agent_calls join on invocation_id exposes the PM agent call's
-# model_id (MODEL_VERSION) and prompt_git_sha (PROMPT_VERSION). REGIME / SECTOR / etc.
-# have no field in either bundle, so no metric here declares them.
+# model_id (MODEL_VERSION) and prompt_git_sha (PROMPT_VERSION), and the
+# pm_decision_log↔regimes join (ALP-911) resolves each decision's invocation
+# active_regime (REGIME). SECTOR / CONVICTION / etc. still have no reachable field.
 _PM_SUPPORTED_CONDITIONING: tuple[ConditioningDimension, ...] = (
     ConditioningDimension.MODEL_VERSION,
     ConditioningDimension.PROMPT_VERSION,
+    ConditioningDimension.REGIME,
 )
 
 
@@ -332,13 +334,14 @@ _PM_METRICS: tuple[Metric, ...] = (
         metric_id=_PM_MODIFICATION_RATE,
         po_type="process",
         default_window=Window.WEEKLY,
-        supported_conditioning=(),
+        supported_conditioning=_PM_SUPPORTED_CONDITIONING,
         compute=_compute_pm_modification_rate,
     ),
     *_distribution_metrics(
         id_prefix="pm_verdict_rate",
         bins=_VERDICT_BINS,
         population=_verdicts,
+        supported_conditioning=_PM_SUPPORTED_CONDITIONING,
     ),
     *(
         metric

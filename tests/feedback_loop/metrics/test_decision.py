@@ -601,18 +601,98 @@ class TestConditioning:
         assert sliced.value == 0.5
         assert sliced.sample_size == 2
 
+    def test_regime_slice_isolates_one_regime(self) -> None:
+        # ALP-911: a REGIME slice resolves each decision's invocation through the
+        # loader's regime map. Two invocations in different regimes; the slice keeps
+        # only the matching regime's decisions.
+        log = (
+            _pm_entry(verdict=PMVerdict.APPROVE, invocation_id="inv-normal"),
+            _pm_entry(verdict=PMVerdict.REJECT, invocation_id="inv-normal"),
+            _pm_entry(verdict=PMVerdict.APPROVE, invocation_id="inv-elevated"),
+        )
+        regimes = RegimeBundle(
+            by_invocation={"inv-normal": "normal", "inv-elevated": "elevated"}
+        )
+        dataset = _dataset(log, regimes=regimes)
+
+        # Unconditioned: 2 approve / 3 total.
+        assert _compute("pm_approval_rate", dataset).value == 2 / 3
+
+        # Conditioned to the elevated regime: only inv-elevated (1 approve / 1 total).
+        elevated = _compute(
+            "pm_approval_rate",
+            dataset,
+            Conditioning(dimension=ConditioningDimension.REGIME, value="elevated"),
+        )
+        assert elevated.value == 1.0
+        assert elevated.sample_size == 1
+
+        # Conditioned to normal: inv-normal (1 approve / 2 total).
+        normal = _compute(
+            "pm_approval_rate",
+            dataset,
+            Conditioning(dimension=ConditioningDimension.REGIME, value="normal"),
+        )
+        assert normal.value == 0.5
+        assert normal.sample_size == 2
+
+    def test_anti_pattern_frequency_recomputes_under_regime_slice(self) -> None:
+        log = (
+            _pm_entry(
+                verdict=PMVerdict.REJECT,
+                invocation_id="inv-elevated",
+                anti_patterns_json=["sunk_cost_persistence"],
+            ),
+            _pm_entry(verdict=PMVerdict.APPROVE, invocation_id="inv-normal"),
+        )
+        regimes = RegimeBundle(
+            by_invocation={"inv-normal": "normal", "inv-elevated": "elevated"}
+        )
+        dataset = _dataset(log, regimes=regimes)
+        sliced = _compute(
+            "anti_pattern_frequency__sunk_cost_persistence",
+            dataset,
+            Conditioning(dimension=ConditioningDimension.REGIME, value="elevated"),
+        )
+        assert sliced.value == 1.0
+        assert sliced.sample_size == 1
+
+    def test_analyst_inaction_recomputes_under_regime_slice(self) -> None:
+        bundle = _proposals(("inv-normal", 3), ("inv-elevated", 0))
+        regimes = RegimeBundle(
+            by_invocation={"inv-normal": "normal", "inv-elevated": "elevated"}
+        )
+        dataset = _dataset(analyst_proposals=bundle, regimes=regimes)
+        sliced = _compute(
+            "analyst_inaction_rate",
+            dataset,
+            Conditioning(dimension=ConditioningDimension.REGIME, value="elevated"),
+        )
+        assert sliced.value == 1.0
+        assert sliced.sample_size == 1
+
     def test_metric_declares_supported_conditioning(self) -> None:
         metric = get_metric(MetricId("pm_approval_rate"))
         assert metric is not None
         assert ConditioningDimension.MODEL_VERSION in metric.supported_conditioning
+        # ALP-911: REGIME is now a declared slice on the PM verdict/approval cores.
+        assert ConditioningDimension.REGIME in metric.supported_conditioning
 
-    def test_unsupported_conditioning_dimension_degrades_to_no_data(self) -> None:
-        # A dimension with no reachable agent_call field (e.g. REGIME) must not raise
-        # KeyError — the registry does not enforce supported_conditioning on compute
-        # callers, so the slice degrades to an empty (no-data) reading.
+    def test_analyst_and_anti_pattern_declare_regime(self) -> None:
+        for metric_id in (
+            "analyst_inaction_rate",
+            "analyst_proposals_per_invocation",
+            "anti_pattern_frequency__sunk_cost_persistence",
+        ):
+            metric = get_metric(MetricId(metric_id))
+            assert metric is not None
+            assert ConditioningDimension.REGIME in metric.supported_conditioning
+
+    def test_regime_slice_with_empty_map_degrades_to_no_data(self) -> None:
+        # With no regime map (the default), a REGIME slice matches no invocation and
+        # the metric degrades to an empty (no-data) reading rather than raising.
         log = (_pm_entry(verdict=PMVerdict.APPROVE, invocation_id="inv-1"),)
-        calls = (_agent_call(invocation_id="inv-1", model_id="claude-opus-4-8"),)
-        dataset = _dataset(log, calls)
+        dataset = _dataset(log)
         result = _compute(
             "pm_approval_rate",
             dataset,
