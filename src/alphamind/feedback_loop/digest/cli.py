@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import dataclasses
 import json
 import logging
 import sys
@@ -35,6 +34,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from alphamind.feedback_loop.digest.codec import serialize_digest
 from alphamind.feedback_loop.digest.generator import WeekInput, generate_digest
 from alphamind.feedback_loop.metrics import get_metric, list_metrics
 from alphamind.feedback_loop.metrics.types import UNCONDITIONED, MetricId
@@ -81,24 +81,6 @@ def _trailing_weeks(current_monday: date, count: int) -> list[date]:
 # ---------------------------------------------------------------------------
 # JSON serialisation (pure)
 # ---------------------------------------------------------------------------
-
-
-def _to_jsonable(obj: Any) -> Any:
-    """Recursively convert a frozen-dataclass digest tree into JSON-native values.
-
-    Dataclasses become dicts (slots-friendly via :func:`dataclasses.fields`); tuples
-    and lists become lists; datetimes become ISO strings; everything else is passed
-    through. ``property`` attributes are not serialised — only declared fields.
-    """
-    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        return {f.name: _to_jsonable(getattr(obj, f.name)) for f in dataclasses.fields(obj)}
-    if isinstance(obj, dict):
-        return {str(k): _to_jsonable(v) for k, v in obj.items()}
-    if isinstance(obj, (tuple, list)):
-        return [_to_jsonable(v) for v in obj]
-    if isinstance(obj, datetime):
-        return obj.isoformat()
-    return obj
 
 
 def _metric_result_json(result: MetricResult) -> dict[str, Any]:
@@ -267,7 +249,7 @@ def _run_digest(args: argparse.Namespace) -> int:
         return 2
 
     digest = generate_digest(weeks, digest_config)
-    print(json.dumps(_to_jsonable(digest), indent=2))
+    print(serialize_digest(digest))
     return 0
 
 
