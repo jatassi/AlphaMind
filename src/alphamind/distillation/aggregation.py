@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from alphamind.distillation.calibration import CalibrationState
+from alphamind.distillation.flag_event_types import resolve_flag_taxonomy
 from alphamind.distillation.output import (
     PERCENTAGE_FLOAT_FORMAT,
     SEVERITY_ORDER,
@@ -46,6 +47,13 @@ from alphamind.distillation.output import (
     OutputBlock,
     format_blocks_for_audience,
     severity_rank,
+)
+from alphamind.portfolio_state.events import (
+    ActivityLogEntry,
+    DistillationAnomalyFlagDetail,
+    EventGroup,
+    EventSource,
+    EventType,
 )
 
 # ---------------------------------------------------------------------------
@@ -120,6 +128,89 @@ def collect_anomalies(blocks: Iterable[OutputBlock]) -> list[AnomalySummary]:
                 )
             )
     return summaries
+
+
+# ---------------------------------------------------------------------------
+# Activity-log emission (ALP-881 / story 04b)
+# ---------------------------------------------------------------------------
+#
+# Persist each produced :class:`AnomalyFlag` as a ``DISTILLATION_ANOMALY_FLAG``
+# activity-log entry so the ALP-96 flag-rate reporter can query anomaly
+# history without re-parsing the invocation archive. The mapping is pure
+# (no I/O, no SQL); the distillation orchestrator owns the sync ``session.add``
+# of the resulting row.
+
+# Flag prefixes that embed a single ticker as their one dynamic ``:``-segment
+# (``correlation_locus_flag:{ticker}``). Every other dynamic-suffix flag carries
+# a *pair* (``correlation_breakdown_flag:{row}:{col}``,
+# ``intra_sector_correlation_divergence:{row}:{col}``) or a pair-key
+# (``lead_lag_inversion_flag:{pair_key}``, ``overdue_lag_flag:{pair_key}``) — no
+# single subject ticker — and so resolves to ``ticker=None``. Segment *count*
+# alone can't separate the locus case from the pair-key case (both have one
+# segment), so the ticker-bearing prefixes are enumerated explicitly.
+_TICKER_BEARING_FLAG_PREFIXES: frozenset[str] = frozenset({"correlation_locus_flag"})
+
+
+def _ticker_from_flag_name(flag_name: str) -> str | None:
+    """Return the embedded ticker for a ticker-bearing flag name, else ``None``.
+
+    ``correlation_locus_flag:NVDA`` → ``"NVDA"``. Market-wide flags (no ``:``
+    suffix) and pair / pair-key flags return ``None`` — they have no single
+    subject ticker.
+    """
+    prefix, _, suffix = flag_name.partition(":")
+    if not suffix or prefix not in _TICKER_BEARING_FLAG_PREFIXES:
+        return None
+    return suffix
+
+
+def anomaly_summary_to_activity_log_entry(
+    summary: AnomalySummary,
+    *,
+    invocation_id: str,
+    timestamp: datetime,
+) -> ActivityLogEntry:
+    """Build the ``DISTILLATION_ANOMALY_FLAG`` entry for one :class:`AnomalySummary`.
+
+    ``threshold_class`` / ``threshold_key`` come from
+    :func:`~alphamind.distillation.flag_event_types.resolve_flag_taxonomy`
+    (the story 02g registry, which strips any dynamic ``:``-suffix). ``magnitude``
+    / ``severity`` come from the flag; ``calibration_state`` / ``block_id`` from
+    the summary; ``ticker`` is the embedded segment for ticker-bearing flag
+    names and ``None`` for pair-key / market-wide flags.
+
+    Pure: no I/O, no SQL. The orchestrator persists the returned entry on its
+    own session. ``entry_id`` is deterministic in ``(invocation_id, block_id,
+    flag.name)`` so two runs of the same invocation produce the same PK and the
+    table never accumulates duplicate rows for one logical anomaly.
+    """
+    flag = summary.flag
+    taxonomy = resolve_flag_taxonomy(flag.name)
+    detail = DistillationAnomalyFlagDetail(
+        threshold_class=taxonomy.threshold_class,
+        threshold_key=taxonomy.threshold_key,
+        magnitude=flag.magnitude,
+        severity=flag.severity,
+        ticker=_ticker_from_flag_name(flag.name),
+        calibration_state=summary.calibration_state,
+        block_id=summary.source_block_id,
+    )
+    entry_id = (
+        f"{invocation_id}-{EventType.DISTILLATION_ANOMALY_FLAG.value}-"
+        f"{summary.source_block_id}-{flag.name}"
+    )
+    return ActivityLogEntry(
+        entry_id=entry_id,
+        invocation_id=invocation_id,
+        timestamp=timestamp,
+        event_type=EventType.DISTILLATION_ANOMALY_FLAG,
+        event_group=EventGroup.DISTILLATION_ANOMALY,
+        position_id=None,
+        order_id=None,
+        thesis_id=None,
+        source=EventSource.DISTILLATION_ORCHESTRATOR,
+        detail=detail,
+    )
 
 
 def group_anomalies_by_audience(
