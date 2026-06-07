@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 
 from alphamind.feedback_loop.validation.records import (
     ExpectedDirection,
@@ -16,12 +15,8 @@ from alphamind.feedback_loop.validation.records import (
     ValidationId,
     ValidationRecord,
 )
-from alphamind.state.tables._singleton_codec import datetime_to_iso_z
+from alphamind.state.tables._singleton_codec import datetime_to_iso_z, iso_z_to_datetime
 from alphamind.state.tables.validations import ValidationsRow
-
-
-def _parse_isoformat(text: str) -> datetime:
-    return datetime.fromisoformat(text)
 
 
 def record_to_row(record: ValidationRecord) -> ValidationsRow:
@@ -59,7 +54,7 @@ def row_to_record(row: ValidationsRow) -> ValidationRecord:
     """Decode a ``ValidationsRow`` back into a ``ValidationRecord``."""
     return ValidationRecord(
         validation_id=ValidationId(row.validation_id),
-        registered_at=_parse_isoformat(row.registered_at),
+        registered_at=iso_z_to_datetime(row.registered_at),
         registered_by_session_id=row.registered_by_session_id,
         edited_artifact=row.edited_artifact,
         pre_edit_version=row.pre_edit_version,
@@ -72,8 +67,8 @@ def row_to_record(row: ValidationsRow) -> ValidationRecord:
         expected_magnitude=row.expected_magnitude,
         success_criterion=row.success_criterion,
         failure_criterion=row.failure_criterion,
-        evaluation_due_at=_parse_isoformat(row.evaluation_due_at),
-        superseded_at=(None if row.superseded_at is None else _parse_isoformat(row.superseded_at)),
+        evaluation_due_at=iso_z_to_datetime(row.evaluation_due_at),
+        superseded_at=(None if row.superseded_at is None else iso_z_to_datetime(row.superseded_at)),
         superseded_reason=(
             None if row.superseded_reason is None else SupersededReason(row.superseded_reason)
         ),

@@ -8,7 +8,6 @@ the full nested structure.
 from __future__ import annotations
 
 import json
-from datetime import datetime
 
 from alphamind.feedback_loop.validation.records import (
     OutcomeId,
@@ -17,12 +16,8 @@ from alphamind.feedback_loop.validation.records import (
     ValidationOutcomeRecord,
     Verdict,
 )
-from alphamind.state.tables._singleton_codec import datetime_to_iso_z
+from alphamind.state.tables._singleton_codec import datetime_to_iso_z, iso_z_to_datetime
 from alphamind.state.tables.validation_outcomes import ValidationOutcomesRow
-
-
-def _parse_isoformat(text: str) -> datetime:
-    return datetime.fromisoformat(text)
 
 
 def record_to_row(record: ValidationOutcomeRecord) -> ValidationOutcomesRow:
@@ -46,7 +41,7 @@ def row_to_record(row: ValidationOutcomesRow) -> ValidationOutcomeRecord:
     return ValidationOutcomeRecord(
         outcome_id=OutcomeId(row.outcome_id),
         validation_id=ValidationId(row.validation_id),
-        evaluated_at=_parse_isoformat(row.evaluated_at),
+        evaluated_at=iso_z_to_datetime(row.evaluated_at),
         evaluated_by_session_id=row.evaluated_by_session_id,
         verdict=Verdict(row.verdict),
         posterior_summary=json.loads(row.posterior_summary_json),

@@ -7,8 +7,6 @@ All timestamps are stored as ISO 8601 text with UTC ``Z`` suffix.
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from alphamind.feedback_loop.retrospective.records import (
     DecisionId,
     DecisionType,
@@ -16,12 +14,8 @@ from alphamind.feedback_loop.retrospective.records import (
     RetrospectiveDecisionRecord,
     Verdict,
 )
-from alphamind.state.tables._singleton_codec import datetime_to_iso_z
+from alphamind.state.tables._singleton_codec import datetime_to_iso_z, iso_z_to_datetime
 from alphamind.state.tables.retrospective_decisions import RetrospectiveDecisionsRow
-
-
-def _parse_isoformat(text: str) -> datetime:
-    return datetime.fromisoformat(text)
 
 
 def record_to_row(record: RetrospectiveDecisionRecord) -> RetrospectiveDecisionsRow:
@@ -43,7 +37,7 @@ def row_to_record(row: RetrospectiveDecisionsRow) -> RetrospectiveDecisionRecord
     return RetrospectiveDecisionRecord(
         decision_id=DecisionId(row.decision_id),
         report_id=ReportId(row.report_id),
-        captured_at=_parse_isoformat(row.captured_at),
+        captured_at=iso_z_to_datetime(row.captured_at),
         decision_type=DecisionType(row.decision_type),
         item_identifier=row.item_identifier,
         verdict=Verdict(row.verdict),

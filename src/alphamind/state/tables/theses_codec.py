@@ -30,16 +30,13 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecordStatus,
     ThesisResolutionCategory,
 )
+from alphamind.state.tables._singleton_codec import iso_z_to_datetime
 from alphamind.state.tables.theses import ThesisRow
 from alphamind.state.tables.thesis_components import ThesisComponentRow
 
 
 def _isoformat(timestamp: datetime) -> str:
     return timestamp.isoformat().replace("+00:00", "Z")
-
-
-def _parse_isoformat(text: str) -> datetime:
-    return datetime.fromisoformat(text)
 
 
 def _key_assumption_to_dict(ka: KeyAssumption) -> dict[str, Any]:
@@ -154,14 +151,14 @@ def rows_to_record(
         position_size_rationale=thesis_row.position_size_rationale,
         components=components,
         status=ThesisRecordStatus(thesis_row.status),
-        generation_timestamp=_parse_isoformat(thesis_row.generation_timestamp),
+        generation_timestamp=iso_z_to_datetime(thesis_row.generation_timestamp),
         time_expectation_hours=thesis_row.time_expectation_hours,
         age_hours=payload["age_hours"],
-        expected_resolution_at=_parse_isoformat(payload["expected_resolution_at"]),
+        expected_resolution_at=iso_z_to_datetime(payload["expected_resolution_at"]),
         resolution_timestamp=(
             None
             if thesis_row.resolution_timestamp is None
-            else _parse_isoformat(thesis_row.resolution_timestamp)
+            else iso_z_to_datetime(thesis_row.resolution_timestamp)
         ),
         resolution_category=(
             None
@@ -206,7 +203,7 @@ def _component_from_row(
         instrument_reference=row.instrument_reference,
         narrative=row.narrative,
         key_assumptions=key_assumptions,
-        generation_timestamp=_parse_isoformat(generation_raw),
+        generation_timestamp=iso_z_to_datetime(generation_raw),
         resolution_outcome=(
             None
             if row.resolution_outcome is None

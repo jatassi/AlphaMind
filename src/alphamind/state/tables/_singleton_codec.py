@@ -1,9 +1,12 @@
-"""Helpers shared by the singleton-table codecs (``cash_ledger`` + ``drawdown_state``).
+"""Helpers shared by the table codecs.
 
-The ``last_updated_at`` column on each singleton row is storage-time
-metadata supplied as a kwarg by the write path — it is not carried by
-the typed record. Both codecs therefore share the same tz-aware guard
-and ISO 8601 ``Z``-suffix serializer.
+Covers the singleton tables (``cash_ledger`` + ``drawdown_state``) and
+the feedback-loop tables (``validations``, ``validation_outcomes``,
+``retrospective_reports``, ``retrospective_decisions``, ``theses``).
+
+All timestamps are stored as ISO 8601 text with a UTC ``Z`` suffix.
+``datetime_to_iso_z`` is the write-side serializer; ``iso_z_to_datetime``
+is its symmetric inverse on the read side.
 """
 
 from __future__ import annotations
@@ -22,3 +25,13 @@ def datetime_to_iso_z(value: datetime, *, field_name: str) -> str:
         msg = f"{field_name} must be timezone-aware; got {value!r}"
         raise ValueError(msg)
     return value.isoformat().replace("+00:00", "Z")
+
+
+def iso_z_to_datetime(text: str) -> datetime:
+    """Parse an ISO 8601 ``Z``-suffix string back to a ``datetime``.
+
+    This is the exact inverse of :func:`datetime_to_iso_z`.  On
+    Python 3.11+ ``datetime.fromisoformat`` accepts the ``Z`` suffix
+    written by the write side, so the round-trip is exact.
+    """
+    return datetime.fromisoformat(text)
