@@ -22,6 +22,12 @@ from alphamind.state.repository.activity_log_queries import (
     read_position_modification_trail,
     read_recent_pm_decision_log,
 )
+from alphamind.state.repository.agent_calls_queries import (
+    insert_agent_call,
+    read_agent_calls_for_agent,
+    read_agent_calls_for_invocation,
+    read_agent_calls_in_window,
+)
 from alphamind.state.repository.counterfactual_replays import (
     insert_counterfactual_replay,
     load_counterfactual_replays_for_envelope,
@@ -85,6 +91,7 @@ __all__ = [
     "SqlPortfolioStateRepository",
     "build_sql_portfolio_state_repository",
     "derive_validation_status",
+    "insert_agent_call",
     "insert_counterfactual_replay",
     "insert_validation",
     "insert_validation_outcome",
@@ -92,6 +99,9 @@ __all__ = [
     "load_counterfactual_replays_for_envelope",
     "load_position_state_at",
     "mark_validation_superseded",
+    "read_agent_calls_for_agent",
+    "read_agent_calls_for_invocation",
+    "read_agent_calls_in_window",
     "read_intra_invocation_changelog",
     "read_most_recent_config_change_new_hash",
     "read_outcomes_by_artifact",
