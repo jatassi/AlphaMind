@@ -102,7 +102,7 @@ def test_wave1_bracket_coverage_broken_raises() -> None:
 
 def test_wave1_resolution_classifier_five_inputs() -> None:
     mod = _load_script()
-    from alphamind.execution.thesis_model import classify_thesis_resolution
+    from alphamind.portfolio_state.records.thesis_resolution import classify_thesis_resolution
 
     # Each of the 5 cases the wave exercises
     cases = mod._resolution_classifier_cases()
@@ -113,8 +113,8 @@ def test_wave1_resolution_classifier_five_inputs() -> None:
 
 
 def test_wave1_resolution_empty_raises() -> None:
-    from alphamind.execution.thesis_model import classify_thesis_resolution
     from alphamind.portfolio_state.events.activity_log import PositionExitMethod
+    from alphamind.portfolio_state.records.thesis_resolution import classify_thesis_resolution
 
     with pytest.raises(ValueError):
         classify_thesis_resolution((), 100.0, PositionExitMethod.PM_DECISION)

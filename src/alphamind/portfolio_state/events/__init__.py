@@ -27,6 +27,7 @@ from alphamind.portfolio_state.events import (
     cash_margin,
     configuration,
     corporate_action,
+    distillation_anomaly,
     order_lifecycle,
     pm_decision,
     position_lifecycle,
@@ -60,6 +61,9 @@ from alphamind.portfolio_state.events.configuration import (
 )
 from alphamind.portfolio_state.events.corporate_action import (
     CorporateActionAppliedDetail,
+)
+from alphamind.portfolio_state.events.distillation_anomaly import (
+    DistillationAnomalyFlagDetail,
 )
 from alphamind.portfolio_state.events.order_lifecycle import (
     OrderCancelledDetail,
@@ -136,6 +140,7 @@ _ALL_REGISTRIES: list[tuple[EventType, type, EventGroup]] = [
     *corporate_action._REGISTRY,
     *reconciliation._REGISTRY,
     *configuration._REGISTRY,
+    *distillation_anomaly._REGISTRY,
 ]
 
 EVENT_TYPE_TO_DETAIL_CLASS: dict[EventType, type] = {
@@ -219,6 +224,7 @@ AnyDetailType = (
     | ReconciliationCorrectionDetail
     | DistillationConfigChangeDetail
     | ProfileSwitchedDetail
+    | DistillationAnomalyFlagDetail
 )
 
 
@@ -244,6 +250,7 @@ __all__ = [
     "CommandAbandonedDetail",
     "CorporateActionAppliedDetail",
     "CorporateActionType",
+    "DistillationAnomalyFlagDetail",
     "DistillationConfigChange",
     "DistillationConfigChangeDetail",
     "EmergencyInvocationRequestedDetail",

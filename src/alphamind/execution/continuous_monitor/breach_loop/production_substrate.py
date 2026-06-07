@@ -166,6 +166,7 @@ def load_breach_loop_loaded_config(config_dir: Path) -> LoadedConfig:
     from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
     from alphamind.config.models.digest import DigestConfig
     from alphamind.config.models.execution import ExecutionConfig
+    from alphamind.config.models.feedback import FeedbackLoopConfig
     from alphamind.config.models.guardrails import GuardrailsConfig
     from alphamind.config.models.llm_failure import LLMFailureConfig
     from alphamind.config.models.scheduler import SchedulerConfig
@@ -182,6 +183,7 @@ def load_breach_loop_loaded_config(config_dir: Path) -> LoadedConfig:
             read_yaml_file(config_dir / "llm_failure.yaml")
         ),
         digest=DigestConfig.model_validate(read_yaml_file(config_dir / "digest.yaml")),
+        feedback=FeedbackLoopConfig.model_validate(read_yaml_file(config_dir / "feedback.yaml")),
         assets=AssetsConfig.model_validate(read_yaml_file(config_dir / "assets.yaml")),
         agents=AgentsConfig.model_validate(read_yaml_file(config_dir / "agents.yaml")),
         continuous_monitor=ContinuousMonitorConfig.model_validate(
@@ -429,6 +431,9 @@ async def _assemble_for_breach_loop_tick(  # noqa: PLR0913 — substrate-level s
         active_risk_parameters_provider=_active_provider,
         prior_active_risk_parameters_provider=_prior_provider,
         config=state_persistence_config,
+        thesis_quality_aggregates_trailing_windows_days=(
+            portfolio_state_config.thesis_quality_aggregates_trailing_windows_days
+        ),
     )
     price_provider = _build_price_provider(underlying_cache, as_of=as_of)
     return assemble_snapshot(

@@ -574,8 +574,8 @@ def _wave1_coverage_cases() -> list[dict[str, Any]]:
 
 def _wave1_classifier_cases() -> list[dict[str, Any]]:
     """01b — 5 cases: thesis resolution classifier."""
-    from alphamind.execution.thesis_model import classify_thesis_resolution
     from alphamind.portfolio_state.events.activity_log import PositionExitMethod
+    from alphamind.portfolio_state.records.thesis_resolution import classify_thesis_resolution
 
     results: list[dict[str, Any]] = []
     classifier_cases = _resolution_classifier_cases()

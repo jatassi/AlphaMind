@@ -13,6 +13,7 @@ from decimal import Decimal
 
 import pytest
 
+from alphamind._kernel.calibration import CalibrationState
 from alphamind._kernel.ids import BracketId, OrderId, PositionId, Symbol, ThesisId
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.config.models.main import Profile
@@ -35,6 +36,7 @@ from alphamind.portfolio_state.events import (
     CommandAbandonedDetail,
     CorporateActionAppliedDetail,
     CorporateActionType,
+    DistillationAnomalyFlagDetail,
     DistillationConfigChange,
     DistillationConfigChangeDetail,
     EmergencyInvocationRequestedDetail,
@@ -466,6 +468,18 @@ def _all_detail_instances() -> list[tuple[type, object]]:
                 annual_fee_pct_used=15.0,
                 notional_usd_used=money("10000.00"),
                 accrual_date=date(2026, 5, 27),
+            ),
+        ),
+        (
+            DistillationAnomalyFlagDetail,
+            DistillationAnomalyFlagDetail(
+                threshold_class="volume",
+                threshold_key="volume_anomaly_sigma",
+                magnitude=3.5,
+                severity="investigate_now",
+                ticker="NVDA",
+                calibration_state=CalibrationState.CALIBRATED,
+                block_id="q1.volume",
             ),
         ),
     ]

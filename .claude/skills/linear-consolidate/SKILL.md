@@ -188,6 +188,6 @@ Skip the feature. The dependency graph is still load-bearing for `/orchestrate` 
 - **`docs/implementation/<feature>/` references in the rollup body.** Those staging dirs don't survive consolidation. Local copies live at `docs/_archive/implementation/<layer>/<feature>/` only.
 - **Inventing description prose.** The opening sentence must be derivable from the rolled-up bullets — if you can't summarize the feature factually from its own shipped stories, ask the operator for one.
 
-## Cumulative tracking
+## Status checks
 
-After each successful consolidation, the project memory file `project_linear_consolidation.md` should reflect the cumulative recovery. The operator may ask for a status check ("what have we cleaned up so far?"); pull the running tally from there, or get the current standing directly with `uv run python scripts/check_linear_cap.py --breakdown`.
+When the operator asks for a status check ("what have we cleaned up so far?" / "how much headroom is left?"), compute it on demand — `uv run python scripts/check_linear_cap.py --breakdown` reports the current active count, buffer to the cap, and the per-state/per-project split. Don't maintain a running tally in memory; the live count is authoritative and the scripts already produce it.

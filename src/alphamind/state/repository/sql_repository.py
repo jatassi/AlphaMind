@@ -12,8 +12,8 @@ against the SQL tables shipped in stories 02b and 04a-04e:
 * Tier 3 methods follow the per-field strategy pre-resolved in
   :issue:`ALP-119`: drawdown from the singleton table, P/L inputs computed
   on-the-fly via SQL aggregation over CLOSED positions, thesis quality
-  aggregates as an empty default placeholder, active risk parameters via
-  the injected callable provider.
+  aggregates computed on read from RESOLVED theses + components (ALP-878),
+  active risk parameters via the injected callable provider.
 
 Snapshot isolation enforcement: ``get_current_invocation_metadata``
 falls back to the most-recently-completed pipeline invocation when the
@@ -47,6 +47,9 @@ from alphamind.execution.regt_margin_attribution.aggregates import RegTExcessAgg
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
+from alphamind.portfolio_state.aggregates.thesis_quality_compute import (
+    compute_thesis_quality_aggregate,
+)
 from alphamind.portfolio_state.events.activity_log import ActivityLogEntry, EventType
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
@@ -157,27 +160,6 @@ def _build_sync_session_factory(
     return sessionmaker(bind=sync_engine, expire_on_commit=False)
 
 
-def _empty_thesis_quality_aggregate(now: datetime) -> ThesisQualityAggregate:
-    """Empty placeholder per ALP-119 Pre-resolved decision (D).
-
-    The thesis-quality computation lands in a follow-up feedback-loop story;
-    this story serves an empty default so the snapshot assembler can produce
-    a valid ``PortfolioStateSnapshot`` without aggregate data.
-    """
-    return ThesisQualityAggregate(
-        as_of_timestamp=now,
-        resolution_counts_by_window=(),
-        duration_stats_by_window=(),
-        invalidation_timing_stats_by_window=(),
-        signal_hit_rates=(),
-        signal_to_thesis_conversions=(),
-        conviction_calibration=(),
-        conviction_sizing_deviation_by_window=(),
-        performance_attribution=(),
-        alpha_beta_decomposition_by_window=(),
-    )
-
-
 class SqlPortfolioStateRepository:
     """SQLAlchemy-backed implementation of ``PortfolioStateRepository``.
 
@@ -193,7 +175,9 @@ class SqlPortfolioStateRepository:
       positions (raw realized P/L over rolling windows). The richer
       win-rate / profit-factor inputs default to ``None`` until a
       follow-up feedback-loop story populates them.
-    * ``thesis_quality_aggregates`` — empty placeholder.
+    * ``thesis_quality_aggregates`` — computed on read from RESOLVED theses +
+      components via the pure ``compute_thesis_quality_aggregate`` helper over
+      the config-sourced trailing windows (ALP-878).
     * ``active_risk_parameters`` — supplied via the zero-arg
       ``active_risk_parameters_provider`` callable injected at construction.
     * ``risk_budget_consumption`` — zero-valued passthrough; the actual
@@ -211,6 +195,7 @@ class SqlPortfolioStateRepository:
         active_risk_parameters_provider: Callable[[], ActiveRiskParameterSet],
         prior_active_risk_parameters_provider: Callable[[str], ActiveRiskParameterSet],
         config: StatePersistenceConfig,
+        thesis_quality_aggregates_trailing_windows_days: tuple[int, ...],
     ) -> None:
         # Build a sync ``sessionmaker`` from the async session factory's engine
         # URL. The async sessionmaker is preserved as a parameter so existing
@@ -222,6 +207,12 @@ class SqlPortfolioStateRepository:
         self._active_risk_parameters_provider = active_risk_parameters_provider
         self._prior_active_risk_parameters_provider = prior_active_risk_parameters_provider
         self._config = config
+        # The thesis-quality aggregation trailing windows live on
+        # ``PortfolioStateConfig`` (not ``StatePersistenceConfig``); the
+        # composition root threads them in here because
+        # ``get_thesis_quality_aggregates`` is a zero-arg Protocol method
+        # (ALP-878 § 2).
+        self._thesis_quality_trailing_windows_days = thesis_quality_aggregates_trailing_windows_days
 
     # ------------------------------------------------------------------
     # Tier 1 — direct table reads
@@ -581,7 +572,17 @@ class SqlPortfolioStateRepository:
         return _aggregate_pnl_inputs(realized_pnls)
 
     def get_thesis_quality_aggregates(self) -> ThesisQualityAggregate:
-        return _empty_thesis_quality_aggregate(datetime.now(UTC))
+        # Imperative shell (ALP-878): read + decode RESOLVED theses, then hand
+        # the typed records + config trailing windows to the pure compute helper.
+        # ``datetime.now(UTC)`` is the read-time ``as_of`` for the trailing
+        # windows — the aggregate is recomputed each snapshot, never persisted.
+        with self._sync_session_factory() as session:
+            resolved = self._read_theses_by_status(session, ThesisRecordStatus.RESOLVED)
+        return compute_thesis_quality_aggregate(
+            resolved_theses=resolved,
+            trailing_windows_days=self._thesis_quality_trailing_windows_days,
+            as_of=datetime.now(UTC),
+        )
 
     def get_active_risk_parameters(self) -> ActiveRiskParameterSet:
         return self._active_risk_parameters_provider()

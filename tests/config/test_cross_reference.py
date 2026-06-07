@@ -26,6 +26,7 @@ from alphamind.config.models import (
     ContinuousMonitorConfig,
     DigestConfig,
     ExecutionConfig,
+    FeedbackLoopConfig,
     GuardrailsConfig,
     LLMFailureConfig,
     LoadedConfig,
@@ -59,6 +60,7 @@ _EXECUTION = ExecutionConfig.model_validate(_read("execution.yaml"))
 _GUARDRAILS = GuardrailsConfig.model_validate(_read("guardrails.yaml"))
 _LLM_FAILURE = LLMFailureConfig.model_validate(_read("llm_failure.yaml"))
 _DIGEST = DigestConfig.model_validate(_read("digest.yaml"))
+_FEEDBACK = FeedbackLoopConfig.model_validate(_read("feedback.yaml"))
 _ASSETS = AssetsConfig.model_validate(_read("assets.yaml"))
 _AGENTS = AgentsConfig.model_validate(_read("agents.yaml"))
 _CONTINUOUS_MONITOR = ContinuousMonitorConfig.model_validate(_read("continuous_monitor.yaml"))
@@ -89,6 +91,7 @@ def _make_inputs(
         guardrails=guardrails if guardrails is not None else _GUARDRAILS,
         llm_failure=_LLM_FAILURE,
         digest=_DIGEST,
+        feedback=_FEEDBACK,
         assets=assets if assets is not None else _ASSETS,
         agents=agents if agents is not None else _AGENTS,
         continuous_monitor=_CONTINUOUS_MONITOR,
