@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import case, create_engine, event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker

@@ -2226,7 +2226,8 @@ class TestRunInvocationThesisResolution:
         # Inject one transient SQLITE_BUSY on the resolution write unit's first
         # ``begin_write_immediate`` (a sanctioned DB-boundary primitive), forcing
         # ``run_with_sqlite_busy_retry`` to re-run the write unit once.
-        real_begin = module.begin_write_immediate
+        from alphamind.persistence.session import begin_write_immediate as real_begin
+
         begin_calls = {"n": 0}
 
         async def _flaky_begin(session: Any) -> None:
@@ -2235,7 +2236,9 @@ class TestRunInvocationThesisResolution:
                 raise OperationalError("BEGIN IMMEDIATE", {}, Exception("database is locked"))
             await real_begin(session)
 
-        monkeypatch.setattr(module, "begin_write_immediate", _flaky_begin)
+        monkeypatch.setattr(
+            "alphamind.scheduler.orchestrator.begin_write_immediate", _flaky_begin
+        )
 
         await module._run_thesis_resolution_step(
             session_factory=async_factory,

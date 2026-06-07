@@ -770,6 +770,22 @@ column** — a failed run is identified by `command_execution_completed_at` bein
 (often `fill_collection_completed_at` too). Tail `pipeline.log` (and the daemon's
 `pipeline.err.log`) for the traceback that names the failing layer.
 
+**Thesis-resolution skip warnings (expected, not a fault).** Every deliberative
+invocation runs a thesis-resolution step (`phase: thesis_resolution`) between
+fill collection and snapshot assembly: it moves each closed-position thesis
+`ACTIVE → RESOLVED`, authoring the component outcomes + resolution category the
+snapshot's recent-resolutions feed and thesis-quality aggregates read. The step
+resolves each eligible thesis **independently** — a per-thesis data gap logs a
+`WARNING` in `pipeline.log` (naming the `thesis_id` + `position_id` + the
+specific gap) and **skips** that thesis, leaving it `ACTIVE`, then continues
+resolving the rest. It never aborts the invocation. A skip-warning is therefore
+**expected operator-visible behavior, not an error** — most commonly an
+option-lifecycle-closed thesis (expiry / assignment / exercise) that carries no
+`POSITION_CLOSED` activity-log entry yet, so the exit method can't be read. The
+skipped thesis stays `ACTIVE` and is retried next invocation. Investigate only
+if the *same* thesis logs the skip on every invocation indefinitely (a stuck
+thesis, not a transient gap).
+
 **Skipped invocations.** When you expected a scheduled fire (per § 4) and
 no `invocation_started` event arrived:
 
