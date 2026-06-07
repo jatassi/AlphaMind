@@ -38,7 +38,9 @@ class TestPhaseColumnRenameMigration:
         repo_root = Path(__file__).parents[2]
         script = ScriptDirectory.from_config(Config(repo_root / "alembic.ini"))
         heads = list(script.get_heads())
-        assert heads == [_NEW_REVISION]
+        # Assert exactly one head (not branched); the head advances as later
+        # migrations land above b001fc0000ee, so we check count, not identity.
+        assert len(heads) == 1
 
     def test_new_revision_parents_on_prior_head(self) -> None:
         repo_root = Path(__file__).parents[2]
@@ -235,11 +237,14 @@ class TestPhaseColumnRenameMigration:
         assert row[1] == "2026-01-01T00:04:00Z"
 
     def test_downgrade_restores_old_column_names(self, tmp_path: Path) -> None:
-        """After downgrade -1, the invocations table has the original column names."""
+        """After downgrading past b001fc0000ee, the invocations table has the original column names."""
         db_path = tmp_path / "down.db"
         cfg = _alembic_config(db_path)
         command.upgrade(cfg, "head")
-        command.downgrade(cfg, "-1")
+        # Downgrade to the revision that precedes b001fc0000ee, not to "-1" (which
+        # would only step back one revision from head — stable regardless of later
+        # migrations that extend the chain above b001fc0000ee).
+        command.downgrade(cfg, _PRIOR_HEAD)
 
         eng = make_engine(str(db_path))
         try:
