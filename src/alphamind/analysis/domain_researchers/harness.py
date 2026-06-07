@@ -29,6 +29,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._harness_core import (
     _PROMPT_CACHE,
@@ -41,6 +43,7 @@ from alphamind.analysis._harness_core import (
     _build_retry_message,
     _load_prompt,
     _render_raw_response,
+    capture_agent_call,
     invoke_sdk,
 )
 from alphamind.analysis._shared import Sector, TokensUsed
@@ -302,6 +305,8 @@ async def invoke_domain_researcher(  # noqa: PLR0913 — signature dictated by d
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "domain_researchers",
+    telemetry_session: AsyncSession | None = None,
+    provenance_root: Path | None = None,
 ) -> HarnessSuccess:
     """Invoke a domain researcher agent and return a validated :class:`HarnessSuccess`.
 
@@ -329,6 +334,9 @@ async def invoke_domain_researcher(  # noqa: PLR0913 — signature dictated by d
         model=str(agent_config.model),
         archive_root=archive_root,
         as_of=as_of,
+        prompt_path=agent_config.prompt,
+        output_schema=SectorBrief.model_json_schema(),
+        sampling_params={"max_tokens": agent_config.output_token_budget},
     )
     wall_start = time.monotonic()
 
@@ -358,75 +366,80 @@ async def invoke_domain_researcher(  # noqa: PLR0913 — signature dictated by d
             outcome.tokens_used,
         )
 
-    # ------------------------------------------------------------------
-    # Attempt 1: initial call
-    # ------------------------------------------------------------------
-    payload1, text1, stop_reason1, tokens1 = await _invoke_once(user_message)
-    raw_response_initial = _render_raw_response(payload1, text1)
-    diag.response_initial = raw_response_initial
-    diag.tokens_used = tokens1
+    async with capture_agent_call(
+        diag, telemetry_session=telemetry_session, provenance_root=provenance_root
+    ):
+        # --------------------------------------------------------------
+        # Attempt 1: initial call
+        # --------------------------------------------------------------
+        payload1, text1, stop_reason1, tokens1 = await _invoke_once(user_message)
+        raw_response_initial = _render_raw_response(payload1, text1)
+        diag.response_initial = raw_response_initial
+        diag.tokens_used = tokens1
+        diag.output_payload = payload1
 
-    try:
-        brief, retry_message = _parse_and_validate(
-            payload1, text1, sector, invocation_id, stop_reason1, attempt=1, diag=diag
-        )
-    except ContextOverflowFailure:
-        diag.write(
-            success=False,
-            wall_clock_seconds=time.monotonic() - wall_start,
-            stop_reason=stop_reason1,
-        )
-        raise
+        try:
+            brief, retry_message = _parse_and_validate(
+                payload1, text1, sector, invocation_id, stop_reason1, attempt=1, diag=diag
+            )
+        except ContextOverflowFailure:
+            diag.write(
+                success=False,
+                wall_clock_seconds=time.monotonic() - wall_start,
+                stop_reason=stop_reason1,
+            )
+            raise
 
-    if brief is not None:
+        if brief is not None:
+            wall_elapsed = time.monotonic() - wall_start
+            diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason1)
+            return HarnessSuccess(
+                brief=brief,
+                raw_response=raw_response_initial,
+                retry_count=0,
+                tokens_used=tokens1,
+                wall_clock_seconds=wall_elapsed,
+            )
+
+        # --------------------------------------------------------------
+        # Attempt 2: corrective retry
+        # --------------------------------------------------------------
+        assert retry_message is not None
+        diag.retry_count = 1
+
+        payload2, text2, stop_reason2, tokens2 = await _invoke_once(retry_message)
+        raw_response_retry = _render_raw_response(payload2, text2)
+        diag.response_retry = raw_response_retry
+        diag.output_payload = payload2
+        diag.tokens_used = TokensUsed(
+            input_tokens=tokens1.input_tokens + tokens2.input_tokens,
+            output_tokens=tokens1.output_tokens + tokens2.output_tokens,
+            cache_read_tokens=tokens1.cache_read_tokens + tokens2.cache_read_tokens,
+            cache_write_tokens=tokens1.cache_write_tokens + tokens2.cache_write_tokens,
+        )
+
+        brief2, _ = _parse_and_validate(
+            payload2, text2, sector, invocation_id, stop_reason2, attempt=2, diag=diag
+        )
+
         wall_elapsed = time.monotonic() - wall_start
-        diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason1)
+
+        if brief2 is None:
+            diag.write(success=False, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason2)
+            raise MalformedOutputFailure(
+                "Parse or validation failed on both initial and retry attempts. "
+                f"First retry error: {diag.errors[-1].get('message', '')}",
+                agent_name=agent_name,
+                invocation_id=invocation_id,
+                raw_response_initial=raw_response_initial,
+                raw_response_retry=raw_response_retry,
+            )
+
+        diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason2)
         return HarnessSuccess(
-            brief=brief,
-            raw_response=raw_response_initial,
-            retry_count=0,
-            tokens_used=tokens1,
+            brief=brief2,
+            raw_response=raw_response_retry,
+            retry_count=1,
+            tokens_used=diag.tokens_used,
             wall_clock_seconds=wall_elapsed,
         )
-
-    # ------------------------------------------------------------------
-    # Attempt 2: corrective retry
-    # ------------------------------------------------------------------
-    assert retry_message is not None
-    diag.retry_count = 1
-
-    payload2, text2, stop_reason2, tokens2 = await _invoke_once(retry_message)
-    raw_response_retry = _render_raw_response(payload2, text2)
-    diag.response_retry = raw_response_retry
-    diag.tokens_used = TokensUsed(
-        input_tokens=tokens1.input_tokens + tokens2.input_tokens,
-        output_tokens=tokens1.output_tokens + tokens2.output_tokens,
-        cache_read_tokens=tokens1.cache_read_tokens + tokens2.cache_read_tokens,
-        cache_write_tokens=tokens1.cache_write_tokens + tokens2.cache_write_tokens,
-    )
-
-    brief2, _ = _parse_and_validate(
-        payload2, text2, sector, invocation_id, stop_reason2, attempt=2, diag=diag
-    )
-
-    wall_elapsed = time.monotonic() - wall_start
-
-    if brief2 is None:
-        diag.write(success=False, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason2)
-        raise MalformedOutputFailure(
-            "Parse or validation failed on both initial and retry attempts. "
-            f"First retry error: {diag.errors[-1].get('message', '')}",
-            agent_name=agent_name,
-            invocation_id=invocation_id,
-            raw_response_initial=raw_response_initial,
-            raw_response_retry=raw_response_retry,
-        )
-
-    diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason2)
-    return HarnessSuccess(
-        brief=brief2,
-        raw_response=raw_response_retry,
-        retry_count=1,
-        tokens_used=diag.tokens_used,
-        wall_clock_seconds=wall_elapsed,
-    )
