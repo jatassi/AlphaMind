@@ -609,6 +609,56 @@ class TestThesisCodec:
 
 
 # ---------------------------------------------------------------------------
+# ALP-919 — invocation_id column + codec round-trip
+# ---------------------------------------------------------------------------
+
+
+class TestThesisInvocationId:
+    """invocation_id column: table structure + codec round-trip (ALP-919)."""
+
+    def test_table_has_invocation_id_index(self, engine: Engine) -> None:
+        insp = inspect(engine)
+        indexes = {idx["name"]: idx for idx in insp.get_indexes("theses")}
+        assert "ix_theses_invocation_id" in indexes
+        assert indexes["ix_theses_invocation_id"]["column_names"] == ["invocation_id"]
+
+    def test_table_has_fk_theses_invocation_id(self, engine: Engine) -> None:
+        insp = inspect(engine)
+        fks = insp.get_foreign_keys("theses")
+        fk_names = {fk["name"] for fk in fks}
+        assert "fk_theses_invocation_id" in fk_names
+
+    def test_codec_round_trip_with_invocation_id(self) -> None:
+        """A thesis with a non-NULL invocation_id survives record_to_rows→rows_to_record."""
+        import dataclasses
+
+        from alphamind._kernel.ids import InvocationId
+        from alphamind.state.tables.theses_codec import record_to_rows, rows_to_record
+
+        record = dataclasses.replace(
+            _active_thesis(),
+            invocation_id=InvocationId("inv-2026-06-07T10:00:00Z-test"),
+        )
+        thesis_row, component_rows = record_to_rows(record)
+        assert thesis_row.invocation_id == "inv-2026-06-07T10:00:00Z-test"
+        roundtripped = rows_to_record(thesis_row, component_rows)
+        assert roundtripped == record
+        assert roundtripped.invocation_id == InvocationId("inv-2026-06-07T10:00:00Z-test")
+
+    def test_codec_round_trip_with_null_invocation_id(self) -> None:
+        """A thesis with invocation_id=None survives round-trip and stays None."""
+        from alphamind.state.tables.theses_codec import record_to_rows, rows_to_record
+
+        record = _active_thesis()
+        assert record.invocation_id is None
+        thesis_row, component_rows = record_to_rows(record)
+        assert thesis_row.invocation_id is None
+        roundtripped = rows_to_record(thesis_row, component_rows)
+        assert roundtripped == record
+        assert roundtripped.invocation_id is None
+
+
+# ---------------------------------------------------------------------------
 # ThesisRecord typed-validator
 # ---------------------------------------------------------------------------
 

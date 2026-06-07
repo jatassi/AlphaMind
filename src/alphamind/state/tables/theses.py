@@ -76,6 +76,20 @@ class ThesisRow(Base):
     position_size_rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
     generation_timestamp: Mapped[str] = mapped_column(Text, nullable=False)
     narrative_json: Mapped[str] = mapped_column(Text, nullable=False)
+    # ALP-919 / story 02i — the pipeline invocation that generated this thesis.
+    # Nullable: theses created before the column or before THESIS_CREATED emission
+    # have no recoverable generating invocation. Non-deferrable: the invocation row
+    # is durably inserted before the phase session opens, so no positions↔theses
+    # cycle applies here.
+    invocation_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey(
+            "invocations.invocation_id",
+            name="fk_theses_invocation_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -94,4 +108,5 @@ class ThesisRow(Base):
         Index("ix_theses_status", "status"),
         Index("ix_theses_position_id", "position_id"),
         Index("ix_theses_resolution_timestamp", "resolution_timestamp"),
+        Index("ix_theses_invocation_id", "invocation_id"),
     )

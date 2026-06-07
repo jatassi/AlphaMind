@@ -18,7 +18,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from alphamind._kernel.ids import PositionId, ThesisId
+from alphamind._kernel.ids import InvocationId, PositionId, ThesisId
 from alphamind.portfolio_state.records.orders import BracketLegType
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
@@ -113,6 +113,7 @@ def record_to_rows(
         position_size_rationale=record.position_size_rationale,
         generation_timestamp=_isoformat(record.generation_timestamp),
         narrative_json=json.dumps(narrative_payload),
+        invocation_id=record.invocation_id,
     )
     return thesis_row, tuple(component_rows)
 
@@ -167,6 +168,11 @@ def rows_to_record(
         ),
         resolution_pnl_usd=payload["resolution_pnl_usd"],
         entry_fill_gap_usd=payload["entry_fill_gap_usd"],
+        invocation_id=(
+            None
+            if thesis_row.invocation_id is None
+            else InvocationId(thesis_row.invocation_id)
+        ),
     )
 
 
