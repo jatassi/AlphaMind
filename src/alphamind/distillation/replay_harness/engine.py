@@ -75,7 +75,7 @@ logger = logging.getLogger(__name__)
 # imports its row producers from :mod:`alphamind.persistence.models` and
 # this list mirrors the union of those imports excluding the distillation
 # state tables (which the harness leaves empty for the orchestrator's
-# Phase 1 refresh primitives to populate).
+# class-B-refresh primitives to populate).
 #
 # When the data-layer schema adds a new table the orchestrator reads, this
 # constant must grow alongside. A schema mismatch (an entry here that does
@@ -349,7 +349,7 @@ def _extract_class_b_baselines(
 ) -> tuple[BaselineValueRecord, ...]:
     """Snapshot the four Class B state tables for rows at ``as_of``.
 
-    The orchestrator's Phase 1 refresh writes one row per
+    The orchestrator's class-B-refresh step writes one row per
     ``(ticker, baseline_kind)`` per invocation; tickers/pairs/contracts the
     slice does not cover produce no record. Outcome rows (event history)
     have no baseline ``value`` so the record's ``value`` is ``None`` for
@@ -481,12 +481,13 @@ _REPLAY_PROCESS_LIFETIME_ID = "replay_pl"
 
 
 def _seed_replay_invocation_row(session: Session, invocation_id: str) -> None:
-    """Seed the ``process_lifetimes`` + ``invocations`` rows Phase 7's brief INSERT
-    references via FK.
+    """Seed the ``process_lifetimes`` + ``invocations`` rows the brief-store
+    population step's INSERT references via FK.
 
     The harness deliberately bypasses the InvocationContext (which is the
     normal writer of ``invocations`` rows) to keep distillation isolated.
-    Phase 7 inserts one row into ``briefs`` with an FK to
+    The brief-store population step inserts one row into ``briefs`` with an
+    FK to
     ``invocations.invocation_id``, so the harness must seed a placeholder
     invocation row matching the synthesized id before the orchestrator
     runs. Both rows are idempotent — repeated calls with the same
