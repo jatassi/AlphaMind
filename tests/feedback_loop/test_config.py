@@ -36,7 +36,7 @@ def test_is_frozen() -> None:
     config = FeedbackLoopConfig.model_validate(_read_feedback_yaml())
 
     with pytest.raises(ValidationError):
-        config.min_resolved_theses_monthly = 99  # type: ignore[misc]
+        config.min_resolved_theses_monthly = 99
 
 
 def test_rejects_non_positive_threshold() -> None:

@@ -42,6 +42,7 @@ _EXPECTED_PUBLIC_NAMES = {
     "ExecutionMode",
     "FailureMode",
     "FeatureFlags",
+    "FeedbackLoopConfig",
     "FinalInvocationBeforeEvent",
     "GreeksRefresh",
     "GuardrailsConfig",

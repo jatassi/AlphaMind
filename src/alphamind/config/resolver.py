@@ -28,6 +28,7 @@ from alphamind.config.models.assets import AssetsConfig
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.digest import DigestConfig
 from alphamind.config.models.execution import ExecutionConfig
+from alphamind.config.models.feedback import FeedbackLoopConfig
 from alphamind.config.models.guardrails import GuardrailsConfig
 from alphamind.config.models.llm_failure import LLMFailureConfig
 from alphamind.config.models.main import (
@@ -124,6 +125,7 @@ class ResolvedConfig:
     guardrails: GuardrailsConfig
     llm_failure: LLMFailureConfig
     digest: DigestConfig
+    feedback: FeedbackLoopConfig
     assets: AssetsConfig
     agents: AgentsConfig
     continuous_monitor: ContinuousMonitorConfig
@@ -169,6 +171,7 @@ class ResolvedConfig:
                 self.guardrails.model_dump_json(),
                 self.llm_failure.model_dump_json(),
                 self.digest.model_dump_json(),
+                self.feedback.model_dump_json(),
                 self.assets.model_dump_json(),
                 self.agents.model_dump_json(),
                 self.continuous_monitor.model_dump_json(),
@@ -273,10 +276,10 @@ def _agent_token_budgets_from_profile(
 class LoadedConfig:
     """Operator-loaded configuration objects passed to the composition resolver.
 
-    Groups the fourteen parsed Pydantic models the upstream loader produces.
-    Bundling them keeps ``compose_config`` 's call-site fan-out manageable
-    without changing the resolver's input contract: each named field below is
-    one of the inputs the story-05 spec lists.
+    Groups the parsed Pydantic models the upstream loader produces. Bundling
+    them keeps ``compose_config`` 's call-site fan-out manageable without
+    changing the resolver's input contract: each named field below is one of
+    the inputs the story-05 spec lists.
     """
 
     main: MainConfig
@@ -286,6 +289,7 @@ class LoadedConfig:
     guardrails: GuardrailsConfig
     llm_failure: LLMFailureConfig
     digest: DigestConfig
+    feedback: FeedbackLoopConfig
     assets: AssetsConfig
     agents: AgentsConfig
     continuous_monitor: ContinuousMonitorConfig
@@ -366,6 +370,7 @@ def compose_config(inputs: LoadedConfig, runtime: RuntimeDimensions) -> Resolved
         guardrails=inputs.guardrails,
         llm_failure=inputs.llm_failure,
         digest=inputs.digest,
+        feedback=inputs.feedback,
         assets=inputs.assets,
         agents=inputs.agents,
         continuous_monitor=inputs.continuous_monitor,
