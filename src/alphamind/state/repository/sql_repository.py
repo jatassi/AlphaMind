@@ -209,9 +209,10 @@ class SqlPortfolioStateRepository:
         self._config = config
         # The thesis-quality aggregation trailing windows live on
         # ``PortfolioStateConfig`` (not ``StatePersistenceConfig``); the
-        # composition root threads them in here because
-        # ``get_thesis_quality_aggregates`` is a zero-arg Protocol method
-        # (ALP-878 § 2).
+        # composition root threads them in here because they are config, not
+        # per-call state. ``get_thesis_quality_aggregates`` additionally takes
+        # the invocation's logical ``now`` as its ``as_of`` (ALP-914), but the
+        # trailing windows themselves stay composition-root-injected.
         self._thesis_quality_trailing_windows_days = thesis_quality_aggregates_trailing_windows_days
 
     # ------------------------------------------------------------------

@@ -426,10 +426,15 @@ async def _read_exit_methods(
         .order_by(ActivityLogRow.entry_at.desc(), ActivityLogRow.entry_id.desc())
     )
     exit_methods: dict[str, PositionExitMethod] = {}
+    seen: set[str] = set()
     for row in (await session.execute(stmt)).scalars():
         position_id = row.position_id
-        if position_id is None or position_id in exit_methods:
-            continue  # rows are newest-first, so the first per position wins
+        if position_id is None or position_id in seen:
+            continue  # rows are newest-first; only the newest entry per position is authoritative
+        seen.add(position_id)
+        # The newest POSITION_CLOSED entry decides the exit method; if it fails to
+        # decode the position is left absent (skipped with a WARNING by the caller)
+        # rather than silently falling through to a stale older entry.
         method = _decode_exit_method(row)
         if method is not None:
             exit_methods[position_id] = method
@@ -483,7 +488,15 @@ async def _read_entry_references(
     stmt = select(PositionRow).where(PositionRow.position_id.in_(position_ids))
     refs: dict[str, _EntryReference] = {}
     for row in (await session.execute(stmt)).scalars():
-        record = row_to_record(row)
+        try:
+            record = row_to_record(row)
+        except (TypeError, ValueError, KeyError):
+            # Entry refs feed only the best-effort market-data slice. A position
+            # row that fails reconstruction (e.g. a violated PositionRecord
+            # invariant on a malformed/legacy row) must not raise out of the
+            # read phase and wedge the whole resolution pass (ALP-914 finding 1)
+            # — skip it; the slice falls back to assumptions-only for that thesis.
+            continue
         symbol = resolve_ticker(record.details)
         entry_price = getattr(record.details, "average_cost_basis_per_share", None)
         refs[row.position_id] = _EntryReference(
