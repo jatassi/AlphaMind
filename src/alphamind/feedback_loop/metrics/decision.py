@@ -315,4 +315,35 @@ _PM_METRICS: tuple[Metric, ...] = (
 )
 
 
-METRICS: tuple[Metric, ...] = _PM_METRICS
+# ---------------------------------------------------------------------------
+# Analyst metrics
+# ---------------------------------------------------------------------------
+
+#: The analyst conviction scale (``Recommendation.conviction_level``, ge=1 le=5).
+_CONVICTION_LEVELS: tuple[int, ...] = (1, 2, 3, 4, 5)
+
+
+def _analyst_convictions(dataset: WindowDataset) -> tuple[int, ...]:
+    """Conviction levels carried by ``pm_analyst`` envelopes' originating proposals.
+
+    Strategist envelopes carry no conviction and are excluded; a proposal missing the
+    field contributes no observation (kept out of the denominator).
+    """
+    convictions: list[int] = []
+    for d in _pm_decisions(dataset):
+        if d.source_provenance_json.get("source_provenance") != "pm_analyst":
+            continue
+        level = d.originating_proposal_json.get("conviction_level")
+        if isinstance(level, int):
+            convictions.append(level)
+    return tuple(convictions)
+
+
+_ANALYST_METRICS: tuple[Metric, ...] = _distribution_metrics(
+    id_prefix="analyst_conviction_rate",
+    bins=tuple((str(level), level) for level in _CONVICTION_LEVELS),
+    population=_analyst_convictions,
+)
+
+
+METRICS: tuple[Metric, ...] = _PM_METRICS + _ANALYST_METRICS

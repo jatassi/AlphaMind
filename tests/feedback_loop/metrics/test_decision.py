@@ -274,3 +274,41 @@ class TestPmModificationCategory:
         assert rate.value == 1 / 3
         assert rate.sample_size == 3
         assert _compute("pm_modification_category_rate__capital_constraint", dataset).value == 0.0
+
+
+class TestAnalystConvictionDistribution:
+    def test_conviction_histogram_over_1_to_5(self) -> None:
+        log = (
+            _pm_entry(
+                verdict=PMVerdict.APPROVE,
+                source_provenance="pm_analyst",
+                originating_proposal_json=_analyst_proposal(conviction_level=5),
+            ),
+            _pm_entry(
+                verdict=PMVerdict.REJECT,
+                source_provenance="pm_analyst",
+                originating_proposal_json=_analyst_proposal(conviction_level=5),
+            ),
+            _pm_entry(
+                verdict=PMVerdict.APPROVE,
+                source_provenance="pm_analyst",
+                originating_proposal_json=_analyst_proposal(conviction_level=2),
+            ),
+            # A strategist envelope carries no conviction — excluded from denominator.
+            _pm_entry(
+                verdict=PMVerdict.APPROVE,
+                source_provenance="pm_strategist",
+                recommendation_type="position_assessment",
+                originating_proposal_json=_strategist_assessment(
+                    thesis_status="on-track", recommended_action="hold"
+                ),
+            ),
+        )
+        dataset = _dataset(log)
+        five = _compute("analyst_conviction_rate__5", dataset)
+        assert five.value == 2 / 3
+        assert five.sample_size == 3
+        assert _compute("analyst_conviction_rate__2", dataset).value == 1 / 3
+        assert _compute("analyst_conviction_rate__1", dataset).value == 0.0
+        assert _compute("analyst_conviction_rate__3", dataset).value == 0.0
+        assert _compute("analyst_conviction_rate__4", dataset).value == 0.0
