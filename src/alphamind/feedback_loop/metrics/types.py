@@ -141,6 +141,36 @@ class MetricResult:
     insufficient_sample: bool
 
 
+def rate_result(metric_id: MetricId, numerator: int, denominator: int) -> MetricResult:
+    """Build a band-less fraction reading (``numerator / denominator``) for a rate metric.
+
+    The one shared builder for the empty-vs-populated rate shape across the decision,
+    citation-chain, and outcome metric families. An empty denominator yields the design's
+    "no honest reading" shape — ``value=None``, ``sample_size=0``,
+    ``insufficient_sample=True`` (a rate is undefined with no observations). A populated
+    denominator yields the point estimate with ``insufficient_sample=False``; the
+    operator-tunable "needs N more observations" gate is a digest-layer concern applied
+    over ``sample_size``, not the pure core's job. Outcome rates that additionally carry a
+    Beta posterior band build their populated ``MetricResult`` directly and use this only
+    for the empty case.
+    """
+    if denominator == 0:
+        return MetricResult(
+            metric_id=metric_id,
+            value=None,
+            posterior_band=None,
+            sample_size=0,
+            insufficient_sample=True,
+        )
+    return MetricResult(
+        metric_id=metric_id,
+        value=numerator / denominator,
+        posterior_band=None,
+        sample_size=denominator,
+        insufficient_sample=False,
+    )
+
+
 # The pure metric-core signature: WindowDataset + slice -> result. No I/O.
 ComputeFn = Callable[["WindowDataset", Conditioning], MetricResult]
 
@@ -173,4 +203,5 @@ __all__ = [
     "PoType",
     "PosteriorBand",
     "Window",
+    "rate_result",
 ]

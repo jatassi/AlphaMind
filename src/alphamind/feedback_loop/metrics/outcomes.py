@@ -25,6 +25,7 @@ on the dataset's ``outcomes`` bundle).
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -38,6 +39,7 @@ from alphamind.feedback_loop.metrics.types import (
     MetricResult,
     PosteriorBand,
     Window,
+    rate_result,
 )
 from alphamind.portfolio_state.records.theses import ThesisResolutionCategory
 
@@ -160,17 +162,6 @@ def _insufficient(sample_size: int, dataset: WindowDataset, window: Window) -> b
     return sample_size < threshold
 
 
-def _empty_result(metric_id: MetricId) -> MetricResult:
-    """A reading over an empty slice — no value, no band, insufficient sample."""
-    return MetricResult(
-        metric_id=metric_id,
-        value=None,
-        posterior_band=None,
-        sample_size=0,
-        insufficient_sample=True,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Rate cores (win rate + the two calibration metrics share this shape)
 # ---------------------------------------------------------------------------
@@ -195,7 +186,7 @@ def _rate_metric(
     outcomes = _slice(dataset, conditioning)
     total = len(outcomes)
     if total == 0:
-        return _empty_result(metric_id)
+        return rate_result(metric_id, 0, 0)
     successes = sum(1 for o in outcomes if predicate(o))
     return MetricResult(
         metric_id=metric_id,
@@ -261,15 +252,35 @@ def _compute_resolution_distribution(
 # ---------------------------------------------------------------------------
 
 
+def _profit_factor_value(wins: float, losses: float) -> float | None:
+    """Profit factor over a non-empty slice, with the undefined denominators distinct.
+
+    ``+inf`` for an all-winning slice (``wins > 0``, no losses); ``None`` for the
+    genuinely-undefined all-break-even ``0/0`` case; the finite ratio otherwise.
+    """
+    if losses == 0.0:
+        return math.inf if wins > 0.0 else None
+    return wins / losses
+
+
 def _compute_profit_factor(dataset: WindowDataset, conditioning: Conditioning) -> MetricResult:
-    """Sum of wins / sum of absolute losses. ``None`` when there are no losses."""
+    """Sum of wins / sum of absolute losses over the resolved-thesis slice.
+
+    Three undefined-denominator cases are kept distinct:
+
+    * **all-wins** (``wins > 0``, no losses) — the mathematically-correct profit factor
+      is ``+inf``; reported as such so an all-winning slice is not conflated with no data.
+    * **all break-even** (a non-empty slice with neither wins nor losses) — the genuinely
+      undefined ``0/0`` case stays ``value=None``.
+    * **empty slice** (``total == 0``) — routed through the shared empty builder above.
+    """
     outcomes = _slice(dataset, conditioning)
     total = len(outcomes)
     if total == 0:
-        return _empty_result(METRIC_PROFIT_FACTOR)
+        return rate_result(METRIC_PROFIT_FACTOR, 0, 0)
     wins = sum(o.resolution_pnl_usd for o in outcomes if o.resolution_pnl_usd > 0.0)
     losses = -sum(o.resolution_pnl_usd for o in outcomes if o.resolution_pnl_usd < 0.0)
-    value = None if losses == 0.0 else wins / losses
+    value = _profit_factor_value(wins, losses)
     return MetricResult(
         metric_id=METRIC_PROFIT_FACTOR,
         value=value,
@@ -288,7 +299,7 @@ def _compute_drawdown(dataset: WindowDataset, conditioning: Conditioning) -> Met
     outcomes = _slice(dataset, conditioning)
     total = len(outcomes)
     if total == 0:
-        return _empty_result(METRIC_DRAWDOWN)
+        return rate_result(METRIC_DRAWDOWN, 0, 0)
     cumulative = 0.0
     peak = 0.0
     max_drawdown = 0.0
@@ -312,7 +323,7 @@ def _compute_pl_per_resolved_thesis(
     outcomes = _slice(dataset, conditioning)
     total = len(outcomes)
     if total == 0:
-        return _empty_result(METRIC_PL_PER_RESOLVED_THESIS)
+        return rate_result(METRIC_PL_PER_RESOLVED_THESIS, 0, 0)
     pnls = tuple(o.resolution_pnl_usd for o in outcomes)
     return MetricResult(
         metric_id=METRIC_PL_PER_RESOLVED_THESIS,
@@ -334,7 +345,7 @@ def _compute_pl_per_token(dataset: WindowDataset, conditioning: Conditioning) ->
     outcomes = _slice(dataset, conditioning)
     total = len(outcomes)
     if total == 0:
-        return _empty_result(METRIC_PL_PER_TOKEN)
+        return rate_result(METRIC_PL_PER_TOKEN, 0, 0)
     tokens = sum(call.input_tokens + call.output_tokens for call in dataset.agent_calls)
     pnl = sum(o.resolution_pnl_usd for o in outcomes)
     value = None if tokens == 0 else pnl / tokens

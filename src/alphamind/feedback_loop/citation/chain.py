@@ -38,6 +38,7 @@ from alphamind.feedback_loop.metrics.types import (
     MetricId,
     MetricResult,
     Window,
+    rate_result,
 )
 from alphamind.portfolio_state.records.theses import ThesisComponentOutcome
 
@@ -68,31 +69,6 @@ def _from_source(dataset: WindowDataset, source: CitationSource) -> list[RefChai
     return [chain for chain in _refs(dataset) if chain.ref.source is source]
 
 
-def _ratio_result(metric_id: MetricId, numerator: int, denominator: int) -> MetricResult:
-    """Build a rate :class:`MetricResult` (``numerator / denominator``).
-
-    An empty denominator yields ``value=None`` and ``insufficient_sample=True`` —
-    a rate is undefined with no refs from the source. The operator-tunable
-    "needs N more observations" gate is a digest-layer concern (07a), applied
-    over ``sample_size``; the pure core only reports the count.
-    """
-    if denominator == 0:
-        return MetricResult(
-            metric_id=metric_id,
-            value=None,
-            posterior_band=None,
-            sample_size=0,
-            insufficient_sample=True,
-        )
-    return MetricResult(
-        metric_id=metric_id,
-        value=numerator / denominator,
-        posterior_band=None,
-        sample_size=denominator,
-        insufficient_sample=False,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Per-source rate cores
 # ---------------------------------------------------------------------------
@@ -106,7 +82,7 @@ def _synthesizer_citation_rate(
     def compute(dataset: WindowDataset, conditioning: Conditioning) -> MetricResult:  # noqa: ARG001 — per-source conditioning is the MetricId; no further slice
         chains = _from_source(dataset, source)
         cited = sum(1 for c in chains if c.cited_in_synthesis)
-        return _ratio_result(metric_id, cited, len(chains))
+        return rate_result(metric_id, cited, len(chains))
 
     return compute
 
@@ -119,7 +95,7 @@ def _decision_layer_citation_rate(
     def compute(dataset: WindowDataset, conditioning: Conditioning) -> MetricResult:  # noqa: ARG001 — per-source conditioning is the MetricId; no further slice
         chains = _from_source(dataset, source)
         cited = sum(1 for c in chains if c.cited_in_decision)
-        return _ratio_result(metric_id, cited, len(chains))
+        return rate_result(metric_id, cited, len(chains))
 
     return compute
 
@@ -134,7 +110,7 @@ def _signal_survival_rate(
         survived = sum(
             1 for c in chains if c.thesis_component_outcome is ThesisComponentOutcome.VALIDATED
         )
-        return _ratio_result(metric_id, survived, len(chains))
+        return rate_result(metric_id, survived, len(chains))
 
     return compute
 
@@ -153,7 +129,7 @@ def _per_source_validation_rate(
         validated = sum(
             1 for c in resolved if c.thesis_component_outcome is ThesisComponentOutcome.VALIDATED
         )
-        return _ratio_result(metric_id, validated, len(resolved))
+        return rate_result(metric_id, validated, len(resolved))
 
     return compute
 
@@ -174,7 +150,7 @@ def _synthesizer_recall(dataset: WindowDataset, conditioning: Conditioning) -> M
     """
     uncited = [c for c in _refs(dataset) if not c.cited_in_synthesis]
     recovered = sum(1 for c in uncited if c.cited_in_decision)
-    return _ratio_result(_SYNTHESIZER_RECALL_ID, recovered, len(uncited))
+    return rate_result(_SYNTHESIZER_RECALL_ID, recovered, len(uncited))
 
 
 # ---------------------------------------------------------------------------

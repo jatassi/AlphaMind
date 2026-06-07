@@ -13,6 +13,7 @@ The outcome-tier metric cores compute purely over a hand-built ``WindowDataset``
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 
 from alphamind.feedback_loop.dataset import OutcomesBundle, WindowDataset
@@ -137,12 +138,37 @@ class TestProfitFactor:
         result = metric.compute(dataset, UNCONDITIONED)
         assert result.value == 3.0
 
-    def test_profit_factor_none_when_no_losses(self) -> None:
+    def test_profit_factor_all_wins_is_inf(self) -> None:
+        # An all-winning slice (wins > 0, no losses) has a mathematically-infinite
+        # profit factor — distinct from the undefined / no-data None (ALP-912 F).
         metric = get_metric(METRIC_PROFIT_FACTOR)
         assert metric is not None
         dataset = _dataset(make_thesis_outcome(thesis_id="t1", resolution_pnl_usd=100.0))
         result = metric.compute(dataset, UNCONDITIONED)
+        assert result.value == math.inf
+        assert result.sample_size == 1
+
+    def test_profit_factor_all_break_even_is_none(self) -> None:
+        # A non-empty slice with neither wins nor losses (all 0.0) is the genuinely
+        # undefined 0/0 case — value stays None, not inf.
+        metric = get_metric(METRIC_PROFIT_FACTOR)
+        assert metric is not None
+        dataset = _dataset(
+            make_thesis_outcome(thesis_id="t1", resolution_pnl_usd=0.0),
+            make_thesis_outcome(thesis_id="t2", resolution_pnl_usd=0.0),
+        )
+        result = metric.compute(dataset, UNCONDITIONED)
         assert result.value is None
+        assert result.sample_size == 2
+
+    def test_profit_factor_empty_slice_is_none(self) -> None:
+        # The empty slice routes through the shared empty builder: value None,
+        # sample_size 0 — distinct from the all-wins inf above.
+        metric = get_metric(METRIC_PROFIT_FACTOR)
+        assert metric is not None
+        result = metric.compute(_dataset(), UNCONDITIONED)
+        assert result.value is None
+        assert result.sample_size == 0
 
 
 class TestDrawdown:

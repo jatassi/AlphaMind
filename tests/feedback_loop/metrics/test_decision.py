@@ -206,6 +206,9 @@ class TestPmVerdictMetrics:
         result = _compute("pm_approval_rate", _dataset(()))
         assert result.value is None
         assert result.sample_size == 0
+        # The shared rate_result builder reports an empty denominator as
+        # insufficient — unified with the citation-chain / outcome families (ALP-912 B).
+        assert result.insufficient_sample is True
 
 
 class TestPmCriterionFailRate:

@@ -36,6 +36,7 @@ from alphamind.feedback_loop.metrics.types import (
     MetricId,
     MetricResult,
     Window,
+    rate_result,
 )
 from alphamind.portfolio_state.events.types import EventType, PMVerdict
 
@@ -114,28 +115,6 @@ def _pm_decisions(dataset: WindowDataset) -> tuple[PMDecisionDetail, ...]:
 
 
 # ---------------------------------------------------------------------------
-# Rate metric
-# ---------------------------------------------------------------------------
-
-
-def _rate_result(metric_id: MetricId, numerator: int, denominator: int) -> MetricResult:
-    """A process-tier fraction reading: ``numerator / denominator``.
-
-    Empty denominator yields ``value=None`` (the design's "no honest reading" signal)
-    rather than a divide-by-zero. ``insufficient_sample`` is left ``False`` here — the
-    operator-tunable sample-size gate is applied by the digest, not the metric core.
-    """
-    value = None if denominator == 0 else numerator / denominator
-    return MetricResult(
-        metric_id=metric_id,
-        value=value,
-        posterior_band=None,
-        sample_size=denominator,
-        insufficient_sample=False,
-    )
-
-
-# ---------------------------------------------------------------------------
 # Distribution factory — one MetricId per bin
 # ---------------------------------------------------------------------------
 
@@ -176,7 +155,7 @@ def _bin_rate_compute[T](
 ) -> Callable[[WindowDataset, Conditioning], MetricResult]:
     def _compute(dataset: WindowDataset, conditioning: Conditioning) -> MetricResult:
         values = population(_conditioned(dataset, conditioning))
-        return _rate_result(metric_id, sum(v == member for v in values), len(values))
+        return rate_result(metric_id, sum(v == member for v in values), len(values))
 
     return _compute
 
@@ -203,7 +182,7 @@ def _verdicts(dataset: WindowDataset) -> tuple[PMVerdict, ...]:
 def _compute_pm_approval_rate(dataset: WindowDataset, conditioning: Conditioning) -> MetricResult:
     verdicts = _verdicts(_conditioned(dataset, conditioning))
     approved = sum(v in (PMVerdict.APPROVE, PMVerdict.APPROVE_WITH_MODIFICATION) for v in verdicts)
-    return _rate_result(_PM_APPROVAL_RATE, approved, len(verdicts))
+    return rate_result(_PM_APPROVAL_RATE, approved, len(verdicts))
 
 
 def _compute_pm_modification_rate(
@@ -211,7 +190,7 @@ def _compute_pm_modification_rate(
 ) -> MetricResult:
     verdicts = _verdicts(_conditioned(dataset, conditioning))
     modified = sum(v == PMVerdict.APPROVE_WITH_MODIFICATION for v in verdicts)
-    return _rate_result(_PM_MODIFICATION_RATE, modified, len(verdicts))
+    return rate_result(_PM_MODIFICATION_RATE, modified, len(verdicts))
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +217,7 @@ def _criterion_fail_rate_compute(
         failed = sum(
             d.evaluation_json.get(criterion, {}).get("status") == "fail" for d in decisions
         )
-        return _rate_result(metric_id, failed, len(decisions))
+        return rate_result(metric_id, failed, len(decisions))
 
     return _compute
 
@@ -438,7 +417,7 @@ def _compute_hold_on_non_on_track_rate(
         if assessment.get("thesis_status") in _NON_ON_TRACK_STATUSES
     ]
     held = sum(a.get("recommended_action") == "hold" for a in non_on_track)
-    return _rate_result(_STRATEGIST_HOLD_ON_NON_ON_TRACK_RATE, held, len(non_on_track))
+    return rate_result(_STRATEGIST_HOLD_ON_NON_ON_TRACK_RATE, held, len(non_on_track))
 
 
 _STRATEGIST_METRICS: tuple[Metric, ...] = (
