@@ -52,6 +52,7 @@ from alphamind.persistence.session import (
     make_engine,
     make_session_factory,
 )
+from alphamind.portfolio_state.records.theses import RecentThesisResolution
 from alphamind.state.invocation_context.records import (
     process_lifetime_record_to_row,
 )
@@ -2036,14 +2037,18 @@ async def _seed_closed_position_active_thesis(
         await sess.commit()
 
 
-def _read_recent_thesis_resolutions(db_path: Path) -> tuple[Any, ...]:
+def _read_recent_thesis_resolutions(
+    db_path: Path,
+) -> tuple[RecentThesisResolution, ...]:
     """Call the production ``get_recent_thesis_resolutions`` against the run's DB.
 
     Builds the real SQL repository (the same path ``assemble_snapshot`` uses) so
     the read exercises the codec round-trip whose ``_check_resolved_fields``
     invariant the ALP-834 half-written RESOLVED row violated.
     """
-    from alphamind.scheduler.orchestrator import make_repository_providers
+    from alphamind.risk_guardrails.regime_adaptation.repository_providers import (
+        make_repository_providers,
+    )
     from alphamind.state.config import StatePersistenceConfig
     from alphamind.state.repository import build_sql_portfolio_state_repository
 
@@ -2066,17 +2071,20 @@ def _read_recent_thesis_resolutions(db_path: Path) -> tuple[Any, ...]:
             config=config,
             thesis_quality_aggregates_trailing_windows_days=(5, 20),
         )
-        return repository.get_recent_thesis_resolutions(lookback_trading_days=20)
+        resolutions: tuple[RecentThesisResolution, ...] = (
+            repository.get_recent_thesis_resolutions(lookback_trading_days=20)
+        )
+        return resolutions
     finally:
         async_engine.sync_engine.dispose()
 
 
 def _make_active_risk_parameters() -> Any:
     from alphamind.config.models.regimes import Regime
-    from alphamind.scheduler.orchestrator import (
-        _load_base_profile_rule_values,
+    from alphamind.risk_guardrails.regime_adaptation.active_parameters import (
         build_active_risk_parameters,
     )
+    from alphamind.scheduler.orchestrator import _load_base_profile_rule_values
 
     return build_active_risk_parameters(
         rule_values=_load_base_profile_rule_values(SHIPPED_CONFIG_DIR),
