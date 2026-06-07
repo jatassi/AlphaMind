@@ -27,6 +27,16 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from alphamind.analysis._shared import Sector, TokensUsed
 from alphamind.analysis.domain_researchers.models import SECTOR_PREFIX
 
+# The reference-ID grammar lives in the pure ``ref_grammar`` module (no sqlalchemy
+# in its transitive closure) so the feedback-loop citation parser can reuse it
+# under its purity contract. Re-exported here so the ALP-531 decision-validator
+# consumers and ``reference_extractor.py`` import these unchanged.
+from alphamind.analysis.synthesizer.ref_grammar import (
+    REF_ID_RE,
+    ReferencePrefix,
+    parse_reference_id,
+)
+
 __all__ = [
     "REF_ID_RE",
     "SOURCE_PREFIXES",
@@ -57,31 +67,6 @@ class BriefSource(enum.StrEnum):
     CR = "cr"
 
 
-class ReferencePrefix(enum.StrEnum):
-    """Closed set of reference-ID prefixes appearing in upstream briefs.
-
-    Mirrors ``docs/design/testing/llm-output-validation.md``
-    § Reference-ID taxonomy. The retrieval store keys by full prefixed ID,
-    so sub-typed variants (`SA-TECH-ANOM`, `SA-TECH-TC`, `QR-CW`) are
-    first-class members rather than encoded as substrings of the base
-    prefix.
-    """
-
-    SA_TECH = "SA-TECH"
-    SA_TECH_ANOM = "SA-TECH-ANOM"
-    SA_TECH_TC = "SA-TECH-TC"
-    SA_FIN = "SA-FIN"
-    SA_FIN_ANOM = "SA-FIN-ANOM"
-    SA_FIN_TC = "SA-FIN-TC"
-    SA_ENERGY = "SA-ENERGY"
-    SA_ENERGY_ANOM = "SA-ENERGY-ANOM"
-    SA_ENERGY_TC = "SA-ENERGY-TC"
-    QR = "QR"
-    QR_CW = "QR-CW"
-    AR = "AR"
-    CR = "CR"
-
-
 SOURCE_PREFIXES: dict[BriefSource, frozenset[ReferencePrefix]] = {
     BriefSource.SA_TECH: frozenset(
         {ReferencePrefix.SA_TECH, ReferencePrefix.SA_TECH_ANOM, ReferencePrefix.SA_TECH_TC}
@@ -108,15 +93,6 @@ SOURCE_PREFIXES: dict[BriefSource, frozenset[ReferencePrefix]] = {
 assert ReferencePrefix.SA_TECH.value == SECTOR_PREFIX[Sector.TECH_SEMIS]
 assert ReferencePrefix.SA_FIN.value == SECTOR_PREFIX[Sector.FINANCIALS]
 assert ReferencePrefix.SA_ENERGY.value == SECTOR_PREFIX[Sector.ENERGY]
-
-
-# Longest-match parse table: sub-typed prefixes (`SA-TECH-ANOM`) must beat their
-# base prefix (`SA-TECH`) so `SA-TECH-ANOM-3` resolves to (SA_TECH_ANOM, 3) and
-# never to (SA_TECH, "ANOM-3"). Sorting by descending value length encodes the
-# rule once for any future additions.
-_PREFIXES_BY_LENGTH: tuple[ReferencePrefix, ...] = tuple(
-    sorted(ReferencePrefix, key=lambda p: len(p.value), reverse=True)
-)
 
 
 class BriefBundle(BaseModel, frozen=True):
@@ -159,38 +135,6 @@ class BriefBundle(BaseModel, frozen=True):
             )
         return self
 
-
-def parse_reference_id(ref_id: str) -> tuple[ReferencePrefix, int] | None:
-    """Parse a reference ID like ``SA-TECH-ANOM-3`` into ``(ReferencePrefix, index)``.
-
-    Longest-match: ``SA-TECH-ANOM-3`` resolves to
-    ``(ReferencePrefix.SA_TECH_ANOM, 3)``, not
-    ``(ReferencePrefix.SA_TECH, "ANOM-3")``. Returns :data:`None` for
-    unknown prefixes, missing indexes, non-integer indexes, zero indexes,
-    or empty input.
-    """
-    if not ref_id:
-        return None
-    for prefix in _PREFIXES_BY_LENGTH:
-        head = f"{prefix.value}-"
-        if not ref_id.startswith(head):
-            continue
-        tail = ref_id[len(head) :]
-        if not tail or not tail.isdigit():
-            return None
-        index = int(tail)
-        if index <= 0:
-            return None
-        return (prefix, index)
-    return None
-
-
-# Bracketed-reference extractor: matches ``[<prefix-segments>-<digits>]``
-# anywhere in narrative prose. ``parse_reference_id`` narrows further to the
-# canonical synthesizer prefix taxonomy. Distinct from the line-anchored
-# ``reference_extractor._HEADER_RE`` — that one splits a brief body into
-# sections, this one finds embedded citations inside prose.
-REF_ID_RE = re.compile(r"\[([A-Z][A-Z0-9-]*-[0-9]+)\]")
 
 # Bracketed-token extractor: matches any ``[<UPPER/digit/hyphen body>]``,
 # including well-formed ``[CR-3]`` (body ``CR-3``). The bare-vs-indexed

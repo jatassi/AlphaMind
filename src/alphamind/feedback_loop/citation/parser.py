@@ -33,6 +33,12 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from alphamind.analysis.synthesizer.ref_grammar import (
+    REF_ID_RE,
+    ReferencePrefix,
+    parse_reference_id,
+)
+
 if TYPE_CHECKING:
     from alphamind.portfolio_state.records.theses import ThesisComponentOutcome
 
@@ -67,60 +73,34 @@ class CitationSource(enum.StrEnum):
     CR = "cr"
 
 
-# The upstream reference-ID prefix taxonomy, mapped to the producing source.
-# Mirrors the as-built synthesizer
-# :class:`alphamind.analysis.synthesizer.models.ReferencePrefix` (the canonical
-# producer-side grammar) — inlined rather than imported because that module
-# transitively pulls ``sqlalchemy`` via ``analysis._shared``, which the
-# feedback-loop metric-core purity contract forbids. Sub-typed variants fold to
-# their base source; only upstream-producible prefixes appear (consumer-layer
-# REC / SA / SA-ORD / ENV IDs are deliberately absent).
-_PREFIX_TO_SOURCE: dict[str, CitationSource] = {
-    "SA-TECH": CitationSource.SA_TECH,
-    "SA-TECH-ANOM": CitationSource.SA_TECH,
-    "SA-TECH-TC": CitationSource.SA_TECH,
-    "SA-FIN": CitationSource.SA_FIN,
-    "SA-FIN-ANOM": CitationSource.SA_FIN,
-    "SA-FIN-TC": CitationSource.SA_FIN,
-    "SA-ENERGY": CitationSource.SA_ENERGY,
-    "SA-ENERGY-ANOM": CitationSource.SA_ENERGY,
-    "SA-ENERGY-TC": CitationSource.SA_ENERGY,
-    "QR": CitationSource.QR,
-    "QR-CW": CitationSource.QR,
-    "AR": CitationSource.AR,
-    "CR": CitationSource.CR,
+# The upstream reference-ID prefix taxonomy, mapped to its producing source.
+# Keyed by the canonical synthesizer
+# :class:`~alphamind.analysis.synthesizer.ref_grammar.ReferencePrefix` member (not by
+# re-listed prefix strings) so a member newly added to that closed taxonomy cannot be
+# silently dropped here — the completeness assert below fails the import until it is
+# mapped. Sub-typed variants fold to their base source (``SA-TECH-ANOM`` → ``SA_TECH``);
+# consumer-layer IDs (``REC`` / ``SA`` / ``SA-ORD`` / ``ENV``) are not ``ReferencePrefix``
+# members at all, so they are absent by construction.
+_PREFIX_TO_SOURCE: dict[ReferencePrefix, CitationSource] = {
+    ReferencePrefix.SA_TECH: CitationSource.SA_TECH,
+    ReferencePrefix.SA_TECH_ANOM: CitationSource.SA_TECH,
+    ReferencePrefix.SA_TECH_TC: CitationSource.SA_TECH,
+    ReferencePrefix.SA_FIN: CitationSource.SA_FIN,
+    ReferencePrefix.SA_FIN_ANOM: CitationSource.SA_FIN,
+    ReferencePrefix.SA_FIN_TC: CitationSource.SA_FIN,
+    ReferencePrefix.SA_ENERGY: CitationSource.SA_ENERGY,
+    ReferencePrefix.SA_ENERGY_ANOM: CitationSource.SA_ENERGY,
+    ReferencePrefix.SA_ENERGY_TC: CitationSource.SA_ENERGY,
+    ReferencePrefix.QR: CitationSource.QR,
+    ReferencePrefix.QR_CW: CitationSource.QR,
+    ReferencePrefix.AR: CitationSource.AR,
+    ReferencePrefix.CR: CitationSource.CR,
 }
 
-# Longest-match prefix order: a sub-typed prefix (``SA-TECH-ANOM``) must beat its
-# base (``SA-TECH``) so ``SA-TECH-ANOM-3`` resolves to the sub-type, never to
-# ``SA-TECH`` with a ``ANOM-3`` tail (mirrors the synthesizer's parse table).
-_PREFIXES_BY_LENGTH: tuple[str, ...] = tuple(sorted(_PREFIX_TO_SOURCE, key=len, reverse=True))
-
-# Bracketed-citation marker: ``[<prefix-segments>-<digits>]`` in narrative prose.
-# Matches the as-built synthesizer ``REF_ID_RE``; the source filter narrows to
-# the upstream taxonomy.
-REF_ID_RE = re.compile(r"\[([A-Z][A-Z0-9-]*-[0-9]+)\]")
-
-
-def _parse_upstream_index(ref_id: str) -> int | None:
-    """Return the positive index of an upstream *ref_id*, or ``None``.
-
-    Longest-match over :data:`_PREFIXES_BY_LENGTH`; rejects unknown prefixes,
-    missing / non-integer / non-positive indexes, and empty input — the same
-    contract as the synthesizer's ``parse_reference_id`` over the upstream subset.
-    """
-    if not ref_id:
-        return None
-    for prefix in _PREFIXES_BY_LENGTH:
-        head = f"{prefix}-"
-        if not ref_id.startswith(head):
-            continue
-        tail = ref_id[len(head) :]
-        if not tail.isdigit():
-            return None
-        index = int(tail)
-        return index if index > 0 else None
-    return None
+# Compile-time completeness guard: every ``ReferencePrefix`` must fold to a source, so
+# adding a member to the synthesizer taxonomy without mapping it here is a load-time
+# failure rather than a silently-dropped citation.
+assert set(_PREFIX_TO_SOURCE) == set(ReferencePrefix)
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,17 +134,18 @@ class RefChain:
 def classify_source(ref_id: str) -> CitationSource | None:
     """Map *ref_id* (e.g. ``"SA-TECH-3"``) to its producing :class:`CitationSource`.
 
-    Returns ``None`` for consumer-layer IDs (``REC`` / ``SA`` / ``SA-ORD`` /
-    ``ENV``), malformed IDs, and any token outside the upstream-source taxonomy.
-    Sub-typed prefixes fold to their base source (``SA-TECH-ANOM-3`` →
-    :attr:`CitationSource.SA_TECH`).
+    Delegates the grammar to the canonical synthesizer
+    :func:`~alphamind.analysis.synthesizer.ref_grammar.parse_reference_id` (longest-match
+    prefix, positive-index requirement), then folds the parsed
+    :class:`~alphamind.analysis.synthesizer.ref_grammar.ReferencePrefix` to its base
+    source. Returns ``None`` for consumer-layer IDs (``REC`` / ``SA`` / ``SA-ORD`` /
+    ``ENV``), malformed IDs, and any token the grammar rejects.
     """
-    if _parse_upstream_index(ref_id) is None:
+    parsed = parse_reference_id(ref_id)
+    if parsed is None:
         return None
-    for prefix in _PREFIXES_BY_LENGTH:
-        if ref_id.startswith(f"{prefix}-"):
-            return _PREFIX_TO_SOURCE[prefix]
-    return None
+    prefix, _index = parsed
+    return _PREFIX_TO_SOURCE[prefix]
 
 
 def extract_citations(text: str) -> tuple[str, ...]:
