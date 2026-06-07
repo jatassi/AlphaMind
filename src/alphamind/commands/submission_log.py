@@ -15,7 +15,7 @@ decision↔execution import cycle that ALP-458 closed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from alphamind.commands.pm_envelope import PMEnvelope
@@ -56,6 +56,16 @@ class SubmissionLogEntry:
     execution-layer deterministic step. Empty when no enter-now repricing
     occurred. Forwarded by ``dispatch_phase2`` to ``persist_envelope_outcome``
     so the ``pm_decision`` audit row reflects the execution-layer movement.
+
+    ``originating_proposal_json`` (ALP-557) carries the ``model_dump(mode="json")``
+    body of the analyst Recommendation / strategist assessment this envelope
+    wraps, resolved at envelope-construction time in the submit_envelope handler
+    (where the pre-processor bundle is in scope) via
+    ``lookup_originating_proposal_json``. Forwarded by ``dispatch_phase2`` (and
+    the in-turn / in-tool writeback paths) into the ``pm_decision`` row so the
+    counterfactual-replay engine (ALP-129) can reconstruct the originating
+    proposal. The empty-dict default covers legacy constructions that never
+    carried a bundle; the production handler always populates it.
     """
 
     envelope: PMEnvelope
@@ -63,6 +73,7 @@ class SubmissionLogEntry:
     dispatch_results: tuple[Any, ...] | None = None
     abandoned_entries: tuple[Any, ...] = ()
     reprice_markers: tuple[Any, ...] = ()
+    originating_proposal_json: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

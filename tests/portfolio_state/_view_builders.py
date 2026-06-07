@@ -350,6 +350,7 @@ def _make_pm_decision_entry(
         modifications_json=[],
         resulting_command_ids=(),
         verdict=PMVerdict.APPROVE,
+        originating_proposal_json={},
     )
     return ActivityLogEntry(
         entry_id=entry_id,

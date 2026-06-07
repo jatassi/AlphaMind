@@ -35,9 +35,6 @@ from alphamind.state.invocation_context.activity_log import (
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
-from alphamind.state.repository.activity_log_queries import (
-    read_most_recent_config_change_new_hash,
-)
 from alphamind.state.tables.invocations import InvocationRow
 
 
@@ -64,6 +61,15 @@ async def emit_distillation_config_change_entry(
     Returns the entry that was persisted, or ``None`` when emission was
     suppressed.
     """
+    # Lazy import to break a module-load cycle: ``state.repository.__init__``
+    # eagerly imports ``activity_log_queries``, which imports this package; a
+    # module-level import of ``activity_log_queries`` here closes the loop and
+    # makes a cold ``import alphamind.state.repository.*`` fail. Importing inside
+    # the function defers it past package initialization.
+    from alphamind.state.repository.activity_log_queries import (
+        read_most_recent_config_change_new_hash,
+    )
+
     persisted_prior_hash = await read_most_recent_config_change_new_hash(
         handle.session, config_file
     )

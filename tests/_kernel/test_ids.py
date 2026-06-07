@@ -189,6 +189,7 @@ def test_kernel_ids_all_lists_every_public_name() -> None:
         "EnvelopeId",
         "InvocationId",
         "RecommendationId",
+        "ReplayId",
         "ThesisId",
         "Symbol",
         "OccSymbol",

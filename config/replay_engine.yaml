@@ -1,0 +1,8 @@
+# Counterfactual replay engine — yaml-tunable knobs (decision (H) of ALP-129).
+iv_lag_low_confidence_threshold_minutes: 60
+# Replays whose nearest IV snapshot at entry or exit is older than this lag
+# are demoted to Confidence.LOW per Step 5 of the design doc.
+strategist_default_forward_window_hours: 24
+# Default forward-simulation window for strategist position-action replays
+# (CLOSE / REDUCE / ADJUST-BRACKET) whose horizon is not otherwise bounded by
+# the proposal; consumed by compute_replay_window (stories 04 / 07).

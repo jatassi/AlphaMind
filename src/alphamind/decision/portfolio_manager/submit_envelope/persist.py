@@ -44,6 +44,7 @@ async def _persist_envelope_outcome_via_phase2(
     *,
     dispatch_results: tuple[BrokerDispatchResult | None, ...] | None = None,
     reprice_markers: tuple[Any, ...] = (),
+    originating_proposal_json: dict[str, Any],
 ) -> None:
     """Dispatch to :func:`persist_envelope_outcome` with the supplied config."""
     await persist_envelope_outcome(
@@ -53,6 +54,7 @@ async def _persist_envelope_outcome_via_phase2(
         config=state_persistence_config,
         dispatch_results=dispatch_results,
         reprice_markers=reprice_markers,
+        originating_proposal_json=originating_proposal_json,
     )
 
 

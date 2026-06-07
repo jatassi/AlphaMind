@@ -288,6 +288,7 @@ def _pm_decision_entry(
         modifications_json=[],
         resulting_command_ids=("cmd-1",),
         verdict=PMVerdict.APPROVE,
+        originating_proposal_json={},
     )
     return _entry(
         entry_id=entry_id,

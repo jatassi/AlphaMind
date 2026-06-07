@@ -191,6 +191,7 @@ def _add_pm_decision(
         modifications_json=[],
         resulting_command_ids=resulting_command_ids,
         verdict=verdict,
+        originating_proposal_json={},
     )
     entry = ActivityLogEntry(
         entry_id=entry_id,

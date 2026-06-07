@@ -15,6 +15,7 @@ from alphamind.state.tables.cash_ledger import CashLedgerRow
 from alphamind.state.tables.corporate_action_integration_ledger import (
     CorporateActionIntegrationLedgerRow,
 )
+from alphamind.state.tables.counterfactual_replays import CounterfactualReplays
 from alphamind.state.tables.drawdown_state import DrawdownStateRow
 from alphamind.state.tables.fill_records import FillRecordRow
 from alphamind.state.tables.invocations import InvocationRow
@@ -37,6 +38,7 @@ __all__ = [
     "CapitalReservationRow",
     "CashLedgerRow",
     "CorporateActionIntegrationLedgerRow",
+    "CounterfactualReplays",
     "DrawdownStateRow",
     "FillRecordRow",
     "InvocationRow",

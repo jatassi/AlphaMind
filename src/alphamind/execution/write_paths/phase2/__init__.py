@@ -92,6 +92,7 @@ async def persist_envelope_outcome(
     config: StatePersistenceConfig,
     dispatch_results: tuple[BrokerDispatchResult | None, ...] | None = None,
     reprice_markers: tuple[Any, ...] = (),
+    originating_proposal_json: dict[str, Any],
 ) -> None:
     """Persist per-command writebacks + one ``pm_decision`` for an accepted envelope.
 
@@ -109,6 +110,12 @@ async def persist_envelope_outcome(
     "marketable_price"}`` dict per enter-now entry repriced by the execution
     layer. Forwarded into the ``pm_decision`` audit row so a repriced envelope
     is no longer recorded as unmodified.
+
+    ``originating_proposal_json`` (ALP-557): the ``model_dump(mode="json")`` body
+    of the analyst Recommendation / strategist assessment this envelope wraps,
+    resolved at the decision layer (where the pre-processor bundle is in scope)
+    and carried through to the ``pm_decision`` row so the counterfactual-replay
+    engine (ALP-129) can reconstruct the originating proposal.
     """
     del config  # No knobs consumed at this story; signature is forward-shaped.
 
@@ -131,6 +138,7 @@ async def persist_envelope_outcome(
         envelope=envelope,
         command_ids=tuple(accepted_command_ids),
         reprice_markers=reprice_markers,
+        originating_proposal_json=originating_proposal_json,
     )
     # Layer-1 parse rejections deliberately skip this — only an accepted
     # envelope's full writeback counts as a Phase 2 commit.
@@ -355,8 +363,15 @@ async def _emit_pm_decision(
     envelope: PMEnvelope,
     command_ids: tuple[str, ...],
     reprice_markers: tuple[Any, ...] = (),
+    originating_proposal_json: dict[str, Any],
 ) -> None:
-    """Emit one ``pm_decision`` capturing the full envelope provenance."""
+    """Emit one ``pm_decision`` capturing the full envelope provenance.
+
+    ``originating_proposal_json`` (ALP-557) is the ``model_dump(mode="json")``
+    body of the analyst Recommendation / strategist assessment the envelope
+    wraps; it is persisted alongside the ALP-765 ``reprice_markers`` so the
+    counterfactual-replay engine can reconstruct the originating proposal.
+    """
     detail = PMDecisionDetail(
         envelope_id=envelope.envelope_id,
         source_provenance_json={
@@ -369,6 +384,7 @@ async def _emit_pm_decision(
         modifications_json=[m.model_dump(mode="json") for m in envelope.modifications],
         resulting_command_ids=command_ids,
         verdict=_VERDICT_TO_PM_VERDICT[envelope.verdict],
+        originating_proposal_json=originating_proposal_json,
         reprice_markers_json=list(reprice_markers),
     )
     _emit(

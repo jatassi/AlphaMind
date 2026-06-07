@@ -639,6 +639,7 @@ _DETAIL_FACTORIES: list[tuple[str, Callable[[], object]]] = [
             modifications_json=[],
             resulting_command_ids=("cmd-001",),
             verdict=PMVerdict.APPROVE,
+            originating_proposal_json={},
         ),
     ),
     (
@@ -1361,6 +1362,7 @@ _ENTRY_CASES: list[tuple[str, EventType, EventGroup, Callable[[], object], Event
             modifications_json=[],
             resulting_command_ids=("cmd-001",),
             verdict=PMVerdict.APPROVE,
+            originating_proposal_json={},
         ),
         EventSource.COMMAND_EXECUTOR,
     ),

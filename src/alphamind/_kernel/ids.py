@@ -27,6 +27,7 @@ __all__ = [
     "OrderId",
     "PositionId",
     "RecommendationId",
+    "ReplayId",
     "Symbol",
     "ThesisId",
     "command_id",
@@ -46,6 +47,7 @@ ClientOrderId = NewType("ClientOrderId", str)
 EnvelopeId = NewType("EnvelopeId", str)
 InvocationId = NewType("InvocationId", str)
 RecommendationId = NewType("RecommendationId", str)
+ReplayId = NewType("ReplayId", str)
 ThesisId = NewType("ThesisId", str)
 Symbol = NewType("Symbol", str)
 OccSymbol = NewType("OccSymbol", str)

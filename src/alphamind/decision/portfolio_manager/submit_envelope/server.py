@@ -47,6 +47,7 @@ from alphamind.decision.portfolio_manager.submit_envelope.process import (
     _strip_analyst_only_command_fields,
     _unwrap_envelope_args,
     _validate_envelope_payload,
+    lookup_originating_proposal_json,
 )
 from alphamind.decision.portfolio_manager.submit_envelope.types import (
     FailedSubmissionEntry,
@@ -464,6 +465,18 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
         credited_deltas=credited_deltas,
     )
 
+    # Step 4.6 (ALP-557): resolve the originating proposal body from the
+    # pre-processor bundle while it is in scope. Layer-3 validation already
+    # guaranteed ``source_recommendation_id`` resolves (Step 2), so a miss here
+    # is a real wiring bug surfaced as ``OriginatingProposalLookupError`` rather
+    # than a silent empty dict. The resolved body rides on the submission-log
+    # entry so every downstream persistence path (in-tool / broker-active
+    # finalize / deferred ``dispatch_phase2``) carries it without re-accessing
+    # the bundle (which is not in scope at the orchestrator's deferred site).
+    # The enter-now reprice rewrite in Step 4 preserves ``source_recommendation_id``,
+    # so resolving after it is correct.
+    originating_proposal_json = lookup_originating_proposal_json(pre_processor_bundle, envelope)
+
     # Step 5: append to submission log (post-broker outcome). ALP-711 scope (C):
     # ``dispatch_results`` rides on the log entry so the orchestrator's
     # Phase 2 dispatcher can forward broker outcomes (real Alpaca order ids,
@@ -479,6 +492,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
                 dispatch_results=dispatch_results,
                 abandoned_entries=abandoned_entries,
                 reprice_markers=reprice_markers,
+                originating_proposal_json=originating_proposal_json,
             ),
         ),
     )
@@ -520,6 +534,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
             accepted_command_ids=accepted_command_ids,
             abandoned_entries=abandoned_entries,
             reprice_markers=reprice_markers,
+            originating_proposal_json=originating_proposal_json,
         )
     elif invocation_handle is not None and not defer_writeback:
         await _persist_envelope_outcome_via_phase2(
@@ -529,6 +544,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
             state_persistence_config,
             dispatch_results=dispatch_results,
             reprice_markers=reprice_markers,
+            originating_proposal_json=originating_proposal_json,
         )
         for abandoned in abandoned_entries:
             await _emit_command_abandoned_via_phase2(

@@ -230,6 +230,7 @@ class TestDispatchPhase2:
             config: Any,
             dispatch_results: Any = None,
             reprice_markers: Any = (),
+            originating_proposal_json: Any = None,
         ) -> None:
             captured_dispatch_results.append(dispatch_results)
 
@@ -285,6 +286,7 @@ class TestDispatchPhase2:
             config: Any,
             dispatch_results: Any = None,
             reprice_markers: Any = (),
+            originating_proposal_json: Any = None,
         ) -> None:
             captured_dispatch_results.append(dispatch_results)
 
@@ -393,6 +395,7 @@ class TestDispatchPhase2:
             config: Any,
             dispatch_results: Any = None,
             reprice_markers: Any = (),
+            originating_proposal_json: Any = None,
         ) -> None:
             captured_sessions.append(handle.session)
 
@@ -482,6 +485,7 @@ class TestDispatchPhase2:
             config: Any,
             dispatch_results: Any = None,
             reprice_markers: Any = (),
+            originating_proposal_json: Any = None,
         ) -> None:
             # Stamp the row's command_execution_summary_json with the
             # current envelope_id as a marker for "this envelope's session
@@ -684,6 +688,44 @@ async def _persist_one_envelope_in_turn(
         )
     (log_entry,) = new_state.submission_log
     return log_entry
+
+
+class TestDispatchPhase2OriginatingProposal:
+    """ALP-557 — the full bundle → submit_envelope → activity-log path threads the
+    originating proposal body into the persisted ``pm_decision`` row."""
+
+    async def test_broker_active_writeback_persists_originating_proposal_json(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The in-turn (broker-active) writeback resolves the originating analyst
+        Recommendation from the pre-processor bundle and persists its body under
+        ``originating_proposal_json`` on the ``pm_decision`` row."""
+        from sqlalchemy import select
+
+        from alphamind.portfolio_state.events.activity_log import (
+            EventType,
+            PMDecisionDetail,
+        )
+        from alphamind.portfolio_state.events.codec import decode_detail
+        from alphamind.state.tables.activity_log import ActivityLogRow
+
+        await _seed_for_real_writeback(async_factory)
+        log_entry = await _persist_one_envelope_in_turn(async_factory)
+
+        # The submission-log entry carries the resolved proposal body so the
+        # deferred path can forward it without re-accessing the bundle.
+        assert log_entry.originating_proposal_json["recommendation_id"] == "REC-1"
+
+        async with async_factory() as sess:
+            pm_rows = [
+                row
+                for row in (await sess.execute(select(ActivityLogRow))).scalars().all()
+                if row.event_type == EventType.PM_DECISION.value
+            ]
+        assert len(pm_rows) == 1
+        detail = decode_detail(pm_rows[0].detail_json, PMDecisionDetail)
+        assert detail.originating_proposal_json["recommendation_id"] == "REC-1"
 
 
 class TestDispatchPhase2Idempotency:

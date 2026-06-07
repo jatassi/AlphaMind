@@ -67,7 +67,8 @@ class TestEntryRepricedMigration:
         repo_root = Path(__file__).parents[2]
         script = ScriptDirectory.from_config(Config(repo_root / "alembic.ini"))
         # A single head (no branched history — two Alembic heads break ``upgrade head``).
-        assert list(script.get_heads()) == [_MIGRATION_REVISION]
+        # The head advances as later migrations land; the invariant is exactly 1 head.
+        assert len(list(script.get_heads())) == 1
         rev = script.get_revision(_MIGRATION_REVISION)
         assert rev is not None
         # Re-parented onto ALP-865's migration (a linear chain), not the baseline.
@@ -87,9 +88,10 @@ class TestEntryRepricedMigration:
         cfg = _alembic_config(db_path)
         command.upgrade(cfg, "head")
 
-        # Step down one revision: the CHECK is narrowed back to the pre-ENTRY_REPRICED
-        # vocabulary, so the member is rejected.
-        command.downgrade(cfg, "-1")
+        # Step down to the parent of this migration (a865wm0000bb), which pre-dates
+        # ENTRY_REPRICED. Using the explicit revision (not ``-1``) keeps the test
+        # stable as later migrations extend the chain above a867er0000cc.
+        command.downgrade(cfg, _PARENT_REVISION)
         assert _try_insert_entry_repriced(db_path) is True
 
         # Step back up: the CHECK is widened, so the member is now accepted.

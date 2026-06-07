@@ -446,6 +446,7 @@ async def finalize_broker_envelope(
     accepted_command_ids: tuple[str, ...],
     abandoned_entries: tuple[Any, ...],
     reprice_markers: tuple[Any, ...],
+    originating_proposal_json: dict[str, Any],
 ) -> None:
     """Emit the envelope-level audit after the per-command loop, in a fresh txn.
 
@@ -457,6 +458,10 @@ async def finalize_broker_envelope(
     guarded by :func:`invocation_has_pending_submit_strand` (ALP-836). Stamping
     here too would be both redundant and ineffective (the orchestrator's
     unconditional stamp would overwrite it).
+
+    ``originating_proposal_json`` (ALP-557) is the resolved analyst Recommendation
+    / strategist assessment body, forwarded into the ``pm_decision`` row exactly
+    as the deferred :func:`persist_envelope_outcome` path does.
     """
     async with session_factory() as session:
         await begin_write_immediate(session)
@@ -466,6 +471,7 @@ async def finalize_broker_envelope(
             envelope=envelope,
             command_ids=accepted_command_ids,
             reprice_markers=reprice_markers,
+            originating_proposal_json=originating_proposal_json,
         )
         for abandoned in abandoned_entries:
             await persist_command_abandoned(
