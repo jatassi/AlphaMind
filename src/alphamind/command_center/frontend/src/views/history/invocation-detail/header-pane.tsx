@@ -54,8 +54,14 @@ export function HeaderPane({ header }: HeaderPaneProps): React.JSX.Element {
           value={header.ended_at ? header.ended_at.replace('T', ' ') : '—'}
         />
         <FieldRow label="Duration" value={<DurationCell secs={header.duration_seconds} />} />
-        <FieldRow label="Phase 1 completed" value={header.phase1_completed_at ?? '—'} />
-        <FieldRow label="Phase 2 completed" value={header.phase2_completed_at ?? '—'} />
+        <FieldRow
+          label="Fill collection completed"
+          value={header.fill_collection_completed_at ?? '—'}
+        />
+        <FieldRow
+          label="Command execution completed"
+          value={header.command_execution_completed_at ?? '—'}
+        />
         <FieldRow label="Trigger type" value={header.trigger_type} />
         <FieldRow label="Trigger reason" value={header.trigger_reason} />
         <FieldRow

@@ -335,8 +335,8 @@ export type InvocationDetailHeader = {
   started_at: string
   ended_at: string | null
   status: string
-  phase1_completed_at: string | null
-  phase2_completed_at: string | null
+  fill_collection_completed_at: string | null
+  command_execution_completed_at: string | null
   duration_seconds: number | null
   trigger_type: string
   trigger_reason: string

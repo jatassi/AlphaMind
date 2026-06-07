@@ -67,7 +67,7 @@ const MOCK_LIVE_DATA = {
     started_at: '2026-05-26T09:30:00Z',
     ended_at: null,
     status: 'running',
-    current_phase: 'phase1',
+    current_phase: 'fill_collection',
     phase_durations: null,
     agent_metrics: null,
     retry_count: null,
