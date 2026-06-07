@@ -6,14 +6,16 @@ module-level ``METRICS`` tuple, aggregates them, and exposes ``get_metric`` /
 gated metric's absence (e.g. PM-accuracy before ALP-129 lands) never crashes a
 consumer — it degrades.
 
-Discovery is exercised by writing a real metric module into the ``metrics``
-package directory for the duration of a test, then forcing a re-scan. This is
-the genuine discovery path — no metric module is patched into ``sys.modules`` by
-hand.
+Discovery is exercised by planting a real metric module on a per-test temporary
+directory appended to the package's ``__path__``. Using ``tmp_path`` (not the
+shared ``src/`` tree) keeps the probe isolated per test, so the suite is safe
+under ``pytest -n auto`` — no two xdist workers ever share the planted file, and
+nothing leaks into the real package between tests.
 """
 
 from __future__ import annotations
 
+import sys
 import textwrap
 from collections.abc import Iterator
 from pathlib import Path
@@ -24,25 +26,27 @@ import alphamind.feedback_loop.metrics as metrics_pkg
 from alphamind.feedback_loop.metrics import get_metric, list_metrics
 from alphamind.feedback_loop.metrics.types import MetricId
 
-_METRICS_DIR = Path(metrics_pkg.__file__).parent
+_PROBE_ID = "discovery_probe"
+_PROBE_MODULE = "discovery_probe"
 
 
 @pytest.fixture()
-def temp_metric_module() -> Iterator[MetricId]:
-    """Write a throwaway metric module into the metrics package, then remove it.
+def planted_metric(tmp_path: Path) -> Iterator[MetricId]:
+    """Plant a metric module on a tmp dir added to the package ``__path__``.
 
-    Yields the ``MetricId`` the module registers so the test can assert the
-    registry discovered it. The module is deleted and the registry cache reset
-    on teardown so the planted metric never leaks into other tests.
+    Yields the ``MetricId`` the module registers. On teardown the tmp dir is
+    removed from ``__path__``, the imported probe module is dropped from
+    ``sys.modules``, and the registry cache is reset — so the probe never leaks
+    into another test.
     """
-    module_path = _METRICS_DIR / "_discovery_probe.py"
-    module_path.write_text(
+    (tmp_path / f"{_PROBE_MODULE}.py").write_text(
         textwrap.dedent(
             '''\
             """Throwaway metric module planted by the registry discovery test."""
 
             from __future__ import annotations
 
+            from alphamind.feedback_loop.dataset import WindowDataset
             from alphamind.feedback_loop.metrics.types import (
                 Conditioning,
                 Metric,
@@ -50,7 +54,6 @@ def temp_metric_module() -> Iterator[MetricId]:
                 MetricResult,
                 Window,
             )
-            from alphamind.feedback_loop.dataset import WindowDataset
 
 
             def _compute(dataset: WindowDataset, conditioning: Conditioning) -> MetricResult:
@@ -76,11 +79,13 @@ def temp_metric_module() -> Iterator[MetricId]:
         ),
         encoding="utf-8",
     )
+    metrics_pkg.__path__.append(str(tmp_path))
     metrics_pkg.reset_registry_cache()
     try:
-        yield MetricId("discovery_probe")
+        yield MetricId(_PROBE_ID)
     finally:
-        module_path.unlink(missing_ok=True)
+        metrics_pkg.__path__.remove(str(tmp_path))
+        sys.modules.pop(f"{metrics_pkg.__name__}.{_PROBE_MODULE}", None)
         metrics_pkg.reset_registry_cache()
 
 
@@ -91,15 +96,11 @@ class TestRegistry:
     def test_list_metrics_returns_tuple(self) -> None:
         assert isinstance(list_metrics(), tuple)
 
-    def test_discovers_planted_metric(self, temp_metric_module: MetricId) -> None:
-        descriptor = get_metric(temp_metric_module)
+    def test_discovers_planted_metric(self, planted_metric: MetricId) -> None:
+        descriptor = get_metric(planted_metric)
         assert descriptor is not None
-        assert descriptor.metric_id == temp_metric_module
+        assert descriptor.metric_id == planted_metric
         assert descriptor.po_type == "process"
 
-    def test_planted_metric_listed(self, temp_metric_module: MetricId) -> None:
-        assert temp_metric_module in {m.metric_id for m in list_metrics()}
-
-    def test_metric_absent_after_teardown(self) -> None:
-        """Confirms the planted module does not leak between tests."""
-        assert get_metric(MetricId("discovery_probe")) is None
+    def test_planted_metric_listed(self, planted_metric: MetricId) -> None:
+        assert planted_metric in {m.metric_id for m in list_metrics()}

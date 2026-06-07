@@ -35,15 +35,14 @@ _registry: dict[MetricId, Metric] | None = None
 def _discover() -> dict[MetricId, Metric]:
     """Walk this package's modules and aggregate their ``METRICS`` tuples.
 
-    Skips private modules (leading underscore) other than the test-discovery
-    probe, and skips this ``__init__`` itself. A duplicate ``metric_id`` across
-    two modules is a programming error (the append-only id contract is violated)
-    and raises :class:`ValueError`.
+    Skips private modules (leading underscore — shared helpers, not metric
+    modules). A duplicate ``metric_id`` across two modules is a programming error
+    (the append-only id contract is violated) and raises :class:`ValueError`.
     """
     discovered: dict[MetricId, Metric] = {}
     for module_info in pkgutil.iter_modules(__path__):
         name = module_info.name
-        if name.startswith("_") and name != "_discovery_probe":
+        if name.startswith("_"):
             continue
         module = importlib.import_module(f"{__name__}.{name}")
         metrics = getattr(module, _METRICS_ATTR, ())
