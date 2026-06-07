@@ -32,6 +32,13 @@ class PMDecisionDetail:
     # ALP-765: execution-layer enter-now reprices that happened after the PM
     # authored the verdict. Empty for envelopes with no enter-now limit entries.
     reprice_markers_json: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    # ALP-911: the canonical anti-pattern strings the PM tagged on this verdict
+    # (``commands.pm_envelope.AntiPattern``), as carried on the originating
+    # ``PMEnvelope.anti_patterns_identified``. Persisted here — the only currently
+    # readable source — so the feedback-loop ``anti_pattern_frequency`` process
+    # metrics can compute off the ``pm_decision_log`` bundle. Empty when the PM
+    # flagged none; an already-persisted row without the key decodes to ``[]``.
+    anti_patterns_json: list[str] = dataclasses.field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)

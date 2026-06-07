@@ -2016,6 +2016,58 @@ class TestEnvelopeRejectionDetail:
         assert entry.event_type == EventType.ENVELOPE_REJECTED
 
 
+class TestPMDecisionAntiPatternsJson:
+    """ALP-911: ``PMDecisionDetail`` carries the PM's identified anti-patterns.
+
+    The tags are persisted so the feedback-loop ``anti_pattern_frequency`` metrics
+    can compute off the ``pm_decision_log`` bundle. No migration is needed — the
+    field is JSON in the existing ``detail_json`` column, the codec auto-encodes it,
+    and ``decode_detail`` decodes an absent key to the ``[]`` default (back-compat).
+    """
+
+    def _detail(self, anti_patterns_json: list[str]) -> PMDecisionDetail:
+        return PMDecisionDetail(
+            envelope_id="env-001",
+            source_provenance_json={"source_provenance": "pm_analyst"},
+            evaluation_json={"verdict": "APPROVE"},
+            modifications_json=[],
+            resulting_command_ids=("cmd-001",),
+            verdict=PMVerdict.APPROVE,
+            originating_proposal_json={},
+            anti_patterns_json=anti_patterns_json,
+        )
+
+    def test_defaults_to_empty_list(self) -> None:
+        detail = PMDecisionDetail(
+            envelope_id="env-001",
+            source_provenance_json={},
+            evaluation_json={},
+            modifications_json=[],
+            resulting_command_ids=(),
+            verdict=PMVerdict.APPROVE,
+            originating_proposal_json={},
+        )
+        assert detail.anti_patterns_json == []
+
+    def test_tags_round_trip_through_codec(self) -> None:
+        tags = ["sunk_cost_persistence", "conviction_inflation"]
+        detail = self._detail(tags)
+        rebuilt = decode_detail(encode_detail(detail), PMDecisionDetail)
+        assert rebuilt.anti_patterns_json == tags
+
+    def test_absent_key_decodes_to_empty_default(self) -> None:
+        # A row persisted before this field existed has no ``anti_patterns_json``
+        # key; the codec must decode it to the ``[]`` default rather than raising.
+        legacy_payload = (
+            '{"envelope_id":"env-001","source_provenance_json":{},'
+            '"evaluation_json":{},"modifications_json":[],'
+            '"resulting_command_ids":["cmd-001"],"verdict":"APPROVE",'
+            '"originating_proposal_json":{},"reprice_markers_json":[]}'
+        )
+        rebuilt = decode_detail(legacy_payload, PMDecisionDetail)
+        assert rebuilt.anti_patterns_json == []
+
+
 # ---------------------------------------------------------------------------
 # ALP-415: RECONCILIATION_ALERT event type — registration round-trip
 # ---------------------------------------------------------------------------
