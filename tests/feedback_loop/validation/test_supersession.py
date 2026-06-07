@@ -391,6 +391,50 @@ class TestFirstFiringAndSkips:
         assert record.superseded_at is None  # type: ignore[attr-defined]
 
 
+class TestGitWindowBoundary:
+    """The git concurrent-edit window honours the same half-open ``[start, end)``
+    membership as the regime/model SQL second-prefix bounds: a commit in the final whole
+    second of the window is in-window; a commit at ``end``'s second is excluded. Git
+    commit times are second-granular and the bound carries an explicit UTC offset (so
+    git does not reinterpret it in local time) — exercised at integer- and
+    fractional-second ends."""
+
+    def _commit_at(self, repo: Path, when: datetime) -> None:
+        (repo / _ARTIFACT).write_text(f"v-{when.isoformat()}\n", encoding="utf-8")
+        _git(repo, "add", _ARTIFACT)
+        _git(repo, "commit", "-q", "-m", f"edit-{when.isoformat()}", env_at=when)
+
+    @pytest.mark.parametrize("end_fraction", [timedelta(0), timedelta(milliseconds=500)])
+    def test_commit_in_final_whole_second_is_in_window(
+        self, temp_repo: Path, end_fraction: timedelta
+    ) -> None:
+        from alphamind.feedback_loop.validation.supersession import _git_log_commits
+
+        start = _REGISTERED_AT
+        end = _REGISTERED_AT + timedelta(days=2) + end_fraction
+        # The last whole second the SQL bound (prefix < second_prefix(end)) keeps.
+        last_whole_second = (_REGISTERED_AT + timedelta(days=2)) - timedelta(seconds=1)
+        self._commit_at(temp_repo, last_whole_second)
+
+        commits = _git_log_commits(_ARTIFACT, start=start, end=end, repo_root=temp_repo)
+        assert len(tuple(commits)) == 1
+
+    @pytest.mark.parametrize("end_fraction", [timedelta(0), timedelta(milliseconds=500)])
+    def test_commit_at_end_second_is_excluded(
+        self, temp_repo: Path, end_fraction: timedelta
+    ) -> None:
+        from alphamind.feedback_loop.validation.supersession import _git_log_commits
+
+        start = _REGISTERED_AT
+        end = _REGISTERED_AT + timedelta(days=2) + end_fraction
+        # A commit at end's whole second — excluded by the half-open second-prefix bound,
+        # so the git filter drops it to match the regime/model SQL triggers.
+        self._commit_at(temp_repo, _REGISTERED_AT + timedelta(days=2))
+
+        commits = _git_log_commits(_ARTIFACT, start=start, end=end, repo_root=temp_repo)
+        assert tuple(commits) == ()
+
+
 class TestDetectSupersessionsCommand:
     def test_runs_detector_and_reports_count(
         self, db_path: str, capsys: pytest.CaptureFixture[str]

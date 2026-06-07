@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import func, select
 
 from alphamind.feedback_loop.validation.records import SupersededReason
+from alphamind.state.repository._window_prefix import SECOND_PREFIX_LEN, second_prefix
 from alphamind.state.repository.validation_queries import (
     mark_validation_superseded,
     read_pending_validations,
@@ -45,16 +46,10 @@ if TYPE_CHECKING:
 
     from alphamind.feedback_loop.validation.records import ValidationRecord
 
-# Length of the ``YYYY-MM-DDTHH:MM:SS`` second-precision prefix shared by every
-# ISO-8601 timestamp the codebase writes, regardless of its suffix. Matches
-# ``agent_calls_queries._SECOND_PREFIX_LEN`` — ``invocations.start_at`` is written
-# by two paths at differing sub-second precision, so a faithful range filter
-# compares second prefixes, not the raw column.
-_SECOND_PREFIX_LEN = 19
-
-
-def _second_prefix(value: datetime) -> str:
-    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S")
+# ``invocations.start_at`` is written by two paths at differing sub-second precision,
+# so a faithful ``[start, end)`` range filter compares the shared
+# ``YYYY-MM-DDTHH:MM:SS`` second prefix rather than the raw column — the same
+# ``state.repository._window_prefix`` helper the regime/model SQL bounds use.
 
 
 def _post_window_regimes(
@@ -64,12 +59,12 @@ def _post_window_regimes(
     end: datetime,
 ) -> tuple[str, ...]:
     """Distinct ``active_regime`` labels for invocations in ``[start, end)``."""
-    start_at_prefix = func.substr(InvocationRow.start_at, 1, _SECOND_PREFIX_LEN)
+    start_at_prefix = func.substr(InvocationRow.start_at, 1, SECOND_PREFIX_LEN)
     stmt = (
         select(InvocationRow.active_regime)
         .where(
-            start_at_prefix >= _second_prefix(start),
-            start_at_prefix < _second_prefix(end),
+            start_at_prefix >= second_prefix(start),
+            start_at_prefix < second_prefix(end),
         )
         .distinct()
     )
@@ -138,13 +133,13 @@ def _post_window_models(
     end: datetime,
 ) -> tuple[str, ...]:
     """Distinct ``agent_calls.model_id`` values for invocations in ``[start, end)``."""
-    start_at_prefix = func.substr(InvocationRow.start_at, 1, _SECOND_PREFIX_LEN)
+    start_at_prefix = func.substr(InvocationRow.start_at, 1, SECOND_PREFIX_LEN)
     stmt = (
         select(AgentCallsRow.model_id)
         .join(InvocationRow, AgentCallsRow.invocation_id == InvocationRow.invocation_id)
         .where(
-            start_at_prefix >= _second_prefix(start),
-            start_at_prefix < _second_prefix(end),
+            start_at_prefix >= second_prefix(start),
+            start_at_prefix < second_prefix(end),
         )
         .distinct()
     )
@@ -179,8 +174,11 @@ def _git_log_commits(
     repo_root: Path | None,
 ) -> Iterable[str]:
     """Commit hashes touching *edited_artifact* in ``[start, end)`` (empty on failure)."""
-    # ``git log --until`` is inclusive; trim one second to make the upper bound
-    # exclusive, matching the half-open ``[start, end)`` SQL filters above.
+    # ``git log --until`` is inclusive and git commit times are second-granular, so
+    # ``end - 1s`` is the inclusive upper bound that excludes ``end``'s own whole second
+    # — the same half-open membership as the regime/model SQL bounds
+    # (``prefix < second_prefix(end)``). The bound is rendered with its explicit UTC
+    # offset via ``isoformat()`` so git does not reinterpret it in the local timezone.
     until = end.astimezone(UTC) - timedelta(seconds=1)
     args = [
         "git",
