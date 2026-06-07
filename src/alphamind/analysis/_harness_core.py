@@ -44,7 +44,6 @@ import logging
 import os
 import random
 import time
-import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from datetime import UTC, datetime
@@ -55,6 +54,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
+from alphamind.analysis._agent_call_capture import CaptureDiagFields
 from alphamind.analysis._shared import TokensUsed
 
 if TYPE_CHECKING:
@@ -406,7 +406,7 @@ def _render_raw_response(payload: dict[str, Any] | None, response_text: str) -> 
 
 
 @dataclass
-class DiagState:
+class DiagState(CaptureDiagFields):
     """Mutable diagnostic state accumulated during an invocation.
 
     The default layout writes ``response_initial.md`` and conditionally
@@ -451,28 +451,11 @@ class DiagState:
     # default, decision harnesses override to "decision".
     archive_layer: str = "analysis"
 
-    # --- agent_calls capture (ALP-880) -----------------------------------
-    # Provenance signals the harness sets once at construction so the same
-    # DiagState that backs the diagnostic archive also backs the agent_calls
-    # row + provenance artifacts. When these stay at their defaults the call
-    # carries no schema / no tools (a narrative agent) and the capture emits
-    # null payloads for those artifacts. ``output_payload`` is the structured
-    # output dict the harness assigns alongside ``response_initial``. These
-    # plus the outcome stamps below satisfy the ``CaptureSignals`` Protocol in
-    # ``_agent_call_capture`` so ``build_capture_from_diag`` projects this diag
-    # without a per-class capture builder.
-    prompt_path: str | None = None
-    output_schema: dict[str, Any] | None = None
-    tools_definition: list[str] | None = None
-    sampling_params: dict[str, Any] = field(default_factory=dict)
-    output_payload: dict[str, Any] | None = None
-    # Stable per-agent-call id, generated once on first ``write`` so retries
-    # aggregate into one record/provenance dir rather than one per attempt.
-    agent_call_id: str | None = None
-    # Last terminal outcome stamped by ``write`` — drives the capture build.
-    last_success: bool | None = None
-    last_wall_clock_seconds: float | None = None
-    last_stop_reason: str | None = None
+    # The agent_calls capture provenance fields + outcome stamps (``prompt_path``,
+    # ``output_schema``, ``tools_definition``, ``sampling_params``,
+    # ``output_payload``, ``agent_call_id``, ``last_*``) are inherited from
+    # ``CaptureDiagFields`` (ALP-909 L1) so the same DiagState that backs the
+    # diagnostic archive also satisfies ``CaptureSignals``.
 
     @property
     def attempt_number(self) -> int:
@@ -511,17 +494,16 @@ class DiagState:
         """Flush the diagnostic record to disk, if archive_root is set.
 
         Also records this terminal outcome (success / wall-clock / stop-reason)
-        and mints the stable ``agent_call_id`` on first call, so a subsequent
-        :meth:`build_capture` can assemble the single aggregated agent_calls
-        record regardless of whether the archive is enabled. Capture is
-        independent of ``archive_root`` — the diag archive and the agent_calls
+        and mints the stable ``agent_call_id`` on first call (via the shared
+        :meth:`CaptureDiagFields.stamp_outcome`), so a subsequent
+        :func:`build_capture_from_diag` can assemble the single aggregated
+        agent_calls record regardless of whether the archive is enabled. Capture
+        is independent of ``archive_root`` — the diag archive and the agent_calls
         provenance are separate layouts.
         """
-        if self.agent_call_id is None:
-            self.agent_call_id = f"ac-{uuid.uuid4().hex}"
-        self.last_success = success
-        self.last_wall_clock_seconds = wall_clock_seconds
-        self.last_stop_reason = stop_reason
+        self.stamp_outcome(
+            success=success, wall_clock_seconds=wall_clock_seconds, stop_reason=stop_reason
+        )
 
         diag_dir = self.diag_dir
         if diag_dir is None:

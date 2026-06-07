@@ -299,9 +299,7 @@ class TestErrorClassVocabulary:
         session.flush()
 
         row = AgentCallsRow(
-            **record_to_row(
-                _make_failed_record(agent_call_id="call-bogus", invocation_id=_INV_MID)
-            )
+            **record_to_row(_make_failed_record(agent_call_id="call-bogus", invocation_id=_INV_MID))
         )
         row.error_class = "not_a_real_class"
         session.add(row)

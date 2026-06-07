@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -124,7 +125,7 @@ def test_prompt_git_sha_memoizes_by_path_and_mtime(
         return real_run(args, **kwargs)
 
     monkeypatch.setattr(cap, "_PROMPT_GIT_SHA_CACHE", {})
-    monkeypatch.setattr(cap.subprocess, "run", _counting_run)
+    monkeypatch.setattr("alphamind.analysis._agent_call_capture.subprocess.run", _counting_run)
 
     sha1 = cap.prompt_git_sha(str(prompt))
     sha2 = cap.prompt_git_sha(str(prompt))  # unchanged → cache hit, no re-spawn
@@ -202,7 +203,7 @@ def test_error_class_sdk_failure_maps_to_model_api_error() -> None:
 
 
 def test_error_class_empty_response_maps_to_empty_response() -> None:
-    """``EmptyResponseFailure`` is its own class — not conflated with model_api_error (ALP-909 C4)."""
+    """``EmptyResponseFailure`` maps to its own class, not model_api_error (ALP-909 C4)."""
     from alphamind.analysis.synthesizer.harness import EmptyResponseFailure
 
     exc = EmptyResponseFailure("e", agent_name="a", invocation_id=_INV)

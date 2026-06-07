@@ -38,22 +38,26 @@ import json
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from alphamind.analysis._harness_core import (
-    ContextOverflowFailure,
-    HarnessFailure,
-    MalformedOutputFailure,
-    TimeoutFailure,
-)
 from alphamind.analysis._shared import TokensUsed
 from alphamind.state.repository.agent_calls_queries import insert_agent_call
 from alphamind.state.tables.agent_calls import AgentCallErrorClass, AgentCallRecord
 
+if TYPE_CHECKING:
+    # Annotation-only: ``from __future__ import annotations`` keeps these as
+    # strings at runtime. The canonical ``DiagState`` (in ``_harness_core``)
+    # inherits ``CaptureDiagFields`` defined below, so ``_harness_core`` imports
+    # this module at module scope — a runtime import of the harness exceptions
+    # here would close that loop into a cycle. The one runtime use
+    # (``isinstance`` in ``error_class_for_failure``) imports them lazily.
+    from alphamind.analysis._harness_core import HarnessFailure
+
 __all__ = [
     "AgentCallCapture",
+    "CaptureDiagFields",
     "CaptureSignals",
     "build_capture_from_diag",
     "error_class_for_failure",
@@ -156,10 +160,18 @@ def error_class_for_failure(exc: HarnessFailure) -> AgentCallErrorClass:
     produced here — it is stamped by the capture wrapper when a
     non-:class:`HarnessFailure` exception escapes the wrapped body.
     """
-    # Lazy import: ``EmptyResponseFailure`` lives in the synthesizer sub-package;
-    # importing it at module scope would pull a heavy harness module (with its
-    # SDK-deferred imports) into this functional-core layer. The failure path is
-    # rare and the module is cached after first import, so the cost is trivial.
+    # Lazy imports: the harness exception classes live in ``_harness_core``,
+    # which imports this module at module scope (its ``DiagState`` inherits
+    # ``CaptureDiagFields``); importing them here at module scope would form a
+    # cycle. ``EmptyResponseFailure`` lives in the synthesizer sub-package and
+    # importing it at module scope would pull a heavy harness module into this
+    # functional core. The failure path is rare and both modules are cached
+    # after first import, so the cost is trivial.
+    from alphamind.analysis._harness_core import (
+        ContextOverflowFailure,
+        MalformedOutputFailure,
+        TimeoutFailure,
+    )
     from alphamind.analysis.synthesizer.harness import EmptyResponseFailure
 
     if isinstance(exc, TimeoutFailure):
@@ -273,6 +285,61 @@ class AgentCallCapture:
         (pdir / _OUTPUT_FILENAME).write_text(
             json.dumps(self.output_payload, indent=2, sort_keys=True), encoding="utf-8"
         )
+
+
+@dataclasses.dataclass(kw_only=True)
+class CaptureDiagFields:
+    """The capture data fields + outcome-stamp shared by every diag state (ALP-909 L1).
+
+    The canonical :class:`alphamind.analysis._harness_core.DiagState` and the two
+    decision harnesses' private ``_DiagState`` records all carried byte-identical
+    copies of these nine provenance/outcome fields plus the same ``write``-time
+    stamp block (mint ``agent_call_id`` once, record the terminal ``last_*``
+    outcome). This base holds them once so a future capture field is a single
+    edit, not three.
+
+    Fields are ``kw_only`` so the base can be mixed into dataclasses whose own
+    non-default fields (``agent_name``, ``invocation_id``, …) precede these —
+    keyword-only fields are appended to ``__init__`` regardless of declaration
+    order, sidestepping the "non-default follows default" ordering error.
+
+    All fields default so a diag can be constructed without naming any of them;
+    the harness sets the provenance signals (``prompt_path`` / ``output_schema``
+    / ``tools_definition`` / ``sampling_params`` / ``output_payload``) at
+    construction and :meth:`stamp_outcome` records the terminal outcome on each
+    ``write``. The defaults make every subclass satisfy :class:`CaptureSignals`.
+    """
+
+    # Provenance signals the harness sets at construction (defaults = a narrative
+    # agent with no schema / no tools / no structured output).
+    prompt_path: str | None = None
+    output_schema: dict[str, Any] | None = None
+    tools_definition: list[str] | None = None
+    sampling_params: dict[str, Any] = dataclasses.field(default_factory=dict)
+    output_payload: dict[str, Any] | None = None
+    # Stable per-agent-call id, minted once on first ``write`` so retries
+    # aggregate into one record/provenance dir rather than one per attempt.
+    agent_call_id: str | None = None
+    # Last terminal outcome stamped by ``write`` — drives the capture build.
+    last_success: bool | None = None
+    last_wall_clock_seconds: float | None = None
+    last_stop_reason: str | None = None
+
+    def stamp_outcome(
+        self, *, success: bool, wall_clock_seconds: float, stop_reason: str | None
+    ) -> None:
+        """Mint ``agent_call_id`` on first call, then record this terminal outcome.
+
+        Called from each diag's ``write`` before its diagnostic-archive I/O so a
+        subsequent :func:`build_capture_from_diag` assembles the single
+        aggregated agent_calls record, independent of whether the archive is
+        enabled.
+        """
+        if self.agent_call_id is None:
+            self.agent_call_id = new_agent_call_id()
+        self.last_success = success
+        self.last_wall_clock_seconds = wall_clock_seconds
+        self.last_stop_reason = stop_reason
 
 
 class CaptureSignals(Protocol):

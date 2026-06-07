@@ -1372,8 +1372,8 @@ async def capture_factory(
 
 
 def _stamped_diag(model: str = "claude-sonnet") -> core.DiagState:
-    """A DiagState the harness body has stamped ``success=True`` (no archive)."""
-    diag = core.DiagState(
+    """A DiagState the harness body can stamp (no archive; capture-drain tests)."""
+    return core.DiagState(
         agent_name="demo_agent",
         invocation_id=_INV_CAP,
         prompt_text="PROMPT",
@@ -1382,7 +1382,6 @@ def _stamped_diag(model: str = "claude-sonnet") -> core.DiagState:
         archive_root=None,
         prompt_path="prompts/demo.md",
     )
-    return diag
 
 
 async def _persisted_rows(
@@ -1489,3 +1488,61 @@ async def test_capture_build_internal_error_override_in_functional_core() -> Non
     assert capture.success is False
     assert capture.error_class is AgentCallErrorClass.internal_error
     assert capture.error_message == "kaboom"
+
+
+# ---------------------------------------------------------------------------
+# Shared capture mixin (ALP-909 L1)
+#
+# The capture data fields + the write() outcome-stamp live in ONE shared base.
+# All three diag carriers (canonical DiagState + the two decision _DiagState)
+# inherit it and still build an equivalent capture (behavior unchanged).
+# ---------------------------------------------------------------------------
+
+
+def test_all_three_diag_carriers_share_one_capture_base() -> None:
+    """The canonical DiagState and both decision _DiagState classes inherit the
+    single shared capture base that holds the data fields + outcome stamp."""
+    from alphamind.analysis._agent_call_capture import CaptureDiagFields
+    from alphamind.decision.portfolio_manager.harness import _DiagState as PMDiag
+    from alphamind.decision.strategist.harness import _DiagState as StrategistDiag
+
+    assert issubclass(core.DiagState, CaptureDiagFields)
+    assert issubclass(StrategistDiag, CaptureDiagFields)
+    assert issubclass(PMDiag, CaptureDiagFields)
+
+
+def test_shared_stamp_mints_id_once_and_records_outcome() -> None:
+    """The shared outcome-stamp mints ``agent_call_id`` once and records the
+    last terminal outcome — identical behavior across all three carriers."""
+    from alphamind.decision.portfolio_manager.harness import _DiagState as PMDiag
+    from alphamind.decision.strategist.harness import _DiagState as StrategistDiag
+
+    strat = StrategistDiag(
+        agent_name="strategist",
+        invocation_id=_INV_CAP,
+        prompt_text="P",
+        user_message="U",
+        model="m",
+        archive_root=None,
+        agent_config_snapshot={},
+    )
+    strat.write(success=True, wall_clock_seconds=1.0, stop_reason="end_turn")
+    first_id = strat.agent_call_id
+    strat.write(success=False, wall_clock_seconds=2.0, stop_reason="error")
+    assert strat.agent_call_id == first_id  # minted once, retries aggregate
+    assert strat.last_success is False
+    assert strat.last_wall_clock_seconds == 2.0
+    assert strat.last_stop_reason == "error"
+
+    pm = PMDiag(
+        agent_name="portfolio_manager",
+        invocation_id=_INV_CAP,
+        prompt_text="P",
+        user_message="U",
+        model="m",
+        archive_root=None,
+        get_submit_envelope_state=lambda: (_ for _ in ()).throw(AssertionError("unused")),
+    )
+    pm.write(success=True, wall_clock_seconds=0.5, stop_reason="end_turn")
+    assert pm.agent_call_id is not None
+    assert pm.last_success is True

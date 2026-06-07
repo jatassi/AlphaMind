@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
-from alphamind.analysis._agent_call_capture import new_agent_call_id
+from alphamind.analysis._agent_call_capture import CaptureDiagFields
 from alphamind.analysis._harness_core import (
     ContextOverflowFailure,
     HarnessFailure,
@@ -174,8 +174,13 @@ def _compose_retry_prompt(original_user_message: str, retry_diagnostic: str) -> 
 
 
 @dataclass
-class _DiagState:
-    """Mutable diagnostic state accumulated during an invocation."""
+class _DiagState(CaptureDiagFields):
+    """Mutable diagnostic state accumulated during an invocation.
+
+    The agent_calls capture provenance fields + outcome stamps are inherited
+    from ``CaptureDiagFields`` (ALP-909 L1), so this carrier satisfies
+    ``CaptureSignals`` without re-declaring them.
+    """
 
     agent_name: str
     invocation_id: str
@@ -198,17 +203,6 @@ class _DiagState:
     tool_calls_used: int = 0
     mode: str | None = None
 
-    # --- agent_calls capture signals (ALP-880) — satisfy ``CaptureSignals`` --
-    prompt_path: str | None = None
-    output_schema: dict[str, Any] | None = None
-    tools_definition: list[str] | None = None
-    sampling_params: dict[str, Any] = field(default_factory=dict)
-    output_payload: dict[str, Any] | None = None
-    agent_call_id: str | None = None
-    last_success: bool | None = None
-    last_wall_clock_seconds: float | None = None
-    last_stop_reason: str | None = None
-
     @property
     def attempt_number(self) -> int:
         """1-indexed aggregated attempt count (the strategist counts ``attempts``)."""
@@ -225,15 +219,14 @@ class _DiagState:
 
         Path: ``<archive_root>/<YYYY-MM-DD>/<invocation_id>/decision/strategist/``
         — date-partitioned canonical layout per ALP-689 followup. Also stamps
-        the terminal outcome + mints the ``agent_call_id`` so the shared
+        the terminal outcome + mints the ``agent_call_id`` (via the shared
+        :meth:`CaptureDiagFields.stamp_outcome`) so the shared
         ``capture_agent_call`` drain can build the one aggregated agent_calls
         record (ALP-880), independent of whether the archive is enabled.
         """
-        if self.agent_call_id is None:
-            self.agent_call_id = new_agent_call_id()
-        self.last_success = success
-        self.last_wall_clock_seconds = wall_clock_seconds
-        self.last_stop_reason = stop_reason
+        self.stamp_outcome(
+            success=success, wall_clock_seconds=wall_clock_seconds, stop_reason=stop_reason
+        )
 
         if self.archive_root is None:
             return
