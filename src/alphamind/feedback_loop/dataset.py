@@ -28,24 +28,30 @@ imports ``execution`` (enforced by ``.importlinter``).
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import yaml
 from sqlalchemy import select
 
-from alphamind.config.models.agents import AgentName
+from alphamind.config.models.agents import AgentName, AgentsConfig
 from alphamind.feedback_loop.citation.parser import (
     ComponentCitation,
     assemble_chains,
     extract_payload_citations,
 )
+from alphamind.portfolio_state.events.types import EventType
 from alphamind.portfolio_state.records.theses import (
     ThesisComponentOutcome,
     ThesisRecord,
 )
-from alphamind.state.repository.activity_log_queries import read_recent_pm_decision_log
+from alphamind.state.repository.activity_log_queries import (
+    read_activity_events_in_window,
+    read_recent_pm_decision_log,
+)
 from alphamind.state.repository.agent_calls_queries import read_agent_calls_in_window
 from alphamind.state.repository.outcome_queries import read_resolved_theses_in_window
 from alphamind.state.repository.validation_queries import (
@@ -183,6 +189,63 @@ class OutcomesBundle:
 
 
 # ---------------------------------------------------------------------------
+# Cost / execution-process sub-bundles (story 06b — ALP-884)
+#
+# A distinct region from the citation (_load_refs) / window (load_window) seams so
+# the concurrent 06g edits to _load_refs/load_window never collide here.
+# ---------------------------------------------------------------------------
+
+#: The packaged ``config/agents.yaml`` — the single source of truth for each agent's
+#: latency budget envelope. Resolved by walking up: dataset.py → feedback_loop →
+#: alphamind → src → repo root (mirrors ``analysis/synthesizer/runner._AGENTS_YAML``).
+_AGENTS_YAML = Path(__file__).resolve().parents[3] / "config" / "agents.yaml"
+
+
+def _packaged_agent_latency_budgets() -> dict[str, int]:
+    """Per-agent ``latency_budget_seconds`` read from the packaged ``agents.yaml``.
+
+    Uses the existing :class:`AgentsConfig` validator (no parallel YAML parsing) so the
+    budget the latency-headroom metric compares wall-clock against is config-sourced, not
+    a hard-coded literal. Stamped onto :class:`CostBudgetsBundle` as the default so a
+    hand-built test dataset omitting the loader still carries the real envelope.
+    """
+    with _AGENTS_YAML.open(encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+    cfg = AgentsConfig.model_validate(data)
+    return {name.value: entry.latency_budget_seconds for name, entry in cfg.agents.items()}
+
+
+@dataclass(frozen=True, slots=True)
+class CostBudgetsBundle:
+    """Per-agent budget envelopes the cost metrics compare observed telemetry against.
+
+    Currently the per-agent ``latency_budget_seconds`` from ``config/agents.yaml`` (the
+    latency-budget-headroom metric's denominator). Stamped onto the dataset by the loader
+    so the *pure* cost metric cores read the envelope without taking config as a
+    ``compute`` argument (functional core / imperative shell). The default reads the
+    packaged ``agents.yaml`` so a hand-built dataset omitting config is well-formed.
+    """
+
+    agent_latency_budget_seconds: Mapping[str, int] = field(
+        default_factory=_packaged_agent_latency_budgets
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ActivityEventsBundle:
+    """Window-bounded activity-log entries the execution-process metrics count.
+
+    The ``pm_decision_log`` bundle is ``PM_DECISION``-only; the guardrail-rejection,
+    command-abandonment, and engine-originated-CLOSE metrics count *other* event types
+    (``GUARDRAIL_REJECTION`` / ``COMMAND_ABANDONED`` / monitor-direct ``POSITION_CLOSED``)
+    over the window, so they read this separate strictly-``[start, end)`` slice rather
+    than the count-based PM-decision sliding window. Empty until the loader fills it.
+    """
+
+    entries: tuple[ActivityLogEntry, ...] = ()
+
+
+# ---------------------------------------------------------------------------
 # WindowDataset
 # ---------------------------------------------------------------------------
 
@@ -221,6 +284,11 @@ class WindowDataset:
     replays: ReplaysBundle = field(default_factory=ReplaysBundle)
     # Resolved-thesis outcome observations + sample-size thresholds (story 06c).
     outcomes: OutcomesBundle = field(default_factory=OutcomesBundle)
+    # Cost / execution-process sub-bundles (story 06b). ``budgets`` carries the
+    # agents.yaml latency envelope; ``activity_events`` the window-bounded non-PM
+    # activity-log slice the execution-process metrics count.
+    budgets: CostBudgetsBundle = field(default_factory=CostBudgetsBundle)
+    activity_events: ActivityEventsBundle = field(default_factory=ActivityEventsBundle)
 
 
 # ---------------------------------------------------------------------------
@@ -416,6 +484,42 @@ def _thesis_to_outcome(record: ThesisRecord) -> ThesisOutcome:
 
 
 # ---------------------------------------------------------------------------
+# Cost / execution-process loader hooks (story 06b — ALP-884)
+#
+# A distinct region from the citation (_load_refs) / outcomes (_load_outcomes) hooks so
+# the concurrent 06g edits to _load_refs/load_window never collide here.
+# ---------------------------------------------------------------------------
+
+#: The activity-log event types the execution-process metrics count over the window. The
+#: PM_DECISION envelopes are included for the engine-originated-CLOSE cascade join (a
+#: cascade close's POSITION_CLOSED carries the ``engine_guardrail`` envelope's command id
+#: as its ``order_id``); the metric cores live in
+#: :mod:`alphamind.feedback_loop.metrics.cost_execution`.
+_EXECUTION_PROCESS_EVENT_TYPES: tuple[EventType, ...] = (
+    EventType.GUARDRAIL_REJECTION,
+    EventType.COMMAND_ABANDONED,
+    EventType.POSITION_CLOSED,
+    EventType.PM_DECISION,
+)
+
+
+async def _load_activity_events(
+    session: AsyncSession, start: datetime, end: datetime
+) -> ActivityEventsBundle:
+    """Window-bounded activity-event sub-bundle loader hook (story 06b).
+
+    Reads the ``[start, end)`` slice of the activity-log event types the
+    execution-process metrics count — distinct from the ``PM_DECISION``-only sliding
+    window (:func:`read_recent_pm_decision_log`), which is count-based and not strictly
+    window-bounded.
+    """
+    entries = await read_activity_events_in_window(
+        session, start, end, _EXECUTION_PROCESS_EVENT_TYPES
+    )
+    return ActivityEventsBundle(entries=entries)
+
+
+# ---------------------------------------------------------------------------
 # The loader — the only DB-touching function in the analytics layer
 # ---------------------------------------------------------------------------
 
@@ -437,8 +541,13 @@ async def load_window(
       ``validation_superseded`` shift surface).
     * the resolved-thesis ``outcomes`` sub-bundle, stamped with *config*'s
       sample-size thresholds (the packaged defaults when *config* is omitted).
+    * the ``activity_events`` sub-bundle — the strictly-window-bounded slice of the
+      execution-process event types (story 06b).
     * the ``refs`` / ``replays`` extension sub-bundles via their hooks (empty
       until 06d / 06e fill them).
+
+    The ``budgets`` sub-bundle is the packaged ``agents.yaml`` latency envelope — read
+    once via its default factory; it carries no window-bounded state.
 
     ``validation_queries`` exposes synchronous ``Session``-based helpers; they are
     bridged onto this async session via :meth:`AsyncSession.run_sync` — SQLAlchemy
@@ -455,6 +564,7 @@ async def load_window(
     refs = await _load_refs(session, agent_calls)
     replays = await _load_replays(session, start, end)
     outcomes = await _load_outcomes(session, start, end, config)
+    activity_events = await _load_activity_events(session, start, end)
     return WindowDataset(
         start=start,
         end=end,
@@ -465,11 +575,14 @@ async def load_window(
         refs=refs,
         replays=replays,
         outcomes=outcomes,
+        activity_events=activity_events,
     )
 
 
 __all__ = [
+    "ActivityEventsBundle",
     "ConditioningAttributes",
+    "CostBudgetsBundle",
     "OutcomesBundle",
     "RefsBundle",
     "ReplaysBundle",
