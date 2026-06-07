@@ -393,6 +393,52 @@ async def handle_assignment_or_exercise(
         broker_timestamp=event.transaction_time,
     )
     await _persist_booking(handle, option_row=option_row, result=result)
+    # Emit POSITION_CLOSED for the option so the changelog records the close,
+    # then re-point the thesis to the delivered equity leg. The thesis carries
+    # the same ``thesis_id`` into the opened equity position (booking.py), so
+    # resolving it at option-close would freeze ``resolution_pnl_usd`` at the
+    # option leg's -premium while the equity leg keeps accruing under the same
+    # thesis — corrupting the learning signal. Re-pointing makes the resolver's
+    # ACTIVE-thesis/CLOSED-position join skip the closed option and resolve the
+    # thesis only when the delivered equity position later closes.
+    exit_method = (
+        PositionExitMethod.OPTION_ASSIGNMENT
+        if event.activity_type is LifecycleActivityType.OPASN
+        else PositionExitMethod.OPTION_EXERCISE
+    )
+    _emit_position_closed(
+        handle,
+        option_record=option_record,
+        exit_method=exit_method,
+        realized_pnl_usd=result.realized_pnl_usd,
+        timestamp=event.transaction_time,
+    )
+    await _repoint_thesis_to_equity(
+        handle,
+        thesis_id=option_record.thesis_id,
+        equity_position_id=equity_position_id,
+    )
+
+
+async def _repoint_thesis_to_equity(
+    handle: InvocationHandle,
+    *,
+    thesis_id: ThesisId | None,
+    equity_position_id: PositionId,
+) -> None:
+    """Re-point the option's thesis row to the delivered equity position.
+
+    The equity row is added in the same write unit (its FK target exists), and
+    the join runs within the open fill-collection transaction, so the re-point
+    commits atomically with the close. A no-op when the option carried no thesis
+    link (a broker option with no local Intent).
+    """
+    if thesis_id is None:
+        return
+    thesis_row = await handle.session.get(ThesisRow, str(thesis_id))
+    if thesis_row is None:
+        return
+    thesis_row.position_id = str(equity_position_id)
 
 
 def _equity_cost_basis(result: BookingResult) -> Money:

@@ -634,6 +634,110 @@ async def test_exercise_books_strike_pnl_and_opens_equity_leg(
     assert ledger_record.cost_basis_usd == money("75000.00")
 
 
+async def test_assignment_emits_position_closed_and_repoints_thesis_to_equity(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """AC6: an assignment emits POSITION_CLOSED (``OPTION_ASSIGNMENT``) for the
+    option AND re-points the linked ``ThesisRow.position_id`` to the delivered
+    equity position (``pos-eq-{activity_id}``), so the thesis resolves off the
+    equity leg's real close — not frozen at the option leg's -premium."""
+    _engine, factory = db
+    await _seed_open_option(factory, contract_count=5.0, premium_paid_per_contract=250.0)
+
+    ctx, handle = await open_handle(factory)
+    try:
+        await integrate_lifecycle_event(
+            handle,
+            _assignment_event(LifecycleActivityType.OPASN),
+            borrow_cost_resolver=_borrow_resolver,
+        )
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        # One POSITION_CLOSED for the option with the assignment exit method.
+        details = await _position_closed_details(sess, "pos-1")
+        assert len(details) == 1
+        assert details[0].exit_method is PositionExitMethod.OPTION_ASSIGNMENT
+
+        entry_rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.position_id == "pos-1",
+                        ActivityLogRow.event_type == EventType.POSITION_CLOSED.value,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert activity_log_entry_from_row(entry_rows[0]).source is (
+            EventSource.ACCOUNT_ACTIVITIES_PROCESSOR
+        )
+
+        # The thesis row was re-pointed to the delivered equity position so the
+        # resolver's ACTIVE-thesis/CLOSED-position join skips the closed option.
+        thesis_row = await sess.get(ThesisRow, "thesis-1")
+        assert thesis_row is not None
+        assert thesis_row.position_id == "pos-eq-act-asn-1"
+
+
+async def test_exercise_emits_position_closed_with_option_exercise_exit_method(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """AC6: an exercise emits POSITION_CLOSED with ``exit_method=OPTION_EXERCISE``
+    (the OPEXC branch) and re-points the thesis to the delivered equity leg."""
+    _engine, factory = db
+    await _seed_open_option(factory, contract_count=5.0, premium_paid_per_contract=250.0)
+
+    ctx, handle = await open_handle(factory)
+    try:
+        await integrate_lifecycle_event(
+            handle,
+            _assignment_event(LifecycleActivityType.OPEXC),
+            borrow_cost_resolver=_borrow_resolver,
+        )
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        details = await _position_closed_details(sess, "pos-1")
+        assert len(details) == 1
+        assert details[0].exit_method is PositionExitMethod.OPTION_EXERCISE
+
+        thesis_row = await sess.get(ThesisRow, "thesis-1")
+        assert thesis_row is not None
+        assert thesis_row.position_id == "pos-eq-act-asn-1"
+
+
+async def test_assignment_emits_position_closed_exactly_once_across_repoll(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """The assignment emit + re-point run once on the booking path; a re-poll
+    (option already CLOSED) returns at ``found is None`` before them."""
+    _engine, factory = db
+    await _seed_open_option(factory, contract_count=5.0, premium_paid_per_contract=250.0)
+
+    ctx, handle = await open_handle(factory)
+    try:
+        await integrate_lifecycle_event(
+            handle,
+            _assignment_event(LifecycleActivityType.OPASN),
+            borrow_cost_resolver=_borrow_resolver,
+        )
+        await integrate_lifecycle_event(
+            handle,
+            _assignment_event(LifecycleActivityType.OPASN),
+            borrow_cost_resolver=_borrow_resolver,
+        )
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        assert len(await _position_closed_details(sess, "pos-1")) == 1
+
+
 async def test_repoll_reappends_optrd_after_crash_window(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
