@@ -107,20 +107,22 @@ def test_target_rationale_external_exit_returns_inconclusive(
 
 
 # ---------------------------------------------------------------------------
-# INVALIDATION_RATIONALE: stop/time triggers → WRONG (the invalidation fired)
+# INVALIDATION_RATIONALE: stop/time triggers → VALIDATED (the invalidation
+# rationale correctly identified the exit — "stopped out correctly", a
+# positive process outcome per thesis-model.md § Resolution).
 # ---------------------------------------------------------------------------
 
 
-def test_invalidation_rationale_stop_triggered_returns_wrong() -> None:
+def test_invalidation_rationale_stop_triggered_returns_validated() -> None:
     component = _make_component(ThesisComponentType.INVALIDATION_RATIONALE)
     result = assess_component_programmatically(component, exit_method=STOP)
-    assert result == WRONG
+    assert result == VALIDATED
 
 
-def test_invalidation_rationale_time_expired_returns_wrong() -> None:
+def test_invalidation_rationale_time_expired_returns_validated() -> None:
     component = _make_component(ThesisComponentType.INVALIDATION_RATIONALE)
     result = assess_component_programmatically(component, exit_method=TIME)
-    assert result == WRONG
+    assert result == VALIDATED
 
 
 # ---------------------------------------------------------------------------

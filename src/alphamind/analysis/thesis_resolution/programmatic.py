@@ -17,8 +17,10 @@ Mapping:
         FORCED_BUY_IN / CORP_ACTION → INCONCLUSIVE (closed for external reasons)
 
     INVALIDATION_RATIONALE:
-        STOP_TRIGGERED              → WRONG       (invalidation condition fired)
-        TIME_EXPIRED                → WRONG       (time-bound invalidation fired)
+        STOP_TRIGGERED              → VALIDATED   (hard invalidation fired — the
+                                                   rationale correctly flagged the exit)
+        TIME_EXPIRED                → VALIDATED   (time-bound invalidation fired —
+                                                   stopped out correctly)
         all other exits             → INCONCLUSIVE (exited for a different reason;
                                                     can't confirm invalidation was met)
 
@@ -45,7 +47,9 @@ _TARGET_MISS_EXITS: frozenset[PositionExitMethod] = frozenset(
     }
 )
 
-# Exit methods that mechanically indicate an invalidation condition fired.
+# Exit methods that mechanically indicate an invalidation condition fired —
+# the invalidation rationale correctly identified the exit (a VALIDATED
+# component-level outcome, not a WRONG one).
 _INVALIDATION_TRIGGER_EXITS: frozenset[PositionExitMethod] = frozenset(
     {
         PositionExitMethod.STOP_TRIGGERED,
@@ -81,7 +85,12 @@ def assess_component_programmatically(
 
         case ThesisComponentType.INVALIDATION_RATIONALE:
             if exit_method in _INVALIDATION_TRIGGER_EXITS:
-                return ThesisComponentOutcome.WRONG
+                # A fired hard invalidation means the invalidation rationale
+                # correctly identified the exit — "stopped out correctly … a
+                # positive process outcome" (thesis-model.md § Resolution). This
+                # is the component-level signal; the thesis-level category is
+                # still partitioned by exit method (classify_thesis_resolution).
+                return ThesisComponentOutcome.VALIDATED
             return ThesisComponentOutcome.INCONCLUSIVE
 
         case ThesisComponentType.ENTRY_RATIONALE:

@@ -96,9 +96,11 @@ async def test_closed_position_thesis_resolves_to_valid_record(
     satisfying _check_resolved_fields (which fires on rehydration)."""
     _, factory = db
     thesis = make_active_thesis()
-    # STOP_TRIGGERED + negative P/L: TARGET → WRONG, INVALIDATION → WRONG
-    # (programmatic); ENTRY → INCONCLUSIVE programmatically, so the LLM
-    # fallback fires for it (the SDK stub returns a verdict).
+    # STOP_TRIGGERED + negative P/L: TARGET → WRONG, INVALIDATION → VALIDATED
+    # (the fired invalidation correctly flagged the exit — ALP-914 finding 7,
+    # programmatic); ENTRY → INCONCLUSIVE programmatically, so the LLM fallback
+    # fires for it (the SDK stub returns a verdict). The thesis-level category
+    # is still INVALIDATED_STOPPED_CORRECTLY (pnl<=0 partitions by exit method).
     await seed_closed_position_thesis(
         factory,
         thesis=thesis,
