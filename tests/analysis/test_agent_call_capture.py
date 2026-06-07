@@ -16,13 +16,17 @@ harness's existing suite.
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import alphamind.state.tables  # noqa: F401 — register all tables on Base.metadata
 from alphamind.analysis._agent_call_capture import (
     AgentCallCapture,
     error_class_for_failure,
+    persist_agent_call,
     provenance_dir,
 )
 from alphamind.analysis._harness_core import (
@@ -31,10 +35,40 @@ from alphamind.analysis._harness_core import (
     SDKFailure,
     TimeoutFailure,
 )
+from alphamind.persistence.models import Base
+from alphamind.persistence.session import (
+    make_async_engine,
+    make_async_session_factory,
+    make_engine,
+    make_session_factory,
+)
+from alphamind.state.repository.agent_calls_queries import read_agent_calls_for_invocation
 from alphamind.state.tables.agent_calls import AgentCallErrorClass
+from tests.state._fk_substrate import stub_invocation_row, stub_process_lifetime_row
 
 
 _INV = "inv-cap-001"
+_PLT = "plt-cap-tests"
+
+
+@pytest.fixture()
+async def async_factory(
+    tmp_path: Path,
+) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """On-disk SQLite with the invocation FK target seeded."""
+    db_path = tmp_path / "capture_test.db"
+    sync_engine = make_engine(str(db_path))
+    Base.metadata.create_all(sync_engine)
+    with make_session_factory(sync_engine)() as sess:
+        sess.add(stub_process_lifetime_row(_PLT))
+        sess.flush()
+        sess.add(stub_invocation_row(_INV, process_lifetime_id=_PLT))
+        sess.commit()
+    sync_engine.dispose()
+
+    async_engine = make_async_engine(str(db_path))
+    yield make_async_session_factory(async_engine)
+    await async_engine.dispose()
 
 
 def _capture(**overrides: object) -> AgentCallCapture:
@@ -165,6 +199,37 @@ def test_failure_capture_records_error_class(tmp_path: Path) -> None:
     assert record.success is False
     assert record.error_class is AgentCallErrorClass.timeout
     assert record.error_message == "exceeded budget"
+
+
+# ---------------------------------------------------------------------------
+# Async persist shell — artifacts + row land together (DB boundary mocked-out
+# via a real in-memory SQLite, the sanctioned DB substitute)
+# ---------------------------------------------------------------------------
+
+
+async def test_persist_writes_one_row_and_four_artifacts(
+    tmp_path: Path, async_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    capture = _capture(invocation_id=_INV)
+    provenance_root = tmp_path / "provenance"
+
+    async with async_factory() as session:
+        await persist_agent_call(session, capture, provenance_root=provenance_root)
+        await session.commit()
+
+    async with async_factory() as session:
+        rows = await read_agent_calls_for_invocation(session, _INV)
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.agent_call_id == "ac-001"
+    assert row.success is True
+    pdir = provenance_dir(
+        provenance_root=provenance_root, invocation_id=_INV, agent_call_id="ac-001"
+    )
+    assert row.output_artifact_ref == str(pdir)
+    for name in ("system_prompt.md", "output_schema.json", "tools_definition.json", "output.json"):
+        assert (pdir / name).exists()
 
 
 pytestmark = pytest.mark.filterwarnings("error::DeprecationWarning")

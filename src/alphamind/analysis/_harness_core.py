@@ -39,19 +39,28 @@ from __future__ import annotations
 #                   #  per-harness names retained for API stability.
 import asyncio
 import contextlib
+import hashlib
 import json
+import logging
 import os
 import random
+import subprocess
 import time
+import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis._shared import TokensUsed
+
+if TYPE_CHECKING:
+    from alphamind.analysis._agent_call_capture import AgentCallCapture
 
 __all__ = [
     "_PROMPT_CACHE",
@@ -77,6 +86,7 @@ __all__ = [
     "_load_prompt",
     "_render_raw_response",
     "_tokens_from_usage",
+    "capture_agent_call",
     "invoke_sdk",
 ]
 
@@ -172,6 +182,32 @@ async def _load_prompt(prompt_path: str) -> str:
         if prompt_path not in _PROMPT_CACHE:
             _PROMPT_CACHE[prompt_path] = (_REPO_ROOT / prompt_path).read_text(encoding="utf-8")
         return _PROMPT_CACHE[prompt_path]
+
+
+def _content_hash(text: str) -> str:
+    """SHA-256 of the prompt text actually sent to the API (hex digest)."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _prompt_git_sha(prompt_path: str) -> str:
+    """Git blob SHA of the committed prompt file, or ``""`` if unavailable.
+
+    Computes ``git hash-object`` against the working-tree file so the value
+    confirms which committed prompt version was on disk for the call. A
+    detached / non-git environment (or a deleted prompt) yields ``""`` — the
+    capture stays best-effort and never fails the call it observes.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", "hash-object", prompt_path],
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+    return completed.stdout.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -437,6 +473,26 @@ class DiagState:
     # default, decision harnesses override to "decision".
     archive_layer: str = "analysis"
 
+    # --- agent_calls capture (ALP-880) -----------------------------------
+    # Provenance signals the harness sets once at construction so the same
+    # DiagState that backs the diagnostic archive also backs the agent_calls
+    # row + provenance artifacts. When these stay at their defaults the call
+    # carries no schema / no tools (a narrative agent) and the capture emits
+    # null payloads for those artifacts. ``output_payload`` is the structured
+    # output dict the harness assigns alongside ``response_initial``.
+    prompt_path: str | None = None
+    output_schema: dict[str, Any] | None = None
+    tools_definition: list[str] | None = None
+    sampling_params: dict[str, Any] = field(default_factory=dict)
+    output_payload: dict[str, Any] | None = None
+    # Stable per-agent-call id, generated once on first ``write`` so retries
+    # aggregate into one record/provenance dir rather than one per attempt.
+    _agent_call_id: str | None = None
+    # Last terminal outcome recorded by ``write`` — drives ``build_capture``.
+    _last_success: bool | None = None
+    _last_wall_clock_seconds: float | None = None
+    _last_stop_reason: str | None = None
+
     @property
     def diag_dir(self) -> Path | None:
         """Per-agent diagnostic directory, or ``None`` when unarchived.
@@ -466,7 +522,21 @@ class DiagState:
         wall_clock_seconds: float,
         stop_reason: str | None,
     ) -> None:
-        """Flush the diagnostic record to disk, if archive_root is set."""
+        """Flush the diagnostic record to disk, if archive_root is set.
+
+        Also records this terminal outcome (success / wall-clock / stop-reason)
+        and mints the stable ``agent_call_id`` on first call, so a subsequent
+        :meth:`build_capture` can assemble the single aggregated agent_calls
+        record regardless of whether the archive is enabled. Capture is
+        independent of ``archive_root`` — the diag archive and the agent_calls
+        provenance are separate layouts.
+        """
+        if self._agent_call_id is None:
+            self._agent_call_id = f"ac-{uuid.uuid4().hex}"
+        self._last_success = success
+        self._last_wall_clock_seconds = wall_clock_seconds
+        self._last_stop_reason = stop_reason
+
         diag_dir = self.diag_dir
         if diag_dir is None:
             return
@@ -498,6 +568,106 @@ class DiagState:
         if self.record_tool_calls or self.tool_calls_used:
             metadata["tool_calls_used"] = self.tool_calls_used
         (diag_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+    def build_capture(
+        self, *, error: HarnessFailure | None = None
+    ) -> AgentCallCapture | None:
+        """Assemble the single aggregated agent_calls capture for this call.
+
+        Returns ``None`` when :meth:`write` has not run (no terminal outcome to
+        record). The accumulated ``tokens_used`` / ``retry_count`` / outcome
+        reflect every constituent API call (tool loop + below-boundary
+        retries), so the capture is exactly one aggregated record per agent
+        call. ``error`` is the raised :class:`HarnessFailure` on a failure
+        path; its subclass selects the persisted ``error_class``.
+        """
+        from alphamind.analysis._agent_call_capture import (
+            AgentCallCapture,
+            error_class_for_failure,
+        )
+
+        if self._agent_call_id is None or self._last_success is None:
+            return None
+        wall_clock_seconds = self._last_wall_clock_seconds or 0.0
+        return AgentCallCapture(
+            agent_call_id=self._agent_call_id,
+            invocation_id=self.invocation_id,
+            agent_name=self.agent_name,
+            attempt_number=self.retry_count + 1,
+            model_id=self.model,
+            prompt_path=self.prompt_path or "",
+            prompt_git_sha=_prompt_git_sha(self.prompt_path) if self.prompt_path else "",
+            prompt_content_hash=_content_hash(self.prompt_text),
+            system_prompt_text=self.prompt_text,
+            sampling_params=dict(self.sampling_params),
+            output_schema=self.output_schema,
+            tools_definition=self.tools_definition,
+            output_payload=self.output_payload,
+            input_tokens=self.tokens_used.input_tokens,
+            output_tokens=self.tokens_used.output_tokens,
+            cache_read_tokens=self.tokens_used.cache_read_tokens,
+            cache_write_tokens=self.tokens_used.cache_write_tokens,
+            wall_clock_ms=int(wall_clock_seconds * 1000),
+            stop_reason=self._last_stop_reason or "",
+            success=self._last_success,
+            error_class=error_class_for_failure(error) if error is not None else None,
+            error_message=str(error) if error is not None else None,
+        )
+
+
+@contextlib.asynccontextmanager
+async def capture_agent_call(
+    diag: DiagState,
+    *,
+    telemetry_session: AsyncSession | None,
+    provenance_root: Path | None,
+) -> AsyncGenerator[None, None]:
+    """Drain *diag*'s agent_calls capture once, on exit of the harness body.
+
+    Wraps a harness's single attempt-loop scope. On exit — clean OR a raised
+    :class:`HarnessFailure` — assembles the one aggregated capture from *diag*
+    and persists the row + four provenance artifacts. A no-op when telemetry
+    is not wired (``telemetry_session`` or ``provenance_root`` is ``None``), so
+    the production-without-telemetry and unit-test paths are unchanged.
+
+    Capture must never break the call it observes: a persistence error is
+    swallowed (the harness result / failure propagates regardless), mirroring
+    the diagnostic writer's "diagnostics never break the call" contract.
+    """
+    if telemetry_session is None or provenance_root is None:
+        yield
+        return
+    error: HarnessFailure | None = None
+    try:
+        yield
+    except HarnessFailure as exc:
+        error = exc
+        raise
+    finally:
+        await _drain_capture(
+            diag, telemetry_session=telemetry_session, provenance_root=provenance_root, error=error
+        )
+
+
+async def _drain_capture(
+    diag: DiagState,
+    *,
+    telemetry_session: AsyncSession,
+    provenance_root: Path,
+    error: HarnessFailure | None,
+) -> None:
+    """Build + persist *diag*'s capture; swallow persistence errors."""
+    from alphamind.analysis._agent_call_capture import persist_agent_call
+
+    capture = diag.build_capture(error=error)
+    if capture is None:
+        return
+    try:
+        await persist_agent_call(telemetry_session, capture, provenance_root=provenance_root)
+    except Exception:  # noqa: BLE001 — telemetry must never break the observed call
+        logging.getLogger(__name__).exception(
+            "agent_calls capture failed for %s/%s", diag.invocation_id, diag.agent_name
+        )
 
 
 # ---------------------------------------------------------------------------
