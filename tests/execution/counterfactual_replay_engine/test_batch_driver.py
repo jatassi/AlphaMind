@@ -24,7 +24,6 @@ from alphamind.execution.counterfactual_replay_engine.engine import (
     ReplayBatchResult,
     replay_pending_proposals,
 )
-from alphamind.execution.counterfactual_replay_engine.enums import UnevaluableReason
 from alphamind.persistence.models import (
     AssetUniverse,
     Base,
@@ -34,6 +33,7 @@ from alphamind.persistence.models import (
 )
 from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.portfolio_state.events.types import PMVerdict
+from alphamind.state.tables.counterfactual_replays import UnevaluableReason
 from tests.execution.counterfactual_replay_engine._fixtures import (
     REPLAY_CONFIG,
     add_pm_decision_row,

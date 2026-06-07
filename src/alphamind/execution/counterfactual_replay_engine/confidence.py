@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from alphamind.execution.counterfactual_replay_engine.enums import Confidence
+from alphamind.state.tables.counterfactual_replays import Confidence
 
 __all__ = ["ConfidenceSignals", "classify_confidence", "replay_engine_version"]
 

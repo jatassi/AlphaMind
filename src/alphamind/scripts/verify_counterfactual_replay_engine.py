@@ -55,13 +55,6 @@ from alphamind.execution.counterfactual_replay_engine.engine import (
     ReplayBatchResult,
     replay_pending_proposals,
 )
-from alphamind.execution.counterfactual_replay_engine.enums import (
-    Confidence,
-    ExitLeg,
-    ReplayKind,
-    ReplayStatus,
-    UnevaluableReason,
-)
 from alphamind.persistence.models import (
     AssetUniverse,
     Base,
@@ -104,13 +97,20 @@ from alphamind.state.repository.counterfactual_replays import (
     load_counterfactual_replays_for_envelope,
 )
 from alphamind.state.tables.brackets_codec import record_to_rows as bracket_record_to_rows
+from alphamind.state.tables.counterfactual_replays import (
+    Confidence,
+    ExitLeg,
+    ReplayKind,
+    ReplayStatus,
+    UnevaluableReason,
+)
 from alphamind.state.tables.invocations import InvocationRow
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.positions_codec import record_to_row as position_record_to_row
 from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
 
 if TYPE_CHECKING:
-    from alphamind.execution.counterfactual_replay_engine.records import (
+    from alphamind.state.tables.counterfactual_replays import (
         CounterfactualReplayRecord,
     )
 

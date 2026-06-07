@@ -19,7 +19,6 @@ from typing import Any, Literal
 
 from alphamind._kernel.money import Money, money, price, signed_money
 from alphamind.config.models.execution import FeeSchedule, OrderType, PaperHarness
-from alphamind.execution.counterfactual_replay_engine.enums import ExitLeg
 from alphamind.execution.counterfactual_replay_engine.option_replay import (
     OptionBracketResult,
     OptionEntryResult,
@@ -29,6 +28,7 @@ from alphamind.execution.paper_evaluation_harness.harness import (
     compute_live_execution_estimate,
 )
 from alphamind.portfolio_state.records.positions import InstrumentType
+from alphamind.state.tables.counterfactual_replays import ExitLeg
 
 _TS = datetime(2026, 1, 10, 14, 0, tzinfo=UTC)
 _ADV_CONTRACTS = 20_000.0

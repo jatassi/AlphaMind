@@ -23,7 +23,6 @@ from alphamind._kernel.money import Money, money, price
 from alphamind.config.models.execution import FeeSchedule, OrderType, PaperHarness
 from alphamind.decision.analyst.models import Recommendation
 from alphamind.decision.strategist.models import PendingOrderAssessment, PositionAssessment
-from alphamind.execution.counterfactual_replay_engine.enums import ExitLeg, UnevaluableReason
 from alphamind.execution.counterfactual_replay_engine.iv_lookup import IVSnapshotLookupResult
 from alphamind.execution.counterfactual_replay_engine.option_replay import (
     price_option_at_underlying_bar,
@@ -66,6 +65,7 @@ from alphamind.portfolio_state.records.positions import (
     OptionsPositionDetails,
 )
 from alphamind.state.repository.position_state import PositionStateSnapshot
+from alphamind.state.tables.counterfactual_replays import ExitLeg, UnevaluableReason
 
 _PROPOSAL_TS = datetime(2026, 6, 1, 14, 0, tzinfo=UTC)
 _NEXT_BAR_TS = datetime(2026, 6, 1, 14, 15, tzinfo=UTC)

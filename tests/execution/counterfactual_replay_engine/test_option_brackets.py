@@ -17,7 +17,6 @@ from decimal import Decimal
 from typing import Any
 
 from alphamind._kernel.money import money
-from alphamind.execution.counterfactual_replay_engine.enums import ExitLeg
 from alphamind.execution.counterfactual_replay_engine.iv_lookup import (
     IVSnapshotLookupResult,
     resolve_contract_ticker,
@@ -28,6 +27,7 @@ from alphamind.execution.counterfactual_replay_engine.option_replay import (
     simulate_option_brackets,
 )
 from alphamind.execution.counterfactual_replay_engine.repos import OhlcvBar
+from alphamind.state.tables.counterfactual_replays import ExitLeg
 
 _TS = datetime(2026, 1, 10, 14, 0, tzinfo=UTC)
 _EXPIRATION = date(2026, 2, 20)

@@ -30,7 +30,6 @@ from zoneinfo import ZoneInfo
 from alphamind._kernel.money import DECIMAL_ZERO, Money, money, price, signed_money
 from alphamind.config.models.execution import OrderType, PaperHarness
 from alphamind.decision.analyst.models import InstrumentOption, Recommendation
-from alphamind.execution.counterfactual_replay_engine.enums import ExitLeg
 from alphamind.execution.counterfactual_replay_engine.equity_replay import (
     EquityBracketResult,
     EquityEntryResult,
@@ -47,6 +46,7 @@ from alphamind.execution.paper_evaluation_harness.harness import (
 from alphamind.portfolio_state.records.positions import InstrumentType
 from alphamind.risk_guardrails.guardrail_evaluation.black_scholes import bs_price
 from alphamind.risk_guardrails.guardrail_evaluation.types import ContractType
+from alphamind.state.tables.counterfactual_replays import ExitLeg
 
 __all__ = [
     "OptionBracketResult",

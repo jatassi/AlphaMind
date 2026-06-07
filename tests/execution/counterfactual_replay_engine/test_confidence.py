@@ -16,7 +16,7 @@ from alphamind.execution.counterfactual_replay_engine.confidence import (
     classify_confidence,
     replay_engine_version,
 )
-from alphamind.execution.counterfactual_replay_engine.enums import Confidence
+from alphamind.state.tables.counterfactual_replays import Confidence
 
 
 def _clean_equity_signals() -> ConfidenceSignals:

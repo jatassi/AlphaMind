@@ -22,7 +22,6 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from alphamind.execution.counterfactual_replay_engine.enums import ReplayKind
 from alphamind.execution.counterfactual_replay_engine.queue import (
     iter_pending_replay_proposals,
 )
@@ -32,6 +31,7 @@ from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
 from alphamind.portfolio_state.events.pm_decision import PMDecisionDetail
 from alphamind.portfolio_state.events.types import PMVerdict
 from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.counterfactual_replays import ReplayKind
 from tests.execution.counterfactual_replay_engine._fixtures import (
     add_pm_decision_row,
     analyst_equity_recommendation_json,

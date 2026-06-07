@@ -14,15 +14,13 @@ import pytest
 
 from alphamind._kernel.ids import EnvelopeId, ReplayId
 from alphamind._kernel.money import money, signed_money
-from alphamind.execution.counterfactual_replay_engine.enums import (
+from alphamind.state.tables.counterfactual_replays import (
     Confidence,
+    CounterfactualReplayRecord,
     ExitLeg,
     ReplayKind,
     ReplayStatus,
     UnevaluableReason,
-)
-from alphamind.execution.counterfactual_replay_engine.records import (
-    CounterfactualReplayRecord,
 )
 
 _NOW = datetime(2026, 1, 2, 15, 30, tzinfo=UTC)

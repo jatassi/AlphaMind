@@ -29,12 +29,12 @@ from alphamind.decision.analyst.models import (
     Recommendation,
     TimeCondition,
 )
-from alphamind.execution.counterfactual_replay_engine.enums import ExitLeg
 from alphamind.execution.counterfactual_replay_engine.repos import OhlcvBar
 from alphamind.execution.paper_evaluation_harness.harness import (
     compute_live_execution_estimate,
 )
 from alphamind.portfolio_state.records.positions import InstrumentType
+from alphamind.state.tables.counterfactual_replays import ExitLeg
 
 __all__ = [
     "EquityBracketResult",

@@ -22,14 +22,6 @@ from sqlalchemy.orm import Session
 import alphamind.state.invocation_context
 import alphamind.state.tables  # noqa: F401 — register state tables on metadata
 from alphamind._kernel.ids import EnvelopeId
-from alphamind.execution.counterfactual_replay_engine.enums import (
-    ReplayKind,
-    ReplayStatus,
-    UnevaluableReason,
-)
-from alphamind.execution.counterfactual_replay_engine.records import (
-    CounterfactualReplayRecord,
-)
 from alphamind.execution.counterfactual_replay_engine.unevaluable_writer import (
     write_unevaluable_record,
 )
@@ -37,6 +29,12 @@ from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.state.repository.counterfactual_replays import (
     load_counterfactual_replays_for_envelope,
+)
+from alphamind.state.tables.counterfactual_replays import (
+    CounterfactualReplayRecord,
+    ReplayKind,
+    ReplayStatus,
+    UnevaluableReason,
 )
 
 _ENV_1 = EnvelopeId("ENV-REC-10")

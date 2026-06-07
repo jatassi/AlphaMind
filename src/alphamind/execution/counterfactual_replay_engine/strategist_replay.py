@@ -64,7 +64,6 @@ from alphamind.decision.strategist.models import (
     PositionAssessment,
     ReduceParameters,
 )
-from alphamind.execution.counterfactual_replay_engine.enums import ExitLeg, UnevaluableReason
 from alphamind.execution.counterfactual_replay_engine.equity_replay import (
     EquityBracketResult,
     EquityEntryResult,
@@ -105,6 +104,7 @@ from alphamind.portfolio_state.records.positions import (
     InstrumentType,
     OptionsPositionDetails,
 )
+from alphamind.state.tables.counterfactual_replays import ExitLeg, UnevaluableReason
 
 if TYPE_CHECKING:
     # Imported under TYPE_CHECKING only: the snapshot is supplied by the caller,

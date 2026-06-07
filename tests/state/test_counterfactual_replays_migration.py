@@ -127,7 +127,7 @@ class TestCounterfactualReplaysMigration:
 
     def test_upgrade_check_constraints_present_in_ddl(self, tmp_path: Path) -> None:
         """The counterfactual_replays DDL carries CHECK constraints for all enums."""
-        from alphamind.execution.counterfactual_replay_engine.enums import (
+        from alphamind.state.tables.counterfactual_replays import (
             ExitLeg,
             UnevaluableReason,
         )
