@@ -108,9 +108,7 @@ class TestNonFiniteValue:
     keep the serialized text standard JSON (no bare ``Infinity`` token) yet round-trip
     the float back."""
 
-    def test_serializes_to_standard_json_and_round_trips_infinity(
-        self, monkeypatch, digest_config
-    ) -> None:  # type: ignore[no-untyped-def]
+    def test_standard_json_round_trips_infinity(self, monkeypatch, digest_config) -> None:  # type: ignore[no-untyped-def]
         weeks = fx.week_sequence(2)
         # The headline pl_last_7d cell carries a non-finite reading.
         fx.install_metrics(monkeypatch, (fx.constant_metric("outcome_pl_last_7d", math.inf),))

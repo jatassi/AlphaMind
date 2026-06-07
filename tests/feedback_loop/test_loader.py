@@ -210,7 +210,7 @@ class TestPureCoreSeam:
 
 class TestPackagedAgentLatencyBudgets:
     """The packaged agents.yaml latency-budget read is the ``CostBudgetsBundle``
-    default factory, invoked once per ``load_window`` (12× per default digest run). It
+    default factory, invoked once per ``load_window`` (12x per default digest run). It
     must parse/validate the file once per process and hand each caller a *fresh* dict so
     the frozen budget bundles never alias one shared mutable mapping."""
 
@@ -225,23 +225,17 @@ class TestPackagedAgentLatencyBudgets:
         first["analyst"] = -1  # mutating one caller's copy must not leak to the next
         assert _packaged_agent_latency_budgets()["analyst"] != -1
 
-    def test_disk_read_is_memoized(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import yaml
-
+    def test_disk_read_is_memoized(self) -> None:
         from alphamind.feedback_loop import dataset as ds
 
         ds._load_agent_latency_budgets.cache_clear()
-        calls = {"n": 0}
-        real_safe_load = yaml.safe_load
-
-        def _counting_safe_load(stream: object) -> object:
-            calls["n"] += 1
-            return real_safe_load(stream)
-
-        monkeypatch.setattr(ds.yaml, "safe_load", _counting_safe_load)
 
         ds._packaged_agent_latency_budgets()
         ds._packaged_agent_latency_budgets()
         ds._packaged_agent_latency_budgets()
 
-        assert calls["n"] == 1  # parsed/validated once, then served from cache
+        # The lru_cache around the parse/validate took exactly one miss (the first call)
+        # and served the rest from cache — one disk read + validate per process.
+        info = ds._load_agent_latency_budgets.cache_info()
+        assert info.misses == 1
+        assert info.hits == 2

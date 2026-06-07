@@ -227,7 +227,7 @@ def _packaged_agent_latency_budgets() -> dict[str, int]:
     not a hard-coded literal. Stamped onto :class:`CostBudgetsBundle` as the default
     factory so a hand-built test dataset omitting the loader still carries the real
     envelope. The disk-read + validate is memoized by :func:`_load_agent_latency_budgets`
-    (``load_window`` builds a fresh bundle per call — 12× per default digest run);
+    (``load_window`` builds a fresh bundle per call — 12x per default digest run);
     a *fresh* ``dict`` copy is returned per call so the frozen bundle instances never
     alias one shared mutable mapping.
     """
