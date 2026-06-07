@@ -989,6 +989,9 @@ def _assemble_fill_collection_snapshot(
         active_risk_parameters_provider=active_provider,
         prior_active_risk_parameters_provider=prior_provider,
         config=state_persistence_config,
+        thesis_quality_aggregates_trailing_windows_days=(
+            portfolio_state_config.thesis_quality_aggregates_trailing_windows_days
+        ),
     )
     price_provider = _price_provider_from_fill_collection(fill_collection_market_inputs)
     option_price_provider = SqlOptionPriceProvider(session_factory=session_factory)

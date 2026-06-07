@@ -100,9 +100,7 @@ def compute_thesis_quality_aggregate(
         raise ValueError(msg)
 
     windows = _resolve_windows(trailing_windows_days, as_of)
-    only_resolved = tuple(
-        t for t in resolved_theses if t.status == ThesisRecordStatus.RESOLVED
-    )
+    only_resolved = tuple(t for t in resolved_theses if t.status == ThesisRecordStatus.RESOLVED)
 
     resolution_counts: list[ResolutionWindowCounts] = []
     duration_stats: list[ThesisDurationStat] = []
@@ -169,7 +167,9 @@ def _theses_in_window(
     if cutoff is None:
         return tuple(resolved)
     return tuple(
-        t for t in resolved if t.resolution_timestamp is not None and t.resolution_timestamp >= cutoff
+        t
+        for t in resolved
+        if t.resolution_timestamp is not None and t.resolution_timestamp >= cutoff
     )
 
 

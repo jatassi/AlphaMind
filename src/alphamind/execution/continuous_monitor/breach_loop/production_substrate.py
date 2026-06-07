@@ -431,6 +431,9 @@ async def _assemble_for_breach_loop_tick(  # noqa: PLR0913 — substrate-level s
         active_risk_parameters_provider=_active_provider,
         prior_active_risk_parameters_provider=_prior_provider,
         config=state_persistence_config,
+        thesis_quality_aggregates_trailing_windows_days=(
+            portfolio_state_config.thesis_quality_aggregates_trailing_windows_days
+        ),
     )
     price_provider = _build_price_provider(underlying_cache, as_of=as_of)
     return assemble_snapshot(
