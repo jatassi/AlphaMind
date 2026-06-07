@@ -118,6 +118,7 @@ async def _run_domain_researcher(  # noqa: PLR0913 — internal helper threading
     sectors_config: Mapping[str, list[str]],
     deps: _Deps,
     archive_root: Path | None = None,
+    provenance_root: Path | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "domain_researchers",
 ) -> DomainResearcherResult:
@@ -192,6 +193,7 @@ async def _run_domain_researcher(  # noqa: PLR0913 — internal helper threading
         invocation_id=invocation_id,
         as_of=as_of,
         archive_root=archive_root,
+        provenance_root=provenance_root,
         progress=progress,
         phase=phase,
     )
@@ -230,6 +232,7 @@ async def run_domain_researcher(  # noqa: PLR0913 — public signature plus ALP-
     agents_config: Mapping[str, BaseAgentConfig],
     sectors_config: Mapping[str, list[str]],
     archive_root: Path | None = None,
+    provenance_root: Path | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "domain_researchers",
 ) -> DomainResearcherResult:
@@ -291,6 +294,7 @@ async def run_domain_researcher(  # noqa: PLR0913 — public signature plus ALP-
             harness_fn=invoke_domain_researcher_in_subprocess,
         ),
         archive_root=archive_root,
+        provenance_root=provenance_root,
         progress=progress,
         phase=phase,
     )

@@ -119,6 +119,7 @@ async def _run_qualitative_researcher(  # noqa: PLR0913 — signature dictated b
     agents_config: Mapping[str, BaseAgentConfig],
     deps: _Deps,
     archive_root: Path | None = None,
+    provenance_root: Path | None = None,
 ) -> QualitativeResearcherResult:
     """Run the qualitative researcher with injected dependencies.
 
@@ -204,6 +205,7 @@ async def _run_qualitative_researcher(  # noqa: PLR0913 — signature dictated b
         invocation_id=invocation_id,
         universe=universe,
         archive_root=archive_root,
+        provenance_root=provenance_root,
     )
     logger.info(
         "harness invoked (retry_count=%d, tokens=%s, tool_calls=%d)",
@@ -239,6 +241,7 @@ async def run_qualitative_researcher(  # noqa: PLR0913 — signature dictated by
     universe: frozenset[str],
     agents_config: Mapping[str, BaseAgentConfig],
     archive_root: Path | None = None,
+    provenance_root: Path | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "qualitative",
 ) -> QualitativeResearcherResult:
@@ -286,6 +289,7 @@ async def run_qualitative_researcher(  # noqa: PLR0913 — signature dictated by
         invocation_id: str,
         universe: frozenset[str],
         archive_root: Path | None,
+        provenance_root: Path | None,
     ) -> HarnessSuccess:
         return await invoke_qualitative_researcher_in_subprocess(
             agent_config=agent_config,
@@ -294,6 +298,7 @@ async def run_qualitative_researcher(  # noqa: PLR0913 — signature dictated by
             universe=universe,
             as_of=as_of,
             archive_root=archive_root,
+            provenance_root=provenance_root,
             progress=progress,
             phase=phase,
         )
@@ -329,4 +334,5 @@ async def run_qualitative_researcher(  # noqa: PLR0913 — signature dictated by
             integrity_check_fn=_integrity_check_fn,
         ),
         archive_root=archive_root,
+        provenance_root=provenance_root,
     )

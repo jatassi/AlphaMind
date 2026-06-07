@@ -320,6 +320,7 @@ async def _run_qualitative_researcher(payload: dict[str, Any]) -> dict[str, Any]
     progress = _resolve_progress(payload.get("progress_jsonl_path"))
     archive_root_str = payload.get("archive_root")
     archive_root = Path(archive_root_str) if archive_root_str else None
+    provenance_root = _parse_provenance_root(payload)
     universe = frozenset(payload["universe"])
     as_of = _parse_as_of(payload)
 
@@ -328,17 +329,20 @@ async def _run_qualitative_researcher(payload: dict[str, Any]) -> dict[str, Any]
     session = session_factory()
     try:
         try:
-            result = await invoke_qualitative_researcher(
-                agent_config=agent_config,
-                user_message=payload["user_message"],
-                invocation_id=payload["invocation_id"],
-                session=session,
-                universe=universe,
-                as_of=as_of,
-                archive_root=archive_root,
-                progress=progress,
-                phase=payload.get("phase", "qualitative"),
-            )
+            async with _telemetry_session(provenance_root) as telemetry_session:
+                result = await invoke_qualitative_researcher(
+                    agent_config=agent_config,
+                    user_message=payload["user_message"],
+                    invocation_id=payload["invocation_id"],
+                    session=session,
+                    universe=universe,
+                    as_of=as_of,
+                    archive_root=archive_root,
+                    telemetry_session=telemetry_session,
+                    provenance_root=provenance_root,
+                    progress=progress,
+                    phase=payload.get("phase", "qualitative"),
+                )
         except (MalformedOutputFailure, ContextOverflowFailure, TimeoutFailure, SDKFailure) as exc:
             return _failure_payload(exc)
 
@@ -397,20 +401,24 @@ async def _run_synthesizer(payload: dict[str, Any]) -> dict[str, Any]:
     progress = _resolve_progress(payload.get("progress_jsonl_path"))
     archive_root_str = payload.get("archive_root")
     archive_root = Path(archive_root_str) if archive_root_str else None
+    provenance_root = _parse_provenance_root(payload)
     portfolio_reader = _decode_pickle(payload["portfolio_reader_pickle"])
     as_of = _parse_as_of(payload)
 
     try:
-        result = await invoke_synthesizer(
-            agent_config=agent_config,
-            user_message=payload["user_message"],
-            invocation_id=payload["invocation_id"],
-            portfolio_reader=portfolio_reader,
-            as_of=as_of,
-            archive_root=archive_root,
-            progress=progress,
-            phase=payload.get("phase", "synthesizer"),
-        )
+        async with _telemetry_session(provenance_root) as telemetry_session:
+            result = await invoke_synthesizer(
+                agent_config=agent_config,
+                user_message=payload["user_message"],
+                invocation_id=payload["invocation_id"],
+                portfolio_reader=portfolio_reader,
+                as_of=as_of,
+                archive_root=archive_root,
+                telemetry_session=telemetry_session,
+                provenance_root=provenance_root,
+                progress=progress,
+                phase=payload.get("phase", "synthesizer"),
+            )
     except (
         EmptyResponseFailure,
         MalformedOutputFailure,
@@ -428,6 +436,7 @@ async def _run_adaptive_researcher(payload: dict[str, Any]) -> dict[str, Any]:
     progress = _resolve_progress(payload.get("progress_jsonl_path"))
     archive_root_str = payload.get("archive_root")
     archive_root = Path(archive_root_str) if archive_root_str else None
+    provenance_root = _parse_provenance_root(payload)
     universe = frozenset(payload["universe"])
     sector_briefs = _decode_pickle(payload["sector_briefs_pickle"])
     qualitative_brief = _decode_pickle(payload["qualitative_brief_pickle"])
@@ -439,20 +448,23 @@ async def _run_adaptive_researcher(payload: dict[str, Any]) -> dict[str, Any]:
     session = session_factory()
     try:
         try:
-            result = await invoke_adaptive_researcher(
-                agent_config=agent_config,
-                user_message=payload["user_message"],
-                invocation_id=payload["invocation_id"],
-                session=session,
-                universe=universe,
-                sector_briefs=sector_briefs,
-                qualitative_brief=qualitative_brief,
-                correlation_regime_brief=correlation_regime_brief,
-                as_of=as_of,
-                archive_root=archive_root,
-                progress=progress,
-                phase=payload.get("phase", "adaptive"),
-            )
+            async with _telemetry_session(provenance_root) as telemetry_session:
+                result = await invoke_adaptive_researcher(
+                    agent_config=agent_config,
+                    user_message=payload["user_message"],
+                    invocation_id=payload["invocation_id"],
+                    session=session,
+                    universe=universe,
+                    sector_briefs=sector_briefs,
+                    qualitative_brief=qualitative_brief,
+                    correlation_regime_brief=correlation_regime_brief,
+                    as_of=as_of,
+                    archive_root=archive_root,
+                    telemetry_session=telemetry_session,
+                    provenance_root=provenance_root,
+                    progress=progress,
+                    phase=payload.get("phase", "adaptive"),
+                )
         except (MalformedOutputFailure, ContextOverflowFailure, TimeoutFailure, SDKFailure) as exc:
             return _failure_payload(exc)
         return _success_payload(result)
@@ -466,6 +478,7 @@ async def _run_analyst(payload: dict[str, Any]) -> dict[str, Any]:
     progress = _resolve_progress(payload.get("progress_jsonl_path"))
     archive_root_str = payload.get("archive_root")
     archive_root = Path(archive_root_str) if archive_root_str else None
+    provenance_root = _parse_provenance_root(payload)
     retrieval_store = _decode_pickle(payload["retrieval_store_pickle"])
     active_sectors = frozenset(payload["active_sectors"])
     as_of = _parse_as_of(payload)
@@ -478,18 +491,21 @@ async def _run_analyst(payload: dict[str, Any]) -> dict[str, Any]:
             sync_session_factory=sync_session_factory,
         )
         try:
-            result = await invoke_analyst(
-                agent_config=agent_config,
-                user_message=payload["user_message"],
-                invocation_id=payload["invocation_id"],
-                initial_validation_state=validation_state,
-                retrieval_store=retrieval_store,
-                active_sectors=active_sectors,
-                as_of=as_of,
-                archive_root=archive_root,
-                progress=progress,
-                phase=payload.get("phase", "analyst"),
-            )
+            async with _telemetry_session(provenance_root) as telemetry_session:
+                result = await invoke_analyst(
+                    agent_config=agent_config,
+                    user_message=payload["user_message"],
+                    invocation_id=payload["invocation_id"],
+                    initial_validation_state=validation_state,
+                    retrieval_store=retrieval_store,
+                    active_sectors=active_sectors,
+                    as_of=as_of,
+                    archive_root=archive_root,
+                    telemetry_session=telemetry_session,
+                    provenance_root=provenance_root,
+                    progress=progress,
+                    phase=payload.get("phase", "analyst"),
+                )
         except (MalformedOutputFailure, ContextOverflowFailure, TimeoutFailure, SDKFailure) as exc:
             return _failure_payload(exc)
         return _success_payload(result)
@@ -502,6 +518,7 @@ async def _run_strategist(payload: dict[str, Any]) -> dict[str, Any]:
     progress = _resolve_progress(payload.get("progress_jsonl_path"))
     archive_root_str = payload.get("archive_root")
     archive_root = Path(archive_root_str) if archive_root_str else None
+    provenance_root = _parse_provenance_root(payload)
     retrieval_store = _decode_pickle(payload["retrieval_store_pickle"])
     active_sectors = frozenset(payload["active_sectors"])
     as_of = _parse_as_of(payload)
@@ -514,19 +531,22 @@ async def _run_strategist(payload: dict[str, Any]) -> dict[str, Any]:
             sync_session_factory=sync_session_factory,
         )
         try:
-            result = await run_strategist_harness(
-                user_message=payload["user_message"],
-                system_prompt=payload["system_prompt"],
-                invocation_id=payload["invocation_id"],
-                agent_config=agent_config,
-                validation_state=validation_state,
-                retrieval_store=retrieval_store,
-                active_sectors=active_sectors,
-                as_of=as_of,
-                archive_root=archive_root,
-                progress=progress,
-                phase=payload.get("phase", "strategist"),
-            )
+            async with _telemetry_session(provenance_root) as telemetry_session:
+                result = await run_strategist_harness(
+                    user_message=payload["user_message"],
+                    system_prompt=payload["system_prompt"],
+                    invocation_id=payload["invocation_id"],
+                    agent_config=agent_config,
+                    validation_state=validation_state,
+                    retrieval_store=retrieval_store,
+                    active_sectors=active_sectors,
+                    as_of=as_of,
+                    archive_root=archive_root,
+                    telemetry_session=telemetry_session,
+                    provenance_root=provenance_root,
+                    progress=progress,
+                    phase=payload.get("phase", "strategist"),
+                )
         except (MalformedOutputFailure, ContextOverflowFailure, TimeoutFailure, SDKFailure) as exc:
             return _failure_payload(exc)
         return _success_payload(result)
@@ -539,6 +559,7 @@ async def _run_portfolio_manager(payload: dict[str, Any]) -> dict[str, Any]:
     progress = _resolve_progress(payload.get("progress_jsonl_path"))
     archive_root_str = payload.get("archive_root")
     archive_root = Path(archive_root_str) if archive_root_str else None
+    provenance_root = _parse_provenance_root(payload)
     as_of = _parse_as_of(payload)
     retrieval_store = _decode_pickle(payload["retrieval_store_pickle"])
     thesis_component_reader = _decode_pickle(payload["thesis_component_reader_pickle"])
@@ -619,32 +640,35 @@ async def _run_portfolio_manager(payload: dict[str, Any]) -> dict[str, Any]:
                     invocation_id=payload["invocation_id"],
                 )
             try:
-                result = await invoke_pm(
-                    agent_config=agent_config,
-                    user_message=payload["user_message"],
-                    invocation_id=payload["invocation_id"],
-                    initial_validation_state=validation_state,
-                    initial_submit_envelope_state=submit_envelope_state,
-                    retrieval_store=retrieval_store,
-                    thesis_component_reader=thesis_component_reader,
-                    pre_processor_bundle=pre_processor_bundle,
-                    pm_view=pm_view,
-                    active_sectors=active_sectors,
-                    halt_mode=halt_mode,
-                    sector_resolver=sector_resolver,
-                    library_config=library_config,
-                    library_market=library_market,
-                    state_persistence_config=state_persistence_config,
-                    as_of=as_of,
-                    archive_root=archive_root,
-                    broker_dispatch=None,
-                    venue_config=venue_config,
-                    execution_mode=execution_mode,
-                    execution_config=execution_config,
-                    invocation_handle=invocation_handle,
-                    progress=progress,
-                    phase=payload.get("phase", "pm"),
-                )
+                async with _telemetry_session(provenance_root) as telemetry_session:
+                    result = await invoke_pm(
+                        agent_config=agent_config,
+                        user_message=payload["user_message"],
+                        invocation_id=payload["invocation_id"],
+                        initial_validation_state=validation_state,
+                        initial_submit_envelope_state=submit_envelope_state,
+                        retrieval_store=retrieval_store,
+                        thesis_component_reader=thesis_component_reader,
+                        pre_processor_bundle=pre_processor_bundle,
+                        pm_view=pm_view,
+                        active_sectors=active_sectors,
+                        halt_mode=halt_mode,
+                        sector_resolver=sector_resolver,
+                        library_config=library_config,
+                        library_market=library_market,
+                        state_persistence_config=state_persistence_config,
+                        as_of=as_of,
+                        archive_root=archive_root,
+                        telemetry_session=telemetry_session,
+                        provenance_root=provenance_root,
+                        broker_dispatch=None,
+                        venue_config=venue_config,
+                        execution_mode=execution_mode,
+                        execution_config=execution_config,
+                        invocation_handle=invocation_handle,
+                        progress=progress,
+                        phase=payload.get("phase", "pm"),
+                    )
             except (
                 MalformedOutputFailure,
                 ContextOverflowFailure,

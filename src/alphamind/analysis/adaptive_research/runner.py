@@ -106,6 +106,7 @@ async def _run_adaptive_researcher(  # noqa: PLR0913 — signature dictated by A
     agents_config: Mapping[str, BaseAgentConfig],
     deps: _Deps,
     archive_root: Path | None = None,
+    provenance_root: Path | None = None,
 ) -> AdaptiveResearcherResult:
     """Run the adaptive researcher with injected dependencies.
 
@@ -157,6 +158,7 @@ async def _run_adaptive_researcher(  # noqa: PLR0913 — signature dictated by A
         qualitative_brief=qualitative_brief,
         correlation_regime_brief=correlation_regime_brief,
         archive_root=archive_root,
+        provenance_root=provenance_root,
     )
     logger.info(
         "harness invoked (retry_count=%d, tokens=%s, tool_calls=%d)",
@@ -195,6 +197,7 @@ async def run_adaptive_researcher(  # noqa: PLR0913 — prescribed signature; va
     universe: frozenset[str],
     agents_config: Mapping[str, BaseAgentConfig],
     archive_root: Path | None = None,
+    provenance_root: Path | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "adaptive",
 ) -> AdaptiveResearcherResult:
@@ -230,6 +233,7 @@ async def run_adaptive_researcher(  # noqa: PLR0913 — prescribed signature; va
         qualitative_brief: QualitativeBrief,
         correlation_regime_brief: CorrelationRegimeBrief,
         archive_root: Path | None,
+        provenance_root: Path | None,
     ) -> HarnessSuccess:
         return await invoke_adaptive_researcher_in_subprocess(
             agent_config=agent_config,
@@ -241,6 +245,7 @@ async def run_adaptive_researcher(  # noqa: PLR0913 — prescribed signature; va
             correlation_regime_brief=correlation_regime_brief,
             as_of=as_of,
             archive_root=archive_root,
+            provenance_root=provenance_root,
             progress=progress,
             phase=phase,
         )
@@ -261,4 +266,5 @@ async def run_adaptive_researcher(  # noqa: PLR0913 — prescribed signature; va
             harness_fn=_harness_fn,
         ),
         archive_root=archive_root,
+        provenance_root=provenance_root,
     )

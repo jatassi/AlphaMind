@@ -52,11 +52,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import exchange_calendars
@@ -342,6 +343,33 @@ async def _update_row_command_execution(
 
 
 # ---------------------------------------------------------------------------
+# Provenance-root derivation (ALP-907)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_provenance_root(state_persistence_config: StatePersistenceConfig) -> Path:
+    """Resolve the agent_calls provenance root from the loaded persistence config.
+
+    The provenance root is the parent of
+    :attr:`StatePersistenceConfig.invocation_provenance_root` (i.e.
+    ``…/data/provenance``), with ``%USERPROFILE%`` expanded the same way the
+    rest of AlphaMind's per-invocation writers do (the environment value, or
+    :func:`Path.home` on POSIX). The config value is a Windows-style path
+    (``%USERPROFILE%\\AlphaMind\\data\\provenance\\invocations``); parsing it
+    via :class:`PureWindowsPath` makes the backslash-separated parent resolve
+    correctly on the macOS dev machine too.
+
+    The result equals
+    :func:`alphamind.distillation.orchestrator._default_provenance_root`, so
+    threading it into the analysis/decision pipelines leaves distillation's
+    own provenance artifacts at the same path (ALP-907 AC: no regression).
+    """
+    userprofile = os.environ.get("USERPROFILE") or str(Path.home())
+    raw = state_persistence_config.invocation_provenance_root.replace("%USERPROFILE%", userprofile)
+    return Path(PureWindowsPath(raw).parent)
+
+
+# ---------------------------------------------------------------------------
 # Decision-pipeline kwarg builder
 # ---------------------------------------------------------------------------
 
@@ -356,6 +384,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     halt_state: HaltState | None,
     now: datetime,
     archive_root: Path,
+    provenance_root: Path | None,
     state_delivery_config: StateDeliveryConfig,
     state_persistence_config: StatePersistenceConfig,
     sector_resolver: Callable[[str], str],
@@ -399,6 +428,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
         "invocation_id": invocation_id,
         "timestamp": now,
         "archive_root": archive_root,
+        "provenance_root": provenance_root,
         "debug_e2e": debug_e2e,
         "resume_context": resume_context,
         # ALP-711 — broker-routing inputs (all picklable; the PM subprocess
@@ -578,6 +608,11 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     state_persistence_config = load_state_persistence_config(
         read_yaml_file(config_dir / "main.yaml")
     )
+    # ALP-907 — the agent_calls telemetry-capture provenance root (parent of the
+    # config's invocation_provenance_root), threaded through the analysis +
+    # decision pipelines → runners → subprocess worker so each production LLM
+    # agent call persists its row + four provenance artifacts.
+    provenance_root = _resolve_provenance_root(state_persistence_config)
     state_delivery_config = load_state_delivery_config(config_dir / "state_delivery.yaml")
     scheduler_config = SchedulerConfig.model_validate(read_yaml_file(config_dir / "scheduler.yaml"))
     overlays_map = load_overlays(config_dir)
@@ -851,6 +886,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         pipeline_config=pipeline_config,
         config_dir=config_dir,
         archive_root=archive_root,
+        provenance_root=provenance_root,
         now=now,
         portfolio_reader=portfolio_reader,
         progress=progress,
@@ -897,6 +933,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         halt_state=halt_state,
         now=now,
         archive_root=archive_root,
+        provenance_root=provenance_root,
         state_delivery_config=state_delivery_config,
         state_persistence_config=state_persistence_config,
         sector_resolver=sector_resolver,
@@ -1262,6 +1299,7 @@ async def _run_analysis(  # noqa: PLR0913 — composition surface threads orches
     pipeline_config: PipelineConfig,
     config_dir: Path,
     archive_root: Path,
+    provenance_root: Path | None,
     now: datetime,
     portfolio_reader: SynthesizerPortfolioStateReader,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
@@ -1298,6 +1336,7 @@ async def _run_analysis(  # noqa: PLR0913 — composition surface threads orches
             sectors_config=sectors_config_from_assets(resolved),
             portfolio_reader=portfolio_reader,
             archive_root=archive_root,
+            provenance_root=provenance_root,
             progress=progress,
             debug_e2e=debug_e2e,
         )
