@@ -222,6 +222,10 @@ class TestEnumMembers:
             "CORPORATE_ACTION_PROCESSOR",
             "CONFIG_RELOAD",
             "OPERATOR_CONSOLE",
+            "DISTILLATION_ORCHESTRATOR",
+            # ALP-899 — the analysis pipeline's thesis-resolution step emits
+            # THESIS_RESOLVED under this source.
+            "ANALYSIS_PIPELINE",
         }
         assert {m.name for m in EventSource} == expected
 
