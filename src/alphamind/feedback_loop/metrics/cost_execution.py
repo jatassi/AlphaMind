@@ -30,6 +30,7 @@ from alphamind.feedback_loop.metrics.types import (
     MetricId,
     MetricResult,
     Window,
+    rate_result,
 )
 from alphamind.portfolio_state.events.pm_decision import PMDecisionDetail
 from alphamind.portfolio_state.events.types import EventSource, EventType
@@ -77,22 +78,6 @@ def _count_result(metric_id: MetricId, count: int) -> MetricResult:
     )
 
 
-def _ratio_result(metric_id: MetricId, numerator: float, denominator: int) -> MetricResult:
-    """A process-tier fraction reading: ``numerator / denominator``.
-
-    Empty denominator yields ``value=None`` (the design's "no honest reading" signal)
-    rather than a divide-by-zero; ``sample_size`` carries the denominator.
-    """
-    value = None if denominator == 0 else numerator / denominator
-    return MetricResult(
-        metric_id=metric_id,
-        value=value,
-        posterior_band=None,
-        sample_size=denominator,
-        insufficient_sample=False,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Token cost per invocation
 # ---------------------------------------------------------------------------
@@ -106,7 +91,7 @@ def _compute_cost_token_per_invocation(
     calls = dataset.agent_calls
     invocations = {call.invocation_id for call in calls}
     total = sum(_billable_tokens(call) for call in calls)
-    return _ratio_result(_COST_TOKEN_PER_INVOCATION, total, len(invocations))
+    return rate_result(_COST_TOKEN_PER_INVOCATION, total, len(invocations))
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +109,7 @@ def _cost_per_agent_compute(
     def _compute(dataset: WindowDataset, _conditioning: Conditioning) -> MetricResult:
         calls = _agent_calls(dataset, agent_name)
         if not calls:
-            return _ratio_result(metric_id, 0, 0)
+            return rate_result(metric_id, 0, 0)
         total = sum(_billable_tokens(call) for call in calls)
         return MetricResult(
             metric_id=metric_id,
@@ -137,6 +122,21 @@ def _cost_per_agent_compute(
     return _compute
 
 
+def _process_metric(
+    metric_id: MetricId, compute: Callable[[WindowDataset, Conditioning], MetricResult]
+) -> Metric:
+    """A scalar process-tier ``Metric`` — the weekly, unconditioned descriptor every
+    cost/execution-process metric in this module shares (mirrors :func:`_per_agent_metrics`
+    for the fan-out families)."""
+    return Metric(
+        metric_id=metric_id,
+        po_type="process",
+        default_window=Window.WEEKLY,
+        supported_conditioning=(),
+        compute=compute,
+    )
+
+
 def _per_agent_metrics(
     id_prefix: str,
     compute_factory: Callable[
@@ -147,15 +147,7 @@ def _per_agent_metrics(
     metrics: list[Metric] = []
     for agent_name in _AGENT_NAMES:
         metric_id = MetricId(f"{id_prefix}__{agent_name}")
-        metrics.append(
-            Metric(
-                metric_id=metric_id,
-                po_type="process",
-                default_window=Window.WEEKLY,
-                supported_conditioning=(),
-                compute=compute_factory(metric_id, agent_name),
-            )
-        )
+        metrics.append(_process_metric(metric_id, compute_factory(metric_id, agent_name)))
     return tuple(metrics)
 
 
@@ -176,7 +168,7 @@ def _cache_hit_rate_compute(
         calls = _agent_calls(dataset, agent_name)
         cache_read = sum(call.cache_read_tokens for call in calls)
         input_tokens = sum(call.input_tokens for call in calls)
-        return _ratio_result(metric_id, cache_read, cache_read + input_tokens)
+        return rate_result(metric_id, cache_read, cache_read + input_tokens)
 
     return _compute
 
@@ -196,7 +188,7 @@ _FAILURE_OVERHEAD = MetricId("failure_overhead")
 def _compute_failure_overhead(dataset: WindowDataset, _conditioning: Conditioning) -> MetricResult:
     total = sum(_billable_tokens(call) for call in dataset.agent_calls)
     retry = sum(_billable_tokens(call) for call in dataset.agent_calls if call.attempt_number > 1)
-    return _ratio_result(_FAILURE_OVERHEAD, retry, total)
+    return rate_result(_FAILURE_OVERHEAD, retry, total)
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +206,7 @@ def _latency_headroom_compute(
     def _compute(dataset: WindowDataset, _conditioning: Conditioning) -> MetricResult:
         calls = _agent_calls(dataset, agent_name)
         if not calls:
-            return _ratio_result(metric_id, 0, 0)
+            return rate_result(metric_id, 0, 0)
         budget_seconds = dataset.budgets.agent_latency_budget_seconds[agent_name]
         mean_wall_seconds = sum(call.wall_clock_ms for call in calls) / len(calls) / _MS_PER_SECOND
         headroom = (budget_seconds - mean_wall_seconds) / budget_seconds
@@ -246,7 +238,7 @@ def _compute_cost_per_resolved_thesis(
 ) -> MetricResult:
     total = sum(_billable_tokens(call) for call in dataset.agent_calls)
     resolved = len(dataset.outcomes.theses)
-    return _ratio_result(_COST_PER_RESOLVED_THESIS, total, resolved)
+    return rate_result(_COST_PER_RESOLVED_THESIS, total, resolved)
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +288,7 @@ def _compute_command_abandonment_rate(
 ) -> MetricResult:
     abandoned = len(_events_of_type(dataset, EventType.COMMAND_ABANDONED))
     total_attempted = _resulting_command_count(dataset) + abandoned
-    return _ratio_result(_COMMAND_ABANDONMENT_RATE, abandoned, total_attempted)
+    return rate_result(_COMMAND_ABANDONMENT_RATE, abandoned, total_attempted)
 
 
 # --- Engine-originated CLOSE frequency -------------------------------------
@@ -359,49 +351,13 @@ def _compute_engine_originated_close_frequency(
 
 
 METRICS: tuple[Metric, ...] = (
-    Metric(
-        metric_id=_COST_TOKEN_PER_INVOCATION,
-        po_type="process",
-        default_window=Window.WEEKLY,
-        supported_conditioning=(),
-        compute=_compute_cost_token_per_invocation,
-    ),
+    _process_metric(_COST_TOKEN_PER_INVOCATION, _compute_cost_token_per_invocation),
     *_COST_PER_AGENT_METRICS,
     *_CACHE_HIT_RATE_METRICS,
-    Metric(
-        metric_id=_FAILURE_OVERHEAD,
-        po_type="process",
-        default_window=Window.WEEKLY,
-        supported_conditioning=(),
-        compute=_compute_failure_overhead,
-    ),
+    _process_metric(_FAILURE_OVERHEAD, _compute_failure_overhead),
     *_LATENCY_HEADROOM_METRICS,
-    Metric(
-        metric_id=_COST_PER_RESOLVED_THESIS,
-        po_type="process",
-        default_window=Window.WEEKLY,
-        supported_conditioning=(),
-        compute=_compute_cost_per_resolved_thesis,
-    ),
-    Metric(
-        metric_id=_GUARDRAIL_REJECTION_COUNT,
-        po_type="process",
-        default_window=Window.WEEKLY,
-        supported_conditioning=(),
-        compute=_compute_guardrail_rejection_count,
-    ),
-    Metric(
-        metric_id=_COMMAND_ABANDONMENT_RATE,
-        po_type="process",
-        default_window=Window.WEEKLY,
-        supported_conditioning=(),
-        compute=_compute_command_abandonment_rate,
-    ),
-    Metric(
-        metric_id=_ENGINE_ORIGINATED_CLOSE_FREQUENCY,
-        po_type="process",
-        default_window=Window.WEEKLY,
-        supported_conditioning=(),
-        compute=_compute_engine_originated_close_frequency,
-    ),
+    _process_metric(_COST_PER_RESOLVED_THESIS, _compute_cost_per_resolved_thesis),
+    _process_metric(_GUARDRAIL_REJECTION_COUNT, _compute_guardrail_rejection_count),
+    _process_metric(_COMMAND_ABANDONMENT_RATE, _compute_command_abandonment_rate),
+    _process_metric(_ENGINE_ORIGINATED_CLOSE_FREQUENCY, _compute_engine_originated_close_frequency),
 )

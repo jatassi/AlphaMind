@@ -217,6 +217,9 @@ class TestTokenCostPerInvocation:
         result = _compute("cost_token_per_invocation", _dataset())
         assert result.value is None
         assert result.sample_size == 0
+        # Empty denominator → insufficient_sample True, consistent with every other
+        # rate family now that the shared rate_result builder is the single source.
+        assert result.insufficient_sample is True
 
 
 class TestTokenCostPerAgent:
