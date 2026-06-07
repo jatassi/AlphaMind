@@ -42,9 +42,13 @@ against the production DB read-only per the [environment policy](../../CLAUDE.md
 
 A metric absent from `metrics-list` (e.g. a counterfactual-replay-gated metric before that
 engine lands) is degraded-away, not an error — `metric <id>` on an unregistered id exits 1.
-Validation registration/evaluation and retrospective-report persistence have **no CLI**
-today; those skills work from the design contracts and this analytics surface, and persist
-their records once [ALP-686](https://linear.app/alphamind-jatassi/issue/ALP-686) lands.
+Validation and retrospective each have their own headless CLI:
+`python -m alphamind.feedback_loop.validation.cli` (`register` / `evaluate` / `list` /
+`detect-supersessions`) and `python -m alphamind.feedback_loop.retrospective.cli`
+(`ingest` / `save-report` / `capture-decision`). They persist directly to the
+`validations` / `validation_outcomes` / `retrospective_reports` / `retrospective_decisions`
+tables today; [ALP-686](https://linear.app/alphamind-jatassi/issue/ALP-686) adds the
+dashboard rendering over those records, not their persistence.
 
 ## MetricId catalog
 
@@ -107,7 +111,7 @@ session-state shape, and lifecycle endpoints are specified at
   `clear_pins` verbs.
 - **Per-view affordances** — `pin_pre_panel` / `pin_post_panel` (validation evaluation view),
   `scroll_to_section` / `highlight_decision_row` (retrospective view).
-- **Validation tracking** — `register_validation`, `get_validation`,
-  `list_pending_validations`, `submit_validation_outcome`, `list_outcomes_by_artifact`, and
-  the `retrospective_reports` / `retrospective_decisions` persistence — all part of the
-  deferred View-F substrate.
+- **Validation tracking (dashboard)** — `register_validation`, `get_validation`,
+  `list_pending_validations`, `submit_validation_outcome`, `list_outcomes_by_artifact` —
+  the View-F canvas affordances. The validation / retrospective records themselves are
+  persisted today by the headless CLIs above; only this dashboard surface is deferred.
