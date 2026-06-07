@@ -285,3 +285,281 @@ async def test_target_reached_profitable_thesis_classifies_validated(
     assert resolved[0].record.resolution_category == ThesisResolutionCategory.VALIDATED
     assert resolved[0].record.resolution_pnl_usd == 500.0
     assert resolved[0].detail.resolution_category == ThesisResolutionCategory.VALIDATED.value
+
+
+# ---------------------------------------------------------------------------
+# Per-thesis gap resilience (ALP-914 finding 1) — a data gap on one thesis
+# logs a WARNING and skips it (left ACTIVE) without aborting the run; other
+# eligible theses still resolve.
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_status(factory: async_sessionmaker[AsyncSession], thesis_id: str) -> str:
+    async with factory() as session:
+        row = (
+            await session.execute(select(ThesisRow).where(ThesisRow.thesis_id == thesis_id))
+        ).scalar_one()
+        return str(row.status)
+
+
+async def test_missing_ledger_row_skips_thesis_others_resolve(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A closed-position ACTIVE thesis with no thesis_pnl_ledger row is skipped
+    with a WARNING (naming the thesis), left ACTIVE, and does not abort the run;
+    a sibling eligible thesis in the same run still resolves."""
+    import logging
+
+    _, factory = db
+    gapped = make_active_thesis(thesis_id="thesis-gap", position_id="pos-gap")
+    await seed_closed_position_thesis(
+        factory,
+        thesis=gapped,
+        realized_pnl_usd=-100.0,
+        exit_method=PositionExitMethod.STOP_TRIGGERED,
+        invocation_id=_INV_ID,
+        with_ledger_row=False,
+    )
+    healthy = make_active_thesis(thesis_id="thesis-ok", position_id="pos-ok")
+    await seed_closed_position_thesis(
+        factory,
+        thesis=healthy,
+        realized_pnl_usd=-100.0,
+        exit_method=PositionExitMethod.STOP_TRIGGERED,
+        invocation_id=_INV_ID,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        async with factory() as session:
+            handle = InvocationHandle(session=session, invocation_id=_INV_ID)
+            resolved = await resolve_closed_position_theses(
+                handle,
+                evaluator_config=make_evaluator_config(),
+                sdk_query_fn=_make_sdk_stub("WRONG"),
+            )
+            await session.commit()
+
+    assert {r.record.thesis_id for r in resolved} == {"thesis-ok"}
+    assert await _resolve_status(factory, "thesis-gap") == ThesisRecordStatus.ACTIVE.value
+    assert await _resolve_status(factory, "thesis-ok") == ThesisRecordStatus.RESOLVED.value
+    assert any("thesis-gap" in r.message and r.levelname == "WARNING" for r in caplog.records)
+
+
+async def test_missing_position_closed_entry_skips_thesis(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A closed-position ACTIVE thesis with no POSITION_CLOSED entry (the
+    option-lifecycle-close shape) is skipped with a WARNING, left ACTIVE, and
+    does not abort the run."""
+    import logging
+
+    _, factory = db
+    gapped = make_active_thesis(thesis_id="thesis-noexit", position_id="pos-noexit")
+    await seed_closed_position_thesis(
+        factory,
+        thesis=gapped,
+        realized_pnl_usd=-100.0,
+        exit_method=PositionExitMethod.STOP_TRIGGERED,
+        invocation_id=_INV_ID,
+        with_position_closed_entry=False,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        async with factory() as session:
+            handle = InvocationHandle(session=session, invocation_id=_INV_ID)
+            resolved = await resolve_closed_position_theses(
+                handle,
+                evaluator_config=make_evaluator_config(),
+                sdk_query_fn=_make_sdk_stub("WRONG"),
+            )
+            await session.commit()
+
+    assert resolved == ()
+    assert await _resolve_status(factory, "thesis-noexit") == ThesisRecordStatus.ACTIVE.value
+    assert any("thesis-noexit" in r.message and r.levelname == "WARNING" for r in caplog.records)
+
+
+async def test_undecodable_position_closed_detail_skips_thesis(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A POSITION_CLOSED entry whose detail cannot be read as a
+    PositionClosedDetail is skipped with a WARNING (the bare assert is gone —
+    this passes under python -O)."""
+    import logging
+
+    _, factory = db
+    gapped = make_active_thesis(thesis_id="thesis-baddetail", position_id="pos-baddetail")
+    await seed_closed_position_thesis(
+        factory,
+        thesis=gapped,
+        realized_pnl_usd=-100.0,
+        exit_method=PositionExitMethod.STOP_TRIGGERED,
+        invocation_id=_INV_ID,
+        malformed_position_closed_detail=True,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        async with factory() as session:
+            handle = InvocationHandle(session=session, invocation_id=_INV_ID)
+            resolved = await resolve_closed_position_theses(
+                handle,
+                evaluator_config=make_evaluator_config(),
+                sdk_query_fn=_make_sdk_stub("WRONG"),
+            )
+            await session.commit()
+
+    assert resolved == ()
+    assert await _resolve_status(factory, "thesis-baddetail") == ThesisRecordStatus.ACTIVE.value
+    assert any("thesis-baddetail" in r.message and r.levelname == "WARNING" for r in caplog.records)
+
+
+async def test_lazy_evaluator_config_not_built_on_zero_thesis_invocation(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """The evaluator config factory is invoked only when a component first needs
+    the LLM fallback. A zero-thesis invocation never reaches the LLM, so the
+    factory is never called and prompt_path_exists never runs (ALP-914
+    finding 4)."""
+    _, factory = db
+
+    calls = {"n": 0}
+
+    def _config_factory() -> Any:
+        calls["n"] += 1
+        return make_evaluator_config()
+
+    def _no_sdk(**_kwargs: Any) -> Any:
+        raise AssertionError("zero-thesis invocation must not call the SDK")
+
+    async with factory() as session:
+        handle = InvocationHandle(session=session, invocation_id=_INV_ID)
+        resolved = await resolve_closed_position_theses(
+            handle,
+            evaluator_config_factory=_config_factory,
+            sdk_query_fn=_no_sdk,
+        )
+        await session.commit()
+
+    assert resolved == ()
+    assert calls["n"] == 0
+
+
+async def test_lazy_evaluator_config_not_built_when_every_thesis_skipped(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """When every eligible thesis is skipped for a data gap before component
+    assessment, no component ever needs the LLM fallback, so the config factory
+    is never invoked (ALP-914 finding 4 — the gap path ties to finding 1)."""
+    _, factory = db
+    gapped = make_active_thesis(thesis_id="thesis-skip", position_id="pos-skip")
+    await seed_closed_position_thesis(
+        factory,
+        thesis=gapped,
+        realized_pnl_usd=-100.0,
+        exit_method=PositionExitMethod.STOP_TRIGGERED,
+        invocation_id=_INV_ID,
+        with_ledger_row=False,  # skipped before any component is assessed
+    )
+
+    calls = {"n": 0}
+
+    def _config_factory() -> Any:
+        calls["n"] += 1
+        return make_evaluator_config()
+
+    def _no_sdk(**_kwargs: Any) -> Any:
+        raise AssertionError("a skipped thesis must not call the SDK")
+
+    async with factory() as session:
+        handle = InvocationHandle(session=session, invocation_id=_INV_ID)
+        resolved = await resolve_closed_position_theses(
+            handle,
+            evaluator_config_factory=_config_factory,
+            sdk_query_fn=_no_sdk,
+        )
+        await session.commit()
+
+    assert resolved == ()
+    assert calls["n"] == 0
+
+
+async def test_market_data_slice_includes_entry_and_resolution_prices(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """The market-data slice the LLM evaluator sees carries the instrument, the
+    entry price, the resolution-time price, and the price move (abs + pct), with
+    P/L framed as the outcome (ALP-914 finding 5)."""
+    _, factory = db
+    thesis = make_active_thesis(thesis_id="thesis-mkt", position_id="pos-mkt")
+    await seed_closed_position_thesis(
+        factory,
+        thesis=thesis,
+        realized_pnl_usd=-250.0,
+        exit_method=PositionExitMethod.PM_DECISION,  # ENTRY+TARGET+INVALIDATION all INCONCLUSIVE → LLM
+        invocation_id=_INV_ID,
+        entry_ticker="NVDA",
+        entry_cost_basis_per_share=100.0,
+    )
+
+    captured: dict[str, str] = {}
+
+    def _capturing_sdk(**kwargs: Any) -> Any:
+        captured["prompt"] = str(kwargs.get("prompt", ""))
+        return _make_sdk_stub("INCONCLUSIVE")(**kwargs)
+
+    async with factory() as session:
+        handle = InvocationHandle(session=session, invocation_id=_INV_ID)
+        await resolve_closed_position_theses(
+            handle,
+            evaluator_config=make_evaluator_config(),
+            sdk_query_fn=_capturing_sdk,
+            underlying_prices={"NVDA": 120.0},
+        )
+        await session.commit()
+
+    slice_text = captured["prompt"]
+    assert "NVDA" in slice_text
+    assert "100.0" in slice_text  # entry price
+    assert "120.0" in slice_text  # resolution-time price
+    assert "20.0" in slice_text  # absolute move
+    assert "%" in slice_text  # percent move rendered
+
+
+async def test_market_data_slice_missing_price_falls_back_without_raising(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A thesis whose underlying is absent from underlying_prices renders
+    'resolution-time price unavailable' and does not raise (ALP-914 finding 5)."""
+    _, factory = db
+    thesis = make_active_thesis(thesis_id="thesis-noprice", position_id="pos-noprice")
+    await seed_closed_position_thesis(
+        factory,
+        thesis=thesis,
+        realized_pnl_usd=-250.0,
+        exit_method=PositionExitMethod.PM_DECISION,
+        invocation_id=_INV_ID,
+        entry_ticker="NVDA",
+        entry_cost_basis_per_share=100.0,
+    )
+
+    captured: dict[str, str] = {}
+
+    def _capturing_sdk(**kwargs: Any) -> Any:
+        captured["prompt"] = str(kwargs.get("prompt", ""))
+        return _make_sdk_stub("INCONCLUSIVE")(**kwargs)
+
+    async with factory() as session:
+        handle = InvocationHandle(session=session, invocation_id=_INV_ID)
+        resolved = await resolve_closed_position_theses(
+            handle,
+            evaluator_config=make_evaluator_config(),
+            sdk_query_fn=_capturing_sdk,
+            underlying_prices={},  # NVDA absent
+        )
+        await session.commit()
+
+    assert len(resolved) == 1
+    assert "resolution-time price unavailable" in captured["prompt"].lower()

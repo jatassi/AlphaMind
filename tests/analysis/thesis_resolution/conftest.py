@@ -141,6 +141,22 @@ def make_active_thesis(
     )
 
 
+def _equity_details_json(*, ticker: str, average_cost_basis_per_share: float) -> str:
+    """An equity ``details_json`` carrying a real ticker + entry cost basis.
+
+    Override of ``stub_position_row``'s STUB/0 default so the resolver's
+    entry-reference read (ALP-914 finding 5) sees a real entry price + symbol.
+    """
+    from alphamind.portfolio_state.records.positions import InstrumentType
+
+    return (
+        f'{{"instrument_type":"{InstrumentType.EQUITY.value}",'
+        f'"ticker":"{ticker}",'
+        '"share_count":10,'
+        f'"average_cost_basis_per_share":{average_cost_basis_per_share}}}'
+    )
+
+
 async def seed_closed_position_thesis(
     factory: async_sessionmaker[AsyncSession],
     *,
@@ -149,63 +165,107 @@ async def seed_closed_position_thesis(
     exit_method: PositionExitMethod,
     invocation_id: str,
     closed_in_invocation_id: str | None = None,
+    with_ledger_row: bool = True,
+    with_position_closed_entry: bool = True,
+    malformed_position_closed_detail: bool = False,
+    entry_ticker: str | None = None,
+    entry_cost_basis_per_share: float | None = None,
 ) -> None:
     """Seed the CLOSED position + ACTIVE thesis + ledger row + POSITION_CLOSED entry.
 
     ``closed_in_invocation_id`` defaults to ``invocation_id`` (closed this
     invocation); pass a prior id to model a position closed by an earlier
     invocation (e.g. the continuous monitor).
+
+    Gap toggles (ALP-914 finding 1 resilience):
+    * ``with_ledger_row=False`` — omit the ``thesis_pnl_ledger`` row.
+    * ``with_position_closed_entry=False`` — omit the POSITION_CLOSED entry
+      (the option-lifecycle-close shape).
+    * ``malformed_position_closed_detail=True`` — emit a POSITION_CLOSED entry
+      whose decoded detail is NOT a ``PositionClosedDetail`` (a
+      ``PositionOpenedDetail`` stand-in).
+
+    Entry reference (ALP-914 finding 5): pass ``entry_ticker`` +
+    ``entry_cost_basis_per_share`` to seed a real equity entry price + symbol.
     """
     position_id = str(thesis.position_id)
     closer_inv = closed_in_invocation_id or invocation_id
     thesis_row, component_rows = record_to_rows(thesis)
-    async with factory() as sess:
-        sess.add(stub_process_lifetime_row())
-        await sess.flush()
-        sess.add(stub_invocation_row(invocation_id))
-        if closer_inv != invocation_id:
-            sess.add(stub_invocation_row(closer_inv))
-        await sess.flush()
-        sess.add(
-            stub_position_row(
-                position_id,
-                thesis_id=str(thesis.thesis_id),
-                status="CLOSED",
-            )
+    position_row = stub_position_row(
+        position_id,
+        thesis_id=str(thesis.thesis_id),
+        status="CLOSED",
+    )
+    # A CLOSED PositionRow must rehydrate into a valid CLOSED PositionRecord —
+    # the resolver's entry-reference read (ALP-914 finding 5) calls
+    # ``row_to_record`` on it, which enforces the CLOSED invariants (non-None
+    # realized P/L + entry timestamp + non-empty execution history).
+    position_row.realized_pnl_to_date_usd = realized_pnl_usd
+    position_row.entry_timestamp = GENERATION.isoformat()
+    position_row.execution_history_json = (
+        '[{"fill_timestamp":"' + GENERATION.isoformat() + '",'
+        '"fill_price":150.0,"fill_quantity":10.0,"slippage":0.0,'
+        '"fees":0.0,"live_execution_estimate":null}]'
+    )
+    if entry_ticker is not None and entry_cost_basis_per_share is not None:
+        position_row.details_json = _equity_details_json(
+            ticker=entry_ticker,
+            average_cost_basis_per_share=entry_cost_basis_per_share,
         )
+    async with factory() as sess:
+        # ``merge`` (not ``add``) so seeding a SECOND thesis into the same DB
+        # re-uses the existing process-lifetime / invocation parent rows instead
+        # of colliding on their PKs.
+        await sess.merge(stub_process_lifetime_row())
+        await sess.flush()
+        await sess.merge(stub_invocation_row(invocation_id))
+        if closer_inv != invocation_id:
+            await sess.merge(stub_invocation_row(closer_inv))
+        await sess.flush()
+        sess.add(position_row)
         sess.add(thesis_row)
         for crow in component_rows:
             sess.add(crow)
         await sess.flush()
-        sess.add(
-            ThesisPnlLedgerRow(
-                thesis_id=str(thesis.thesis_id),
-                realized_pnl_usd=Decimal(str(realized_pnl_usd)),
-                cost_basis_usd=Decimal("1000.0"),
-                provenance_json="{}",
-                derived_from_invocation_id=closer_inv,
-                updated_at=NOW.isoformat().replace("+00:00", "Z"),
-                last_derived_event_seq=None,
+        if with_ledger_row:
+            sess.add(
+                ThesisPnlLedgerRow(
+                    thesis_id=str(thesis.thesis_id),
+                    realized_pnl_usd=Decimal(str(realized_pnl_usd)),
+                    cost_basis_usd=Decimal("1000.0"),
+                    provenance_json="{}",
+                    derived_from_invocation_id=closer_inv,
+                    updated_at=NOW.isoformat().replace("+00:00", "Z"),
+                    last_derived_event_seq=None,
+                )
             )
-        )
-        entry = ActivityLogEntry(
-            entry_id=f"{closer_inv}-POSITION_CLOSED-{uuid.uuid4().hex}",
-            invocation_id=closer_inv,
-            timestamp=NOW,
-            event_type=EventType.POSITION_CLOSED,
-            event_group=EVENT_TYPE_TO_GROUP[EventType.POSITION_CLOSED],
-            position_id=position_id,
-            order_id=None,
-            thesis_id=str(thesis.thesis_id),
-            source=EventSource.FILL_PROCESSOR,
-            detail=PositionClosedDetail(
-                exit_method=exit_method,
-                exit_price=money(150.0),
-                realized_pnl_usd=signed_money(realized_pnl_usd),
-                thesis_resolution_category="",
-            ),
-        )
-        sess.add(activity_log_entry_to_row(entry))
+        if with_position_closed_entry:
+            entry = ActivityLogEntry(
+                entry_id=f"{closer_inv}-POSITION_CLOSED-{uuid.uuid4().hex}",
+                invocation_id=closer_inv,
+                timestamp=NOW,
+                event_type=EventType.POSITION_CLOSED,
+                event_group=EVENT_TYPE_TO_GROUP[EventType.POSITION_CLOSED],
+                position_id=position_id,
+                order_id=None,
+                thesis_id=str(thesis.thesis_id),
+                source=EventSource.FILL_PROCESSOR,
+                detail=PositionClosedDetail(
+                    exit_method=exit_method,
+                    exit_price=money(150.0),
+                    realized_pnl_usd=signed_money(realized_pnl_usd),
+                    thesis_resolution_category="",
+                ),
+            )
+            row = activity_log_entry_to_row(entry)
+            if malformed_position_closed_detail:
+                # A POSITION_CLOSED row whose detail_json cannot be decoded into
+                # a PositionClosedDetail (its required keys are absent) — the
+                # guarded-skip path (ALP-914 finding 1, resolver.py:234). The
+                # row's event_type still forces the PositionClosedDetail decode
+                # class, so a structurally-wrong payload makes the decode raise.
+                row.detail_json = '{"unexpected_key": "not a closed detail"}'
+            sess.add(row)
         await sess.commit()
 
 
