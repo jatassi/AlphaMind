@@ -8,7 +8,20 @@ outcome metric families share. On an empty denominator it yields the design's
 
 from __future__ import annotations
 
-from alphamind.feedback_loop.metrics.types import MetricId, rate_result
+from alphamind.feedback_loop.metrics.types import MetricId, PosteriorBand, rate_result
+
+
+def test_posterior_band_contains_is_inclusive_of_bounds() -> None:
+    band = PosteriorBand(lower=0.2, upper=0.8)
+    assert band.contains(0.2) is True
+    assert band.contains(0.8) is True
+    assert band.contains(0.5) is True
+
+
+def test_posterior_band_contains_excludes_values_outside_bounds() -> None:
+    band = PosteriorBand(lower=0.2, upper=0.8)
+    assert band.contains(0.19) is False
+    assert band.contains(0.81) is False
 
 
 def test_rate_result_populated_fraction() -> None:

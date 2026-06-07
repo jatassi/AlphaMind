@@ -95,7 +95,7 @@ def _classify_movement(
         return _Movement.UNREADABLE
 
     if post.posterior_band is not None:
-        if post.posterior_band.lower <= pre.value <= post.posterior_band.upper:
+        if post.posterior_band.contains(pre.value):
             return _Movement.INDISTINGUISHABLE
     elif post.value == pre.value:
         return _Movement.INDISTINGUISHABLE

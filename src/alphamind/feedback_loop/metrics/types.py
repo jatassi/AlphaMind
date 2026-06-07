@@ -119,6 +119,10 @@ class PosteriorBand:
             msg = f"PosteriorBand lower ({self.lower}) must not exceed upper ({self.upper})"
             raise ValueError(msg)
 
+    def contains(self, value: float) -> bool:
+        """True when *value* falls within the band, bounds inclusive."""
+        return self.lower <= value <= self.upper
+
 
 @dataclass(frozen=True, slots=True)
 class MetricResult:
