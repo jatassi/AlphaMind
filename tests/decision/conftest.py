@@ -1,7 +1,7 @@
 """Shared fixtures for the decision-layer tests (analyst / strategist / portfolio_manager).
 
 Centralizes the ``ActiveRiskParameterSet`` builder that routes through the
-Phase-1 guardrail-enforcement orchestrator (``compose_phase_1_enforcement``)
+active-guardrails composition (``compose_active_guardrails``)
 rather than constructing the record inline. ALP-397 / story 03b migration.
 
 The helper exists so every decision-layer fixture that previously constructed
@@ -50,12 +50,12 @@ def compose_active_risk_parameters_via_orchestrator(
     entries: tuple[ActiveRiskParameterEntry, ...] = (),
     active_overlays: tuple[str, ...] = (),
 ) -> ActiveRiskParameterSet:
-    """Build an :class:`ActiveRiskParameterSet` via ``compose_phase_1_enforcement``.
+    """Build an :class:`ActiveRiskParameterSet` via ``compose_active_guardrails``.
 
     Wraps the supplied baseline parameters in a synthetic
     :class:`RegimeAdaptationOutput` plus a zero-drawdown
-    :class:`DrawdownState`, then routes through the canonical Phase-1
-    enforcement entry point. With ``current_drawdown_pct == 0.0`` the
+    :class:`DrawdownState`, then routes through the canonical active-guardrails
+    composition entry point. With ``current_drawdown_pct == 0.0`` the
     progressive-tier override path is a no-op (the orchestrator's classifier
     returns ``None``), so the baseline parameters pass through unchanged —
     values, regime label, transition state, and overlays preserved.
