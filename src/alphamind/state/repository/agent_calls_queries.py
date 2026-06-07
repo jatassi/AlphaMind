@@ -14,37 +14,15 @@ harness write-hook (story 04a) and the per-agent calibration analysis (06*):
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from alphamind.state.repository._window_prefix import SECOND_PREFIX_LEN, second_prefix
 from alphamind.state.tables.agent_calls import AgentCallRecord, AgentCallsRow
 from alphamind.state.tables.agent_calls_codec import record_to_row, row_to_record
 from alphamind.state.tables.invocations import InvocationRow
-
-# Length of the ``YYYY-MM-DDTHH:MM:SS`` second-precision prefix shared by every
-# ISO-8601 timestamp the codebase writes, regardless of its suffix.
-_SECOND_PREFIX_LEN = 19
-
-
-def _second_prefix(value: datetime) -> str:
-    """Render a window bound as its ``YYYY-MM-DDTHH:MM:SS`` second prefix (UTC).
-
-    ``invocations.start_at`` is a Text column written by two paths with
-    *different* sub-second precision: the scheduler / operator paths emit
-    second precision (``strftime("%Y-%m-%dT%H:%M:%SZ")``) while the
-    fill-collection recovery path emits microsecond precision
-    (``isoformat().replace("+00:00", "Z")``). The suffixes therefore differ
-    (``Z`` 0x5A vs ``.`` 0x2E vs ``+`` 0x2B), so a naive lexicographic range
-    filter over the raw column mis-sorts at sub-second boundaries.
-
-    Comparing the bound's second prefix against the column's second prefix
-    (``substr(start_at, 1, 19)``) is chronologically faithful at second
-    granularity for *every* stored value regardless of which writer produced
-    it, which is the resolution callers need for invocation-start windows.
-    """
-    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 async def insert_agent_call(session: AsyncSession, record: AgentCallRecord) -> None:
@@ -83,13 +61,15 @@ async def read_agent_calls_in_window(
     ``invocations.start_at``. The start bound is inclusive, the end bound is
     exclusive.
     """
-    start_at_prefix = func.substr(InvocationRow.start_at, 1, _SECOND_PREFIX_LEN)
+    # ``invocations.start_at`` is a Text column written at differing sub-second
+    # precision across writers; the second-prefix comparison is faithful for all.
+    start_at_prefix = func.substr(InvocationRow.start_at, 1, SECOND_PREFIX_LEN)
     stmt = (
         select(AgentCallsRow)
         .join(InvocationRow, AgentCallsRow.invocation_id == InvocationRow.invocation_id)
         .where(
-            start_at_prefix >= _second_prefix(start),
-            start_at_prefix < _second_prefix(end),
+            start_at_prefix >= second_prefix(start),
+            start_at_prefix < second_prefix(end),
         )
         .order_by(InvocationRow.start_at.asc(), AgentCallsRow.attempt_number.asc())
     )
@@ -109,14 +89,16 @@ async def read_agent_calls_for_agent(
     the window bounds, matching the same inclusive-start / exclusive-end
     semantics as :func:`read_agent_calls_in_window`.
     """
-    start_at_prefix = func.substr(InvocationRow.start_at, 1, _SECOND_PREFIX_LEN)
+    # ``invocations.start_at`` is a Text column written at differing sub-second
+    # precision across writers; the second-prefix comparison is faithful for all.
+    start_at_prefix = func.substr(InvocationRow.start_at, 1, SECOND_PREFIX_LEN)
     stmt = (
         select(AgentCallsRow)
         .join(InvocationRow, AgentCallsRow.invocation_id == InvocationRow.invocation_id)
         .where(
             AgentCallsRow.agent_name == agent_name,
-            start_at_prefix >= _second_prefix(start),
-            start_at_prefix < _second_prefix(end),
+            start_at_prefix >= second_prefix(start),
+            start_at_prefix < second_prefix(end),
         )
         .order_by(InvocationRow.start_at.asc(), AgentCallsRow.attempt_number.asc())
     )
