@@ -358,3 +358,114 @@ class TestStrategistDistributions:
         assert _compute("strategist_action_rate__reduce", dataset).value == 1 / 3
         # adjust-bracket wire value maps to an adjust_bracket snake_case bin id.
         assert _compute("strategist_action_rate__adjust_bracket", dataset).value == 0.0
+
+
+class TestStrategistTransitionMatrix:
+    def test_transition_rate_from_prior_to_current(self) -> None:
+        # Three assessments with prior_status: at-risk->on-track (x2), on-track->at-risk.
+        log = (
+            _pm_entry(
+                verdict=PMVerdict.APPROVE,
+                source_provenance="pm_strategist",
+                recommendation_type="position_assessment",
+                originating_proposal_json=_strategist_assessment(
+                    thesis_status="on-track", recommended_action="hold", prior_status="at-risk"
+                ),
+            ),
+            _pm_entry(
+                verdict=PMVerdict.APPROVE,
+                source_provenance="pm_strategist",
+                recommendation_type="position_assessment",
+                originating_proposal_json=_strategist_assessment(
+                    thesis_status="on-track", recommended_action="hold", prior_status="at-risk"
+                ),
+            ),
+            _pm_entry(
+                verdict=PMVerdict.APPROVE,
+                source_provenance="pm_strategist",
+                recommendation_type="position_assessment",
+                originating_proposal_json=_strategist_assessment(
+                    thesis_status="at-risk", recommended_action="reduce", prior_status="on-track"
+                ),
+            ),
+        )
+        dataset = _dataset(log)
+        ar_to_ot = _compute(
+            "strategist_status_transition_rate__at_risk__to__on_track", dataset
+        )
+        assert ar_to_ot.value == 2 / 3
+        assert ar_to_ot.sample_size == 3
+        assert (
+            _compute(
+                "strategist_status_transition_rate__on_track__to__at_risk", dataset
+            ).value
+            == 1 / 3
+        )
+        assert (
+            _compute(
+                "strategist_status_transition_rate__stale__to__invalidated", dataset
+            ).value
+            == 0.0
+        )
+
+    def test_assessments_without_prior_status_are_excluded(self) -> None:
+        # prior_status=None must not count toward the transition denominator.
+        log = (
+            _pm_entry(
+                verdict=PMVerdict.APPROVE,
+                source_provenance="pm_strategist",
+                recommendation_type="position_assessment",
+                originating_proposal_json=_strategist_assessment(
+                    thesis_status="on-track", recommended_action="hold", prior_status=None
+                ),
+            ),
+            _pm_entry(
+                verdict=PMVerdict.APPROVE,
+                source_provenance="pm_strategist",
+                recommendation_type="position_assessment",
+                originating_proposal_json=_strategist_assessment(
+                    thesis_status="on-track", recommended_action="hold", prior_status="at-risk"
+                ),
+            ),
+        )
+        result = _compute(
+            "strategist_status_transition_rate__at_risk__to__on_track", _dataset(log)
+        )
+        assert result.value == 1.0
+        assert result.sample_size == 1
+
+
+class TestStrategistHoldOnNonOnTrack:
+    def test_hold_on_at_risk_or_stale_over_at_risk_plus_stale(self) -> None:
+        log = (
+            # at-risk + hold -> counts
+            _pm_entry(
+                verdict=PMVerdict.APPROVE,
+                source_provenance="pm_strategist",
+                recommendation_type="position_assessment",
+                originating_proposal_json=_strategist_assessment(
+                    thesis_status="at-risk", recommended_action="hold"
+                ),
+            ),
+            # stale + reduce -> in denominator, not numerator
+            _pm_entry(
+                verdict=PMVerdict.APPROVE,
+                source_provenance="pm_strategist",
+                recommendation_type="position_assessment",
+                originating_proposal_json=_strategist_assessment(
+                    thesis_status="stale", recommended_action="reduce"
+                ),
+            ),
+            # on-track + hold -> excluded entirely
+            _pm_entry(
+                verdict=PMVerdict.APPROVE,
+                source_provenance="pm_strategist",
+                recommendation_type="position_assessment",
+                originating_proposal_json=_strategist_assessment(
+                    thesis_status="on-track", recommended_action="hold"
+                ),
+            ),
+        )
+        result = _compute("strategist_hold_on_non_on_track_rate", _dataset(log))
+        assert result.value == 0.5
+        assert result.sample_size == 2

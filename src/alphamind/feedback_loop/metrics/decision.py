@@ -399,6 +399,44 @@ def _strategist_actions(dataset: WindowDataset) -> tuple[str, ...]:
     return _strategist_field(dataset, "recommended_action")
 
 
+_STRATEGIST_HOLD_ON_NON_ON_TRACK_RATE = MetricId("strategist_hold_on_non_on_track_rate")
+
+
+def _strategist_transitions(dataset: WindowDataset) -> tuple[tuple[str, str], ...]:
+    """``(prior_status, thesis_status)`` pairs over strategist assessments.
+
+    Only assessments carrying a (string) ``prior_status`` contribute — a first-ever
+    classification (``prior_status`` ``None``) is not a transition.
+    """
+    transitions: list[tuple[str, str]] = []
+    for assessment in _strategist_assessments(dataset):
+        prior = assessment.get("prior_status")
+        current = assessment.get("thesis_status")
+        if isinstance(prior, str) and isinstance(current, str):
+            transitions.append((prior, current))
+    return tuple(transitions)
+
+
+_TRANSITION_BINS: tuple[tuple[str, tuple[str, str]], ...] = tuple(
+    (f"{from_suffix}__to__{to_suffix}", (from_value, to_value))
+    for from_suffix, from_value in _STATUS_BINS
+    for to_suffix, to_value in _STATUS_BINS
+)
+
+
+def _compute_hold_on_non_on_track_rate(
+    dataset: WindowDataset, conditioning: Conditioning
+) -> MetricResult:
+    conditioned = _conditioned(dataset, conditioning)
+    non_on_track = [
+        assessment
+        for assessment in _strategist_assessments(conditioned)
+        if assessment.get("thesis_status") in _NON_ON_TRACK_STATUSES
+    ]
+    held = sum(a.get("recommended_action") == "hold" for a in non_on_track)
+    return _rate_result(_STRATEGIST_HOLD_ON_NON_ON_TRACK_RATE, held, len(non_on_track))
+
+
 _STRATEGIST_METRICS: tuple[Metric, ...] = (
     *_distribution_metrics(
         id_prefix="strategist_status_rate",
@@ -409,6 +447,18 @@ _STRATEGIST_METRICS: tuple[Metric, ...] = (
         id_prefix="strategist_action_rate",
         bins=_ACTION_BINS,
         population=_strategist_actions,
+    ),
+    *_distribution_metrics(
+        id_prefix="strategist_status_transition_rate",
+        bins=_TRANSITION_BINS,
+        population=_strategist_transitions,
+    ),
+    Metric(
+        metric_id=_STRATEGIST_HOLD_ON_NON_ON_TRACK_RATE,
+        po_type="process",
+        default_window=Window.WEEKLY,
+        supported_conditioning=(),
+        compute=_compute_hold_on_non_on_track_rate,
     ),
 )
 
