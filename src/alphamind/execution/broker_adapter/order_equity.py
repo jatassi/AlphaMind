@@ -80,7 +80,7 @@ class EquityLegAck:
     ``client_order_id`` server-side — the OMS never sends one and the child
     orders never round-trip an OMS id — so the children's real ids must be
     captured here at submission, classified by ``order_type`` (LIMIT →
-    take-profit, STOP / STOP_LIMIT → stop-loss). The Phase 2 OPEN writeback
+    take-profit, STOP / STOP_LIMIT → stop-loss). The command execution OPEN writeback
     then stamps each captured id onto the matching protective-leg ``orders``
     row, which carries a NULL ``alpaca_order_id`` until backfilled (ALP-847 — no
     synthetic ``alp-…`` placeholder), so a later protective fill / OCO

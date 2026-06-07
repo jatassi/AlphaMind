@@ -459,7 +459,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         market_open=calendar_cache.is_market_open,
     )
     # ALP-855 / W4a — borrow accrual is accounting; it was evicted from the
-    # always-on monitor (ADR-0004) into the pipeline's Phase-1 write unit (single
+    # always-on monitor (ADR-0004) into the pipeline's fill-collection write unit (single
     # writer = pipeline, ADR-0005). No monitor registration here.
     #
     # ALP-857 / W4b — breach detection + price-staleness (the lone safety item

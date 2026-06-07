@@ -582,7 +582,7 @@ def _resolve_originating_thesis(
     * **OPEN** mints a *new* thesis via :func:`derive_open_thesis_id` — the
       single source of truth for the OPEN thesis identity (ALP-844, A2). The id
       is deterministic from the base command id, so the FK embedded here is the
-      one authoritative copy: Phase-2 OPEN writeback reads it back by *parsing*
+      one authoritative copy: command-execution OPEN writeback reads it back by *parsing*
       the command id rather than re-deriving it.
     * **CLOSE / ADD / ADJUST** act on an existing position; the FK is that
       position's persisted ``thesis_id``. A real such command reaching
@@ -650,7 +650,7 @@ def _process_one_command(
     # base command id, so resolve the OPEN's thesis off the base id (the
     # link-stripped ``inv-…`` form) before the link is appended. The embedded
     # value this mints is the single source of truth for the OPEN thesis
-    # identity — Phase 2 reads it back by parsing this command id rather than
+    # identity — command execution reads it back by parsing this command id rather than
     # re-deriving it (A2). ``derive_pm_base_command_id`` is the SOLE definition
     # of the base-id format, shared with ``derive_pm_command_id`` so the two can
     # never diverge.
@@ -980,13 +980,14 @@ def _build_acknowledgment(
     """Build an Acknowledgment for an accepted OPEN / ADD / ADJUST command.
 
     For OPEN the acknowledgment carries the same ``POS-{ticker}-{suffix}`` and
-    ``ORD-{ticker}-entry-{suffix}`` identifiers Phase 2's
-    :func:`alphamind.execution.write_paths.phase2.open._new_open_ids`
+    ``ORD-{ticker}-entry-{suffix}`` identifiers command execution's
+    :func:`alphamind.execution.write_paths.command_execution.open._new_open_ids`
     mints from the matching ``command_id`` — so the LLM sees the identifiers
     that will land on the persisted rows. For ADD the ``position_id`` is
     already supplied by the command; the ``order_id`` mirrors the
-    ``ORD-ADD-{position_id}-{suffix}`` shape Phase 2's add path uses for the
-    primary entry order (see :func:`alphamind.execution.write_paths.phase2.add._add_order_id`).
+    ``ORD-ADD-{position_id}-{suffix}`` shape the command_execution add path
+    uses for the primary entry order (see
+    :func:`alphamind.execution.write_paths.command_execution.add._add_order_id`).
     Broker routing (story 03e / ALP-390), when wired, swaps the ``order_id``
     for the broker's real ``alpaca_order_id`` via
     :func:`alphamind.decision.portfolio_manager.submit_envelope.dispatch._with_real_order_id`.

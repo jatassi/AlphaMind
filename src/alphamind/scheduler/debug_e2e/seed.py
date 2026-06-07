@@ -460,7 +460,7 @@ def _build_entry_order_row(
     encoded as the order direction. The position's
     ``execution_history_json`` is left empty (the seed does not fabricate
     a matching ``fill_records`` row); the close write-path in
-    :mod:`alphamind.execution.write_paths.phase2.close` reads only
+    :mod:`alphamind.execution.write_paths.command_execution.close` reads only
     ``position.share_count`` / ``position.contract_count`` to size the
     close, so a missing fill record doesn't affect command persistence.
 
@@ -578,7 +578,7 @@ def _build_drawdown_state_row(starting_cash_usd: float, *, now: datetime) -> Dra
     fresh-DB fallback in :func:`alphamind.state.drawdown_reader.read_drawdown_state`
     is only used pre-snapshot for halt-state computation). Seeding it here
     keeps debug-e2e runnable from a fully wiped DB without depending on a
-    prior Phase 1 write to bootstrap the row.
+    prior fill-collection write to bootstrap the row.
     """
     return DrawdownStateRow(
         id=DRAWDOWN_STATE_SINGLETON_ID,

@@ -4,7 +4,7 @@
 ``abandon_command`` (F) each run in their own committed transaction on a fresh
 session, so a durable ``orders`` row keyed by ``client_order_id`` exists before
 the broker dispatch and a lost post-submit commit can never strand a live broker
-order. Reuses the phase2 write-path builders + the shared ``db`` fixture.
+order. Reuses the command_execution write-path builders + the shared ``db`` fixture.
 """
 
 from __future__ import annotations
@@ -39,20 +39,20 @@ from alphamind.execution.broker_adapter.order_options import (
 )
 from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
 from alphamind.execution.oms.command_ids import derive_open_thesis_id, derive_pm_command_id
-from alphamind.execution.write_paths.phase2.atomic import (
+from alphamind.execution.write_paths.command_execution.atomic import (
     abandon_command,
     backfill_command_broker_ids,
     dispatched_order_id,
     precommit_command,
 )
-from alphamind.execution.write_paths.phase2.open import _capital_floor_order_id
+from alphamind.execution.write_paths.command_execution.open import _capital_floor_order_id
 from alphamind.portfolio_state.records.orders import OrderRole, OrderStatus
 from alphamind.risk_guardrails.guardrail_evaluation import Greeks
 from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.cash_ledger import CASH_LEDGER_SINGLETON_ID, CashLedgerRow
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.positions import PositionRow
-from tests.execution.state_persistence.test_phase2_write_path import (
+from tests.execution.state_persistence.test_command_execution_write_path import (
     _accepted_result,
     _active_bracket,
     _active_thesis,
@@ -116,7 +116,7 @@ def _limit_open() -> OpenCommand:
 def _open_cid(envelope_id: str, *, ticker: str = "NVDA") -> str:
     """A realistic broker-carried OPEN command id (ALP-844) for ``_limit_open``.
 
-    Phase-2 OPEN writeback (reached here via ``precommit_command`` →
+    Command-execution OPEN writeback (reached here via ``precommit_command`` →
     ``dispatched_order_id`` → ``_new_open_ids``) resolves the thesis by parsing
     the command id, so an OPEN's pre-commit must carry a thesis-bearing PM id.
     Mints the thesis off the link-free base id with the canonical helper, exactly
@@ -503,10 +503,10 @@ async def test_abandon_options_open_cancels_pending_submit_floor_no_strand(
     (``abandon_command`` → ``_writeback_cancel`` → ``_cancel_pending_protective_orders``)
     must sweep the floor leg out of PENDING_SUBMIT, or its ``inv-{id}.``
     ``client_order_id`` keeps ``invocation_has_pending_submit_strand`` True forever
-    → ``phase2_completed_at`` withheld with no recovery, and the resting floor is
+    → ``command_execution_completed_at`` withheld with no recovery, and the resting floor is
     never cancelled. The floor reserves no capital, so none is released here.
     """
-    from alphamind.execution.write_paths.phase2.atomic import (
+    from alphamind.execution.write_paths.command_execution.atomic import (
         invocation_has_pending_submit_strand,
     )
 
@@ -541,7 +541,7 @@ async def test_abandon_options_open_cancels_pending_submit_floor_no_strand(
     )
 
     # The floor row is cleared out of PENDING_SUBMIT (CANCELLED), so no strand
-    # remains and the invocation can stamp phase2_completed_at.
+    # remains and the invocation can stamp command_execution_completed_at.
     floor_row = await _read_order_by_order_id(factory, floor_order_id)
     assert floor_row is not None
     assert floor_row.status == OrderStatus.CANCELLED.value
@@ -586,7 +586,7 @@ async def test_precommit_capital_floor_raises_when_floor_row_missing(
     unstamped with no signal. The correct behaviour is to surface a RuntimeError
     immediately so the anomaly is caught before the transaction commits.
     """
-    from alphamind.execution.write_paths.phase2.atomic import _precommit_capital_floor
+    from alphamind.execution.write_paths.command_execution.atomic import _precommit_capital_floor
 
     _, factory = db
     await _seed_invocation_substrate(factory, invocation_id=_INV)
@@ -615,7 +615,7 @@ async def test_precommit_replay_stamps_floor_when_entry_committed_but_floor_unst
     exists; the fix is that it must still run _precommit_capital_floor (idempotent
     if already stamped) before returning True so the floor is never skipped.
     """
-    from alphamind.execution.write_paths.phase2.open import _capital_floor_order_id
+    from alphamind.execution.write_paths.command_execution.open import _capital_floor_order_id
 
     _, factory = db
     await _seed_invocation_substrate(factory, invocation_id=_INV)
@@ -700,7 +700,7 @@ def test_dispatched_order_id_is_none_for_cancel() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Integrity guard — phase2 stamp withheld on a PENDING_SUBMIT strand
+# Integrity guard — command_execution stamp withheld on a PENDING_SUBMIT strand
 # ---------------------------------------------------------------------------
 
 
@@ -711,7 +711,7 @@ async def test_invocation_has_pending_submit_strand_detects_and_scopes(
     """ALP-836 — the integrity guard flags THIS invocation's stuck PENDING_SUBMIT
     row (a lost post-submit backfill), is scoped to its command_id prefix, and
     clears once the row is backfilled to PENDING."""
-    from alphamind.execution.write_paths.phase2.atomic import (
+    from alphamind.execution.write_paths.command_execution.atomic import (
         invocation_has_pending_submit_strand,
     )
 

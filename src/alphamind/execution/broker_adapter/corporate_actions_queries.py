@@ -32,7 +32,7 @@ from alpaca.data.requests import CorporateActionsRequest
 # In-scope v1beta1 action types — every type with an event-log CA vocabulary
 # member (ALP-849 / W1c). The first nine carry a position / cash mutation; the
 # trailing three (UNIT_SPLIT / REDEMPTION / WORTHLESS_REMOVAL) are capture-only —
-# fetched so Phase 1 appends them to the gap-free ``broker_event_log`` even though
+# fetched so fill collection appends them to the gap-free ``broker_event_log`` even though
 # they carry no mutation. Only RIGHTS_DISTRIBUTION is omitted (no vocabulary
 # member); it is dropped client-side as defense in depth if the API returns it.
 _DEFAULT_TYPES: tuple[CorporateActionsType, ...] = (

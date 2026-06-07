@@ -211,7 +211,7 @@ The engine detects and rejects conflicting commands issued in the same invocatio
 
 Every command carries a unique identifier assigned deterministically by the OMS command intake layer from the envelope's structural position — the PM never generates command IDs. Format and generation rules are in [oms-command-ids.md](../oms-command-ids.md).
 
-The in-process architecture (pipeline and OMS in a single Python process, atomic Phase 2 transactions, fail-closed mid-pipeline policy) rules out the scenarios that would motivate dedup-and-return-stored-response. A duplicate `command_id` arriving at the OMS indicates a structural bug — concurrent envelope mutation, an ID-derivation flaw, or upstream corruption — and is treated as an error: the OMS raises, the invocation aborts per fail-closed, an alert is logged. See [oms-command-ids.md §Why not dedup](../oms-command-ids.md).
+The in-process architecture (pipeline and OMS in a single Python process, atomic command execution transactions, fail-closed mid-pipeline policy) rules out the scenarios that would motivate dedup-and-return-stored-response. A duplicate `command_id` arriving at the OMS indicates a structural bug — concurrent envelope mutation, an ID-derivation flaw, or upstream corruption — and is treated as an error: the OMS raises, the invocation aborts per fail-closed, an alert is logged. See [oms-command-ids.md §Why not dedup](../oms-command-ids.md).
 
 Broker submission failures are handled in [broker-adapter.md](broker-adapter.md) and the submission-failure policy in [state-persistence.md](state-persistence.md) — a brief within-invocation retry window followed by abandonment, surfacing to the originating agent at the next invocation.
 

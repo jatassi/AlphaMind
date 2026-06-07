@@ -116,8 +116,8 @@ def _make_invocation_record(invocation_id: str = _INV_ID) -> InvocationRecord:
         invocation_id=invocation_id,
         process_lifetime_id=_PROCESS_ID,
         start_at=_NOW.isoformat().replace("+00:00", "Z"),
-        phase1_completed_at=None,
-        phase2_completed_at=None,
+        fill_collection_completed_at=None,
+        command_execution_completed_at=None,
         trigger_type="scheduled",
         trigger_source="cron",
         trigger_reason="0 9 * * 1-5",
@@ -767,7 +767,7 @@ async def test_capture_only_types_are_surfaced_for_event_log_capture(
 ) -> None:
     """``WorthlessRemoval`` / ``UnitSplit`` / ``Redemption`` — the v1beta1 types
     the fetcher used to drop — are now surfaced as capture-only activities (no
-    position-mutation math, ``signed_cash_impact_usd == 0``) so Phase 1 captures
+    position-mutation math, ``signed_cash_impact_usd == 0``) so fill collection captures
     them onto the append-only event log (W1c)."""
     _, factory = db
     await _seed_invocation_substrate(factory)

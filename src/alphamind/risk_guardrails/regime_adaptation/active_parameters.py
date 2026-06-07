@@ -13,7 +13,7 @@
 
 The companion ``build_synthetic_regime_output`` shim retired in ALP-513;
 ``resolve_regime_adaptation``'s real output now flows through every
-:func:`compose_phase_1_enforcement` call site.
+:func:`compose_active_guardrails` call site.
 
 Per the parameter set contract, each entry's ``rule_label`` mirrors its
 ``rule_id`` and the unit is a flat ``"pct"`` — the values are not surfaced
@@ -56,7 +56,7 @@ def build_active_risk_parameters(
     """Compose an ``ActiveRiskParameterSet`` from a flat rule-values map.
 
     The canonical pipeline path is :func:`resolve_regime_adaptation` →
-    :func:`compose_phase_1_enforcement`. This helper exists for callers
+    :func:`compose_active_guardrails`. This helper exists for callers
     that need a parameter set *before* the resolver can run (the
     scheduler's pre-runtime halt-state probe, the snapshot's seed
     parameter set, the :func:`load_prior_active_risk_parameters`

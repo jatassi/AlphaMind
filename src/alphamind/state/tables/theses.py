@@ -10,7 +10,7 @@ record's non-component fields preserved as JSON for faithful round-trip.
 ``position_id`` carries a DEFERRABLE INITIALLY DEFERRED FK to
 ``positions.position_id`` (``ON DELETE RESTRICT``), matching the
 ``e9d2c4f7b3a1_tighten_state_persistence_fks`` migration. The deferral
-accommodates the positions↔theses cycle that Phase 2's OPEN writeback seeds
+accommodates the positions↔theses cycle that command execution's OPEN writeback seeds
 in a single transaction. CHECK constraints encode the same enum vocabularies
 the typed ``ThesisRecord`` enforces, so a future direct-SQL writer faces the
 same fail-closed guarantees.

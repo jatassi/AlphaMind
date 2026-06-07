@@ -12,7 +12,7 @@ cannot be deleted without first removing the entry.
 carrying DEFERRABLE INITIALLY DEFERRED FKs to ``positions`` / ``orders`` /
 ``theses`` (``ON DELETE RESTRICT``), matching the
 ``e9d2c4f7b3a1_tighten_state_persistence_fks`` migration. The deferral
-accommodates Phase 2's writebacks, where activity-log emission can precede
+accommodates command execution's writebacks, where activity-log emission can precede
 parent-row commit when a single transaction seeds the full position +
 thesis + bracket + orders cluster.
 """

@@ -12,7 +12,7 @@ from alphamind.execution.continuous_monitor.breach_loop import (
     BreachLoopResult,
     RuleEvaluation,
 )
-from alphamind.execution.guardrail_enforcement import Phase1EnforcementResult
+from alphamind.execution.guardrail_enforcement import ActiveGuardrails
 from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
@@ -78,7 +78,7 @@ def test_rule_evaluation_carries_classification_when_breaching() -> None:
 
 
 def test_breach_loop_result_is_frozen_and_immutable() -> None:
-    phase1_result = Phase1EnforcementResult(
+    guardrails = ActiveGuardrails(
         active_risk_parameters=_active_risk_parameters(),
         drawdown_tier=None,
     )
@@ -88,7 +88,7 @@ def test_breach_loop_result_is_frozen_and_immutable() -> None:
     )
     result = BreachLoopResult(
         as_of=datetime(2026, 5, 11, 14, 30, tzinfo=UTC),
-        phase1_result=phase1_result,
+        active_guardrails=guardrails,
         rule_evaluations=(),
         halt_state=None,
         immediate_action_breaches=(),
@@ -103,7 +103,7 @@ def test_breach_loop_result_is_frozen_and_immutable() -> None:
 
 
 def test_breach_loop_result_carries_halt_state_and_breaches() -> None:
-    phase1_result = Phase1EnforcementResult(
+    guardrails = ActiveGuardrails(
         active_risk_parameters=_active_risk_parameters(),
         drawdown_tier=None,
     )
@@ -127,7 +127,7 @@ def test_breach_loop_result_carries_halt_state_and_breaches() -> None:
     )
     result = BreachLoopResult(
         as_of=datetime(2026, 5, 11, 14, 30, tzinfo=UTC),
-        phase1_result=phase1_result,
+        active_guardrails=guardrails,
         rule_evaluations=(breach,),
         halt_state=halt,
         immediate_action_breaches=(breach,),

@@ -39,7 +39,7 @@ def test_init_reexports_public_surface() -> None:
 def test_init_reexports_private_handler_and_helpers() -> None:
     """Tests still import a handful of underscore-prefixed helpers; preserve them.
 
-    ``_handle_submit_envelope`` is exercised directly by the phase-2 write-path
+    ``_handle_submit_envelope`` is exercised directly by the command-execution write-path
     and broker-routing test suites; ``_validate_envelope_payload`` by the
     state-persistence verify script; ``_adjust_command_context`` by the
     engine-stub broker-routing tests. Keeping them importable from the package
@@ -86,9 +86,9 @@ def test_submodules_are_focused() -> None:
     assert hasattr(dispatch_mod, "_route_through_broker")
     assert hasattr(dispatch_mod, "_adjust_command_context")
 
-    # persist.py owns the phase-2 persistence helpers and imports phase2 at top.
-    assert hasattr(persist_mod, "_persist_envelope_outcome_via_phase2")
-    assert hasattr(persist_mod, "_persist_envelope_parse_failure_via_phase2")
+    # persist.py owns the command_execution persistence helpers.
+    assert hasattr(persist_mod, "_persist_envelope_outcome_via_command_execution")
+    assert hasattr(persist_mod, "_persist_envelope_parse_failure_via_command_execution")
 
     # server.py owns the MCP factory.
     assert hasattr(server_mod, "build_submit_envelope_mcp_server")

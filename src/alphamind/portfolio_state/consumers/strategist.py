@@ -237,7 +237,7 @@ def _rationale_for_closure(
     """Short human-readable summary of the closure for strategist scanning.
 
     Strategy-position closures emit a zeroed ``exit_price`` per
-    ``bracket_stops.task._estimated_exit_price_for`` (Phase 1 reconciliation
+    ``bracket_stops.task._estimated_exit_price_for`` (fill collection reconciliation
     overwrites the persisted P/L with the actual fill once the order lands).
     Rendering ``$0.00`` is operator-confusing for a position that did fill;
     surface ``"—"`` instead so the strategist's view distinguishes

@@ -76,13 +76,13 @@ def test_noop_emitter_satisfies_protocol() -> None:
 def test_noop_phase_start_accepts_phase_without_raising() -> None:
     """``phase_start(phase: str)`` is callable and returns nothing."""
     emitter = NoOpProgressEmitter()
-    emitter.phase_start("phase1")
+    emitter.phase_start("fill_collection")
 
 
 def test_noop_phase_done_accepts_phase_and_arbitrary_fields() -> None:
     """``phase_done(phase, **fields)`` swallows arbitrary keyword fields."""
     emitter = NoOpProgressEmitter()
-    emitter.phase_done("phase1", elapsed_s=1.23, status="ok")
+    emitter.phase_done("fill_collection", elapsed_s=1.23, status="ok")
 
 
 def test_noop_agent_request_accepts_kwargs_only_fields() -> None:
@@ -167,8 +167,8 @@ def test_recording_emitter_satisfies_protocol() -> None:
 def test_recording_emitter_records_each_event_kind() -> None:
     """All four event kinds land in ``events`` with the expected payload shape."""
     emitter = RecordingProgressEmitter()
-    emitter.phase_start("phase1")
-    emitter.phase_done("phase1", fills_processed=3)
+    emitter.phase_start("fill_collection")
+    emitter.phase_done("fill_collection", fills_processed=3)
     emitter.agent_request(phase="analyst", agent="analyst", model="claude-opus-4-8")
     emitter.agent_response(
         phase="analyst",
@@ -184,8 +184,8 @@ def test_recording_emitter_records_each_event_kind() -> None:
     )
     kinds = [evt[0] for evt in emitter.events]
     assert kinds == ["phase_start", "phase_done", "agent_request", "agent_response"]
-    assert emitter.events[0][1] == {"phase": "phase1"}
-    assert emitter.events[1][1] == {"phase": "phase1", "fills_processed": 3}
+    assert emitter.events[0][1] == {"phase": "fill_collection"}
+    assert emitter.events[1][1] == {"phase": "fill_collection", "fills_processed": 3}
     assert emitter.events[2][1]["agent"] == "analyst"
     assert emitter.events[3][1]["stop_reason"] == "end_turn"
     assert emitter.events[3][1]["cache_read_tokens"] == 60_000

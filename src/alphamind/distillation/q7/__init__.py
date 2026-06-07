@@ -1,8 +1,8 @@
 """Q7 cross-asset and correlation computations.
 
 ALP-486 split this sub-package along the compute/load boundary so the
-orchestrator's Phase 2 can run q7 in parallel with q1 / q3 / q6 /
-qualitative. The implementation is split across:
+per-category indicator compute step can run q7 in parallel with q1 / q3
+/ q6 / qualitative. The implementation is split across:
 
 - :mod:`alphamind.distillation.q7._helpers` — shared pure math primitives
   (correlation, log-return, z-score, lagged-correlation helpers).

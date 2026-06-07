@@ -438,7 +438,7 @@ async def _assemble_for_breach_loop_tick(  # noqa: PLR0913 — substrate-level s
         sector_resolver=position_sector_resolver,
         config=portfolio_state_config,
         now=as_of,
-        warn_on_phase1_latency=False,
+        warn_on_fill_collection_latency=False,
     )
 
 
@@ -621,7 +621,7 @@ def make_regime_provider(
     :class:`ActiveRiskParameterSet` from the latest invocation's snapshot
     file, fetch the live composite-alert state, then invoke
     :func:`resolve_regime_adaptation` so the breach loop's
-    :func:`compose_phase_1_enforcement` call site receives a real output
+    :func:`compose_active_guardrails` call site receives a real output
     bundle — active overlays bookkeeping, ``parameter_change_flag``
     computation, transition-state semantics, and
     ``regime_skip_emergency`` policy all flow through.
@@ -720,7 +720,7 @@ def _resolve_regime_adaptation_sync(
     """Run :func:`resolve_regime_adaptation` against a fresh sync session.
 
     ``fallback`` covers the case where no :class:`RegimeAdaptationState`
-    has been persisted yet (the scheduler hasn't completed a Phase 1 that
+    has been persisted yet (the scheduler hasn't completed a fill-collection that
     folded a regime decision through the resolver). The monitor process
     can start before the scheduler does in fresh-DB environments, so the
     breach loop must keep ticking.

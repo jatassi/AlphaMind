@@ -261,7 +261,7 @@ def _build_stub_engine_pair_factory() -> Any:
 
 def _make_summary_for_stub() -> Any:
     """Build a canonical :class:`InvocationSummary` for the dispatch stub."""
-    from alphamind.execution.write_paths.phase1 import Phase1Summary
+    from alphamind.execution.write_paths.fill_collection import FillCollectionSummary
     from alphamind.scheduler.orchestrator import InvocationSummary
 
     return InvocationSummary(
@@ -269,7 +269,7 @@ def _make_summary_for_stub() -> Any:
         trigger_type="manual",
         trigger_source="debug_e2e_cli",
         firing_run_type=RunType.market_hours_rolling,
-        phase1_summary=Phase1Summary(
+        fill_collection_summary=FillCollectionSummary(
             fills_processed=0,
             fills_quarantined=0,
             ca_activities_processed=0,

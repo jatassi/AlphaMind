@@ -1,8 +1,8 @@
 """Append-only corporate-action integration-ledger helper (story 05 / ALP-363).
 
-Called from Phase 1 inside the open ``InvocationContext`` transaction to mark
+Called from fill collection inside the open ``InvocationContext`` transaction to mark
 an Alpaca CA activity as integrated. Idempotent on ``alpaca_activity_id`` so
-Phase 1 retry (transient failure during the integration transaction) does not
+fill collection retry (transient failure during the integration transaction) does not
 double-count.
 
 Unlike ``append_fill_record`` (monitor path, owns its own transaction), this

@@ -3,7 +3,7 @@
 Story 03d — disconnect-recovery primitive that calls
 ``AccountStateQueries.get_orders(status="all", since=ts)`` and translates each
 yielded ``OrderSnapshot`` into one or more ``FillReport`` records the OMS
-Phase 1 path can integrate alongside live websocket fills.
+Fill collection path can integrate alongside live websocket fills.
 
 Tests use a synthetic ``AccountStateQueries`` substitute that yields canned
 ``OrderSnapshot`` records so we exercise the translation + ordering surface
@@ -604,7 +604,7 @@ class TestSinceUntilParameters:
 class TestIdempotencyFriendlyEmission:
     async def test_emits_all_window_events_without_dedup(self) -> None:
         """The recovery routine does not dedup against the OMS's prior state;
-        the OMS Phase 1 path is idempotent on (client_order_id, event_type)
+        the OMS fill collection path is idempotent on (client_order_id, event_type)
         via its fill_records ledger. So even an order whose ``new`` event
         was already processed via the websocket re-emits during recovery."""
         snap_one = _build_order_snapshot(

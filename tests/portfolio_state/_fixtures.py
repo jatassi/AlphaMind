@@ -97,7 +97,7 @@ from ._view_builders import (
 # Shared timestamps
 # ---------------------------------------------------------------------------
 
-_PHASE1_AT = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
+_FILL_COLLECTION_AT = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
 _NOW = datetime(2025, 6, 1, 9, 30, 0, tzinfo=UTC)
 _ENTRY_AT = datetime(2025, 6, 1, 7, 0, 0, tzinfo=UTC)
 _INV_ID = "inv-e2e-001"
@@ -113,7 +113,7 @@ def _make_config() -> PortfolioStateConfig:
         pm_decision_log_sliding_window_invocations=5,
         thesis_resolutions_lookback_trading_days=10,
         thesis_quality_aggregates_trailing_windows_days=(5, 20),
-        snapshot_freshness_max_phase1_to_snapshot_seconds=300.0,
+        snapshot_freshness_max_fill_collection_to_snapshot_seconds=300.0,
         snapshot_freshness_max_price_age_seconds=900.0,
         snapshot_freshness_max_option_price_age_seconds=2100.0,
     )
@@ -193,18 +193,20 @@ def _make_thesis_quality_aggregates(now: datetime = _NOW) -> ThesisQualityAggreg
 
 def _make_invocation_metadata(
     invocation_id: str = _INV_ID,
-    phase1_at: datetime = _PHASE1_AT,
+    fill_collection_at: datetime = _FILL_COLLECTION_AT,
 ) -> CurrentInvocationMetadata:
     return CurrentInvocationMetadata(
         invocation_id=invocation_id,
-        phase1_committed_at=phase1_at,
+        fill_collection_committed_at=fill_collection_at,
         pipeline_invocation_started_at=None,
     )
 
 
 def _make_prior_context() -> PriorInvocationContext:
     return PriorInvocationContext(
-        prior_invocation_id=None, prior_active_risk_parameters=None, prior_phase1_committed_at=None
+        prior_invocation_id=None,
+        prior_active_risk_parameters=None,
+        prior_fill_collection_committed_at=None,
     )
 
 

@@ -404,10 +404,10 @@ def _build_mcp_wiring(  # noqa: PLR0913 — runner-facing signature mirrors per-
     fast-fill race against a deferred order-row commit, committing the full
     outcome (orders + capital reservation + ``pm_decision`` + any
     ``command_abandoned`` audit rows). The orchestrator's later
-    ``dispatch_phase2`` stage then detects that in-turn write and skips
+    ``dispatch_command_execution`` stage then detects that in-turn write and skips
     re-persisting the envelope (and its abandoned audit), so there is no
     duplication. On the deferred/log-only path (no broker triple) Step 6 does
-    not write and ``dispatch_phase2`` remains the sole writer.
+    not write and ``dispatch_command_execution`` remains the sole writer.
     """
     validation_servers, validation_tools = build_validate_guardrail_mcp_server(
         initial_validation_state

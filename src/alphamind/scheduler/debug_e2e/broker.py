@@ -248,7 +248,7 @@ class LogOnlyCorporateActionsQueries:
 class LogOnlyBatchQuoteSource:
     """Log-only ``BatchQuoteSource`` stand-in for ``--debug-e2e`` (ALP-753).
 
-    Returns ``{}`` — no live quotes — so the phase-1 reference layer falls back
+    Returns ``{}`` — no live quotes — so the fill-collection reference layer falls back
     deterministically to the seeded ``ohlcv_bars`` for every active ticker, the
     same offline, reproducible bar-based behavior debug-e2e had before ALP-753.
     Returning an empty map (rather than raising) keeps ``staleness_flag`` off, so

@@ -1,7 +1,8 @@
 """Q6 yield-curve regime classifier — pure compute (ALP-485).
 
-Extracted from the legacy ``q6_macro.py`` so the orchestrator's Phase 2 can
-run q6 in parallel under ``asyncio.TaskGroup`` + ``asyncio.to_thread``.
+Extracted from the legacy ``q6_macro.py`` so the per-category indicator
+compute step can run q6 in parallel under ``asyncio.TaskGroup`` +
+``asyncio.to_thread``.
 
 The corresponding session-bound FRED reads live in
 :mod:`alphamind.distillation.q6._loaders`. The pure-compute

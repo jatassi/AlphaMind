@@ -551,7 +551,7 @@ class TestOpenCommand:
 
     def test_allows_short_equity_instrument(self) -> None:
         # ALP-717: short-equity OpenCommand construction is first-class once
-        # Phase 1 grows the SHORT entry-fill helper + borrow-cost modeling on
+        # fill collection grows the SHORT entry-fill helper + borrow-cost modeling on
         # EquityPositionDetails (Story 01). The OMS-boundary guard from
         # ALP-644 is retired; SHORT equity now mirrors the existing
         # SHORT-option allowance.
@@ -570,7 +570,7 @@ class TestOpenCommand:
 
     def test_allows_short_option_instrument(self) -> None:
         # The short-equity restriction must not regress single-leg short options,
-        # which Phase 1 already supports as first-class (SELL_TO_OPEN routes to
+        # which fill collection already supports as first-class (SELL_TO_OPEN routes to
         # _apply_options_entry_fill unconditionally).
         short_option = OptionInstrument(
             asset_type="option",

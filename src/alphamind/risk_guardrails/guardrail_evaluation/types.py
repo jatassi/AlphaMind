@@ -217,7 +217,7 @@ class ExistingPosition:
 
 @dataclass(frozen=True, slots=True)
 class PortfolioStateSnapshot:
-    """Phase-1 portfolio snapshot the library projects deltas against.
+    """Pre-decision portfolio snapshot the library projects deltas against.
 
     Pre-aggregated read interface — the library does not iterate raw positions
     to compute exposures (that lives in the portfolio-state ingestion layer

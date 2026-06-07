@@ -241,7 +241,7 @@ class EmergencyTriggerEvaluator:
     async def handle_emergency_input(self, result: BreachLoopResult) -> None:
         """``on_emergency_input`` callback — see class docstring."""
         as_of = result.as_of
-        current_regime = result.phase1_result.active_risk_parameters.regime_label
+        current_regime = result.active_guardrails.active_risk_parameters.regime_label
         # On the first tick the prior label is unknown; treat it as the
         # current label so the regime-jump primitive sees a non-tightening
         # delta and does not fire (multi-rule, velocity, and margin-call
@@ -362,14 +362,14 @@ class EmergencyTriggerEvaluator:
             self._drawdown_window.popleft()
 
     def _daily_drawdown_limit_pct(self, result: BreachLoopResult) -> float:
-        """Resolve the active daily-drawdown limit from the Phase 1 result.
+        """Resolve the active daily-drawdown limit from the fill-collection result.
 
-        The breach loop's ``Phase1EnforcementResult.active_risk_parameters``
+        The breach loop's ``ActiveGuardrails.active_risk_parameters``
         is the canonical source; the ``daily_drawdown_pct`` entry's value
         is the active limit. When absent, the velocity check cannot fire
         — return ``0.0`` and let the primitive's "no crossing" branch hold.
         """
-        for entry in result.phase1_result.active_risk_parameters.entries:
+        for entry in result.active_guardrails.active_risk_parameters.entries:
             if entry.rule_id == "daily_drawdown_pct":
                 return float(entry.value)
         return 0.0

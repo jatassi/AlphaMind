@@ -1,8 +1,8 @@
 """Shared test substrate for state_persistence tests (ALP-790 hoist).
 
 Houses the duplicated db fixture and the invocation / cash / drawdown
-builders and seeds extracted from phase1_write_path, phase2_write_path,
-phase1_strategy, phase1_options, and phase1_regt_attribution.
+builders and seeds extracted from fill_collection_write_path, command_execution_write_path,
+fill_collection_strategy, fill_collection_options, and fill_collection_regt_attribution.
 """
 
 from __future__ import annotations
@@ -105,8 +105,8 @@ def _make_invocation_record(
         invocation_id=invocation_id,
         process_lifetime_id=process_lifetime_id,
         start_at=_NOW.isoformat().replace("+00:00", "Z"),
-        phase1_completed_at=None,
-        phase2_completed_at=None,
+        fill_collection_completed_at=None,
+        command_execution_completed_at=None,
         trigger_type="scheduled",
         trigger_source="cron",
         trigger_reason="0 9 * * 1-5",

@@ -12,16 +12,16 @@ from alphamind.execution.guardrail_enforcement.composition import (
     compose_active_risk_parameters,
 )
 from alphamind.execution.guardrail_enforcement.orchestrator import (
-    Phase1EnforcementResult,
-    compose_phase_1_enforcement,
+    ActiveGuardrails,
+    compose_active_guardrails,
 )
 from alphamind.execution.guardrail_enforcement.repository_provider import (
     make_active_risk_parameters_provider,
 )
 
 __all__ = [
-    "Phase1EnforcementResult",
+    "ActiveGuardrails",
+    "compose_active_guardrails",
     "compose_active_risk_parameters",
-    "compose_phase_1_enforcement",
     "make_active_risk_parameters_provider",
 ]

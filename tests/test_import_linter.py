@@ -459,7 +459,7 @@ def test_decision_not_execution_contract_with_composition_root_exception() -> No
         f"{pkg}.dispatch -> alphamind.execution.broker_adapter.errors",
         f"{pkg}.dispatch -> alphamind.execution.broker_adapter.order_options",
         f"{pkg}.dispatch -> alphamind.execution.oms.broker_dispatch",
-        f"{pkg}.persist -> alphamind.execution.write_paths.phase2",
+        f"{pkg}.persist -> alphamind.execution.write_paths.command_execution",
         f"{pkg}.process -> alphamind.execution.oms.command_ids",
         f"{pkg}.server -> alphamind.execution.broker_adapter.client_factory",
         f"{pkg}.server -> alphamind.execution.broker_adapter.queries",
@@ -472,8 +472,8 @@ def test_decision_not_execution_contract_with_composition_root_exception() -> No
         # pre-commit/backfill/teardown with the broker dispatch in the composition
         # root (dispatch), and finalizes the envelope audit via the same module
         # after the loop (server). Same permanent carve-out as the persist edge.
-        f"{pkg}.dispatch -> alphamind.execution.write_paths.phase2.atomic",
-        f"{pkg}.server -> alphamind.execution.write_paths.phase2.atomic",
+        f"{pkg}.dispatch -> alphamind.execution.write_paths.command_execution.atomic",
+        f"{pkg}.server -> alphamind.execution.write_paths.command_execution.atomic",
         "alphamind.state.config -> alphamind.execution.corporate_actions.config",
     }
     assert set(ignored) == expected_edges, (

@@ -1268,7 +1268,7 @@ async def test_layer_1_parse_failure_captured_in_failed_submission_log() -> None
 @pytest.mark.asyncio
 async def test_layer_1_no_longer_rejects_short_equity_open_command() -> None:
     """ALP-717: a SHORT equity OPEN command no longer trips Layer-1 schema
-    validation. The OMS-boundary guard from ALP-644 was retired once Phase 1
+    validation. The OMS-boundary guard from ALP-644 was retired once fill collection
     grew direction-aware fill integration (Story 02) and the four short-only
     fields on ``EquityPositionDetails`` (Story 01). The envelope parses
     cleanly through Layer-1 and reaches Layer-2/3 — when routing + risk
@@ -1562,12 +1562,12 @@ async def test_layer_1_parse_failure_is_logged_for_operator(
 
 
 @pytest.mark.asyncio
-async def test_handle_submit_envelope_persists_layer1_failure_via_phase2(
+async def test_handle_submit_envelope_persists_layer1_failure_via_command_execution(
     tmp_path: Any,
 ) -> None:
     """When ``invocation_handle`` is supplied AND Layer-1 fails, the
     in-memory failed_submission_log AND an envelope_parse_failed activity log
-    entry are both written. Mirrors the phase2 write-path test surface so
+    entry are both written. Mirrors the command_execution write-path test surface so
     an OMS-tree change touching the wrapper trips here too."""
     from sqlalchemy import select as _select
 
@@ -1629,8 +1629,8 @@ async def test_handle_submit_envelope_persists_layer1_failure_via_phase2(
             invocation_id="inv-alp366-fail",
             process_lifetime_id="proc-1",
             start_at=_NOW.isoformat().replace("+00:00", "Z"),
-            phase1_completed_at=None,
-            phase2_completed_at=None,
+            fill_collection_completed_at=None,
+            command_execution_completed_at=None,
             trigger_type="scheduled",
             trigger_source="cron",
             trigger_reason="0 9 * * 1-5",
@@ -1692,11 +1692,11 @@ async def test_handle_submit_envelope_persists_layer1_failure_via_phase2(
 
 
 @pytest.mark.asyncio
-async def test_handle_submit_envelope_persists_accepted_envelope_via_phase2(
+async def test_handle_submit_envelope_persists_accepted_envelope_via_command_execution(
     tmp_path: Any,
 ) -> None:
     """When ``invocation_handle`` is supplied AND the envelope is accepted,
-    the Phase 2 writeback runs alongside the in-memory state-cell advance."""
+    the command_execution writeback runs alongside the in-memory state-cell advance."""
     from sqlalchemy import select as _select
 
     import alphamind.state.tables  # noqa: F401
@@ -1779,8 +1779,8 @@ async def test_handle_submit_envelope_persists_accepted_envelope_via_phase2(
             invocation_id="inv-alp366-ok",
             process_lifetime_id="proc-1",
             start_at=_NOW.isoformat().replace("+00:00", "Z"),
-            phase1_completed_at=None,
-            phase2_completed_at=None,
+            fill_collection_completed_at=None,
+            command_execution_completed_at=None,
             trigger_type="scheduled",
             trigger_source="cron",
             trigger_reason="0 9 * * 1-5",
@@ -1971,7 +1971,7 @@ def test_failed_submission_entry_is_frozen() -> None:
 @pytest.mark.asyncio
 async def test_open_acknowledgment_carries_deterministic_position_and_order_ids() -> None:
     """OpenCommand acknowledgments carry deterministic ``POS-{ticker}-{suffix}``
-    / ``ORD-{ticker}-entry-{suffix}`` identifiers matching Phase 2's scheme,
+    / ``ORD-{ticker}-entry-{suffix}`` identifiers matching command execution's scheme,
     not the legacy ``-stub`` placeholders."""
     from alphamind.execution.oms.command_ids import (
         derive_pm_command_id,
@@ -1990,7 +1990,7 @@ async def test_open_acknowledgment_carries_deterministic_position_and_order_ids(
     ack = payload["submission_results"][0]["acknowledgment"]
     state = get_state()
 
-    # The Phase-2 minted ids hash the *base* command id; the broker-carried
+    # The command-execution minted ids hash the *base* command id; the broker-carried
     # link (ALP-844) is stripped by ``synthesize_id_suffix`` so the suffix is
     # identical regardless of which thesis FK the id carries. We pass the
     # OPEN's deterministic thesis here so the call is well-formed.
@@ -2133,9 +2133,9 @@ def _equity_position_with_thesis(*, position_id: str, thesis_id: str | None) -> 
     )
 
 
-def test_resolve_thesis_open_matches_phase2_minted_thesis_id() -> None:
+def test_resolve_thesis_open_matches_command_execution_minted_thesis_id() -> None:
     """An OPEN's broker-carried thesis FK equals the ``THE-{ticker}-{suffix}``
-    thesis_id Phase 2 mints from the same base command id — so a fill
+    thesis_id command_execution mints from the same base command id — so a fill
     self-attributes to the very thesis row the OPEN creates (ALP-844)."""
     from alphamind.decision.portfolio_manager.submit_envelope.process import (
         _resolve_originating_thesis,

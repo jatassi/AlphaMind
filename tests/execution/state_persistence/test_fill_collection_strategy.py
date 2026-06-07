@@ -1,7 +1,7 @@
-"""Tests for the Phase 1 fill-integration write path on strategy / mleg
+"""Tests for the fill collection fill-integration write path on strategy / mleg
 positions (story 04b / ALP-392).
 
-Mirrors :mod:`tests.execution.state_persistence.test_phase1_options` but for
+Mirrors :mod:`tests.execution.state_persistence.test_fill_collection_options` but for
 the STRATEGY discriminator on ``PositionDetailsPayload``. Strategy positions
 are multi-leg options structures (vertical spreads, iron condors, straddles,
 etc.) that submit as a single Alpaca ``mleg`` order and surface per-leg
@@ -401,7 +401,7 @@ def _make_leg_order(
 ) -> OrderRecord:
     """Build a per-leg ``OrderRecord`` (``OptionsInstrumentSpec`` + ``SIMPLE``).
 
-    Per-leg orders carry the strategy ``position_id`` so Phase 1 can correlate
+    Per-leg orders carry the strategy ``position_id`` so fill collection can correlate
     sibling legs; ``order_class`` stays ``SIMPLE`` because the leg itself is
     a single-instrument identifier — the strategy-as-mleg structure lives on
     the parent order.
@@ -576,7 +576,7 @@ def _make_strategy_thesis_with_resolved_components(
 ) -> ThesisRecord:
     """ACTIVE thesis whose components carry pre-set resolution outcomes.
 
-    Used in exit-fill tests so when Phase 1 transitions thesis.status to
+    Used in exit-fill tests so when fill collection transitions thesis.status to
     RESOLVED, the resulting record stays valid.
     """
     components = tuple(
@@ -745,7 +745,7 @@ async def _set_order_status(
 
     Real cancel events flow through the continuous monitor's run-loop and
     update per-leg order rows directly; for tests we mutate the row in place
-    so Phase 1 sees the post-cancel substrate.
+    so fill collection sees the post-cancel substrate.
     """
     async with factory() as sess:
         row = await sess.get(OrderRow, order_id)
@@ -757,9 +757,9 @@ async def _set_order_status(
 async def _open_handle(
     factory: async_sessionmaker[AsyncSession],
     *,
-    invocation_id_suffix: str = "-phase1",
+    invocation_id_suffix: str = "-fill-collection",
 ) -> tuple[InvocationContext, InvocationHandle]:
-    """Open an invocation context for a Phase 1 invocation.
+    """Open an invocation context for a fill_collection invocation.
 
     Multi-invocation tests (e.g., staggered fills across T1/T2) must pass
     distinct ``invocation_id_suffix`` values so each invocation row obeys
@@ -842,7 +842,7 @@ async def test_all_legs_filled_atomic_open_with_signed_net_cost_basis(
     """4-leg iron condor: all legs fill on the same timestamp; the position
     transitions PENDING → OPEN at the last leg's filled event with cost
     basis = signed sum across legs."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -956,7 +956,7 @@ async def test_long_call_spread_has_positive_net_debit(
 ) -> None:
     """Long call spread (long lower, short higher): net cost basis is positive
     (paid premium = net debit)."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -1057,7 +1057,7 @@ async def test_short_put_spread_has_negative_net_credit(
 ) -> None:
     """Short put spread (short higher, long lower): net cost basis is negative
     (received premium = net credit)."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -1156,7 +1156,7 @@ async def test_staggered_legs_only_open_at_last_filled_event(
 ) -> None:
     """3 legs filled on T1, 4th leg still PENDING → position stays PENDING.
     Once the 4th leg fills on T2 → position transitions OPEN."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -1235,7 +1235,7 @@ async def test_staggered_legs_only_open_at_last_filled_event(
         ),
     )
 
-    ctx2, handle2 = await _open_handle(factory, invocation_id_suffix="-phase1-t2")
+    ctx2, handle2 = await _open_handle(factory, invocation_id_suffix="-fill-collection-t2")
     handle2_invocation_id = handle2.invocation_id
     await process_unprocessed_fills(
         handle2,
@@ -1274,7 +1274,7 @@ async def test_partial_leg_fill_position_stays_pending(
 ) -> None:
     """One leg arrives with a partial fill (order_status_after=PARTIALLY_FILLED);
     position stays PENDING and the bracket is not activated."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -1384,7 +1384,7 @@ async def test_cancel_mid_fill_writes_bracket_incomplete_warning(
     """Cancel mid-fill with 2 of 4 legs filled: the position stays PENDING,
     a ``bracket_incomplete_warning`` activity-log entry is written naming the
     unfilled leg(s), and the bracket is dissolved."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -1468,7 +1468,7 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
 ) -> None:
     """All legs close-fill (atomic timing): OPEN → CLOSED transition happens
     when the last close fill arrives; net realized P/L computed across legs."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
     from tests.state._fk_substrate import stub_order_row
@@ -1617,7 +1617,7 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
 
 
 # ---------------------------------------------------------------------------
-# Tests — Phase 1 strategy entry-fill payoff recompute (story 02 / ALP-598)
+# Tests — fill collection strategy entry-fill payoff recompute (story 02 / ALP-598)
 # ---------------------------------------------------------------------------
 
 
@@ -1630,7 +1630,7 @@ async def test_entry_fill_recomputes_net_premium_for_credit_strategy(
     from alphamind.execution.position_model import (
         compute_strategy_net_premium_usd,
     )
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -1700,7 +1700,7 @@ async def test_entry_fill_recomputes_max_profit_loss_and_breakevens(
         compute_strategy_max_profit_usd,
         compute_strategy_net_premium_usd,
     )
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -1769,7 +1769,7 @@ async def test_partially_filled_entry_leaves_skeleton_metrics_untouched(
     """While a strategy entry is partially filled (some legs still at
     ``contract_count = 0``), the parent payoff metrics stay at their skeleton
     zeros and the recompute raises no ``ValueError``."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -1830,7 +1830,7 @@ async def test_entry_fill_leaves_strategy_greeks_untouched(
     """The entry-fill payoff recompute leaves ``strategy_greeks`` exactly as
     the fill found it — a fill carries no greeks; greek refresh is the
     continuous monitor's job."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -1890,7 +1890,7 @@ async def test_staggered_credit_entry_metrics_zero_until_final_leg(
     invocations: the parent payoff metrics stay at their skeleton zeros until
     the final leg fills, then become credit-correct — negative
     ``net_premium_usd``, finite ``max_loss_usd``."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -1953,7 +1953,7 @@ async def test_staggered_credit_entry_metrics_zero_until_final_leg(
         ),
     )
 
-    ctx2, handle2 = await _open_handle(factory, invocation_id_suffix="-phase1-t2")
+    ctx2, handle2 = await _open_handle(factory, invocation_id_suffix="-fill-collection-t2")
     await process_unprocessed_fills(
         handle2,
         market_inputs=_make_market_inputs(),
@@ -1986,7 +1986,7 @@ async def test_strategy_add_recomputes_average_cost_basis(
     """ADD on an OPEN strategy: per-leg ratios scale by additional_quantity;
     new entry fills correlate to the addition; per-leg average cost basis
     recomputes as a weighted average of original and added contracts."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
     from tests.state._fk_substrate import stub_order_row
@@ -2135,7 +2135,7 @@ async def test_strategy_add_recomputes_parent_payoff_metrics(
         compute_strategy_max_profit_usd,
         compute_strategy_net_premium_usd,
     )
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
     from tests.state._fk_substrate import stub_order_row
@@ -2266,9 +2266,9 @@ async def test_strategy_fill_failure_quarantined_state_unchanged(
     """A strategy close fill claiming more contracts than the leg holds is
     quarantined, not propagated (ALP-761). The per-fill savepoint rolls back its
     partial mutations so the strategy position and cash are untouched, the fill
-    row is QUARANTINED, a single reconciliation alert is emitted, and Phase-1
+    row is QUARANTINED, a single reconciliation alert is emitted, and fill collection
     completes normally."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
     from tests.state._fk_substrate import stub_order_row
@@ -2330,7 +2330,7 @@ async def test_strategy_fill_failure_quarantined_state_unchanged(
         market_inputs=_make_market_inputs(),
         config=_make_state_persistence_config(),
     )
-    # Phase-1 returns normally — the ValueError did not escape.
+    # Fill collection returns normally — the ValueError did not escape.
     await ctx.__aexit__(None, None, None)
 
     assert summary.fills_processed == 0

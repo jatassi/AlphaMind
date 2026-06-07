@@ -105,12 +105,12 @@ async def emit_baseline_config_change_entry(
     (:func:`read_most_recent_config_change_new_hash`) suppresses no-op
     re-emissions on subsequent invocations with byte-identical config; on
     a fresh DB this writes one baseline entry per config-version so the
-    verify script's ``check_activity_log`` succeeds even when Phase 1 and
-    Phase 2 emit zero entries (clean paper-DB invocation).
+    verify script's ``check_activity_log`` succeeds even when fill collection and
+    command execution emit zero entries (clean paper-DB invocation).
 
     The git SHA is read from the bound invocation row (stamped by
-    ``insert_invocation_record`` before Phase 1 opened). The entry id
-    follows the Phase 1 / Phase 2 emitter convention
+    ``insert_invocation_record`` before fill collection opened). The entry id
+    follows the fill-collection / command-execution emitter convention
     (``{invocation_id}-{event_type}-{uuid4-hex}``).
     """
     # Local import keeps the state-layer module from pulling scripts into its
@@ -123,7 +123,7 @@ async def emit_baseline_config_change_entry(
         msg = (
             f"invocations row {handle.invocation_id!r} disappeared before "
             "baseline DISTILLATION_CONFIG_CHANGE emission; "
-            "insert_invocation_record should have committed it before Phase 1 opened"
+            "insert_invocation_record should have committed it before fill collection opened"
         )
         raise RuntimeError(msg)
     entry_id = (

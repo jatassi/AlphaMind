@@ -79,7 +79,7 @@ class TestInsertInvocationRecord:
     ) -> None:
         """The row must be committed + visible to fresh-session reads on return.
 
-        The downstream snapshot read (between Phase 1 and Phase 2) reads
+        The downstream snapshot read (between fill collection and command execution) reads
         the row via fresh sessions through the SQL repository — the
         function's contract is that the row is durable by the time it
         returns, not later.
@@ -106,8 +106,8 @@ class TestInsertInvocationRecord:
         row = rows[0]
         assert row.invocation_id == invocation_id
         assert row.start_at == "2026-05-07T14:30:00Z"
-        assert row.phase1_completed_at is None
-        assert row.phase2_completed_at is None
+        assert row.fill_collection_completed_at is None
+        assert row.command_execution_completed_at is None
 
     async def test_returns_resolved_pipeline_config(
         self,

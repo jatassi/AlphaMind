@@ -11,7 +11,7 @@ Calls :meth:`AccountStateQueries.get_orders` with ``status="all"``,
 than event-log fetching, since Alpaca's REST surface lacks an event-log
 endpoint.
 
-Reports are yielded in fill-timestamp ascending order so the OMS Phase 1
+Reports are yielded in fill-timestamp ascending order so the OMS fill collection
 path can integrate them like normal websocket fills; ties broken by Alpaca
 order ID for deterministic ordering. The OMS is idempotent on
 ``client_order_id + event_type`` via the fill_records ledger, so the recovery
@@ -216,7 +216,7 @@ def _build_leg_report(
 
     The leg carries its own ``status`` — Alpaca may report mixed states
     (e.g. 3 of 4 legs filled, 1 still open under thin liquidity), and the
-    OMS Phase 1 path needs each leg's individual state. Statuses outside
+    OMS fill collection path needs each leg's individual state. Statuses outside
     the OMS vocabulary fall back to the parent's event for stable correlation.
     """
     leg_event = _STATUS_TO_EVENT.get(leg.status, parent.event_type)

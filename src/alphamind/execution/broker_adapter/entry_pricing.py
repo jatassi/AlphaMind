@@ -53,7 +53,7 @@ class TouchQuote:
     def mid(self) -> Price:
         """The touch midpoint ``(bid + ask) / 2`` — a coarse current-spot proxy.
 
-        Used by the ALP-753 phase-1 reference anchor as the single scalar that
+        Used by the ALP-753 fill-collection reference anchor as the single scalar that
         mirrors a held position's ``current_price``. ``bid``/``ask`` are both
         strictly positive (constructed via :func:`price`), so the mid is too.
         """
@@ -75,7 +75,7 @@ class BatchQuoteSource(Protocol):
     a missing / one-sided / zero touch is dropped per symbol, so the caller
     falls back to a recorded reference for the dropped symbol. A whole-batch
     broker failure raises ``RuntimeError`` (rather than the singular
-    :class:`QuoteSource`'s ``None``) so the phase-1 caller degrades the entire
+    :class:`QuoteSource`'s ``None``) so the fill-collection caller degrades the entire
     reference layer and flips its staleness flag.
     """
 

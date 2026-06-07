@@ -4,7 +4,7 @@ Daily SHORT-equity borrow cost is **accounting**, which ADR-0004 evicts from the
 always-on continuous monitor into scheduled / pipeline-cadence work, and ADR-0005
 makes the pipeline the single writer of the projection (positions / cash). This
 module is that relocation: :func:`run_borrow_accrual` runs inside the
-orchestrator's Phase-1 write transaction — reusing the invocation's open session
+orchestrator's fill-collection write transaction — reusing the invocation's open session
 and ``invocation_id`` — alongside fill integration and the account-activities
 poll. The pure :func:`compute_tick` kernel is unchanged; the once-per-trading-day
 timer machinery (``run_borrow_accrual_loop`` / ``_next_tick_utc`` / the per-tick
@@ -41,7 +41,7 @@ from alphamind.scheduler.borrow_accrual_kernel import (
     AccrualTickResult,
     compute_tick,
 )
-from alphamind.scheduler.phase1_inputs import _MAX_REFERENCE_BAR_AGE_SECONDS
+from alphamind.scheduler.fill_collection_inputs import _MAX_REFERENCE_BAR_AGE_SECONDS
 from alphamind.state.invocation_context.activity_log import (
     activity_log_entry_to_row,
 )
@@ -66,7 +66,7 @@ _US_EASTERN = ZoneInfo("US/Eastern")
 _OHLCV_DAILY_TIMEFRAME = "1d"
 
 # Staleness ceiling for the per-ticker closing print — reuses
-# ``phase1_inputs._MAX_REFERENCE_BAR_AGE_SECONDS`` (7 calendar days) so the
+# ``fill_collection_inputs._MAX_REFERENCE_BAR_AGE_SECONDS`` (7 calendar days) so the
 # two consumers stay in sync: 7 days clears the longest US market-holiday
 # weekend yet still drops a ticker whose OHLCV feed has genuinely stalled,
 # surfacing the kernel's "missing closing print" ValueError instead of a
@@ -89,7 +89,7 @@ async def run_borrow_accrual(
     borrow_cost_resolver: BorrowCostResolver,
     now: datetime,
 ) -> AccrualTickResult:
-    """Book the daily SHORT-equity borrow accrual inside the Phase-1 write unit.
+    """Book the daily SHORT-equity borrow accrual inside the fill-collection write unit.
 
     Reuses *handle*'s open session and ``invocation_id`` — the pipeline already
     owns the ``invocations`` row, so this does **not** mint one. The once-per-

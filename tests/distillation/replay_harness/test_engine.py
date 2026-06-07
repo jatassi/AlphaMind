@@ -140,7 +140,7 @@ def test_class_b_baselines_populated_from_slice_history(
     """The Class B refresh primitives populate ``class_b_baseline_values``.
 
     The harness leaves the distillation state tables empty; the orchestrator's
-    Phase 1 refresh fills them from the slice's OHLCV / macro / event history.
+    Class B refresh fills them from the slice's OHLCV / macro / event history.
     A slice with a few weeks of bars produces baseline rows for at least the
     seeded sector tickers.
     """
@@ -151,7 +151,7 @@ def test_class_b_baselines_populated_from_slice_history(
 
     assert len(invocation.class_b_baseline_values) > 0
     seen_baseline_kinds = {record.baseline_kind for record in invocation.class_b_baseline_values}
-    # The Phase 1 refresh covers the volume / ATR / spread / sentiment kinds
+    # The Class B refresh covers the volume / ATR / spread / sentiment kinds
     # for the per-ticker baseline plus pair_lag for lead-lag pairs. The
     # sentiment baseline may be empty when no news rows seed the slice; the
     # volume + ATR pair is the always-on signal that proves the refresh ran.

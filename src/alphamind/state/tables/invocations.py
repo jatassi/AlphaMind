@@ -6,10 +6,10 @@ composition snapshot references, and the data-layer state references the
 feedback loop joins against to isolate confounders during prompt-edit and
 config-change validation.
 
-Phase 1 / Phase 2 completion timestamps and their summary JSON columns are
-nullable on insert; the ``InvocationContext`` writes the row on enter and
-the Phase 1 / Phase 2 write paths (later stories) UPDATE these columns
-inside their own transactions.
+Fill-collection / command-execution completion timestamps and their summary
+JSON columns are nullable on insert; the ``InvocationContext`` writes the
+row on enter and the fill-collection / command-execution write paths UPDATE
+these columns inside their own transactions.
 
 Foreign key on ``process_lifetime_id`` with ``ON DELETE RESTRICT`` —
 process-lifetime rows are append-only, and a parent row referenced by an
@@ -86,8 +86,8 @@ class InvocationRow(Base):
         nullable=False,
     )
     start_at: Mapped[str] = mapped_column(Text, nullable=False)
-    phase1_completed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
-    phase2_completed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fill_collection_completed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    command_execution_completed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     trigger_type: Mapped[str] = mapped_column(Text, nullable=False)
     trigger_source: Mapped[str] = mapped_column(Text, nullable=False)
     trigger_reason: Mapped[str] = mapped_column(Text, nullable=False)

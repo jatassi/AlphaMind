@@ -118,7 +118,7 @@ _T2 = datetime(2025, 1, 1, 10, 2, 0, tzinfo=UTC)
 _INV_ID = "inv-test-001"
 
 _ENTRY_AT = datetime(2025, 6, 1, 8, 0, 0, tzinfo=UTC)  # used by position builders
-_PHASE1_AT = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
+_FILL_COLLECTION_AT = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
 _NOW = datetime(2025, 6, 1, 9, 0, 30, tzinfo=UTC)
 
 
@@ -589,7 +589,8 @@ def _make_snapshot(**overrides: object) -> PortfolioStateSnapshot:
     """Build a valid PortfolioStateSnapshot with at least 2 open, 1 pending, 1 thesis, 1 order.
 
     Reconciled from drifted copies: supports the kw overrides used across files
-    (open_positions=, pending_positions=, phase1_committed_at=, snapshot_assembled_at= etc).
+    (open_positions=, pending_positions=, fill_collection_committed_at=,
+    snapshot_assembled_at= etc).
     Bare call yields rich data (for snapshot.py); explicit () for positions yields minimal-ish
     (for freshness no-pos cases).
     """
@@ -607,7 +608,7 @@ def _make_snapshot(**overrides: object) -> PortfolioStateSnapshot:
 
     base: dict[str, Any] = {
         "invocation_id": _INV_ID,
-        "phase1_committed_at": _T0,
+        "fill_collection_committed_at": _T0,
         "snapshot_assembled_at": _T1,
         "pipeline_invocation_started_at": _T2,
         "open_positions": (pos1, pos2),
@@ -642,7 +643,7 @@ def _make_snapshot(**overrides: object) -> PortfolioStateSnapshot:
         base["recent_pm_decision_log"] = ()
         base["position_modification_trail"] = {}
         base["sector_exposure"] = ()
-        if "snapshot_assembled_at" in overrides or "phase1_committed_at" in overrides:
+        if "snapshot_assembled_at" in overrides or "fill_collection_committed_at" in overrides:
             base["pipeline_invocation_started_at"] = None
     base.update(overrides)
     return PortfolioStateSnapshot(**base)

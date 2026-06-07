@@ -1149,7 +1149,7 @@ class TestBracketLegPLAnchor:
 
 
 class TestDirectionToSide:
-    """Buy-vs-sell partition of OrderDirection consumed by phase1 cash-movement
+    """Buy-vs-sell partition of OrderDirection consumed by fill_collection cash-movement
     and the paper-evaluation harness side dispatch."""
 
     @pytest.mark.parametrize(

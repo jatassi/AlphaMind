@@ -183,7 +183,7 @@ def _estimated_exit_price_for(position: PositionRecord, spot: float) -> tuple[fl
     BS closed form would require recomputing here, which the closer's
     caller already does for P/L-target firings). For the activity-log
     entry only, we surface a reasonable scalar so operators see
-    *something* — Phase 1 reconciliation overwrites the persisted P/L with
+    *something* — fill-collection reconciliation overwrites the persisted P/L with
     the actual fill once the order lands.
 
     Single-leg options: estimated exit = prior premium per contract — a

@@ -1111,7 +1111,7 @@ class Brief(Base):
 # ---------------------------------------------------------------------------
 # Per-ticker realized-vol substrate — story ALP-530.
 #
-# Populated once per distillation invocation; consumers (Phase 1's Reg T
+# Populated once per distillation invocation; consumers (fill collection's Reg T
 # attribution wedge, the continuous monitor's greeks-refresh
 # FixtureIvProvider, and the paper-evaluation harness's MapVolLookup) read
 # the latest row per ticker via ``distillation.realized_vol.read_realized_vol_map``.

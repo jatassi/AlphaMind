@@ -8,7 +8,7 @@ Deterministic math shared by every guardrail check. Three call sites compose the
 
 | Input | Source | Purpose |
 |---|---|---|
-| `current_state` | Phase 1 portfolio snapshot — positions with delta-adjusted exposures, sector exposures, directional exposures, capital, drawdown state | Baseline against which deltas are projected |
+| `current_state` | Pre-decision portfolio snapshot — positions with delta-adjusted exposures, sector exposures, directional exposures, capital, drawdown state | Baseline against which deltas are projected |
 | `proposed_deltas` | Caller — one or more proposed exposure changes, each carrying instrument, direction, size | The change being evaluated |
 | `active_regime` | [Regime adaptation](regime-adaptation.md) — regime label and per-rule multipliers | Resolves effective limits for this invocation |
 | `active_profile` | [Rules & limits — profiles](rules-and-limits.md#portfolio-size-profiles) — active features, sectors, base rule values | Defines which rules are in scope and their base values |

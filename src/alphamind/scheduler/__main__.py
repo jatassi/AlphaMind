@@ -291,7 +291,7 @@ async def _run_once(args: argparse.Namespace) -> None:
         )
 
     # The dataclass-asdict path produces a plain dict; ``default=str`` covers
-    # the embedded ``RunType`` enum and the ``Phase1Summary`` slots so the
+    # the embedded ``RunType`` enum and the ``FillCollectionSummary`` slots so the
     # serialization stays a one-liner regardless of which fields are added
     # to ``InvocationSummary`` later.
     print(json.dumps(asdict(summary), default=str, indent=2))

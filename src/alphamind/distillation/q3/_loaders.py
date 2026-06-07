@@ -3,16 +3,16 @@
 The compute path is :func:`assemble_q3_blocks_from_inputs` — a pure
 function over :class:`Q3Inputs` (frozen) plus
 :class:`DistillationDomainConfig`. This module is the only place Q3
-reaches the database for the Phase 2 dispatch: it composes the per-sub
-loaders (flow_classification, anomalies, atm_iv_baseline,
-etf_iv_divergence) plus the universe / sector-topology / flow-z-score /
-sector-ETF-membership reads previously embedded in the legacy
-session-bound :func:`assemble_q3_blocks`.
+reaches the database for the per-category indicator compute dispatch: it
+composes the per-sub loaders (flow_classification, anomalies,
+atm_iv_baseline, etf_iv_divergence) plus the universe / sector-topology
+/ flow-z-score / sector-ETF-membership reads previously embedded in the
+legacy session-bound :func:`assemble_q3_blocks`.
 
-The shell-vs-core split is what lets the orchestrator Phase 2 run q3's
-``compute_*`` in ``asyncio.TaskGroup`` over pre-loaded frozen inputs —
-no shared mutable session means no "Session is already flushing"
-InvalidRequestError.
+The shell-vs-core split is what lets the per-category indicator compute
+step run q3's ``compute_*`` in ``asyncio.TaskGroup`` over pre-loaded
+frozen inputs — no shared mutable session means no "Session is already
+flushing" InvalidRequestError.
 
 The IV-rank baseline upsert happens during the loader (sequentially,
 under the shared session) so the resulting :class:`Q3Inputs` carries
@@ -347,8 +347,9 @@ def load_q3_inputs(
     Composes the per-sub loaders plus the legacy session-bound resolution
     helpers (universe scope, sector topology, flow z-scores, sector-ETF
     filter, ATM-IV baselines) into one call. After this returns, the
-    Phase 2 ``TaskGroup`` runs :func:`assemble_q3_blocks_from_inputs`
-    in a thread without further DB access.
+    per-category indicator compute ``TaskGroup`` runs
+    :func:`assemble_q3_blocks_from_inputs` in a thread without further
+    DB access.
 
     The ATM-IV baseline upsert happens here (synchronously under the
     shared session) so the parallel pure compute sees ``iv_rank_results``

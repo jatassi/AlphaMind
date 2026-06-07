@@ -27,7 +27,7 @@ class RepositoryReadError(RuntimeError):
 
 
 class RepositoryConsistencyError(RepositoryReadError):
-    """Raised when the production reader detects a Phase 1 / Phase 2 isolation violation."""
+    """Raised when the production reader detects a transaction-isolation violation."""
 
 
 # ---------------------------------------------------------------------------
@@ -105,14 +105,14 @@ class CurrentInvocationMetadata:
     """Identity fields for the currently running pipeline invocation."""
 
     invocation_id: str
-    phase1_committed_at: datetime
+    fill_collection_committed_at: datetime
     pipeline_invocation_started_at: datetime | None
 
     def __post_init__(self) -> None:
         if len(self.invocation_id) < 1:
             msg = "invocation_id must be non-empty"
             raise ValueError(msg)
-        _require_tz_aware(self.phase1_committed_at, "phase1_committed_at")
+        _require_tz_aware(self.fill_collection_committed_at, "fill_collection_committed_at")
         if self.pipeline_invocation_started_at is not None:
             _require_tz_aware(self.pipeline_invocation_started_at, "pipeline_invocation_started_at")
 
@@ -123,7 +123,7 @@ class PriorInvocationContext:
 
     prior_invocation_id: str | None
     prior_active_risk_parameters: ActiveRiskParameterSet | None
-    prior_phase1_committed_at: datetime | None
+    prior_fill_collection_committed_at: datetime | None
 
     def __post_init__(self) -> None:
         id_is_none = self.prior_invocation_id is None
@@ -134,8 +134,11 @@ class PriorInvocationContext:
                 "or both be non-None"
             )
             raise ValueError(msg)
-        if self.prior_phase1_committed_at is not None:
-            _require_tz_aware(self.prior_phase1_committed_at, "prior_phase1_committed_at")
+        if self.prior_fill_collection_committed_at is not None:
+            _require_tz_aware(
+                self.prior_fill_collection_committed_at,
+                "prior_fill_collection_committed_at",
+            )
 
 
 # ---------------------------------------------------------------------------

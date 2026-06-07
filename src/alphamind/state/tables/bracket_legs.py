@@ -11,7 +11,7 @@ reference it. ``order_id`` is nullable for ``EVENT_INVALIDATION`` legs and
 carries a DEFERRABLE INITIALLY DEFERRED FK to ``orders.order_id``
 (``ON DELETE RESTRICT``), matching the
 ``e9d2c4f7b3a1_tighten_state_persistence_fks`` migration. The deferral
-accommodates Phase 2's OPEN writeback, which inserts the protective leg
+accommodates command execution's OPEN writeback, which inserts the protective leg
 order and the parent bracket in the same transaction. The UNIQUE constraint
 on ``(bracket_id, leg_index)`` preserves leg-ordering invariants.
 """

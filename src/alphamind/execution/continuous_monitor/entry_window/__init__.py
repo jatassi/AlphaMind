@@ -8,7 +8,7 @@ limit toward the market (bounded by ``entry_window_max_reprices``) so an
 accepted thesis still gets a fill, falling back to the terminal cancel once the
 budget is spent. Composes existing primitives: a status-keyed ``PENDING_ENTRY``
 bracket read, the broker adapter's ``submit_replace`` / ``submit_cancel`` and
-``marketable_limit_price``, and the Phase-2 reprice / CANCEL writebacks.
+``marketable_limit_price``, and the command-execution reprice / CANCEL writebacks.
 """
 
 from __future__ import annotations

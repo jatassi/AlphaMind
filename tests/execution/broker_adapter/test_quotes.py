@@ -134,7 +134,7 @@ async def test_latest_quotes_empty_symbols_makes_no_call() -> None:
 @pytest.mark.asyncio
 async def test_latest_quotes_raises_runtimeerror_on_broker_failure() -> None:
     """A whole-batch broker failure raises ``RuntimeError`` (unlike the singular
-    :meth:`latest_quote`, which returns ``None``) so the phase-1 caller can
+    :meth:`latest_quote`, which returns ``None``) so the fill-collection caller can
     degrade the universe layer and flip ``staleness_flag`` (ALP-753)."""
     source = _source(cast("_FakeDataClient", _RaisingDataClient(ConnectionError("feed down"))))
 
@@ -145,7 +145,7 @@ async def test_latest_quotes_raises_runtimeerror_on_broker_failure() -> None:
 @pytest.mark.asyncio
 async def test_latest_quotes_raises_runtimeerror_on_non_dict_response() -> None:
     """A successful-but-non-dict batch response degrades conservatively (raises
-    ``RuntimeError`` → phase-1 falls back to bars + flips staleness) rather than
+    ``RuntimeError`` → fill collection falls back to bars + flips staleness) rather than
     silently returning an empty map as if every quote were dropped (ALP-753)."""
     source = _source(cast("_FakeDataClient", _NonDictDataClient()))
 

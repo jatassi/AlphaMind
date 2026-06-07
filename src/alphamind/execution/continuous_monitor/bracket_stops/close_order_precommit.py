@@ -4,7 +4,7 @@ A monitor-fired bracket close submits to the broker directly (no engine envelope
 no ``CloseCommand`` writeback), so historically it left NO local ``orders`` row.
 When the close fill returned it self-attributed to ``broker_event_log`` via the
 broker-carried link, but ``persist_fill_report`` only appends a ``fill_records``
-row when an ``oms_order_id`` resolves — and with no ``orders`` row none did. Phase 1
+row when an ``oms_order_id`` resolves — and with no ``orders`` row none did. Fill collection
 closes positions by integrating UNPROCESSED ``fill_records``, so the closing fill
 was never integrated and the position stayed OPEN after the broker filled the exit
 (the phantom-open class).
@@ -15,7 +15,7 @@ broker submit, carrying NO broker id (``alpaca_order_id`` NULL, ALP-847) and
 status ``PENDING_SUBMIT``. The returning close fill then resolves an
 ``oms_order_id`` through the existing ``_resolve_oms_order_id``
 client_order_id-keyed path, ``persist_fill_report`` appends the ``fill_records``
-row, and Phase 1 integrates it and closes the position.
+row, and fill collection integrates it and closes the position.
 
 The write is idempotent on the ``client_order_id``: a retried fire (the leg
 re-prepares after a transient pre-submit failure) finds the existing row and is a
@@ -36,13 +36,13 @@ from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     CloseOrderPrecommitter,
     FloorAlpacaIdResolver,
 )
-from alphamind.execution.write_paths.phase2._shared import (
+from alphamind.execution.write_paths.command_execution._shared import (
     _build_pending_order,
     _close_order_direction_for_position,
     _instrument_spec_for_position,
     _position_quantity,
 )
-from alphamind.execution.write_paths.phase2.close import _close_order_id
+from alphamind.execution.write_paths.command_execution.close import _close_order_id
 from alphamind.persistence.retry import run_with_sqlite_busy_retry
 from alphamind.persistence.session import begin_write_immediate
 from alphamind.portfolio_state.records.orders import (

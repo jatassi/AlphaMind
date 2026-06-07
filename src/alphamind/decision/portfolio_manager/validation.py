@@ -70,7 +70,7 @@ __all__ = [
 
 # ValidationError / ValidationResult / ValidationWarning are re-exported from
 # :mod:`alphamind.commands.validation_results` per ALP-458 — they ride from
-# this validator into the execution-side Phase 2 write path's rejection
+# this validator into the execution-side command execution write path's rejection
 # persistence, so the wire shape lives in the commands kernel where both
 # decision and execution can import without re-introducing the cycle.
 

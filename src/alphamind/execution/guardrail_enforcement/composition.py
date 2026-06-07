@@ -2,7 +2,7 @@
 
 Pure synchronous primitive that wraps the two breach-behavior primitives
 (``classify_cumulative_drawdown_tier`` + ``apply_progressive_tier_overrides``)
-into a single canonical entry point. Consumed by the Phase 1 enforcement
+into a single canonical entry point. Consumed by the active-guardrails
 orchestrator (story 02) and (eventually) by the continuous monitor when it
 recomputes parameters mid-session at an emergency trigger.
 

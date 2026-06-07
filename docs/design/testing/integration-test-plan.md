@@ -44,7 +44,7 @@ The LLM invocation boundary is the single seam for LLM failures. The gateway moc
 
 ### Fixture name equals taxonomy label
 
-Every scripted-misbehavior fixture is named after the failure mode it represents (`llm_timeout`, `llm_malformed_output_recover`, `llm_context_overflow`, `gateway_unavailable_phase2`, etc.). When the spec adds, removes, or renames a failure mode, the corresponding fixture must change — drift is detectable mechanically.
+Every scripted-misbehavior fixture is named after the failure mode it represents (`llm_timeout`, `llm_malformed_output_recover`, `llm_context_overflow`, `gateway_unavailable_cmd_exec`, etc.). When the spec adds, removes, or renames a failure mode, the corresponding fixture must change — drift is detectable mechanically.
 
 ### Realistic operational conditions
 
@@ -136,9 +136,9 @@ Asserts adapter behavior against the Alpaca mock matches [broker-adapter.md](../
 
 | Scenario | Assertion |
 |---|---|
-| Alpaca REST unreachable during Phase 1 reconciliation | pipeline aborts with stale-portfolio-state reason; no agents run |
-| Alpaca REST unreachable during Phase 2 submit (retry succeeds) | command committed; activity log shows retry attempts |
-| Alpaca REST unreachable during Phase 2 submit (retry exhausts) | full atomic rollback; `command_abandoned` event; originator surface at next invocation |
+| Alpaca REST unreachable during fill collection reconciliation | pipeline aborts with stale-portfolio-state reason; no agents run |
+| Alpaca REST unreachable during command execution submit (retry succeeds) | command committed; activity log shows retry attempts |
+| Alpaca REST unreachable during command execution submit (retry exhausts) | full atomic rollback; `command_abandoned` event; originator surface at next invocation |
 | `trade_updates` websocket disconnect mid-session | adapter reconnects, `GET /v2/orders` since-query recovers missed events, OMS state reconciles |
 | Monitor restart mid-session | pending orders recovered from DB; reconnect-replay from Alpaca produces consistent state without double-processing |
 
@@ -150,7 +150,7 @@ Pipeline and continuous monitor are separate processes coordinating through the 
 
 ### Test concerns
 
-**Order round-trip.** Pipeline Phase 2 submits a limit OPEN via the adapter; Alpaca mock acknowledges. Mock emits `partial_fill` then `fill` on `trade_updates`. Monitor writes both to the fill buffer. Next pipeline Phase 1 drains the buffer, updates position state, activity log reflects chronology (Alpaca event timestamps vs. collection timestamp).
+**Order round-trip.** Pipeline command execution submits a limit OPEN via the adapter; Alpaca mock acknowledges. Mock emits `partial_fill` then `fill` on `trade_updates`. Monitor writes both to the fill buffer. Next pipeline fill collection drains the buffer, updates position state, activity log reflects chronology (Alpaca event timestamps vs. collection timestamp).
 
 **Engine-originated protective CLOSE.** Monitor evaluates a live quote stream against portfolio state. Position-level max-loss breach detected. Monitor issues CLOSE via engine envelope with `MON.{session}.{trigger}.{ordinal}` ID and guardrail trigger reference. OMS processes through the same pipeline as PM envelopes. Next invocation's strategist context surfaces the `engine_originated_closure_signal` anti-pattern cue.
 
@@ -160,7 +160,7 @@ Pipeline and continuous monitor are separate processes coordinating through the 
 
 **Cross-process activity log invariants.** PM-originated and engine-originated envelopes written to the same log. Total ordering by commit time holds. `cascade_id` linkage works across boundaries (monitor-originated CLOSE sharing a cascade ID with a margin-call event; next PM invocation sees both linked).
 
-**Monitor restart resilience.** Monitor process restarted mid-session. On restart, recovers pending orders from DB, replays missed trigger evaluations via retroactive catch-up, resumes websocket subscription. A pipeline invocation during monitor downtime encounters gateway unavailability on Phase 1 and aborts per fail-closed.
+**Monitor restart resilience.** Monitor process restarted mid-session. On restart, recovers pending orders from DB, replays missed trigger evaluations via retroactive catch-up, resumes websocket subscription. A pipeline invocation during monitor downtime encounters gateway unavailability on fill collection and aborts per fail-closed.
 
 ### Stub boundary
 
@@ -178,7 +178,7 @@ Pipeline and continuous monitor are separate processes coordinating through the 
 | Greeks refresh | 2%-move trigger fires → refresh writes updated greeks → next invocation's validation reads refreshed values |
 | Emergency trigger | regime jump detected → trigger record written → pipeline starts outside cadence → emergency context flows to agents |
 | Cross-process invariants | activity log total ordering under concurrent writes; `cascade_id` linkage across PM + monitor envelopes |
-| Monitor resilience | monitor restart recovers pending orders; retroactive catch-up produces missed fills; pipeline aborts during monitor-unavailable Phase 1 |
+| Monitor resilience | monitor restart recovers pending orders; retroactive catch-up produces missed fills; pipeline aborts during monitor-unavailable fill collection |
 
 ---
 
@@ -202,9 +202,9 @@ For each: pipeline aborts at the failing agent's boundary, partial upstream outp
 **Gateway failure modes at the gateway mock.** Each mode scripted per submitted order ID:
 
 - `gateway_rejection_submit` — gateway rejects at submitOrder; activity log attribution `rejection_source: gateway` distinct from `rejection_source: guardrail`
-- `gateway_unavailable_phase2_retry_succeed` — transient failure followed by success within retry window; command committed
-- `gateway_unavailable_phase2_retry_exhaust` — persistent failure; retry window exhausts; atomic rollback; `command_abandoned` event; next-invocation surface to originating agent
-- `gateway_unavailable_phase1` — collect fails; pipeline aborts with stale-portfolio-state reason
+- `gateway_unavailable_cmd_exec_retry_succeed` — transient failure followed by success within retry window; command committed
+- `gateway_unavailable_cmd_exec_retry_exhaust` — persistent failure; retry window exhausts; atomic rollback; `command_abandoned` event; next-invocation surface to originating agent
+- `gateway_unavailable_fill_collection` — collect fails; pipeline aborts with stale-portfolio-state reason
 - `malformed_fill_report` — quarantined; reconciliation alert; portfolio state uncorrupted
 - `out_of_sequence_fills` — processed normally; cost basis math holds
 - `unsupported_amendment` — quarantined when gateway declares no amendment capability
@@ -230,9 +230,9 @@ For each: pipeline aborts at the failing agent's boundary, partial upstream outp
 | `llm_model_api_error` | LLM invocation | bounded exponential backoff, abort on exhaustion |
 | `llm_tool_use_error_idempotent` | LLM invocation | single retry, abort on second failure |
 | `gateway_rejection_submit` | gateway mock | activity log tagged `rejection_source: gateway`, distinct from guardrail rejection |
-| `gateway_unavailable_phase2_retry_succeed` | gateway mock | retry within window, command committed |
-| `gateway_unavailable_phase2_retry_exhaust` | gateway mock | atomic rollback, `command_abandoned` event, originator surface next invocation |
-| `gateway_unavailable_phase1` | gateway mock | pipeline abort, stale-portfolio-state reason |
+| `gateway_unavailable_cmd_exec_retry_succeed` | gateway mock | retry within window, command committed |
+| `gateway_unavailable_cmd_exec_retry_exhaust` | gateway mock | atomic rollback, `command_abandoned` event, originator surface next invocation |
+| `gateway_unavailable_fill_collection` | gateway mock | pipeline abort, stale-portfolio-state reason |
 | `malformed_fill_report` | gateway mock | quarantined, reconciliation alert, state intact |
 | `out_of_sequence_fills` | gateway mock | processed, cost basis correct |
 | `unsupported_amendment` | gateway mock | quarantined when amendment capability declared absent |

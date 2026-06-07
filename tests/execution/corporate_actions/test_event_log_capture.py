@@ -91,7 +91,7 @@ async def test_split_appends_ca_event_carrying_position_thesis_link(
 async def test_ca_capture_is_idempotent_on_event_key(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """The same CA activity integrated twice (a Phase 1 retry / late re-post)
+    """The same CA activity integrated twice (a fill collection retry / late re-post)
     collapses to one ``broker_event_log`` row, keyed on the ``event_key`` PK."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
     from alphamind.execution.corporate_actions.types import CorporateActionActivity

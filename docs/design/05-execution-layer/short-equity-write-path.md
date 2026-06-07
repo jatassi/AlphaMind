@@ -9,7 +9,7 @@ obligation.
 
 Pairs with [architecture.md § 4](architecture.md#4-continuous-monitor) for
 monitor responsibilities, [state-persistence.md](state-persistence.md) for
-the Phase 1 fill-integration semantics, and
+the fill collection fill-integration semantics, and
 [regt-margin-attribution.md](regt-margin-attribution.md) for per-fill margin
 attribution. Borrow-cost resolution at validation time is the
 [risk-guardrails layer's responsibility](../06-risk-guardrails/guardrail-evaluation.md);
@@ -20,14 +20,14 @@ attributes borrow cost into realized P/L.
 
 ## Why this exists
 
-Phase 1 today rejects SHORT-equity entry at two layers:
+Fill collection today rejects SHORT-equity entry at two layers:
 
 * The OMS command boundary (`OpenCommand._validate_equity_direction` at
   `src/alphamind/commands/command_models.py:488-506`) raises on every SHORT
   EQUITY `OpenCommand`.
-* The Phase 1 fill dispatcher
+* The fill collection dispatcher
   (`_apply_fill_to_equity_position` at
-  `src/alphamind/execution/write_paths/phase1.py:611-626`) raises
+  `src/alphamind/execution/write_paths/fill_collection.py:611-626`) raises
   `NotImplementedError` on `(is_buy_side=False, status=PENDING)`.
 
 Both guards were placeholders to keep an unfinished write path from leaking
@@ -58,7 +58,7 @@ After this work lands:
   it to the broker, which submits a SELL_TO_OPEN entry order via the existing
   `submit_equity_open` path (already direction-aware at
   `src/alphamind/execution/broker_adapter/order_equity.py:245-247`).
-* The Phase 1 fill integrator routes the SELL_TO_OPEN fill into a PENDING →
+* The fill collection integrator routes the SELL_TO_OPEN fill into a PENDING →
   OPEN transition on the SHORT position, stamps the entry-time borrow rate
   from the resolver, and initializes the accrued-borrow accumulator at zero.
 * On every trading day's close, the continuous monitor advances every OPEN
@@ -153,7 +153,7 @@ class BorrowCostAccruedDetail:
 ```
 
 `EVENT_TYPE_TO_GROUP` gains the corresponding mapping; the event-emitter
-sequence in Phase 1's `_emit` helper is reused via the monitor's own
+sequence in fill collection's `_emit` helper is reused via the monitor's own
 `append_activity_log_entry` call.
 
 ### Cash ledger
@@ -175,7 +175,7 @@ double-counting against actual cash debits.
 Triggered by the SELL_TO_OPEN fill against a PENDING SHORT-equity position.
 
 `_apply_fill_to_equity_position` dispatches via direction-aware routing
-(see § Phase 1 dispatcher below) to `_apply_entry_fill`. The entry helper
+(see § Fill collection dispatcher below) to `_apply_entry_fill`. The entry helper
 extends to stamp the four short-only fields when the position direction is
 SHORT:
 
@@ -283,7 +283,7 @@ OPEN SHORT position.
 
 `_apply_fill_to_equity_position` routes via the direction-aware dispatcher
 to `_apply_exit_fill`. The exit helper already direction-signs the realized
-P/L delta (`phase1.py:765-808`); it extends to flush the accumulated
+P/L delta (`fill_collection.py:765-808`); it extends to flush the accumulated
 borrow cost into the realized P/L on the closing-side branch:
 
 ```python
@@ -325,17 +325,17 @@ existing fill-side activity-log emission contract for cover-to-close
 (`PositionClosedDetail.realized_pnl_usd`) automatically reflects the
 flushed accumulator since `realized_pnl_to_date_usd` is post-flush at the
 point `_emit_fill_activity_log_entries` reads it
-(`phase1.py:1670-1687`). No new emission point is required at close.
+(`fill_collection.py:1670-1687`). No new emission point is required at close.
 
 ---
 
 ## Architecture
 
-### Phase 1 dispatcher
+### Fill collection dispatcher
 
 `_apply_fill_to_equity_position` mirrors the options dispatcher's
 direction-aware routing via `_is_opening_fill(direction, is_buy_side)`
-(already defined at `phase1.py:662-664`):
+(already defined at `fill_collection.py:662-664`):
 
 ```python
 def _apply_fill_to_equity_position(
@@ -355,7 +355,7 @@ def _apply_fill_to_equity_position(
                 borrow_cost_resolver=borrow_cost_resolver,
             )
         msg = (
-            f"Phase 1 received closing fill on PENDING position {position.position_id!r}; "
+            f"Fill collection received closing fill on PENDING position {position.position_id!r}; "
             "a position cannot close before it opens"
         )
         raise ValueError(msg)
@@ -363,12 +363,12 @@ def _apply_fill_to_equity_position(
         if _is_opening_fill(direction, is_buy_side):
             return _apply_add_fill(position, details, fill)
         return _apply_exit_fill(position, details, fill)
-    msg = f"Phase 1 cannot integrate fill against position status {position.status!r}"
+    msg = f"Fill collection cannot integrate fill against position status {position.status!r}"
     raise ValueError(msg)
 ```
 
 The `is_buy_side` flag retains its meaning at the call site
-(`_integrate_one_fill` at `phase1.py:441-443`) — the dispatch interpretation
+(`_integrate_one_fill` at `fill_collection.py:441-443`) — the dispatch interpretation
 shifts to "opening" via `_is_opening_fill`. The four cases:
 
 | Status   | Direction | Buy side | Routing             |
@@ -386,7 +386,7 @@ The resolver is threaded from `process_unprocessed_fills` through
 `_integrate_one_fill` to the dispatcher to `_apply_entry_fill`. The
 orchestrator already builds the resolver per invocation at
 `src/alphamind/scheduler/orchestrator.py:629-630`; an additional kwarg
-on `process_unprocessed_fills` carries it into Phase 1.
+on `process_unprocessed_fills` carries it into fill collection.
 
 ### Continuous monitor — § 4f daily borrow accrual
 
@@ -407,7 +407,7 @@ next trading-day close. Holidays follow the same market-hours calendar
 the rest of the monitor consumes.
 
 **Action per tick.** Iterate every OPEN SHORT-equity position via the
-existing `_read_all_positions` query shape (`phase1.py:352-370`,
+existing `_read_all_positions` query shape (`fill_collection.py:352-370`,
 filtered to `direction=SHORT` and `instrument_type=EQUITY`). For each:
 
 1. Read the live `share_count` and the latest closing print from
@@ -424,7 +424,7 @@ filtered to `direction=SHORT` and `instrument_type=EQUITY`). For each:
 All five steps run inside one `InvocationContext`-equivalent transaction
 per tick so the cross-position update and the activity-log emissions
 commit atomically. The monitor opens this transaction via the same
-`InvocationHandle` plumbing Phase 1 uses; an invocation row is inserted
+`InvocationHandle` plumbing fill collection uses; an invocation row is inserted
 with `invocation_kind=ENGINE_BORROW_ACCRUAL` (new enum variant) so the
 audit trail keeps tick-level groupability.
 
@@ -455,7 +455,7 @@ The `borrow_cost_resolver` callable lands in four production call sites:
 | Analyst validation tool                 | `risk_guardrails/state_delivery/validation_tool.py:832-866`                       | yes       |
 | Library snapshot assembler              | `risk_guardrails/library_snapshot.py:342-362`                                     | yes       |
 | Proposal pre-processor (translator)     | `decision/proposal_pre_processor/translator.py:282-348`                           | yes       |
-| Phase 1 entry-fill helper               | `execution/write_paths/phase1.py::_apply_entry_fill`                              | **new**   |
+| Fill collection entry-fill helper       | `execution/write_paths/fill_collection.py::_apply_entry_fill`                     | **new**   |
 | Continuous monitor § 4f accrual tick    | new module under `execution/continuous_monitor/borrow_accrual.py` (or similar)    | **new**   |
 
 The two new call sites consume the same `Callable[[str], float | None]`
@@ -469,11 +469,11 @@ contract; both build their instance via `build_borrow_cost_resolver` from
   `Literal["long", "short"]`).
 * `EquityPositionDetails.borrow_rate_pct` / `locate_status` /
   `margin_held_usd` — schema unchanged.
-* `_apply_add_fill` (`phase1.py:739-762`) — direction-agnostic
+* `_apply_add_fill` (`fill_collection.py:739-762`) — direction-agnostic
   arithmetic.
-* `_apply_exit_fill` (`phase1.py:765-808`) — direction-signed realized
+* `_apply_exit_fill` (`fill_collection.py:765-808`) — direction-signed realized
   P/L; gains only the borrow-flush branch.
-* Phase 2 OPEN write path (`execution/write_paths/phase2/open.py:555-564`) —
+* Command execution OPEN write path (`execution/write_paths/command_execution/open.py:555-564`) —
   already builds a valid SHORT-equity PENDING skeleton.
 * Broker submit (`broker_adapter/order_equity.py:89-132`,
   `_entry_side` at `:245-247`) — already maps `short → SELL`.
@@ -496,7 +496,7 @@ contract; both build their instance via `build_borrow_cost_resolver` from
 * `OpenCommand._validate_equity_direction` and its comment block at
   `commands/command_models.py:487-507`.
 * `_apply_fill_to_equity_position`'s `not is_buy_side and PENDING`
-  branch at `phase1.py:623-625` (the `NotImplementedError`).
+  branch at `fill_collection.py:623-625` (the `NotImplementedError`).
 
 ### Existing tests that flip
 
@@ -505,10 +505,10 @@ Three tests assert the rejected state and flip direction:
 1. `tests/execution/oms/test_command_models.py::TestOpenCommandStrategyTargetType::test_rejects_short_equity_instrument`
    (lines 437-458) flips to `test_allows_short_equity_instrument`,
    mirroring the existing `test_allows_short_option_instrument`.
-2. `tests/execution/state_persistence/test_phase1_write_path.py::test_short_entry_fill_raises_explicit_not_implemented`
+2. `tests/execution/state_persistence/test_fill_collection_write_path.py::test_short_entry_fill_raises_explicit_not_implemented`
    (lines 1450-1491) flips to assert PENDING → OPEN with the four
    short-only fields stamped from a stub resolver.
-3. `tests/execution/state_persistence/test_phase1_write_path.py::test_atomicity_exception_rolls_back_fills_and_log`
+3. `tests/execution/state_persistence/test_fill_collection_write_path.py::test_atomicity_exception_rolls_back_fills_and_log`
    (lines 1091-1145) re-grounds around a different deliberate fault.
    The replacement: seed a fill referencing a missing `order_id` to hit
    the `_read_order` `ValueError` path. Rollback assertions stay the
@@ -517,25 +517,25 @@ Three tests assert the rejected state and flip direction:
 ### New positive coverage
 
 * OMS command boundary: `OpenCommand` constructs cleanly for SHORT EQUITY.
-* Phase 1 dispatcher: each of the eight (status × direction × buy_side)
+* Fill collection dispatcher: each of the eight (status × direction × buy_side)
   cases routes correctly, including the two defensive `ValueError`
   cases (PENDING-LONG+SELL, PENDING-SHORT+BUY).
-* Phase 1 entry-fill (SHORT): the four short-only fields stamp from the
+* Fill collection entry-fill (SHORT): the four short-only fields stamp from the
   resolver; the codec round-trips through `details_json` and the
   validator accepts.
-* Phase 1 entry-fill (SHORT, missing resolver row): raises `ValueError`
+* Fill collection entry-fill (SHORT, missing resolver row): raises `ValueError`
   with a message naming the upstream contract violation.
-* Phase 1 ADD on a SHORT position: weighted-avg cost basis is correct;
+* Fill collection ADD on a SHORT position: weighted-avg cost basis is correct;
   `borrow_rate_pct` / `accrued_borrow_cost_usd` unchanged on the post-ADD
   position.
-* Phase 1 cover-to-close (SHORT): realized P/L sign is correct (entry $100,
+* Fill collection cover-to-close (SHORT): realized P/L sign is correct (entry $100,
   exit $90 → +$10/share net of borrow flush); `accrued_borrow_cost_usd`
   subtracts from the realized delta; position transitions to CLOSED.
-* Phase 1 partial cover (SHORT): no borrow flush; position stays OPEN;
+* Fill collection partial cover (SHORT): no borrow flush; position stays OPEN;
   `accrued_borrow_cost_usd` unchanged.
 * Reg T attribution: SHORT entry stamps 150%-MV initial margin via
   `compute_attribution`; the existing tests under
-  `tests/execution/state_persistence/test_phase1_regt_attribution.py`
+  `tests/execution/state_persistence/test_fill_collection_regt_attribution.py`
   add a SHORT-equity case.
 * Codec round-trip: `EquityPositionDetails` with SHORT short-only fields
   including `accrued_borrow_cost_usd` round-trips through
@@ -575,7 +575,7 @@ accrual)
 [regt-margin-attribution.md](regt-margin-attribution.md);
 [continuous-monitor-runtime.md](continuous-monitor-runtime.md).
 
-### Story 01 — Phase 1 SHORT-equity write path
+### Story 01 — Fill collection SHORT-equity write path
 
 Unblocks production. After this story lands, SHORT EQUITY proposals
 dispatch end-to-end with correctly-signed realized P/L on cover-to-close.
@@ -594,31 +594,31 @@ until Story 02 lands its daily tick.
   `state/tables/positions_codec.py:120-173` to round-trip the new field
   (`_details_to_dict` + `_equity_from_dict`).
 * Replace `_apply_fill_to_equity_position` at
-  `execution/write_paths/phase1.py:611-626` with the direction-aware
+  `execution/write_paths/fill_collection.py:611-626` with the direction-aware
   dispatcher above, threading `borrow_cost_resolver` to
   `_apply_entry_fill`.
 * Extend `_apply_entry_fill` at
-  `execution/write_paths/phase1.py:712-736` to stamp the four short-only
+  `execution/write_paths/fill_collection.py:712-736` to stamp the four short-only
   fields when `direction == Direction.SHORT`, sourced from the
   resolver and the fill itself (margin from Reg T arithmetic).
 * Extend `_apply_exit_fill` at
-  `execution/write_paths/phase1.py:765-808` with the borrow-flush
+  `execution/write_paths/fill_collection.py:765-808` with the borrow-flush
   branch on the closing fill that takes `share_count` to zero. Reword
   the helper's docstring from "Sell-side fill" to "Exit fill" and make
   the direction-sign source explicit.
 * Thread `borrow_cost_resolver` through `process_unprocessed_fills` at
-  `execution/write_paths/phase1.py:207-271` (new kwarg) and through
+  `execution/write_paths/fill_collection.py:207-271` (new kwarg) and through
   `_integrate_one_fill` at `:416-487` (new kwarg) to the dispatcher.
 * Thread the resolver into the call from the orchestrator
-  (`scheduler/orchestrator.py` — the call site that wires Phase 1 into
+  (`scheduler/orchestrator.py` — the call site that wires fill collection into
   the post-decision step); the resolver is already built earlier in the
   orchestrator at `:629-630`.
-* Update phase2 open at
-  `execution/write_paths/phase2/open.py:555-564` so the PENDING
+* Update command execution open at
+  `execution/write_paths/command_execution/open.py:555-564` so the PENDING
   skeleton's `accrued_borrow_cost_usd` is `0.0` (not None) for SHORT,
   to satisfy the extended validator at PENDING construction time.
 * Flip three existing tests (per § Validation and tests above).
-* Add positive Phase 1 SHORT entry, ADD, partial-cover, and
+* Add positive fill collection SHORT entry, ADD, partial-cover, and
   cover-to-close coverage.
 * Add codec round-trip coverage for the new field.
 * Add Reg T attribution coverage for the SHORT-entry case.
@@ -675,7 +675,7 @@ After Story 01 lands and the operator restarts `alphamind-scheduler`,
 
 * The first pre-open cycle that surfaces a SHORT EQUITY thesis (the CRWD
   and SCHW shapes from attempt 4 are the proximate candidates) dispatches
-  the `OpenCommand` to Alpaca; the next invocation's Phase 1 integrates
+  the `OpenCommand` to Alpaca; the next invocation's fill collection integrates
   the SELL_TO_OPEN fill into an OPEN SHORT position with the four
   short-only fields stamped.
 * `commands_submitted` on the PM result record advances above zero on

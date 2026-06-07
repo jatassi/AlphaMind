@@ -1,7 +1,7 @@
 """Distillation orchestrator entry point.
 
 The single ``async`` entry point the pipeline process calls during its
-distillation phase. The orchestrator sequences seven phases per
+distillation phase. The orchestrator sequences seven steps per
 ``docs/design/02-distillation-layer/external.md`` § Output format and the
 spec at ``docs/implementation/02-distillation-layer/12-distillation-orchestrator.md``:
 
@@ -32,7 +32,7 @@ spec at ``docs/implementation/02-distillation-layer/12-distillation-orchestrator
    :class:`DistillationOutputs` for hot-path consumers in the same
    process.
 
-Per the LLM-agents-uniformly-Critical policy, any failure in any phase
+Per the LLM-agents-uniformly-Critical policy, any failure in any step
 aborts the invocation. The orchestrator does not catch and continue.
 """
 
@@ -223,7 +223,7 @@ def _invocation_archive_dir(*, archive_root: Path, as_of: datetime, invocation_i
 
 
 # ---------------------------------------------------------------------------
-# Phase 1 — Class B refresh
+# Class B refresh
 # ---------------------------------------------------------------------------
 
 
@@ -243,7 +243,7 @@ def _refresh_class_b_state(
     """Run the five Class B refresh primitives in sequence.
 
     Returns the total number of refresh-output rows produced (sum across
-    primitives). The orchestrator logs the per-phase count.
+    primitives). The orchestrator logs the per-step count.
     """
     as_of_iso = _format_as_of(as_of)
     pw = config.persistence_windows
@@ -320,7 +320,7 @@ def _refresh_class_b_state(
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 — per-category dispatchers
+# Per-category indicator compute
 # ---------------------------------------------------------------------------
 #
 # Each dispatcher is a thin wrapper over its category's public surface.
@@ -331,12 +331,12 @@ def _refresh_class_b_state(
 # asyncio.to_thread so the event loop never blocks waiting for SQLite.
 #
 # All six categories (q1, q3, q6, q7, q12, qualitative) wire up directly
-# to their module-level entry points. The :data:`_PHASE_2_PLACEHOLDER_GAPS`
+# to their module-level entry points. The :data:`_CATEGORY_COMPUTE_PLACEHOLDER_GAPS`
 # table is preserved as an empty tuple for the verification script in
 # story 13 (`scripts/verify_distillation.py`) so its summary section's
 # shape stays stable; it now reports "all categories integrated."
 
-_PHASE_2_PLACEHOLDER_GAPS: tuple[tuple[str, str], ...] = ()
+_CATEGORY_COMPUTE_PLACEHOLDER_GAPS: tuple[tuple[str, str], ...] = ()
 
 
 def _compute_q1_blocks(
@@ -370,9 +370,9 @@ def _load_q1_inputs_via_session(
 ) -> Q1Inputs:
     """ALP-467 — pre-load Q1 inputs under the shared Session.
 
-    The shell half of the q1 compute/load split. Phase 2 calls this
-    sequentially under one Session before launching the TaskGroup; the
-    returned :class:`Q1Inputs` is then handed to
+    The shell half of the q1 compute/load split. The per-category indicator
+    compute step calls this sequentially under one Session before launching
+    the TaskGroup; the returned :class:`Q1Inputs` is then handed to
     :func:`_compute_q1_blocks_from_inputs` (pure compute, thread-safe).
     """
     repository = SqlDistillationRepository(session)
@@ -386,9 +386,9 @@ def _compute_q1_blocks_from_inputs(
 ) -> list[OutputBlock]:
     """ALP-467 — pure-compute Q1 dispatch from pre-loaded inputs.
 
-    Wraps :func:`assemble_q1_blocks_from_inputs` so the orchestrator's
-    Phase 2 TaskGroup has a single ``to_thread`` callable that takes only
-    serializable / immutable arguments — no Session, no ORM.
+    Wraps :func:`assemble_q1_blocks_from_inputs` so the per-category
+    indicator compute TaskGroup has a single ``to_thread`` callable that
+    takes only serializable / immutable arguments — no Session, no ORM.
     """
     return assemble_q1_blocks_from_inputs(q1_inputs, config=config)
 
@@ -423,7 +423,7 @@ def _persist_realized_vol_from_q1_inputs(
     )
 
 
-def _compute_legacy_phase2_blocks(
+def _compute_legacy_session_bound_blocks(
     session: Session,
     *,
     config: DistillationDomainConfig,
@@ -449,9 +449,9 @@ def _load_q3_inputs_via_session(
 ) -> Q3Inputs:
     """ALP-484 — pre-load Q3 inputs under the shared Session.
 
-    The shell half of the q3 compute/load split. Phase 2 calls this
-    sequentially under one Session before launching the TaskGroup; the
-    returned :class:`Q3Inputs` is then handed to
+    The shell half of the q3 compute/load split. The per-category indicator
+    compute step calls this sequentially under one Session before launching
+    the TaskGroup; the returned :class:`Q3Inputs` is then handed to
     :func:`_compute_q3_blocks_from_inputs` (pure compute, thread-safe).
 
     The IV-rank baseline UPSERT happens inside this loader so the
@@ -470,9 +470,9 @@ def _load_q3_inputs_via_session(
 def _compute_q3_blocks_from_inputs(q3_inputs: Q3Inputs) -> list[OutputBlock]:
     """ALP-484 — pure-compute Q3 dispatch from pre-loaded inputs.
 
-    Wraps :func:`assemble_q3_blocks_from_inputs` so the orchestrator's
-    Phase 2 TaskGroup has a single ``to_thread`` callable that takes only
-    serializable / immutable arguments — no Session, no ORM.
+    Wraps :func:`assemble_q3_blocks_from_inputs` so the per-category
+    indicator compute TaskGroup has a single ``to_thread`` callable that
+    takes only serializable / immutable arguments — no Session, no ORM.
     """
     return assemble_q3_blocks_from_inputs(q3_inputs)
 
@@ -485,9 +485,9 @@ def _load_q6_inputs_via_session(
 ) -> Q6Inputs:
     """ALP-485 — pre-load Q6 inputs under the shared Session.
 
-    The shell half of the q6 compute/load split. Phase 2 calls this
-    sequentially under one Session before launching the TaskGroup; the
-    returned :class:`Q6Inputs` is then handed to
+    The shell half of the q6 compute/load split. The per-category indicator
+    compute step calls this sequentially under one Session before launching
+    the TaskGroup; the returned :class:`Q6Inputs` is then handed to
     :func:`_compute_q6_blocks_from_inputs` (pure compute, thread-safe).
 
     The funding-stress and market-liquidity composite-refresh writes
@@ -501,9 +501,9 @@ def _load_q6_inputs_via_session(
 def _compute_q6_blocks_from_inputs(q6_inputs: Q6Inputs) -> list[OutputBlock]:
     """ALP-485 — pure-compute Q6 dispatch from pre-loaded inputs.
 
-    Wraps :func:`assemble_q6_blocks_from_inputs` so the orchestrator's
-    Phase 2 TaskGroup has a single ``to_thread`` callable that takes only
-    serializable / immutable arguments — no Session, no ORM.
+    Wraps :func:`assemble_q6_blocks_from_inputs` so the per-category
+    indicator compute TaskGroup has a single ``to_thread`` callable that
+    takes only serializable / immutable arguments — no Session, no ORM.
     """
     return assemble_q6_blocks_from_inputs(q6_inputs)
 
@@ -518,9 +518,9 @@ def _load_q7_inputs_via_session(
 ) -> Q7Inputs:
     """ALP-486 — pre-load Q7 inputs under the shared Session.
 
-    The shell half of the q7 compute/load split. Phase 2 calls this
-    sequentially under one Session before launching the TaskGroup; the
-    returned :class:`Q7Inputs` is then handed to
+    The shell half of the q7 compute/load split. The per-category indicator
+    compute step calls this sequentially under one Session before launching
+    the TaskGroup; the returned :class:`Q7Inputs` is then handed to
     :func:`_compute_q7_blocks_from_inputs` (pure compute, thread-safe).
 
     The intra-sector ``correlation_divergence`` event writes happen
@@ -539,9 +539,9 @@ def _load_q7_inputs_via_session(
 def _compute_q7_blocks_from_inputs(q7_inputs: Q7Inputs) -> list[OutputBlock]:
     """ALP-486 — pure-compute Q7 dispatch from pre-loaded inputs.
 
-    Wraps :func:`assemble_q7_blocks_from_inputs` so the orchestrator's
-    Phase 2 TaskGroup has a single ``to_thread`` callable that takes only
-    serializable / immutable arguments — no Session, no ORM.
+    Wraps :func:`assemble_q7_blocks_from_inputs` so the per-category
+    indicator compute TaskGroup has a single ``to_thread`` callable that
+    takes only serializable / immutable arguments — no Session, no ORM.
     """
     return assemble_q7_blocks_from_inputs(q7_inputs)
 
@@ -576,11 +576,11 @@ def _load_qualitative_inputs_via_session(
 ) -> QualitativeInputs:
     """ALP-487 — pre-load qualitative inputs under the shared Session.
 
-    The shell half of the qualitative compute/load split. Phase 2 calls
-    this sequentially under one Session before launching the TaskGroup;
-    the returned :class:`QualitativeInputs` is then handed to
-    :func:`_compute_qualitative_blocks_from_inputs` (pure compute,
-    thread-safe).
+    The shell half of the qualitative compute/load split. The per-category
+    indicator compute step calls this sequentially under one Session before
+    launching the TaskGroup; the returned :class:`QualitativeInputs` is
+    then handed to :func:`_compute_qualitative_blocks_from_inputs` (pure
+    compute, thread-safe).
     """
     repository = SqlDistillationRepository(session)
     return load_qualitative_inputs(
@@ -600,15 +600,15 @@ def _compute_qualitative_blocks_from_inputs(
     """ALP-487 — pure-compute qualitative dispatch from pre-loaded inputs.
 
     Wraps :func:`assemble_qualitative_blocks_from_inputs` so the
-    orchestrator's Phase 2 TaskGroup has a single ``to_thread`` callable
-    that takes only serializable / immutable arguments — no Session, no
-    ORM.
+    per-category indicator compute TaskGroup has a single ``to_thread``
+    callable that takes only serializable / immutable arguments — no
+    Session, no ORM.
     """
     return assemble_qualitative_blocks_from_inputs(qualitative_inputs, config=config)
 
 
 # ---------------------------------------------------------------------------
-# Phase 3 — regime classification
+# Regime classification
 # ---------------------------------------------------------------------------
 
 
@@ -928,7 +928,7 @@ def _refresh_regime(
     config: DistillationDomainConfig,
     as_of: datetime,
 ) -> tuple[RegimeRefreshResult, OutputBlock]:
-    """Phase 3 — refresh the regime row and assemble the universal block."""
+    """Regime classification — refresh the regime row and assemble the universal block."""
     classification, transition = _build_regime_thresholds(config)
     snapshot, calibration_state, bootstrap_reason = _build_regime_snapshot(session, as_of=as_of)
     result = refresh_regime_state(
@@ -945,7 +945,7 @@ def _refresh_regime(
 
 
 # ---------------------------------------------------------------------------
-# Phase 6 — invocation-archive write
+# Invocation-archive write
 # ---------------------------------------------------------------------------
 
 
@@ -976,7 +976,7 @@ def _write_invocation_archive(
 
 
 # ---------------------------------------------------------------------------
-# Phase 7 — brief-store population
+# Brief-store population
 # ---------------------------------------------------------------------------
 
 
@@ -986,7 +986,7 @@ def _populate_brief_store(
     correlation_regime_brief: CorrelationRegimeBrief,
     invocation_id: str,
 ) -> int:
-    """Phase 7 — INSERT the correlation-regime brief row into the ``briefs`` table.
+    """Brief-store population — INSERT the correlation-regime brief row into the ``briefs`` table.
 
     The hot-path passthrough in :class:`DistillationOutputs` is preserved
     so in-process consumers (the synthesizer, the sector analysts) keep
@@ -1020,7 +1020,7 @@ def _count_non_calibrated_blocks(blocks: Iterable[OutputBlock]) -> int:
     return sum(1 for block in blocks if block.calibration_state is not CalibrationState.CALIBRATED)
 
 
-async def _run_phase_2(
+async def _compute_category_indicators(
     session: Session,
     *,
     config: DistillationDomainConfig,
@@ -1029,7 +1029,7 @@ async def _run_phase_2(
     as_of: datetime,
     invocation_id: str,
 ) -> list[OutputBlock]:
-    """Phase 2 — per-category indicator computations.
+    """Per-category indicator compute — run all six category dispatchers.
 
     ALP-467 piloted the compute/load boundary split on q1; ALP-484
     propagated the split to q3; ALP-487 propagated it to qualitative;
@@ -1070,7 +1070,7 @@ async def _run_phase_2(
     )
     # ALP-530 — populate the per-ticker realized-vol substrate from the
     # per-ticker close-price series Q1 already loaded. Synchronous under
-    # the shared Session so downstream consumers (Phase 1 attribution,
+    # the shared Session so downstream consumers (fill_collection attribution,
     # continuous-monitor refresh) see the rows from this invocation
     # onward.
     rows_persisted = await asyncio.to_thread(
@@ -1080,7 +1080,10 @@ async def _run_phase_2(
         invocation_id=invocation_id,
         as_of=as_of,
     )
-    logger.info("phase 2 (per-ticker realized vol) complete: rows=%d", rows_persisted)
+    logger.info(
+        "per-category indicator compute (per-ticker realized vol) complete: rows=%d",
+        rows_persisted,
+    )
     q3_inputs = await asyncio.to_thread(
         _load_q3_inputs_via_session,
         session,
@@ -1155,7 +1158,7 @@ async def _run_phase_2(
             )
             legacy_task = tg.create_task(
                 asyncio.to_thread(
-                    _compute_legacy_phase2_blocks,
+                    _compute_legacy_session_bound_blocks,
                     session,
                     config=config,
                     as_of=as_of,
@@ -1175,7 +1178,7 @@ async def _run_phase_2(
     for category_blocks in per_category_blocks:
         indicator_blocks.extend(category_blocks)
     logger.info(
-        "phase 2 (per-category indicators) complete: blocks=%d elapsed=%.3fs",
+        "per-category indicator compute complete: blocks=%d elapsed=%.3fs",
         len(indicator_blocks),
         time.monotonic() - phase_start,
     )
@@ -1194,7 +1197,7 @@ async def run_external_distillation(
 ) -> DistillationOutputs:
     """The single ``async`` entry point the pipeline process calls.
 
-    Runs the seven phases per the story spec; any failure aborts the
+    Runs the seven steps per the story spec; any failure aborts the
     invocation per ``docs/design/mid-pipeline-failure-handling.md``. The
     orchestrator does not catch and continue.
 
@@ -1214,9 +1217,10 @@ async def run_external_distillation(
     overall_start = time.monotonic()
 
     # Resolve prediction-market contract scope ONCE so every consumer
-    # (Phase 1's refresh_contract_history and Phase 2's
-    # load_qualitative_inputs) sees the identical tuple. Splitting would
-    # let the writer ingest one set while the reader reports on another.
+    # (the class-B-refresh step's refresh_contract_history and the
+    # per-category-indicator-compute step's load_qualitative_inputs) sees
+    # the identical tuple. Splitting would let the writer ingest one set
+    # while the reader reports on another.
     contract_scope: tuple[str, ...] = await asyncio.to_thread(
         resolve_prediction_market_scope,
         session,
@@ -1224,7 +1228,7 @@ async def run_external_distillation(
         as_of=as_of,
     )
 
-    # Phase 1 — Class B refresh.
+    # Class B refresh.
     phase_start = time.monotonic()
     baseline_rows = await asyncio.to_thread(
         _refresh_class_b_state,
@@ -1235,13 +1239,13 @@ async def run_external_distillation(
         as_of=as_of,
     )
     logger.info(
-        "phase 1 (class B refresh) complete: rows=%d elapsed=%.3fs",
+        "class B refresh complete: rows=%d elapsed=%.3fs",
         baseline_rows,
         time.monotonic() - phase_start,
     )
 
-    # Phase 2 — per-category indicator computations.
-    indicator_blocks = await _run_phase_2(
+    # Per-category indicator compute.
+    indicator_blocks = await _compute_category_indicators(
         session,
         config=config,
         ticker_scope=ticker_scope,
@@ -1250,7 +1254,7 @@ async def run_external_distillation(
         invocation_id=invocation_id,
     )
 
-    # Phase 3 — regime classification.
+    # Regime classification.
     phase_start = time.monotonic()
     regime_result, regime_block = await asyncio.to_thread(
         _refresh_regime,
@@ -1263,27 +1267,27 @@ async def run_external_distillation(
         exempt_flag_names=config.severity_caps.exempt_flag_names,
     )
     logger.info(
-        "phase 3 (regime classification) complete: label=%s elapsed=%.3fs",
+        "regime classification complete: label=%s elapsed=%.3fs",
         regime_result.regime_label.value,
         time.monotonic() - phase_start,
     )
 
-    # Phase 4 — aggregation. Partition / collect / group per story 10
+    # Aggregation. Partition / collect / group per story 10
     # to populate the diagnostic counts the orchestrator returns; the
-    # assemblers (Phase 5) re-derive the same partitioning from the
+    # assembly step re-derives the same partitioning from the
     # block list, so the dicts here are not threaded forward.
     phase_start = time.monotonic()
     partitioned = partition_blocks(all_blocks)
     anomaly_summaries: list[AnomalySummary] = collect_anomalies(all_blocks)
     grouped_anomalies = group_anomalies_by_audience(anomaly_summaries)
     logger.info(
-        "phase 4 (aggregation) complete: audiences=%d total_anomalies=%d elapsed=%.3fs",
+        "aggregation complete: audiences=%d total_anomalies=%d elapsed=%.3fs",
         len(partitioned),
         len(anomaly_summaries),
         time.monotonic() - phase_start,
     )
 
-    # Phase 5 — assembly. The three sector assemblies and the CR brief
+    # Assembly. The three sector assemblies and the CR brief
     # are independent (each reads its own audience slice of the same
     # block list), so they fan out via asyncio.gather instead of
     # serializing through a per-audience loop.
@@ -1320,7 +1324,7 @@ async def run_external_distillation(
         invocation_id,
     )
     logger.info(
-        "phase 5 (assembly) complete: elapsed=%.3fs",
+        "assembly complete: elapsed=%.3fs",
         time.monotonic() - phase_start,
     )
 
@@ -1339,11 +1343,11 @@ async def run_external_distillation(
         all_blocks=tuple(all_blocks),
     )
 
-    # Phase 6 — invocation-archive write plus calibration-state snapshot.
+    # Invocation-archive write plus calibration-state snapshot.
     # The archive write emits the markdown documents; the snapshot write
     # emits the deterministic JSON the feedback loop and command center
-    # consume per story 17. Both writes share phase 6's fail-closed
-    # semantics — any failure aborts the invocation.
+    # consume per story 17. Both writes share the invocation-archive step's
+    # fail-closed semantics — any failure aborts the invocation.
     phase_start = time.monotonic()
     archive_dir = _invocation_archive_dir(
         archive_root=archive_root, as_of=as_of, invocation_id=invocation_id
@@ -1364,14 +1368,16 @@ async def run_external_distillation(
     # ALP-540: replace the bootstrap-seed scaffold at the archive root with
     # the operator-facing data-health summary. The seed (written by
     # ``_persist_data_calibration_snapshot`` at invocation start) is the
-    # ``{}`` placeholder the operator sees in failed e2e runs — Phase 6
-    # overwrites it with the structured per-state summary.
+    # ``{}`` placeholder the operator sees in failed e2e runs — the
+    # invocation-archive write step overwrites it with the structured
+    # per-state summary.
     #
     # ALP-709: compute inter-baseline sentiment inflow telemetry against
     # the same session + ticker_scope the qualitative loader will see
-    # downstream. Phase 1 has already refreshed the sentiment baselines,
-    # so the (prior, latest) windows the helper reports against match the
-    # windows ``load_sentiment_aggregates`` would compute against.
+    # downstream. The class-B refresh step has already refreshed the
+    # sentiment baselines, so the (prior, latest) windows the helper
+    # reports against match the windows ``load_sentiment_aggregates``
+    # would compute against.
     sentiment_inflow = await asyncio.to_thread(
         compute_sentiment_inflow_metrics,
         session,
@@ -1386,12 +1392,12 @@ async def run_external_distillation(
         sentiment_inflow=sentiment_inflow,
     )
     logger.info(
-        "phase 6 (archive write) complete: dir=%s elapsed=%.3fs",
+        "invocation-archive write complete: dir=%s elapsed=%.3fs",
         archive_dir,
         time.monotonic() - phase_start,
     )
 
-    # Phase 7 — brief-store population.
+    # Brief-store population.
     phase_start = time.monotonic()
     inserted_brief_rows = await asyncio.to_thread(
         _populate_brief_store,
@@ -1400,7 +1406,7 @@ async def run_external_distillation(
         invocation_id=invocation_id,
     )
     logger.info(
-        "phase 7 (brief-store population) complete: rows=%d elapsed=%.3fs",
+        "brief-store population complete: rows=%d elapsed=%.3fs",
         inserted_brief_rows,
         time.monotonic() - phase_start,
     )

@@ -4,12 +4,12 @@ Extracts the as-built sync/async method surface of
 :class:`~alphamind.execution.broker_adapter.queries.AccountStateQueries` and
 :class:`~alphamind.execution.broker_adapter.corporate_actions_queries.CorporateActionsQueries`
 into runtime-checkable Protocols. The scheduler's
-``gather_phase1_inputs`` depends on these Protocols, not the concrete
+``gather_fill_collection_inputs`` depends on these Protocols, not the concrete
 classes, so the debug-e2e package can substitute log-only stand-ins (story
 02b) without monkey-patching module-level factory seams (story 03b's
 ``_build_*`` hooks).
 
-Only the methods ``gather_phase1_inputs`` consumes go into each Protocol
+Only the methods ``gather_fill_collection_inputs`` consumes go into each Protocol
 surface (P9 — small Protocol surface).
 """
 
@@ -33,7 +33,7 @@ __all__ = ["AccountStateQueriesP", "CorporateActionsQueriesP"]
 
 @runtime_checkable
 class AccountStateQueriesP(Protocol):
-    """Sync read-only account/positions surface gather_phase1_inputs consumes.
+    """Sync read-only account/positions surface gather_fill_collection_inputs consumes.
 
     Mirrors the as-built methods on
     :class:`~alphamind.execution.broker_adapter.queries.AccountStateQueries`
@@ -59,7 +59,7 @@ class AccountStateQueriesP(Protocol):
 
 @runtime_checkable
 class CorporateActionsQueriesP(Protocol):
-    """Async v1beta1 corporate-actions surface the Phase 1 fetcher consumes.
+    """Async v1beta1 corporate-actions surface the fill collection fetcher consumes.
 
     Mirrors the as-built method on
     :class:`~alphamind.execution.broker_adapter.corporate_actions_queries.CorporateActionsQueries`.

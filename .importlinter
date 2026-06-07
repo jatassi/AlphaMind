@@ -87,7 +87,7 @@ ignore_imports =
     alphamind.distillation.calibration -> sqlalchemy
     alphamind.distillation.contract_scope -> sqlalchemy
     alphamind.distillation.orchestrator -> sqlalchemy
-    # ALP-709: orchestrator phase-6 invokes
+    # ALP-709: the invocation-archive write step invokes
     # ``analysis.qualitative_research.loaders.compute_sentiment_inflow_metrics``
     # so the operator data-health snapshot carries inter-baseline news-flow
     # telemetry. The helper reuses three private loader functions
@@ -238,9 +238,9 @@ ignore_imports =
 
 # Forbidden contract (ALP-467 pilot): pure-compute cores split out by the
 # distillation compute/load boundary pilot must never import sqlalchemy.
-# This is the architectural seam that lets Phase 2 of the orchestrator run
-# ``asyncio.TaskGroup``-parallel over ``asyncio.to_thread(compute_*)`` calls
-# — no shared mutable session means no "Session is already flushing"
+# This is the architectural seam that lets the per-category indicator compute
+# step run ``asyncio.TaskGroup``-parallel over ``asyncio.to_thread(compute_*)``
+# calls — no shared mutable session means no "Session is already flushing"
 # InvalidRequestError. Compute modules expand here as further sub-modules
 # split out per the multi-quarter propagation tracked as ALP-467
 # follow-ups (q6 / q7 / qualitative / remaining q3 categories).
@@ -375,7 +375,7 @@ layers =
 # OMS-only write-path subpackage from ``execution/state_persistence/
 # write_paths/`` to ``execution/write_paths/`` since nothing else
 # remained beneath ``state_persistence/``. The ``persist ->
-# execution.write_paths.phase2`` edge remains the load-bearing
+# execution.write_paths.command_execution`` edge remains the load-bearing
 # execution-side wiring entry.
 #
 # ALP-482 audit conclusion: keep this package here rather than hoisting
@@ -384,7 +384,7 @@ layers =
 # carry PM request-routing logic alongside the wiring. The runtime
 # ``decision -> execution`` edges are two top-level imports
 # (``process -> execution.oms.command_ids``,
-# ``persist -> execution.write_paths.phase2``) plus four function-local
+# ``persist -> execution.write_paths.command_execution``) plus four function-local
 # fallbacks inside ``dispatch.py``; the remaining ``submit_envelope.*``
 # entries below are ``TYPE_CHECKING``-only and carry no runtime cost.
 # These ``submit_envelope.*`` exceptions are permanent architectural
@@ -410,7 +410,7 @@ ignore_imports =
     alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.broker_adapter.errors
     alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.broker_adapter.order_options
     alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.oms.broker_dispatch
-    alphamind.decision.portfolio_manager.submit_envelope.persist -> alphamind.execution.write_paths.phase2
+    alphamind.decision.portfolio_manager.submit_envelope.persist -> alphamind.execution.write_paths.command_execution
     alphamind.decision.portfolio_manager.submit_envelope.process -> alphamind.execution.oms.command_ids
     # ALP-711 — ``submit_envelope.server.build_broker_routing_kwargs`` lazily
     # constructs the Alpaca-backed TradingClient + AccountStateQueries inside
@@ -432,12 +432,12 @@ ignore_imports =
     alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.broker_adapter.quotes
     # ALP-836 — atomicity-first order persistence. ``submit_envelope.dispatch``
     # interleaves the per-command pre-commit / backfill / teardown
-    # (``execution.write_paths.phase2.atomic``) with the broker dispatch in the PM
+    # (``execution.write_paths.command_execution.atomic``) with the broker dispatch in the PM
     # composition root, and ``submit_envelope.server`` finalizes the envelope-level
-    # audit (pm_decision + phase2 stamp) via the same module after the loop. Same
-    # permanent composition-root carve-out as the ``persist -> ...phase2`` edge.
-    alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.write_paths.phase2.atomic
-    alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.write_paths.phase2.atomic
+    # audit (pm_decision + command_execution stamp) via the same module after the loop. Same
+    # permanent composition-root carve-out as the ``persist -> ...command_execution`` edge.
+    alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.write_paths.command_execution.atomic
+    alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.write_paths.command_execution.atomic
     # ALP-470 hoisted ``state.config`` out of execution but its
     # ``CorporateActionsConfig`` field still reaches into
     # ``execution.corporate_actions.config`` (the per-feature CA knobs).
@@ -487,8 +487,8 @@ type = forbidden
 source_modules =
     alphamind.scheduler.__main__
     alphamind.scheduler.orchestrator
-    alphamind.scheduler.phase1_inputs
-    alphamind.scheduler.phase2_dispatch
+    alphamind.scheduler.fill_collection_inputs
+    alphamind.scheduler.command_execution_dispatch
     alphamind.scheduler.run_context
     alphamind.scheduler.driver
     alphamind.scheduler.emergency

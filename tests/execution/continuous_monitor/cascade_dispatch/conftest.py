@@ -36,7 +36,7 @@ from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
     DeferralEvent,
 )
 from alphamind.execution.guardrail_enforcement.orchestrator import (
-    Phase1EnforcementResult,
+    ActiveGuardrails,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -197,7 +197,7 @@ def make_breach_config() -> BreachBehaviorConfig:
 
 def make_breach_loop_result(*, evaluations: tuple[RuleEvaluation, ...]) -> BreachLoopResult:
     immediate = tuple(e for e in evaluations if e.classification is BreachResponse.immediate_engine)
-    phase1_result = Phase1EnforcementResult(
+    guardrails = ActiveGuardrails(
         active_risk_parameters=make_active_risk_parameters(
             regime=RegimeLabel.ELEVATED,
             rule_values={},
@@ -206,7 +206,7 @@ def make_breach_loop_result(*, evaluations: tuple[RuleEvaluation, ...]) -> Breac
     )
     return BreachLoopResult(
         as_of=NOW,
-        phase1_result=phase1_result,
+        active_guardrails=guardrails,
         rule_evaluations=evaluations,
         halt_state=None,
         immediate_action_breaches=immediate,

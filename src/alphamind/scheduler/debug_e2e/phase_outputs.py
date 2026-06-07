@@ -4,7 +4,8 @@ Story ALP-690. Provides:
 
 * ``SDK_PHASE_NAMES`` — frozenset of the 9 SDK-phase names that produce
   persisted outputs.  Deterministic phases (``snapshot_assembly``,
-  ``phase1``, etc.) are excluded per parent decision (H).
+  ``fill_collection``, etc.) are excluded because they are always
+  re-computed on resume (per design doc § 4).
 * ``phase_output_path`` — compute the canonical on-disk path for a given
   phase's output file.
 * ``write_phase_output`` — atomically serialize a Pydantic model to the
@@ -36,9 +37,9 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 #: Exactly the 9 SDK phases that write ``phase_outputs/<phase>.json`` on
-#: completion.  Deterministic phases (``phase1``, ``snapshot_assembly``,
-#: ``distillation``, ``pre_processor``, ``phase2``) are excluded — they are
-#: always re-computed on resume (per design doc § 4).
+#: completion.  Deterministic phases (``fill_collection``, ``snapshot_assembly``,
+#: ``distillation``, ``pre_processor``, ``command_execution``) are excluded — they
+#: are always re-computed on resume (per design doc § 4).
 SDK_PHASE_NAMES: frozenset[str] = frozenset(
     {
         "tech_semis",

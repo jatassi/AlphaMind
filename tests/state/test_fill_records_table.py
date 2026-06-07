@@ -2,7 +2,7 @@
 
 The story defines an append-only Tier-2 lifecycle table: one row per fill event
 with a ``processing_status`` flag (unprocessed / processed / quarantined). The
-Phase 1 fill-integration write path queries unprocessed fills, integrates them,
+The fill collection fill-integration write path queries unprocessed fills, integrates them,
 and marks them processed inside the same transaction that mutates positions /
 orders / cash. The deduplication contract is enforced by a UNIQUE composite key
 on ``(order_id, fill_timestamp, fill_quantity, fill_price)``.
@@ -117,8 +117,8 @@ def _invocation_record(invocation_id: str = "inv-1") -> InvocationRecord:
         invocation_id=invocation_id,
         process_lifetime_id="proc-1",
         start_at="2026-05-07T14:30:00Z",
-        phase1_completed_at=None,
-        phase2_completed_at=None,
+        fill_collection_completed_at=None,
+        command_execution_completed_at=None,
         trigger_type="scheduled",
         trigger_source="morning-cron",
         trigger_reason="0 9 * * 1-5",

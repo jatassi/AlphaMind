@@ -1,6 +1,6 @@
 """Tests for ``compute_q6_blocks`` — the upstream-data wrapper around ``assemble_q6_blocks``.
 
-Story scope: close the q6 row of ``_PHASE_2_PLACEHOLDER_GAPS`` by adding a
+Story scope: close the q6 row of ``_CATEGORY_COMPUTE_PLACEHOLDER_GAPS`` by adding a
 single entry point the orchestrator can call. The wrapper queries
 ``macro_observations`` (FRED yield curve, breakevens, dollar series, funding
 proxies) plus ``event_calendar`` / ``earnings_event_details`` (surprise

@@ -2,7 +2,7 @@
 
 ADR-0004 evicts daily borrow-cost accounting from the always-on monitor; ADR-0005
 makes the pipeline the single writer. :func:`run_borrow_accrual` runs inside the
-orchestrator's Phase-1 write transaction — reusing the invocation's open session
+orchestrator's fill-collection write transaction — reusing the invocation's open session
 and ``invocation_id`` (no per-tick ``InvocationRow`` mint, no once-per-day timer).
 
 Exercised against a real in-memory SQLite DB (the sanctioned DB boundary): seed
@@ -96,8 +96,8 @@ def _invocation_row() -> InvocationRow:
         invocation_id=_INVOCATION_ID,
         process_lifetime_id=_PROCESS_LIFETIME_ID,
         start_at=_NOW.isoformat().replace("+00:00", "Z"),
-        phase1_completed_at=None,
-        phase2_completed_at=None,
+        fill_collection_completed_at=None,
+        command_execution_completed_at=None,
         trigger_type="scheduled",
         trigger_source="market_open",
         trigger_reason="scheduled_run",
@@ -305,7 +305,7 @@ class TestUncoveredShortDoesNotAbort:
     """ALP-862: an OPEN SHORT whose ticker has no borrow rate accrues 0.0, not a rollback.
 
     The account-activities poll opens a SHORT equity leg from a forced assignment
-    earlier in the same Phase-1 write unit; ``run_borrow_accrual`` runs right
+    earlier in the same fill-collection write unit; ``run_borrow_accrual`` runs right
     after, in the same transaction. If the ticker is uncovered (no
     ``borrow_cost_daily`` row), the accrual must accrue 0.0 rather than raise —
     raising would roll back the just-opened short, re-stranding the broker short.

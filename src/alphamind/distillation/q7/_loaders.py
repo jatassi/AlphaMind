@@ -2,10 +2,10 @@
 
 The compute path is :func:`assemble_q7_blocks_from_inputs` — a pure
 function over :class:`Q7Inputs` (frozen). This module is the only place
-Q7 reaches the database for the Phase 2 dispatch: it composes the
-session-bound reads for each sub-module's pre-loaded inputs, runs the
-pure compute, and performs the intra-sector divergence-event writes
-synchronously under the shared session.
+Q7 reaches the database for the per-category indicator compute dispatch:
+it composes the session-bound reads for each sub-module's pre-loaded
+inputs, runs the pure compute, and performs the intra-sector
+divergence-event writes synchronously under the shared session.
 
 After this loader returns, :func:`assemble_q7_blocks_from_inputs` consumes
 :class:`Q7Inputs` without further DB access — the parallel pure compute

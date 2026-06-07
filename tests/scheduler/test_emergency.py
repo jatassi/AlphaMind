@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.run_types import RunType
 from alphamind.config.models.venue import VenueConfig
-from alphamind.execution.write_paths.phase1 import Phase1Summary
+from alphamind.execution.write_paths.fill_collection import FillCollectionSummary
 from alphamind.portfolio_state.events.activity_log import (
     EmergencyInvocationRequestedDetail,
     EventGroup,
@@ -60,14 +60,14 @@ def _make_invocation_record(
     invocation_id: str,
     start_at: str,
     trigger_type: str,
-    phase2_completed_at: str | None,
+    command_execution_completed_at: str | None,
 ) -> InvocationRecord:
     return InvocationRecord(
         invocation_id=invocation_id,
         process_lifetime_id=_PROCESS_LIFETIME_ID,
         start_at=start_at,
-        phase1_completed_at=None,
-        phase2_completed_at=phase2_completed_at,
+        fill_collection_completed_at=None,
+        command_execution_completed_at=command_execution_completed_at,
         trigger_type=trigger_type,  # type: ignore[arg-type]
         trigger_source="test",
         trigger_reason="seed",
@@ -152,7 +152,7 @@ def _make_invocation_summary(
         trigger_type="emergency",
         trigger_source="continuous_monitor",
         firing_run_type=RunType.emergency,
-        phase1_summary=Phase1Summary(
+        fill_collection_summary=FillCollectionSummary(
             fills_processed=0,
             fills_quarantined=0,
             ca_activities_processed=0,
@@ -204,7 +204,7 @@ async def _seed_emergency_entry(
                     invocation_id=_BOOTSTRAP_INV_ID,
                     start_at="2026-05-07T14:00:00Z",
                     trigger_type="manual",
-                    phase2_completed_at=None,
+                    command_execution_completed_at=None,
                 )
             )
         )
@@ -225,16 +225,16 @@ async def _seed_completed_emergency_invocation(
     factory: async_sessionmaker[AsyncSession],
     *,
     invocation_id: str,
-    phase2_completed_at: datetime,
+    command_execution_completed_at: datetime,
 ) -> None:
     """Insert a prior emergency invocation that completed at the given UTC time."""
-    iso = phase2_completed_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    iso = command_execution_completed_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
     record = InvocationRecord(
         invocation_id=invocation_id,
         process_lifetime_id=_PROCESS_LIFETIME_ID,
         start_at=iso,
-        phase1_completed_at=iso,
-        phase2_completed_at=iso,
+        fill_collection_completed_at=iso,
+        command_execution_completed_at=iso,
         trigger_type="emergency",
         trigger_source="continuous_monitor",
         trigger_reason="earlier emergency",
@@ -476,7 +476,7 @@ class TestCooldown:
         await _seed_completed_emergency_invocation(
             async_factory,
             invocation_id="inv-prev-emergency",
-            phase2_completed_at=datetime.now(UTC) - timedelta(minutes=5),
+            command_execution_completed_at=datetime.now(UTC) - timedelta(minutes=5),
         )
 
         recorder = _RunInvocationRecorder()
@@ -513,7 +513,7 @@ class TestCooldown:
         await _seed_completed_emergency_invocation(
             async_factory,
             invocation_id="inv-prev-emergency",
-            phase2_completed_at=datetime.now(UTC) - timedelta(minutes=5),
+            command_execution_completed_at=datetime.now(UTC) - timedelta(minutes=5),
         )
 
         recorder = _RunInvocationRecorder()

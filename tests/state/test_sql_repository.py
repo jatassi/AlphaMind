@@ -136,7 +136,7 @@ from alphamind.state.tables.theses_codec import (
 # ---------------------------------------------------------------------------
 
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
-_PHASE1_AT = _NOW - timedelta(seconds=30)
+_FILL_COLLECTION_AT = _NOW - timedelta(seconds=30)
 _PRIOR_START = _NOW - timedelta(hours=1)
 _INV_ID = "inv-2026-05-08T12:00:00Z-aaaa"
 _PRIOR_INV_ID = "inv-2026-05-08T11:00:00Z-bbbb"
@@ -234,19 +234,19 @@ def _make_invocation_record(
     invocation_id: str = _INV_ID,
     *,
     start_at: datetime = _NOW,
-    phase1_completed_at: datetime | None = _PHASE1_AT,
+    fill_collection_completed_at: datetime | None = _FILL_COLLECTION_AT,
     resolved_config_snapshot_path: str = "/tmp/provenance/inv/resolved.json",
 ) -> InvocationRecord:
     return InvocationRecord(
         invocation_id=invocation_id,
         process_lifetime_id=_PROCESS_ID,
         start_at=start_at.isoformat().replace("+00:00", "Z"),
-        phase1_completed_at=(
+        fill_collection_completed_at=(
             None
-            if phase1_completed_at is None
-            else phase1_completed_at.isoformat().replace("+00:00", "Z")
+            if fill_collection_completed_at is None
+            else fill_collection_completed_at.isoformat().replace("+00:00", "Z")
         ),
-        phase2_completed_at=None,
+        command_execution_completed_at=None,
         trigger_type="scheduled",
         trigger_source="cron",
         trigger_reason="0 9 * * 1-5",
@@ -1360,7 +1360,7 @@ async def test_get_current_invocation_metadata_returns_committed_metadata(
     result = repo.get_current_invocation_metadata()
 
     assert result.invocation_id == _INV_ID
-    assert result.phase1_committed_at == _PHASE1_AT
+    assert result.fill_collection_committed_at == _FILL_COLLECTION_AT
     # ``pipeline_invocation_started_at`` is left None at snapshot assembly
     # time per the design (see ``PortfolioStateSnapshot`` field docstring
     # + the archived 04a-master-snapshot spec). Populating it from the
@@ -1371,13 +1371,13 @@ async def test_get_current_invocation_metadata_returns_committed_metadata(
     assert result.pipeline_invocation_started_at is None
 
 
-async def test_get_current_invocation_metadata_raises_when_no_completed_fallback_exists_null_phase1(
+async def test_get_current_invocation_metadata_raises_no_completed_fallback_null_fill_collection(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    # Only a NULL-phase1 invocation exists — no completed fallback, so raises.
+    # Only a NULL-fill_collection invocation exists — no completed fallback, so raises.
     _, factory = db
     await _seed_minimal_invocation(
-        factory, invocation=_make_invocation_record(phase1_completed_at=None)
+        factory, invocation=_make_invocation_record(fill_collection_completed_at=None)
     )
 
     repo = _build_repo(factory)
@@ -1399,23 +1399,27 @@ async def test_get_current_invocation_metadata_raises_when_no_completed_fallback
         repo.get_current_invocation_metadata()
 
 
-async def test_get_current_invocation_metadata_falls_back_to_completed_when_current_is_null_phase1(
+async def test_get_current_invocation_metadata_falls_back_to_completed_null_fill_collection(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    # Seed a completed prior invocation, then a NULL-phase1 current invocation
-    # (simulating a scheduler pause before Phase-1 commit).
+    # Seed a completed prior invocation, then a NULL-fill_collection current invocation
+    # (simulating a scheduler pause before fill_collection commit).
     _, factory = db
     prior = _make_invocation_record(
-        invocation_id=_PRIOR_INV_ID, start_at=_PRIOR_START, phase1_completed_at=_PHASE1_AT
+        invocation_id=_PRIOR_INV_ID,
+        start_at=_PRIOR_START,
+        fill_collection_completed_at=_FILL_COLLECTION_AT,
     )
     await _seed_minimal_invocation(factory, invocation=prior)
-    await _seed_minimal_invocation_extra(factory, _make_invocation_record(phase1_completed_at=None))
+    await _seed_minimal_invocation_extra(
+        factory, _make_invocation_record(fill_collection_completed_at=None)
+    )
 
     repo = _build_repo(factory)
     result = repo.get_current_invocation_metadata()
 
     assert result.invocation_id == _PRIOR_INV_ID
-    assert result.phase1_committed_at == _PHASE1_AT
+    assert result.fill_collection_committed_at == _FILL_COLLECTION_AT
     assert result.pipeline_invocation_started_at is None
 
 
@@ -1426,7 +1430,9 @@ async def test_get_current_invocation_metadata_falls_back_to_completed_when_curr
     # which has no row — verifies the missing-row fallback path.
     _, factory = db
     prior = _make_invocation_record(
-        invocation_id=_PRIOR_INV_ID, start_at=_PRIOR_START, phase1_completed_at=_PHASE1_AT
+        invocation_id=_PRIOR_INV_ID,
+        start_at=_PRIOR_START,
+        fill_collection_completed_at=_FILL_COLLECTION_AT,
     )
     await _seed_minimal_invocation(factory, invocation=prior)
 
@@ -1434,7 +1440,7 @@ async def test_get_current_invocation_metadata_falls_back_to_completed_when_curr
     result = repo.get_current_invocation_metadata()
 
     assert result.invocation_id == _PRIOR_INV_ID
-    assert result.phase1_committed_at == _PHASE1_AT
+    assert result.fill_collection_committed_at == _FILL_COLLECTION_AT
 
 
 async def test_get_prior_invocation_context_first_invocation_returns_none(
@@ -1448,7 +1454,7 @@ async def test_get_prior_invocation_context_first_invocation_returns_none(
 
     assert result.prior_invocation_id is None
     assert result.prior_active_risk_parameters is None
-    assert result.prior_phase1_committed_at is None
+    assert result.prior_fill_collection_committed_at is None
 
 
 async def test_get_prior_invocation_context_returns_most_recent_prior(
@@ -1473,7 +1479,7 @@ async def test_get_prior_invocation_context_returns_most_recent_prior(
 
     assert result.prior_invocation_id == _PRIOR_INV_ID
     assert result.prior_active_risk_parameters == prior_params
-    assert result.prior_phase1_committed_at == _PHASE1_AT
+    assert result.prior_fill_collection_committed_at == _FILL_COLLECTION_AT
 
 
 async def test_get_prior_invocation_context_skips_maintenance_tick(
@@ -1485,7 +1491,7 @@ async def test_get_prior_invocation_context_skips_maintenance_tick(
     but never resolve a config, so their ``resolved_config_snapshot_path`` is
     the empty string. The most-recent prior for a pipeline run is typically
     that evening's tick; selecting it and handing its empty path to the prior
-    provider crashed Phase 1. Selection must skip it and anchor on the most
+    provider crashed fill collection. Selection must skip it and anchor on the most
     recent invocation that actually ran the pipeline.
     """
     _, factory = db
@@ -1498,7 +1504,7 @@ async def test_get_prior_invocation_context_skips_maintenance_tick(
     maintenance_tick = _make_invocation_record(
         invocation_id="inv-2026-05-08T11:30:00Z-tick",
         start_at=_NOW - timedelta(minutes=90),
-        phase1_completed_at=None,
+        fill_collection_completed_at=None,
         resolved_config_snapshot_path="",
     )
     current = _make_invocation_record()
@@ -1884,7 +1890,7 @@ async def test_assemble_snapshot_against_sql_repo_produces_populated_snapshot(
         pm_decision_log_sliding_window_invocations=5,
         thesis_resolutions_lookback_trading_days=10,
         thesis_quality_aggregates_trailing_windows_days=(5, 20),
-        snapshot_freshness_max_phase1_to_snapshot_seconds=300.0,
+        snapshot_freshness_max_fill_collection_to_snapshot_seconds=300.0,
         snapshot_freshness_max_price_age_seconds=60.0,
         snapshot_freshness_max_option_price_age_seconds=300.0,
     )
@@ -1912,7 +1918,7 @@ async def test_assemble_snapshot_against_sql_repo_produces_populated_snapshot(
     snap = assembled.snapshot
 
     assert snap.invocation_id == _INV_ID
-    assert snap.phase1_committed_at == _PHASE1_AT
+    assert snap.fill_collection_committed_at == _FILL_COLLECTION_AT
     assert {p.position_id for p in snap.open_positions} == {"pos-1"}
     assert {p.position_id for p in snap.pending_positions} == {"pos-pending"}
     assert {t.thesis_id for t in snap.active_theses} == {"thesis-1"}
@@ -1929,7 +1935,7 @@ async def test_assemble_snapshot_under_paused_invocation_uses_fallback_metadata(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """Breach-loop integration: assemble_snapshot succeeds when the bound invocation
-    is paused (NULL phase1_completed_at) by falling back to the prior completed row.
+    is paused (NULL fill_collection_completed_at) by falling back to the prior completed row.
     AC #2 from ALP-769."""
     from alphamind.portfolio_state import PortfolioStateConfig
     from alphamind.portfolio_state.assembler import assemble_snapshot
@@ -1940,13 +1946,17 @@ async def test_assemble_snapshot_under_paused_invocation_uses_fallback_metadata(
 
     _, factory = db
 
-    # Seed a completed prior invocation, then a NULL-phase1 current invocation
+    # Seed a completed prior invocation, then a NULL-fill_collection current invocation
     # that the repo is bound to (simulating a scheduler pause).
     prior = _make_invocation_record(
-        invocation_id=_PRIOR_INV_ID, start_at=_PRIOR_START, phase1_completed_at=_PHASE1_AT
+        invocation_id=_PRIOR_INV_ID,
+        start_at=_PRIOR_START,
+        fill_collection_completed_at=_FILL_COLLECTION_AT,
     )
     await _seed_minimal_invocation(factory, invocation=prior)
-    await _seed_minimal_invocation_extra(factory, _make_invocation_record(phase1_completed_at=None))
+    await _seed_minimal_invocation_extra(
+        factory, _make_invocation_record(fill_collection_completed_at=None)
+    )
     await _seed_cash_ledger(factory)
     await _seed_drawdown_state(factory)
 
@@ -1960,7 +1970,7 @@ async def test_assemble_snapshot_under_paused_invocation_uses_fallback_metadata(
         pm_decision_log_sliding_window_invocations=5,
         thesis_resolutions_lookback_trading_days=10,
         thesis_quality_aggregates_trailing_windows_days=(5, 20),
-        snapshot_freshness_max_phase1_to_snapshot_seconds=300.0,
+        snapshot_freshness_max_fill_collection_to_snapshot_seconds=300.0,
         snapshot_freshness_max_price_age_seconds=60.0,
         snapshot_freshness_max_option_price_age_seconds=300.0,
     )
@@ -1978,6 +1988,6 @@ async def test_assemble_snapshot_under_paused_invocation_uses_fallback_metadata(
     # Snapshot uses the prior completed invocation's metadata — breach_loop
     # continues ticking normally despite the paused current invocation.
     assert snap.invocation_id == _PRIOR_INV_ID
-    assert snap.phase1_committed_at == _PHASE1_AT
+    assert snap.fill_collection_committed_at == _FILL_COLLECTION_AT
     assert snap.open_positions == ()
     assert snap.pending_positions == ()

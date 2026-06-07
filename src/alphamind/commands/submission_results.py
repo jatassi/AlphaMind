@@ -12,7 +12,7 @@ outside the kernel — they sit in :mod:`alphamind.commands` so both
 decision-side producers (the submit_envelope MCP wrapper at
 :mod:`alphamind.decision.portfolio_manager.submit_envelope`) and
 execution-side consumers (:mod:`alphamind.execution.state_persistence
-.write_paths.phase2`, :mod:`alphamind.execution.oms.submit_engine_envelope`)
+.write_paths.command_execution`, :mod:`alphamind.execution.oms.submit_engine_envelope`)
 can import them without re-introducing the decision↔execution cycle that
 ALP-458 eliminated.
 

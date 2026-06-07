@@ -63,10 +63,10 @@ from alphamind.decision.proposal_pre_processor import (
 from alphamind.decision.proposal_pre_processor.models import CombinedSetImpact
 from alphamind.decision.strategist.runner import StrategistResult, run_strategist
 from alphamind.execution.guardrail_enforcement import (
-    compose_phase_1_enforcement,
+    compose_active_guardrails,
     make_active_risk_parameters_provider,
 )
-from alphamind.pipeline._shared import apply_agent_overrides, build_phase1_enforcement_inputs
+from alphamind.pipeline._shared import apply_agent_overrides, build_active_guardrail_inputs
 from alphamind.portfolio_state.consumers.analyst import project_analyst_view
 from alphamind.portfolio_state.consumers.portfolio_manager import (
     SnapshotBackedThesisComponentReader,
@@ -129,8 +129,8 @@ class DecisionPipelineResult:
     directly without re-running any stage.
 
     ``drawdown_tier`` (story ALP-433) is the classified cumulative-drawdown
-    progressive-response tier from the pipeline's Phase 1 composition
-    step. ``None`` when ``drawdown_state.current_drawdown_pct`` is below
+    progressive-response tier from the pipeline's active-guardrails composition.
+    ``None`` when ``drawdown_state.current_drawdown_pct`` is below
     every configured tier trigger; otherwise the deepest active tier the
     classifier resolved. Surfaced here so downstream halt-mode and
     emergency-trigger callers do not redo the classification.
@@ -385,7 +385,7 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
 
     See module docstring for the six-stage sequence. The runner consumes
     a pre-built :class:`AssembledSnapshot` (assembled by the orchestrator
-    between Phase 1 and analysis per the three-transaction model in
+    between fill collection and analysis per the three-transaction model in
     ``docs/design/05-execution-layer/state-persistence.md`` § Snapshot
     isolation) and produces fresh validation-state cells + submit-envelope
     state on every invocation — no module-level state survives between
@@ -404,12 +404,12 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
     per-invocation timestamp the agents stamp into their structured
     outputs.
 
-    Phase 1 enforcement composition (story ALP-433) runs once per call:
+    Active-guardrails composition (story ALP-433) runs once per call:
     the runner reads :class:`DrawdownState` via
-    :func:`build_phase1_enforcement_inputs`, calls
-    :func:`compose_phase_1_enforcement` against
+    :func:`build_active_guardrail_inputs`, calls
+    :func:`compose_active_guardrails` against
     *regime_output* + *progressive_tiers*, and uses the resulting
-    :class:`Phase1EnforcementResult` to (a) override the snapshot's
+    :class:`ActiveGuardrails` to (a) override the snapshot's
     ``active_risk_parameters`` with the composed parameter set (so every
     downstream agent reads the same canonical view) and (b) surface
     ``drawdown_tier`` on the bundled result. The same
@@ -428,28 +428,28 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
     # 1. Apply per-trigger overrides → string-keyed mapping for runners.
     resolved_agents = apply_agent_overrides(agents_config, agent_overrides)
 
-    # 2. Compose Phase 1 enforcement once per invocation — read drawdown
+    # 2. Compose active guardrails once per invocation — read drawdown
     # from the repository, apply progressive-tier overrides on top of the
     # regime-resolved parameter set, build the provider adapter so the
     # snapshot assembler / SQL repo factory have one canonical entry point.
     # The provider is awaited inline below so the same closure shape that
     # ``SqlPortfolioStateRepository`` consumes also feeds the snapshot
     # override — one canonical construction path.
-    phase1_regime, phase1_drawdown, phase1_tiers = build_phase1_enforcement_inputs(
+    guardrail_regime, guardrail_drawdown, guardrail_tiers = build_active_guardrail_inputs(
         repository=repository,
         regime_output=regime_output,
         progressive_tiers=progressive_tiers,
     )
-    phase1_result = compose_phase_1_enforcement(
-        regime_output=phase1_regime,
-        drawdown_state=phase1_drawdown,
-        progressive_tiers=phase1_tiers,
+    active_guardrails = compose_active_guardrails(
+        regime_output=guardrail_regime,
+        drawdown_state=guardrail_drawdown,
+        progressive_tiers=guardrail_tiers,
     )
-    active_risk_parameters_provider = make_active_risk_parameters_provider(phase1_result)
+    active_risk_parameters_provider = make_active_risk_parameters_provider(active_guardrails)
     composed_active_risk_parameters = active_risk_parameters_provider()
 
     # 3. Pre-built snapshot threaded from the orchestrator. Re-write the
-    # snapshot's ``active_risk_parameters`` with the composed Phase 1
+    # snapshot's ``active_risk_parameters`` with the composed active-guardrails
     # output so every downstream agent and state-delivery renderer reads
     # the canonical post-override view.
     assembled = assembled_snapshot
@@ -759,7 +759,7 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
         strategist_result=strategist_result,
         pre_processor_bundle=pre_processor_bundle,
         pm_result=pm_result,
-        drawdown_tier=phase1_result.drawdown_tier,
+        drawdown_tier=active_guardrails.drawdown_tier,
     )
 
 

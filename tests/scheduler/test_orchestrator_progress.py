@@ -5,8 +5,8 @@ Drives :func:`alphamind.scheduler.orchestrator.run_invocation` against a
 
 * Every phase boundary the parent issue ALP-493 § (D) enumerates (excluding
   ``seed`` — story 04 emits that one) is recorded.
-* The orchestrator emits ``phase_start`` / ``phase_done`` for ``phase1``,
-  ``snapshot_assembly``, and ``phase2``.
+* The orchestrator emits ``phase_start`` / ``phase_done`` for ``fill_collection``,
+  ``snapshot_assembly``, and ``command_execution``.
 * The progress emitter is correctly threaded into ``run_analysis_pipeline``
   and ``run_decision_pipeline`` — both stubs receive the same emitter the
   orchestrator constructed from ``context.debug_e2e.emitter_factory`` and
@@ -39,7 +39,7 @@ from alphamind.config.models.run_types import RunType
 # Side-effect import to break the submit_envelope_mcp ↔ portfolio_manager
 # circular import: PMEnvelope first, then submit_envelope_mcp.
 from alphamind.decision.portfolio_manager.models import PMEnvelope  # noqa: F401
-from alphamind.execution.write_paths.phase1 import Phase1Summary
+from alphamind.execution.write_paths.fill_collection import FillCollectionSummary
 from alphamind.persistence.session import (
     make_engine,
     make_session_factory,
@@ -103,15 +103,15 @@ def _make_context(
     )
 
 
-def _make_phase1_inputs(*, staleness_flag: bool = False) -> Any:
-    """Minimal ``Phase1Inputs`` with no positions / no CA activities."""
+def _make_fill_collection_inputs(*, staleness_flag: bool = False) -> Any:
+    """Minimal ``FillCollectionInputs`` with no positions / no CA activities."""
     from alphamind.risk_guardrails.guardrail_evaluation import (
         FixtureIvProvider,
         MarketInputs,
     )
-    from alphamind.scheduler.phase1_inputs import Phase1Inputs
+    from alphamind.scheduler.fill_collection_inputs import FillCollectionInputs
 
-    return Phase1Inputs(
+    return FillCollectionInputs(
         ca_activities=(),
         alpaca_positions=(),
         alpaca_account=None,
@@ -125,8 +125,8 @@ def _make_phase1_inputs(*, staleness_flag: bool = False) -> Any:
     )
 
 
-def _make_phase1_summary() -> Phase1Summary:
-    return Phase1Summary(
+def _make_fill_collection_summary() -> FillCollectionSummary:
+    return FillCollectionSummary(
         fills_processed=0,
         fills_quarantined=0,
         ca_activities_processed=0,
@@ -170,8 +170,8 @@ def _singleton_records() -> tuple[Any, Any]:
 async def _seed_singletons_via_handle(handle: Any) -> None:
     """Mirror ``process_unprocessed_fills``'s singleton-seeding side effects.
 
-    Joins the Phase 1 transaction so the singletons commit together with
-    ``phase1_completed_at`` — same shape as the helper in
+    Joins the fill collection transaction so the singletons commit together with
+    ``fill_collection_completed_at`` — same shape as the helper in
     ``test_orchestrator.py``.
     """
     from alphamind.state.tables.cash_ledger_codec import cash_ledger_record_to_row
@@ -338,17 +338,17 @@ def _patch_no_op_pipeline_with_progress_emit(monkeypatch: pytest.MonkeyPatch) ->
     from alphamind.scheduler import orchestrator as module
 
     async def _gather_stub(**_kw: Any) -> Any:
-        return _make_phase1_inputs()
+        return _make_fill_collection_inputs()
 
-    async def _process_stub(*args: Any, **_kw: Any) -> Phase1Summary:
+    async def _process_stub(*args: Any, **_kw: Any) -> FillCollectionSummary:
         from alphamind.state.invocation_context.context import (
             stamp_phase_completion,
         )
 
         handle = args[0]
         await _seed_singletons_via_handle(handle)
-        await stamp_phase_completion(handle, column="phase1_completed_at")
-        return _make_phase1_summary()
+        await stamp_phase_completion(handle, column="fill_collection_completed_at")
+        return _make_fill_collection_summary()
 
     async def _analysis_stub(**kw: Any) -> Any:
         progress = kw["progress"]
@@ -361,27 +361,27 @@ def _patch_no_op_pipeline_with_progress_emit(monkeypatch: pytest.MonkeyPatch) ->
         return _make_decision_result()
 
     async def _dispatch_stub(**_kw: Any) -> Any:
-        from alphamind.scheduler.phase2_dispatch import Phase2Summary
+        from alphamind.scheduler.command_execution_dispatch import CommandExecutionSummary
 
-        return Phase2Summary(commands_submitted=0, commands_rejected=0)
+        return CommandExecutionSummary(commands_submitted=0, commands_rejected=0)
 
     def _regime_stub(**_kw: Any) -> Any:
         return make_regime_output(now=_NOW)
 
     async def _activities_poll_stub(*_args: Any, **_kw: Any) -> Any:
         # ALP-846 — the activity poll touches the broker; stub it alongside the
-        # other broker callee (gather_phase1_inputs) so this no-op pipeline does
+        # other broker callee (gather_fill_collection_inputs) so this no-op pipeline does
         # not build a live Alpaca client.
         from alphamind.execution.account_activities.poll import PollResult
 
         return PollResult(activities_booked=0, cursor=None)
 
-    monkeypatch.setattr(module, "gather_phase1_inputs", _gather_stub)
+    monkeypatch.setattr(module, "gather_fill_collection_inputs", _gather_stub)
     monkeypatch.setattr(module, "process_unprocessed_fills", _process_stub)
     monkeypatch.setattr(module, "run_account_activities_poll", _activities_poll_stub)
     monkeypatch.setattr(module, "run_analysis_pipeline", _analysis_stub)
     monkeypatch.setattr(module, "run_decision_pipeline", _decision_stub)
-    monkeypatch.setattr(module, "dispatch_phase2", _dispatch_stub)
+    monkeypatch.setattr(module, "dispatch_command_execution", _dispatch_stub)
     monkeypatch.setattr(module, "_resolve_regime_adaptation_for_invocation", _regime_stub)
 
 
@@ -423,7 +423,7 @@ async def test_run_invocation_records_every_phase_boundary(
     dones = {fields["phase"] for kind, fields in emitter.events if kind == "phase_done"}
 
     expected_phases = {
-        "phase1",
+        "fill_collection",
         "snapshot_assembly",
         "distillation",
         "domain_researchers",
@@ -434,7 +434,7 @@ async def test_run_invocation_records_every_phase_boundary(
         "strategist",
         "pre_processor",
         "pm",
-        "phase2",
+        "command_execution",
     }
     assert starts == expected_phases, f"missing phase_start events: {expected_phases - starts}"
     assert dones == expected_phases, f"missing phase_done events: {expected_phases - dones}"
@@ -493,14 +493,14 @@ async def test_run_invocation_records_agents_in_dependency_order(
     )
 
 
-async def test_phase1_done_carries_fills_processed(
+async def test_fill_collection_done_carries_fills_processed(
     async_factory: async_sessionmaker[AsyncSession],
     env_path: Path,
     archive_root: Path,
     db_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``phase_done("phase1")`` carries the ``fills_processed`` field per AC."""
+    """``phase_done("fill_collection")`` carries the ``fills_processed`` field per AC."""
     from alphamind.scheduler.orchestrator import run_invocation
 
     _patch_no_op_pipeline_with_progress_emit(monkeypatch)
@@ -521,22 +521,22 @@ async def test_phase1_done_carries_fills_processed(
         now=_NOW,
     )
 
-    phase1_done = next(
+    fill_collection_done = next(
         fields
         for kind, fields in emitter.events
-        if kind == "phase_done" and fields.get("phase") == "phase1"
+        if kind == "phase_done" and fields.get("phase") == "fill_collection"
     )
-    assert phase1_done["fills_processed"] == 0
+    assert fill_collection_done["fills_processed"] == 0
 
 
-async def test_phase2_done_carries_commands_submitted(
+async def test_command_execution_done_carries_commands_submitted(
     async_factory: async_sessionmaker[AsyncSession],
     env_path: Path,
     archive_root: Path,
     db_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``phase_done("phase2")`` carries the ``commands_submitted`` field per AC."""
+    """``phase_done("command_execution")`` carries the ``commands_submitted`` field per AC."""
     from alphamind.scheduler.orchestrator import run_invocation
 
     _patch_no_op_pipeline_with_progress_emit(monkeypatch)
@@ -557,12 +557,12 @@ async def test_phase2_done_carries_commands_submitted(
         now=_NOW,
     )
 
-    phase2_done = next(
+    command_execution_done = next(
         fields
         for kind, fields in emitter.events
-        if kind == "phase_done" and fields.get("phase") == "phase2"
+        if kind == "phase_done" and fields.get("phase") == "command_execution"
     )
-    assert phase2_done["commands_submitted"] == 0
+    assert command_execution_done["commands_submitted"] == 0
 
 
 async def test_run_invocation_without_debug_e2e_uses_noop_emitter(

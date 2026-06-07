@@ -53,7 +53,7 @@ log = logging.getLogger(__name__)
 
 
 # The capital-floor leg's id form, minted by
-# ``write_paths.phase2.open._capital_floor_bracket_leg`` as
+# ``write_paths.command_execution.open._capital_floor_bracket_leg`` as
 # ``f"{bracket_id}-leg-floor"``. The closer matches the floor by this suffix so
 # cancel-on-monitor-fire targets ONLY the always-on capital floor — never the
 # equity native-bracket children (take-profit ``-leg-target`` / stop
@@ -68,7 +68,7 @@ type InvocationIdProvider = Callable[[], Awaitable[str]]
 # Persists the durable monitor-fired-close ``orders`` row before the broker submit
 # (FS4 / ALP-836 atomic pattern): ``(position, client_order_id)`` → a committed
 # OrderRow keyed by ``client_order_id`` so the returning close fill resolves an
-# ``oms_order_id`` and Phase 1 closes the position. Idempotent on the
+# ``oms_order_id`` and fill collection closes the position. Idempotent on the
 # ``client_order_id``. Production wires the SQL implementation in
 # :mod:`alphamind.execution.continuous_monitor.bracket_stops.wiring`; tests pass a
 # capturing fake (a sanctioned DB boundary).
@@ -190,7 +190,7 @@ async def prepare_bracket_close(
        position.
     3. (FS4 / ALP-836) Persist a durable ``orders`` row keyed by that
        ``client_order_id`` so the returning close fill resolves an
-       ``oms_order_id`` and Phase 1 integrates it (closing the position). Skipped
+       ``oms_order_id`` and fill collection integrates it (closing the position). Skipped
        when no precommitter is wired (legacy callers / unit tests of the
        submit-only path).
 
@@ -248,7 +248,7 @@ async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-ou
     first shrinks that window to near-zero. The residual, irreducible race is a
     floor the broker has ALREADY triggered (matched/partially-filled) by the time
     the cancel arrives: the cancel is best-effort and a benign already-filled / 404
-    is swallowed, the close still goes out, and Phase 1 quarantines the second fill
+    is swallowed, the close still goes out, and fill collection quarantines the second fill
     locally (absorb-on-broker-fire). The cancel is intentionally not awaited as a
     precondition of the submit — a floor-cancel failure must never block the close,
     which is the position's actual exit.

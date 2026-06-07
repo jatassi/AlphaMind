@@ -19,7 +19,7 @@ sweep), position lookup, bracket lookup, Alpaca-side reconciliation.
 ``positions`` / ``brackets`` (``ON DELETE RESTRICT``), matching the
 ``e9d2c4f7b3a1_tighten_state_persistence_fks`` migration. The deferral
 accommodates the orders↔brackets cycle (``brackets.entry_order_id`` points
-back at orders) that Phase 2's OPEN writeback seeds in a single transaction.
+back at orders) that command execution's OPEN writeback seeds in a single transaction.
 """
 
 from __future__ import annotations

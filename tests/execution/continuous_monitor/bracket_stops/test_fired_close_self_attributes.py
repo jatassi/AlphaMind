@@ -360,13 +360,13 @@ class TestFiredLegCloseSelfAttributes:
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         """FS4 — a monitor-fired close that pre-commits a durable ``orders`` row
-        produces a ``fill_records`` row so Phase 1 closes the position.
+        produces a ``fill_records`` row so fill collection closes the position.
 
         With the FS4 fix wired, the closer's pre-submit step persists a durable
         close ``orders`` row keyed by the engine ``client_order_id`` (ALP-836
         atomic pattern). When the close fill returns echoing that id,
         ``persist_fill_report`` resolves the row → ``oms_order_id`` non-None →
-        appends the ``fill_records`` row Phase 1 integrates to close the position.
+        appends the ``fill_records`` row fill collection integrates to close the position.
         Without the durable row (the pre-fix path) the fill lands ONLY in
         ``broker_event_log`` and the position stays phantom-open.
         """
@@ -401,7 +401,7 @@ class TestFiredLegCloseSelfAttributes:
         report = _fill_report_for(close_client_order_id)
         await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
 
-        # FS4 — the close fill produced a fill_records row (Phase 1 will integrate
+        # FS4 — the close fill produced a fill_records row (fill collection will integrate
         # it and close the position). The order_id resolves to the durable
         # pre-committed close row (client_order_id-keyed), not a phantom id.
         fills = await _read_fill_records(session_factory)

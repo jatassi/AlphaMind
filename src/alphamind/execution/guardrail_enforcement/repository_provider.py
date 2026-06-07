@@ -1,4 +1,4 @@
-"""Repository-provider adapter for ``Phase1EnforcementResult``.
+"""Repository-provider adapter for ``ActiveGuardrails``.
 
 Bridges the guardrail-enforcement orchestrator's output to the zero-arg
 callable shape ``SqlPortfolioStateRepository`` expects for its
@@ -18,12 +18,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from alphamind.execution.guardrail_enforcement.orchestrator import Phase1EnforcementResult
+from alphamind.execution.guardrail_enforcement.orchestrator import ActiveGuardrails
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 
 
 def make_active_risk_parameters_provider(
-    result: Phase1EnforcementResult,
+    result: ActiveGuardrails,
 ) -> Callable[[], ActiveRiskParameterSet]:
     """Build the provider callable expected by ``SqlPortfolioStateRepository``.
 

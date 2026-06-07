@@ -4,9 +4,9 @@ How the engine stores state durably and how the ingestion layer queries it. Defi
 
 *Design principle — storage-agnostic logical model:* The schema is logical entities and relationships, not implementation-specific DDL. Any storage engine that supports ACID transactions, indexed queries, and durable writes can implement this model — embedded relational (SQLite), client-server relational (PostgreSQL), or document-oriented stores with transactional guarantees. Storage choice is an implementation decision informed by operational requirements (deployment complexity, concurrency, data volume), not an architectural one.
 
-*Design principle — immediate fill persistence:* Fill events are persisted durably the moment they arrive on Alpaca's `trade_updates` websocket — not buffered in volatile memory and drained later. The continuous monitor writes each incoming fill event as an **unprocessed fill**. The fill is persisted but not yet integrated into position, cash, or P/L state. Phase 1 of each invocation queries for unprocessed fills, processes them into state updates (positions, brackets, cash, activity log), and marks them processed — all within an atomic transaction. Eliminates the risk window where fill data exists only in volatile memory. If the monitor crashes and restarts, no fills are lost — they're already in the durable store, and missed events are recovered via `GET /v2/orders` reconciliation ([broker-adapter.md § Fill stream](broker-adapter.md)). If the OMS process restarts mid-invocation, unprocessed fills wait to be integrated.
+*Design principle — immediate fill persistence:* Fill events are persisted durably the moment they arrive on Alpaca's `trade_updates` websocket — not buffered in volatile memory and drained later. The continuous monitor writes each incoming fill event as an **unprocessed fill**. The fill is persisted but not yet integrated into position, cash, or P/L state. Fill collection at each invocation queries for unprocessed fills, processes them into state updates (positions, brackets, cash, activity log), and marks them processed — all within an atomic transaction. Eliminates the risk window where fill data exists only in volatile memory. If the monitor crashes and restarts, no fills are lost — they're already in the durable store, and missed events are recovered via `GET /v2/orders` reconciliation ([broker-adapter.md § Fill stream](broker-adapter.md)). If the OMS process restarts mid-invocation, unprocessed fills wait to be integrated.
 
-*Design principle — the OMS owns all state integration:* Fills are persisted immediately by the continuous monitor; *integration* into portfolio state is exclusively the OMS's responsibility. The fill persistence path is a narrow, append-only write (one new fill record with a processing status flag). State integration — updating positions, brackets, cash, P/L, activity log — is the OMS's domain and runs only during Phase 1. Preserves the single-writer invariant: the fill records table has two writers (monitor for initial persistence, OMS for marking processed), but all other entities have exactly one writer (the OMS).
+*Design principle — the OMS owns all state integration:* Fills are persisted immediately by the continuous monitor; *integration* into portfolio state is exclusively the OMS's responsibility. The fill persistence path is a narrow, append-only write (one new fill record with a processing status flag). State integration — updating positions, brackets, cash, P/L, activity log — is the OMS's domain and runs only during fill collection. Preserves the single-writer invariant: the fill records table has two writers (monitor for initial persistence, OMS for marking processed), but all other entities have exactly one writer (the OMS).
 
 *Design principle—explicit changelog over snapshot diffing:* Every state mutation carries semantic identity. A position closure from a stop trigger, a PM decision, and a time-based expiration are mechanically identical (quantity goes to zero) but semantically distinct. Generating changelog entries at mutation time preserves this semantic richness. Snapshot diffing detects *that* something changed but not *why*. Since the OMS controls every mutation path, attaching a changelog entry to each mutation is both feasible and cheap. The activity log ([raw state category 5](../01-data-layer/internal/portfolio-state.md)) is a byproduct of mutation, not reconstructed after the fact.
 
@@ -150,18 +150,18 @@ Fill record:
 - Execution venue (live mode)
 - Gateway reference at time of fill
 - **Persistence timestamp:** when this fill record was written to the durable store (immediately upon fill occurrence)
-- **Processing status:** unprocessed (persisted but not yet integrated into state) or processed (fully integrated during Phase 1)
-- **Processing invocation ID:** which pipeline invocation's Phase 1 integrated this fill into state (null while unprocessed)
+- **Processing status:** unprocessed (persisted but not yet integrated into state) or processed (fully integrated during fill collection)
+- **Processing invocation ID:** which pipeline invocation's fill collection integrated this fill into state (null while unprocessed)
 - **Processing timestamp:** when the OMS processed this fill into state updates (null while unprocessed)
-- **Reg T margin attribution:** structured metadata attached during Phase 1 per [regt-margin-attribution.md](regt-margin-attribution.md). Captures pre/post Reg T and portfolio-margin-equivalent requirements, marginal consumption deltas, the `regt_excess_over_pm` headline, and `pm_model_version`. Null on fills predating the attribution module.
+- **Reg T margin attribution:** structured metadata attached during fill collection per [regt-margin-attribution.md](regt-margin-attribution.md). Captures pre/post Reg T and portfolio-margin-equivalent requirements, marginal consumption deltas, the `regt_excess_over_pm` headline, and `pm_model_version`. Null on fills predating the attribution module.
 
-The two-timestamp design (persistence vs. processing) captures the full lifecycle: a fill at 12:15 is persisted at 12:15 (persistence timestamp), sits unprocessed until the 1:30 invocation's Phase 1, and integrates at 1:30 (processing timestamp, invocation ID). Fill timestamp is authoritative for P/L and position age; persistence timestamp confirms durability; processing timestamp and invocation ID provide the integration audit trail.
+The two-timestamp design (persistence vs. processing) captures the full lifecycle: a fill at 12:15 is persisted at 12:15 (persistence timestamp), sits unprocessed until the 1:30 invocation's fill collection, and integrates at 1:30 (processing timestamp, invocation ID). Fill timestamp is authoritative for P/L and position age; persistence timestamp confirms durability; processing timestamp and invocation ID provide the integration audit trail.
 
-Fill records are the authoritative source for reconstructing execution history. Position cost basis, realized P/L, and fill statistics are all derivable from the fill record set for a given position. The processing status field makes Phase 1 idempotent: if Phase 1 fails mid-transaction and rolls back, fills remain unprocessed and are picked up on the next attempt.
+Fill records are the authoritative source for reconstructing execution history. Position cost basis, realized P/L, and fill statistics are all derivable from the fill record set for a given position. The processing status field makes fill collection idempotent: if fill collection fails mid-transaction and rolls back, fills remain unprocessed and are picked up on the next attempt.
 
 ---
 
-**Corporate action integration ledger.** Tracks which Alpaca CA activities the OMS has integrated. One row per CA activity, keyed on `alpaca_activity_id` (deduplication anchor). Records: `alpaca_activity_id`, `processing_invocation_id`, `processing_timestamp`, `processing_status` (`processed` after Phase 1 commits). Parallels the fill records' processing-status mechanism — on Phase 1 retry, activities already present are skipped. The full activity record is not persisted locally: `GET /v2/account/activities` is the authoritative queryable store, and the activity log entry at integration time captures everything needed for audit. See [corporate-actions.md](corporate-actions.md) for the full integration spec.
+**Corporate action integration ledger.** Tracks which Alpaca CA activities the OMS has integrated. One row per CA activity, keyed on `alpaca_activity_id` (deduplication anchor). Records: `alpaca_activity_id`, `processing_invocation_id`, `processing_timestamp`, `processing_status` (`processed` after fill collection commits). Parallels the fill records' processing-status mechanism — on fill collection retry, activities already present are skipped. The full activity record is not persisted locally: `GET /v2/account/activities` is the authoritative queryable store, and the activity log entry at integration time captures everything needed for audit. See [corporate-actions.md](corporate-actions.md) for the full integration spec.
 
 ---
 
@@ -226,7 +226,7 @@ Risk and guardrail events:
 
 PM decision events:
 - `pm_decision`: the full decision envelope produced by the portfolio manager for a single analyst or strategist proposal. Detail: envelope ID, source provenance (agent, recommendation ID, recommendation type), evaluation (verdict — approve, approve_with_modification, or reject — plus thesis quality assessment for new entries, concerns, rationale), modifications array (each with field, original value, approved value, adjustment category, per-modification rationale), and resulting command IDs (empty for rejections and holds). This replaces the previous flat structure with a richer record that supports feedback loop queries such as PM rejection rate by source agent, modification frequency by category, and sizing adjustment correlation with outcomes. See [portfolio-manager.md](../04-decision-layer/portfolio-manager.md) for the full envelope schema.
-- `command_abandoned`: a PM-approved command was submitted but failed to reach Alpaca within the within-invocation retry window, and the command transaction was rolled back. Detail: envelope ID, command ID, originating agent (analyst or strategist, which determines next-invocation surfacing), failure reason (Alpaca unreachable, Alpaca rejected post-retries, etc.), retry attempt count. Surfaced to the originating agent at the next invocation via the `Abandoned openings` (analyst) or `Abandoned position actions` (strategist) block in their respective guardrail state headers per [state-delivery.md](../06-risk-guardrails/state-delivery.md); see the submission-failure policy in the Phase 2 write path below.
+- `command_abandoned`: a PM-approved command was submitted but failed to reach Alpaca within the within-invocation retry window, and the command transaction was rolled back. Detail: envelope ID, command ID, originating agent (analyst or strategist, which determines next-invocation surfacing), failure reason (Alpaca unreachable, Alpaca rejected post-retries, etc.), retry attempt count. Surfaced to the originating agent at the next invocation via the `Abandoned openings` (analyst) or `Abandoned position actions` (strategist) block in their respective guardrail state headers per [state-delivery.md](../06-risk-guardrails/state-delivery.md); see the submission-failure policy in the command execution write path below.
 
 Corporate action events:
 - `corporate_action_applied`: an Alpaca-emitted corporate action was integrated into local position state. Detail: action type (split, reverse-split, stock-dividend, cash-dividend-long, cash-dividend-short, cash-merger, stock-merger, spin-off, symbol-change), Alpaca activity ID, ticker (and `new_ticker` for symbol changes and stock mergers), ratio or amount as reported by Alpaca, pre-action quantity, post-action quantity, pre-action cost basis, post-action cost basis, signed cash impact, parent position ID (spin-off only), resulting position status. This is the audit-trail single-source-of-truth event for the change; the standard lifecycle events (`position_closed`, `position_opened`, `cash_credited`, `cash_debited`, `bracket_cancelled_corporate_action`) are emitted alongside for downstream consumers that already process those generically. See [corporate-actions.md](corporate-actions.md) for the full per-action-type matrix.
@@ -273,8 +273,8 @@ Execution scaffolding fields:
 - Invocation ID (unique, monotonically increasing)
 - Process lifetime ID: foreign key to the process lifetime that produced this invocation
 - Start timestamp
-- Phase 1 completion timestamp (when fill collection finished and the snapshot became available)
-- Phase 2 completion timestamp (when command execution finished)
+- Fill collection completion timestamp (when fill collection finished and the snapshot became available)
+- Command execution completion timestamp (when command execution finished)
 - Fill collection summary: count of fills collected, any reconciliation deltas against Alpaca's `GET /v2/orders`, any collection failures
 - Command execution summary: count of commands processed, count of rejections
 - Snapshot metadata: reference to the snapshot produced at this invocation (for historical replay)
@@ -529,13 +529,13 @@ When a fill event arrives:
 2. **Persist the fill record** with `processing_status = unprocessed` and `persistence_timestamp = now`. A single append-only write — no other entities modified.
 3. **Acknowledge persistence.** The monitor confirms the fill is durably stored before consuming the next websocket event.
 
-The write is intentionally narrow: one new record, one entity, append-only. Touches nothing else — no position updates, no cash changes, no activity log entries. Minimizes partial-failure risk and keeps the monitor's persistence responsibility simple. A fill persisted but not yet processed is safe — picked up by the next Phase 1. A fill that fails to persist must be retried or flagged for reconciliation; on sustained failure the monitor can recover lost events via `GET /v2/orders` at reconnect.
+The write is intentionally narrow: one new record, one entity, append-only. Touches nothing else — no position updates, no cash changes, no activity log entries. Minimizes partial-failure risk and keeps the monitor's persistence responsibility simple. A fill persisted but not yet processed is safe — picked up by the next fill collection. A fill that fails to persist must be retried or flagged for reconciliation; on sustained failure the monitor can recover lost events via `GET /v2/orders` at reconnect.
 
 **Deduplication:** Fill records dedupe on the composite key (order ID, fill timestamp, fill quantity, fill price). On retry (transient storage failure, `GET /v2/orders` replay), duplicates are silently ignored. Persistence is idempotent.
 
-### Phase 1 write path: fill integration
+### Fill collection write path: fill integration
 
-Triggered at the start of each invocation. The OMS queries fills with `processing_status = unprocessed`, ordered by fill timestamp, and integrates them. Phase 1 also drains unprocessed Alpaca CA activities and merges them with fills chronologically; CA integration mechanics are in [corporate-actions.md](corporate-actions.md). All Phase 1 state updates — fills and CA activities together — commit as a single atomic transaction. On commit, fills are marked `processing_status = processed` with the current invocation ID and processing timestamp, and the CA integration ledger is updated.
+Triggered at the start of each invocation. The OMS queries fills with `processing_status = unprocessed`, ordered by fill timestamp, and integrates them. Fill collection also drains unprocessed Alpaca CA activities and merges them with fills chronologically; CA integration mechanics are in [corporate-actions.md](corporate-actions.md). All fill collection state updates — fills and CA activities together — commit as a single atomic transaction. On commit, fills are marked `processing_status = processed` with the current invocation ID and processing timestamp, and the CA integration ledger is updated.
 
 For each unprocessed fill record, the OMS executes:
 
@@ -559,9 +559,9 @@ For each unprocessed fill record, the OMS executes:
 
 The entire sequence is one atomic transaction. On rollback, no state is modified and fills remain unprocessed — retried on the next invocation. The transaction commits before the snapshot read, ensuring the snapshot reflects all integrated fills.
 
-### Phase 2 write path: command execution
+### Command execution write path
 
-Triggered by PM commands at invocation end. Each command is validated against guardrails, then processed into state mutations. Commands process sequentially — each command's guardrail validation accounts for cumulative state changes from prior commands in the same invocation.
+Triggered by portfolio manager commands at invocation end. Each command is validated against guardrails, then processed into state mutations. Commands process sequentially — each command's guardrail validation accounts for cumulative state changes from prior commands in the same invocation.
 
 **OPEN command:**
 1. Validate against guardrails (position size, concentration, exposure, capital, thesis completeness)
@@ -577,9 +577,9 @@ Triggered by PM commands at invocation end. Each command is validated against gu
 1. Validate (position exists, quantity available, bracket state consistent)
 2. Create a close order entity
 3. Submit the close order to the gateway
-4. Full close: mark remaining bracket legs for cancellation on fill (bracket isn't dissolved until the close fill is collected in a future Phase 1)
+4. Full close: mark remaining bracket legs for cancellation on fill (bracket isn't dissolved until the close fill is collected in a future fill collection)
 5. Write activity log entries: `order_submitted`, `pm_decision`
-6. Full close with immediate fill (market order, instant gateway acknowledgment): actual position closure still happens in the next Phase 1 when the fill is collected. The position remains open until then. Preserves the invariant that all state transitions from fills happen in Phase 1.
+6. Full close with immediate fill (market order, instant gateway acknowledgment): actual position closure still happens in the next fill collection when the fill is collected. The position remains open until then. Preserves the invariant that all state transitions from fills happen in fill collection.
 
 **ADJUST command:**
 1. Validate (position exists, new parameters within guardrails, thesis coverage maintained)
@@ -606,7 +606,7 @@ Triggered by PM commands at invocation end. Each command is validated against gu
 6. If bracket adjustment specified: cancel and resubmit modified protective legs (same as ADJUST)
 7. Write activity log entries: `order_submitted`, `thesis_component_added`, `capital_reserved`, `pm_decision`, and bracket modification entries if applicable
 
-Each command's state mutations commit atomically, including Alpaca submission and within-invocation retries. The retry policy is a brief exponential-backoff loop bounded by a configurable window (default: tens of seconds, well within Phase 2). If the window exhausts without success, the command is abandoned: transaction rolls back, no speculative position/thesis/bracket/order records remain, the synchronous response to the PM carries a `gateway_submission_failed` outcome code, and the activity log records a `command_abandoned` event. The abandoned command surfaces to its originating agent at the next invocation for a fresh-grounds retry decision rather than mechanical resubmission on stale thesis — the freshness discipline applied in [api-failure-handling.md](../01-data-layer/api-failure-handling.md) and [mid-pipeline-failure-handling.md](../mid-pipeline-failure-handling.md).
+Each command's state mutations commit atomically, including Alpaca submission and within-invocation retries. The retry policy is a brief exponential-backoff loop bounded by a configurable window (default: tens of seconds, well within command execution). If the window exhausts without success, the command is abandoned: transaction rolls back, no speculative position/thesis/bracket/order records remain, the synchronous response to the PM carries a `gateway_submission_failed` outcome code, and the activity log records a `command_abandoned` event. The abandoned command surfaces to its originating agent at the next invocation for a fresh-grounds retry decision rather than mechanical resubmission on stale thesis — the freshness discipline applied in [api-failure-handling.md](../01-data-layer/api-failure-handling.md) and [mid-pipeline-failure-handling.md](../mid-pipeline-failure-handling.md).
 
 Two failure outcomes log distinctly: guardrail-layer rejections produce `guardrail_rejection` entries (rejected synchronously; PM may reissue with modifications, per [oms-commands.md §Command processing model](oms-commands.md)), and broker submission failures after the retry window produce `command_abandoned` entries (surfaced to the originating agent at the next invocation per [state-delivery.md](../06-risk-guardrails/state-delivery.md)). Both events are written in a post-rollback transaction, surviving the rollback of the main command transaction.
 
@@ -618,9 +618,9 @@ Two distinct read patterns: the invocation snapshot (primary read path serving t
 
 ### Invocation snapshot
 
-Produced once per invocation, after Phase 1 commits and before the analysis pipeline runs. A consistent point-in-time read of all data the ingestion layer needs to assemble [raw state categories 1–6](../01-data-layer/internal/portfolio-state.md). Consistency: reflects all Phase 1 updates, none of Phase 2 (which hasn't happened yet at snapshot time).
+Produced once per invocation, after fill collection commits and before the analysis pipeline runs. A consistent point-in-time read of all data the ingestion layer needs to assemble [raw state categories 1–6](../01-data-layer/internal/portfolio-state.md). Consistency: reflects all fill collection updates, none of command execution (which hasn't happened yet at snapshot time).
 
-The snapshot read is a set of queries executed within a single read transaction (or equivalent isolation — any approach guaranteeing reads see a consistent state as of Phase 1 commit).
+The snapshot read is a set of queries executed within a single read transaction (or equivalent isolation — any approach guaranteeing reads see a consistent state as of fill collection commit).
 
 **Snapshot contents mapped to raw state categories:**
 
@@ -690,28 +690,28 @@ Historical queries don't require snapshot isolation — they read committed data
 
 ## Snapshot isolation
 
-The two-phase invocation model requires the snapshot read see a consistent state: all Phase 1 updates, no Phase 2 updates. The immediate fill persistence model adds a concurrent writer (the continuous monitor) that must not disrupt snapshot consistency. This section specifies the isolation contract without prescribing a mechanism — different storage engines achieve this differently.
+The two-phase invocation model requires the snapshot read see a consistent state: all fill collection updates, no command execution updates. The immediate fill persistence model adds a concurrent writer (the continuous monitor) that must not disrupt snapshot consistency. This section specifies the isolation contract without prescribing a mechanism — different storage engines achieve this differently.
 
-**The invariant:** Between Phase 1's commit completion and Phase 2's first write, the ingestion layer reads a snapshot. This snapshot must include every Phase 1 fill-integration mutation and must not include any Phase 2 command-execution mutation. New fill records arriving from the monitor during the snapshot read are irrelevant — they are unprocessed and will integrate in the next invocation's Phase 1.
+**The invariant:** Between fill collection's commit completion and command execution's first write, the ingestion layer reads a snapshot. This snapshot must include every fill collection mutation and must not include any command execution mutation. New fill records arriving from the monitor during the snapshot read are irrelevant — they are unprocessed and will integrate in the next invocation's fill collection.
 
-**Why this matters:** A partial-Phase 1 snapshot (some fills integrated, others not) would show the analysis pipeline an inconsistent portfolio. A snapshot including Phase 2 mutations (e.g., a pending order from a command not yet submitted) would reflect unvalidated decisions.
+**Why this matters:** A partial fill collection snapshot (some fills integrated, others not) would show the analysis pipeline an inconsistent portfolio. A snapshot including command execution mutations (e.g., a pending order from a command not yet submitted) would reflect unvalidated decisions.
 
-**Concurrent fill persistence during snapshot:** The monitor may persist new fill records at any time — including during Phase 1's transaction or the snapshot read. Safe because: (a) new fills arrive `processing_status = unprocessed`, invisible to the snapshot read path (which reads integrated state from positions, cash, brackets, not raw fill records); (b) the Phase 1 transaction queries unprocessed fills at transaction start and processes exactly that set — fills arriving after are not included; (c) the fill persistence write (single append to fill records) doesn't conflict with Phase 1's writes (which update positions, orders, brackets, cash, and mark fills processed). The only shared write target is the fill records entity, where monitor appends new rows and OMS updates processing status of existing rows — non-conflicting on different rows.
+**Concurrent fill persistence during snapshot:** The monitor may persist new fill records at any time — including during fill collection's transaction or the snapshot read. Safe because: (a) new fills arrive `processing_status = unprocessed`, invisible to the snapshot read path (which reads integrated state from positions, cash, brackets, not raw fill records); (b) the fill collection transaction queries unprocessed fills at transaction start and processes exactly that set — fills arriving after are not included; (c) the fill persistence write (single append to fill records) doesn't conflict with fill collection's writes (which update positions, orders, brackets, cash, and mark fills processed). The only shared write target is the fill records entity, where monitor appends new rows and OMS updates processing status of existing rows — non-conflicting on different rows.
 
 **Implementation contract:** The persistence layer must support the following sequencing guarantee:
 
-1. Phase 1 begins a write transaction. It queries all fill records with `processing_status = unprocessed` and integrates them into state.
-2. Phase 1 commits the transaction (fill records marked processed, all state entities updated). At this point, all fill-derived state is durable and visible.
-3. The ingestion layer begins a read transaction (or equivalent isolation boundary). This read sees the committed Phase 1 state.
+1. Fill collection begins a write transaction. It queries all fill records with `processing_status = unprocessed` and integrates them into state.
+2. Fill collection commits the transaction (fill records marked processed, all state entities updated). At this point, all fill-derived state is durable and visible.
+3. The ingestion layer begins a read transaction (or equivalent isolation boundary). This read sees the committed fill collection state.
 4. The ingestion layer completes its read.
-5. Phase 2 begins a write transaction. Command-execution mutations occur within this transaction.
-6. Phase 2 commits.
+5. Command execution begins a write transaction. Command-execution mutations occur within this transaction.
+6. Command execution commits.
 
 Throughout steps 1–6, the gateway may independently persist new fill records. These writes must not block or be blocked by the above sequence.
 
 Steps 3–4 must see the state as of step 2 and must not be affected by writes in step 5, even if 4 and 5 overlap in wall-clock time (they shouldn't in the current sequential model, but the isolation contract should be robust to future changes).
 
-Any storage engine with read-committed isolation or better satisfies this contract. The concurrent fill persistence path requires non-blocking appends to the fill records entity concurrent with read transactions on other entities — standard for any transactional engine. In practice, step 4 completes before step 5 begins — the isolation contract is satisfied trivially by sequencing. Specified explicitly so future architectural changes (e.g., parallelizing the analysis pipeline with Phase 2 command preparation) don't silently violate consistency.
+Any storage engine with read-committed isolation or better satisfies this contract. The concurrent fill persistence path requires non-blocking appends to the fill records entity concurrent with read transactions on other entities — standard for any transactional engine. In practice, step 4 completes before step 5 begins — the isolation contract is satisfied trivially by sequencing. Specified explicitly so future architectural changes (e.g., parallelizing the analysis pipeline with command execution preparation) don't silently violate consistency.
 
 ---
 
@@ -784,8 +784,8 @@ Key referential paths:
 - [Position model](position-model.md) — defines the position hierarchy stored in the positions entity
 - [Thesis model](thesis-model.md) — defines the structured thesis stored across the thesis and thesis components entities
 - [Orders & brackets](orders-and-brackets.md) — defines the order vocabulary and bracket structure stored in the orders and brackets entities
-- [OMS commands](oms-commands.md) — defines the Phase 2 write path commands
-- [Broker adapter](broker-adapter.md) — defines the fill report contract that drives Phase 1 writes and the Alpaca order lifecycle semantics the order entity mirrors
+- [OMS commands](oms-commands.md) — defines the command execution write path commands
+- [Broker adapter](broker-adapter.md) — defines the fill report contract that drives fill collection writes and the Alpaca order lifecycle semantics the order entity mirrors
 - [Venue configuration](venue-configuration.md) — settlement rules that affect cash ledger accounting
 - [Portfolio state (raw)](../01-data-layer/internal/portfolio-state.md)—the read interface (categories 1–6) that the snapshot must serve
 - [Portfolio state (derived)](../02-distillation-layer/internal.md)—derived metrics that consume snapshot data and historical queries

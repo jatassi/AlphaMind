@@ -9,7 +9,7 @@ durably appending it to ``fill_records``.
 The translator is pure and synchronous: no I/O. Non-fill events
 (``new`` / ``canceled`` / ``expired`` / ``replaced`` / ``replace_rejected`` /
 ``rejected`` / ``done_for_day``) still flow through the activity log via
-Phase 1, but they do not append to ``fill_records`` — the translator returns
+fill collection, but they do not append to ``fill_records`` — the translator returns
 ``None`` for them. Mleg parent events also return ``None`` (the parent
 strategy fill is not a per-position fill); per-leg children translate to one
 ``FillRecord`` each carrying the parent's ``client_order_id``.
@@ -72,7 +72,7 @@ def fill_report_to_fill_record(
 
     * Non-fill event types (``new``, ``canceled``, ``expired``, ``replaced``,
       ``replace_rejected``, ``rejected``, ``done_for_day``) — these still
-      surface through the activity log at Phase 1 but do not append to
+      surface through the activity log at fill collection but do not append to
       ``fill_records``.
     * Mleg parent events — the parent strategy fill is not a per-position
       fill; only the per-leg children (``parent_client_order_id`` populated)

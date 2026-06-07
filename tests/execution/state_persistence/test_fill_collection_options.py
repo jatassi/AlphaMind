@@ -1,7 +1,7 @@
-"""Tests for the Phase 1 fill-integration write path on options positions
+"""Tests for the fill collection fill-integration write path on options positions
 (story 03c / ALP-388).
 
-Mirrors the equity tests in ``test_phase1_write_path.py`` but for the OPTIONS
+Mirrors the equity tests in ``test_fill_collection_write_path.py`` but for the OPTIONS
 discriminator on ``PositionDetailsPayload``. Builders here construct
 ``OptionsPositionDetails``-shaped positions and ``OptionsInstrumentSpec``-
 shaped orders; everything else (substrate seeding, invocation context, FK
@@ -332,7 +332,7 @@ def _make_pending_options_bracket(
 
     For options, Alpaca does not support brackets; the protective leg has
     ``order_id=None`` because the trigger is monitored against the underlying
-    stream by the continuous monitor (ALP-123). Phase 1 just transitions the
+    stream by the continuous monitor (ALP-123). Fill collection just transitions the
     leg from PENDING_ACTIVATION to ACTIVE on entry fill.
     """
     leg = BracketLeg(
@@ -434,7 +434,7 @@ def _make_options_thesis_with_resolved_components(
 ) -> ThesisRecord:
     """ACTIVE thesis whose components carry pre-set resolution outcomes.
 
-    Used in exit-fill tests so that when Phase 1 transitions thesis.status
+    Used in exit-fill tests so that when fill collection transitions thesis.status
     to RESOLVED, the resulting record stays valid.
     """
     components = tuple(
@@ -592,7 +592,7 @@ async def _open_handle(
     ctx = InvocationContext(
         session_factory=factory,
         record=_make_invocation_record(
-            invocation_id=_INV_ID + "-phase1",
+            invocation_id=_INV_ID + "-fill-collection",
             process_lifetime_id=_PROCESS_ID,
         ),
     )
@@ -610,7 +610,7 @@ async def test_long_call_entry_fill_transitions_pending_position_to_open(
 ) -> None:
     """BUY_TO_OPEN long-call entry: PENDING → OPEN with positive cost basis
     scaled by contract_multiplier; greeks preserved; bracket activates."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -695,7 +695,7 @@ async def test_short_put_entry_fill_carries_negative_cost_basis(
 ) -> None:
     """SELL_TO_OPEN short-put entry: PENDING → OPEN with negative
     ``premium_paid_per_contract`` (premium received), and cash credited."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -784,7 +784,7 @@ async def test_add_fill_recomputes_weighted_average_premium(
     """ADD-side options fill (BUY_TO_OPEN against an OPEN long position)
     increments contract_count and recomputes weighted-average premium per
     the same formula the equity path uses for share-count adds."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -847,7 +847,7 @@ async def test_partial_close_fill_accumulates_realized_pl_and_emits_position_red
     """Partial CLOSE on a long-call position: realized P/L is computed
     multiplier-scaled, contract_count drops to the remaining amount, and
     a ``position_reduced`` activity-log entry is written."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
 
@@ -939,7 +939,7 @@ async def test_full_close_fill_transitions_position_closed_and_dissolves_bracket
     """Full SELL_TO_CLOSE on a long-call: OPEN → CLOSED with cumulative
     realized P/L; bracket transitions ACTIVE → DISSOLVED; thesis RESOLVED;
     activity log carries position_closed + bracket_dissolved + thesis_resolved."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
     from tests.state._fk_substrate import stub_order_row
@@ -1063,12 +1063,12 @@ async def test_broker_capital_floor_fill_closes_the_position(
     This is the bonus the floor's durable OrderRow buys (the floor is a tracked
     broker order, not an orphan): when the broker fires the always-on capital floor,
     its fill resolves to the floor's OrderRow (role PRICE_STOP, close-side SELL on a
-    LONG option) and Phase 1 integrates it as an EXIT fill — exactly the mechanism a
+    LONG option) and fill collection integrates it as an EXIT fill — exactly the mechanism a
     monitor-fired close rides. The opposite-sided fill drives OPEN → CLOSED with no
-    edit to the 04a fill-integration logic (Phase 1 dispatches by the order's
+    edit to the 04a fill-integration logic (fill collection dispatches by the order's
     direction, not its role).
     """
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
     from tests.state._fk_substrate import stub_order_row
@@ -1173,7 +1173,7 @@ async def test_bracket_activation_for_monitor_managed_legs_carries_empty_order_i
     ACTIVE and the BRACKET_ACTIVATED event carries an empty
     ``protective_leg_order_ids`` tuple — the monitor work tree (ALP-123) is
     the consumer of the activation marker."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
     from alphamind.state.tables.bracket_legs import BracketLegRow
@@ -1240,7 +1240,7 @@ async def test_buy_to_close_short_position_debits_cash_and_realizes_pnl(
     """BUY_TO_CLOSE on an OPEN short-put position: cash debited by premium
     paid (covering the short); position transitions OPEN -> CLOSED with
     realized P/L = (entry_premium_received - exit_premium_paid) * qty * multiplier."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
     from tests.state._fk_substrate import stub_order_row
@@ -1354,9 +1354,9 @@ async def test_exit_fill_exceeds_open_quantity_quarantined_state_unchanged(
     """An options exit fill claiming more contracts than the position holds is
     quarantined, not propagated (ALP-761). The per-fill savepoint rolls back its
     partial mutations so the position and cash ledger are untouched, the fill
-    row is QUARANTINED, a single reconciliation alert is emitted, and Phase-1
+    row is QUARANTINED, a single reconciliation alert is emitted, and fill collection
     completes normally."""
-    from alphamind.execution.write_paths.phase1 import (
+    from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
     from tests.state._fk_substrate import stub_order_row
@@ -1421,7 +1421,7 @@ async def test_exit_fill_exceeds_open_quantity_quarantined_state_unchanged(
         market_inputs=_make_market_inputs(),
         config=_make_state_persistence_config(),
     )
-    # Phase-1 returns normally — the ValueError did not escape.
+    # Fill collection returns normally — the ValueError did not escape.
     await ctx.__aexit__(None, None, None)
 
     assert summary.fills_processed == 0
@@ -1461,6 +1461,6 @@ async def test_exit_fill_exceeds_open_quantity_quarantined_state_unchanged(
         assert [r.event_type for r in log_rows] == [EventType.RECONCILIATION_ALERT.value]
 
 
-# Strategy / mleg coverage moved to ``test_phase1_strategy.py`` under story
-# 04b (ALP-392) — Phase 1 now supports STRATEGY-discriminated positions in
+# Strategy / mleg coverage moved to ``test_fill_collection_strategy.py`` under story
+# 04b (ALP-392) — fill collection now supports STRATEGY-discriminated positions in
 # addition to equity (story 07) and options (story 03c / ALP-388).

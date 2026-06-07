@@ -82,15 +82,15 @@ async def _is_within_dedup_window(
 ) -> bool:
     """Return ``True`` if any invocation completed within the lookback window.
 
-    The dedup query treats ``phase2_completed_at IS NULL`` as "not completed"
+    The dedup query treats ``command_execution_completed_at IS NULL`` as "not completed"
     — aborted runs do not suppress later fires.
     """
     cutoff = now - timedelta(minutes=lookback_minutes)
     cutoff_iso = cutoff.isoformat().replace("+00:00", "Z")
     stmt = (
         select(InvocationRow.invocation_id)
-        .where(InvocationRow.phase2_completed_at.is_not(None))
-        .where(InvocationRow.phase2_completed_at >= cutoff_iso)
+        .where(InvocationRow.command_execution_completed_at.is_not(None))
+        .where(InvocationRow.command_execution_completed_at >= cutoff_iso)
         .limit(1)
     )
     result = await session.execute(stmt)

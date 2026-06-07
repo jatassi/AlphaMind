@@ -29,7 +29,7 @@ from alphamind._kernel.ids import AlpacaOrderId, BracketId, OrderId, PositionId,
 from alphamind._kernel.money import money, price
 from alphamind.execution.broker_adapter.queries import PositionSnapshot, TradeAccountSnapshot
 from alphamind.execution.write_paths.entry_reprice_sync import entry_reprice_event_record
-from alphamind.execution.write_paths.phase1 import rederive_thesis_ledgers
+from alphamind.execution.write_paths.fill_collection import rederive_thesis_ledgers
 from alphamind.execution.write_paths.projection_rebuild import (
     BrokerFactNoIntent,
     OrderStatusProjection,
@@ -733,7 +733,7 @@ async def test_rederive_after_activities_poll_folds_same_invocation_lifecycle_ev
         make_active_thesis(),
         make_active_bracket(),
     )
-    # An opening buy FILL (the Phase-1 fill-fold leg) — cost_basis 1500, realized 0.
+    # An opening buy FILL (the fill-collection fill-fold leg) — cost_basis 1500, realized 0.
     await _append_events(
         factory,
         _fill_event(
@@ -1159,7 +1159,7 @@ async def test_bounded_incremental_matches_full_one_shot(tmp_path: Path) -> None
 # ENTRY order just reached a terminal status with no recorded fills is dissolved
 # by the pipeline (not the monitor): bracket DISSOLVED, capital released, thesis
 # ``CANCELLED_NEVER_ENTERED``, position PENDING→CANCELLED. The cascade internals
-# are covered by the phase-2 ``persist_entry_window_cancel`` test; these prove the
+# are covered by the command-execution ``persist_entry_window_cancel`` test; these prove the
 # *rebuild* triggers it — and declines when the entry filled in the cancel race.
 # ---------------------------------------------------------------------------
 

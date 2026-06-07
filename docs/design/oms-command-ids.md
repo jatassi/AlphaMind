@@ -8,10 +8,10 @@ Deterministic identifiers for every OMS command. Specifies generation, format, u
 
 Command ID generation for the two origins defined in [oms-commands.md §Command origins](05-execution-layer/oms-commands.md):
 
-- **PM-originated** — extracted from envelopes produced by the PM during Phase 2 of an invocation.
+- **PM-originated** — extracted from envelopes produced by the PM during command execution.
 - **Engine-originated** — CLOSE commands issued by the continuous monitor between invocations via engine-originated envelopes.
 
-Out of scope: broker submission retry semantics and surfacing of failed submissions — see [state-persistence.md § Phase 2 write path](05-execution-layer/state-persistence.md).
+Out of scope: broker submission retry semantics and surfacing of failed submissions — see [state-persistence.md § Command execution write path](05-execution-layer/state-persistence.md#command-execution-write-path).
 
 ---
 
@@ -25,7 +25,7 @@ Derived by the OMS command intake layer at envelope receipt time from the envelo
 {invocation_id}.{envelope_id}.{command_ordinal}.{attempt_seq}
 ```
 
-- **`invocation_id`** — assigned by the pipeline at invocation start, monotonically increasing ([state-persistence.md §Invocation records](05-execution-layer/state-persistence.md)).
+- **`invocation_id`** — assigned by the pipeline at invocation start, monotonically increasing ([state-persistence.md § Invocation records](05-execution-layer/state-persistence.md#tier-2--lifecycle-entities)).
 - **`envelope_id`** — deterministically derived from the source proposal: `ENV-<source_id>`. Pattern: `^ENV-(REC|SA|SA-ORD)-[0-9]+$`.
   - `ENV-REC-<n>` for analyst recommendations (source `^REC-[0-9]+$`, see [analyst-output-schema.md](04-decision-layer/analyst-output-schema.md)).
   - `ENV-SA-<n>` for strategist per-position assessments (source `^SA-[0-9]+$`, see [strategist-output-schema.md](04-decision-layer/strategist-output-schema.md)).
@@ -118,7 +118,7 @@ A duplicate is a bug — concurrent envelope state mutation, flawed ID derivatio
 Scenario: an invocation runs twice (scheduler bug, operator re-run, supervisor confusion). Addressed by existing infrastructure:
 
 - **APScheduler `max_instances=1`** ([infrastructure.md](../architecture/infrastructure.md)) suppresses concurrent invocations at the scheduler layer.
-- **Monotonically increasing `invocation_id`** ([state-persistence.md §Invocation records](05-execution-layer/state-persistence.md)) — restart or re-run generates a fresh ID; collision impossible by construction.
+- **Monotonically increasing `invocation_id`** ([state-persistence.md § Invocation records](05-execution-layer/state-persistence.md#tier-2--lifecycle-entities)) — restart or re-run generates a fresh ID; collision impossible by construction.
 - **Uniqueness constraint on the invocation record** catches any accidental reuse at the write layer — the second attempt errors before any agents run.
 
 If any of these fail, it's a bug in the named component, not a case for command-level compensation.
@@ -130,7 +130,7 @@ If any of these fail, it's a bug in the named component, not a case for command-
 Conventional distributed-systems idempotency stores a command ID → response mapping and returns the stored response on duplicates. AlphaMind doesn't need this because the architecture rules out duplicate scenarios:
 
 - **Pipeline and OMS are in-process** ([infrastructure.md](../architecture/infrastructure.md), [component-boundaries.md](../architecture/component-boundaries.md)). PM→OMS is a function call, not a network RPC. Either the call returns or raises — no "submitted but response unknown" state.
-- **State mutations are atomic transactions** ([state-persistence.md §Phase 2 write path](05-execution-layer/state-persistence.md) — *"Each command's state mutations are committed atomically. If a command fails mid-processing, the transaction rolls back"*).
+- **State mutations are atomic transactions** ([state-persistence.md § Command execution write path](05-execution-layer/state-persistence.md#command-execution-write-path) — *"Each command's state mutations are committed atomically. If a command fails mid-processing, the transaction rolls back"*).
 - **Fail-closed policy** ([llm-agent-failure-handling.md](llm-agent-failure-handling.md), [mid-pipeline-failure-handling.md](mid-pipeline-failure-handling.md)): OMS raises → pipeline aborts. No retry loop.
 - **No resume after abort** ([mid-pipeline-failure-handling.md](mid-pipeline-failure-handling.md)). Mid-invocation crash discards in-flight state; next invocation starts fresh with a different `invocation_id`.
 
@@ -160,5 +160,5 @@ A duplicate arrival is a behavioral or implementation bug, treated as an error (
 - Strategist output schema (source of `SA-<n>`, `SA-ORD-<n>`): [04-decision-layer/strategist-output-schema.md](04-decision-layer/strategist-output-schema.md)
 - Activity log and atomic transactions: [05-execution-layer/state-persistence.md](05-execution-layer/state-persistence.md)
 - Continuous monitor and engine-originated envelopes: [05-execution-layer/architecture.md](05-execution-layer/architecture.md)
-- Broker submission retry policy (separate seam): [05-execution-layer/state-persistence.md § Phase 2 write path](05-execution-layer/state-persistence.md), [05-execution-layer/broker-adapter.md](05-execution-layer/broker-adapter.md)
+- Broker submission retry policy (separate seam): [05-execution-layer/state-persistence.md § Command execution write path](05-execution-layer/state-persistence.md#command-execution-write-path), [05-execution-layer/broker-adapter.md](05-execution-layer/broker-adapter.md)
 - In-process architecture: [../architecture/component-boundaries.md](../architecture/component-boundaries.md), [../architecture/infrastructure.md](../architecture/infrastructure.md)

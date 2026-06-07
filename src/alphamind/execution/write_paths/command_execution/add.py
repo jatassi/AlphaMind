@@ -13,7 +13,7 @@ from alphamind.commands.command_models import (
     BracketAdjustment,
 )
 from alphamind.commands.submission_results import SubmissionResult
-from alphamind.execution.write_paths.phase2._shared import (
+from alphamind.execution.write_paths.command_execution._shared import (
     _OMS_COMPONENT_TYPE_TO_PERSISTED,
     _append_bracket_modification,
     _build_entry_order_from_command,
@@ -28,7 +28,7 @@ from alphamind.execution.write_paths.phase2._shared import (
     _protective_roles_for_change_fields,
     _reserve_capital,
 )
-from alphamind.execution.write_paths.phase2.adjust import (
+from alphamind.execution.write_paths.command_execution.adjust import (
     _apply_protective_leg_modification,
     _build_replacement_order_for_change_fields,
 )
@@ -141,7 +141,7 @@ async def _writeback_add(
     # repriced or cancelled releases exactly what it reserved and never drives
     # ``reserved_capital_usd`` negative. A market add carries no price →
     # ``money(0)`` (marketable: reserves nothing; consideration flows through
-    # Phase 1 on fill).
+    # fill collection on fill).
     reserved_amount = _order_reserved_notional(add_order)
     if reserved_amount > 0:
         await _reserve_capital(handle, amount_usd=reserved_amount)

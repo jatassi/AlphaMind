@@ -7,7 +7,7 @@ side uses the OCC TIMS RBH/CPM User Guide (the methodology FINRA Rule 4210(g)
 points to) as its versioned, publicly-citable reference.
 
 This package exports the configuration skeleton, class-group composition,
-stress revaluation, per-fill aggregator, orchestrator, and Phase 1 wedge
+stress revaluation, per-fill aggregator, orchestrator, and fill collection wedge
 helpers — the full Reg T margin attribution surface.
 """
 

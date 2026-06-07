@@ -102,7 +102,7 @@ _MONITOR_SESSION = "session-abc"
 
 
 # ---------------------------------------------------------------------------
-# Engine + session fixtures (mirrors test_phase2_write_path.py)
+# Engine + session fixtures (mirrors test_command_execution_write_path.py)
 # ---------------------------------------------------------------------------
 
 
@@ -166,8 +166,8 @@ def _make_invocation_record(invocation_id: str = _INV_ID) -> InvocationRecord:
         invocation_id=invocation_id,
         process_lifetime_id=_PROCESS_ID,
         start_at=_NOW.isoformat().replace("+00:00", "Z"),
-        phase1_completed_at=None,
-        phase2_completed_at=None,
+        fill_collection_completed_at=None,
+        command_execution_completed_at=None,
         trigger_type="scheduled",
         trigger_source="cron",
         trigger_reason="0 9 * * 1-5",
@@ -224,7 +224,7 @@ async def _seed_cash_ledger(
 
 
 # ---------------------------------------------------------------------------
-# Builders — position cluster (mirrors phase2 helpers)
+# Builders — position cluster (mirrors command_execution helpers)
 # ---------------------------------------------------------------------------
 
 

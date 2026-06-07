@@ -2,7 +2,7 @@
 
 The orchestrator computes ``halt_state`` before resolving runtime
 dimensions, which requires reading the ``drawdown_state`` singleton row.
-On a fresh DB the row is absent (Phase 1's write path seeds it), so this
+On a fresh DB the row is absent (fill collection's write path seeds it), so this
 module owns the read with a zero-drawdown fallback that keeps the
 halt-detection contract intact (no drawdown → no halt).
 
@@ -54,7 +54,7 @@ async def read_drawdown_state(
 ) -> DrawdownState:
     """Read the ``drawdown_state`` singleton row; fall back to zero on absence.
 
-    Phase 1's write path (``process_unprocessed_fills``) seeds the singleton
+    Fill collection's write path (``process_unprocessed_fills``) seeds the singleton
     row, so a fresh DB legitimately has none before the first invocation
     completes. Treating absence as zero drawdown keeps the orchestrator
     runnable from a clean state without violating the halt-detection

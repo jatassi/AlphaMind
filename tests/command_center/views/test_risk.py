@@ -120,7 +120,7 @@ async def seeded_db(db_path: str) -> AsyncIterator[str]:
             text("""
                 INSERT INTO invocations
                     (invocation_id, process_lifetime_id, start_at,
-                     phase1_completed_at, phase2_completed_at,
+                     fill_collection_completed_at, command_execution_completed_at,
                      trigger_type, trigger_source, trigger_reason,
                      git_sha_at_invocation, active_profile, active_regime,
                      active_mode, active_overlays_json, resolved_config_hash,

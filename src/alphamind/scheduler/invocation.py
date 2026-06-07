@@ -3,7 +3,7 @@
 Builds the 22-field ``InvocationRecord`` every pipeline invocation writes
 and inserts it via :func:`insert_invocation_row` in its own short
 transaction so the row is durable + visible to fresh-session reads before
-Phase 1 opens.
+fill collection opens.
 
 The orchestrator entry-point :func:`insert_invocation_record` composes the
 record (minting the invocation_id, loading + persisting the pipeline-config
@@ -88,8 +88,8 @@ async def build_invocation_record(  # noqa: PLR0913 — signature pinned by stor
         invocation_id=invocation_id,
         process_lifetime_id=process_lifetime_id,
         start_at=start_at,
-        phase1_completed_at=None,
-        phase2_completed_at=None,
+        fill_collection_completed_at=None,
+        command_execution_completed_at=None,
         trigger_type=trigger_type,
         trigger_source=trigger_source,
         trigger_reason=trigger_reason,
@@ -340,7 +340,7 @@ async def insert_invocation_record(  # noqa: PLR0913 — composition surface thr
 
     Returns ``(invocation_id, pipeline_config)``. The orchestrator threads
     both through the per-phase transactions: the id identifies the row that
-    Phase 1 / Phase 2 stamp; the config is the resolved snapshot the row's
+    fill collection / command execution stamp; the config is the resolved snapshot the row's
     ``resolved_config_snapshot_path`` points at, reused without re-loading.
     """
     invocation_id = _mint_invocation_id(now)

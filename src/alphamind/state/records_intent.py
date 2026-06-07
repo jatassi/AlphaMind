@@ -9,7 +9,7 @@ overwritten by a broker snapshot (ADR-0005: pipeline is the single writer).
   provenance. Story 03c *derives* these values from the broker-event log; this
   story defines the durable shape only.
 * :class:`CapitalReservationRecord` — a per-thesis capital reservation written
-  by the Phase-2 OPEN path when capital is reserved for a thesis, read by the
+  by the command-execution OPEN path when capital is reserved for a thesis, read by the
   projection / PnL derivations.
 
 The order→thesis link itself rides the broker-carried link (story 01b) and the
@@ -53,7 +53,7 @@ class ThesisPnlLedgerRecord(BaseModel):
 class CapitalReservationRecord(BaseModel):
     """Frozen per-thesis capital-reservation entry.
 
-    Written by the Phase-2 OPEN path when capital is reserved for a thesis;
+    Written by the command-execution OPEN path when capital is reserved for a thesis;
     read by the projection / PnL derivations. ``released_at`` is null while the
     reservation is live and set when the capital is released.
     """

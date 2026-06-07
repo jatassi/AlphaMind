@@ -7,7 +7,7 @@ Verifies that:
 - An InvocationRow with an unrecognized trigger_source raises IntegrityError
   (the constraint is enforced).
 - ``borrow_accrual`` is NOT in _TRIGGER_SOURCES (story 04b relocated borrow accrual
-  into the pipeline Phase-1 write unit; it no longer mints its own InvocationRow —
+  into the pipeline fill-collection write unit; it no longer mints its own InvocationRow —
   ALP-842 CU4).
 """
 
@@ -75,8 +75,8 @@ def _invocation_kwargs(
         "invocation_id": invocation_id,
         "process_lifetime_id": process_lifetime_id,
         "start_at": "2026-05-27T16:00:00Z",
-        "phase1_completed_at": None,
-        "phase2_completed_at": None,
+        "fill_collection_completed_at": None,
+        "command_execution_completed_at": None,
         "trigger_type": "scheduled",
         "trigger_source": trigger_source,
         "trigger_reason": "test_tick",

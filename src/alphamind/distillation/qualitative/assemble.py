@@ -1,8 +1,9 @@
 """Qualitative top-level pure-compute assembly entry point.
 
 :func:`assemble_qualitative_blocks_from_inputs` operates over a frozen
-:class:`QualitativeInputs` (see :mod:`._loaders`); the orchestrator's
-Phase 2 calls it under ``asyncio.TaskGroup`` + ``asyncio.to_thread``. The
+:class:`QualitativeInputs` (see :mod:`._loaders`); the per-category
+indicator compute step calls it under ``asyncio.TaskGroup`` +
+``asyncio.to_thread``. The
 three classifiers do not share state at compute time — every
 cross-classifier piece (sector audience map, contract scope) is
 pre-loaded once by the whole-category loader and threaded into the

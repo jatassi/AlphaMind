@@ -1,6 +1,6 @@
-"""Phase 1 guardrail-enforcement orchestrator.
+"""Active-guardrails composition.
 
-Per-invocation Phase 1 entry point that wraps a regime-adaptation output with
+Per-invocation entry point that wraps a regime-adaptation output with
 the drawdown-tier composition primitive (story 01) and bundles the result.
 
 Pure synchronous function. Caller is responsible for invoking
@@ -30,8 +30,8 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True)
-class Phase1EnforcementResult:
-    """Per-invocation Phase 1 enforcement-layer output.
+class ActiveGuardrails:
+    """Per-invocation active-guardrails composition output.
 
     Bundles the canonical ``ActiveRiskParameterSet`` (regime-resolved +
     drawdown-tier-overridden) consumed by state-delivery renderers, the
@@ -43,13 +43,13 @@ class Phase1EnforcementResult:
     drawdown_tier: DrawdownTier | None
 
 
-def compose_phase_1_enforcement(
+def compose_active_guardrails(
     *,
     regime_output: RegimeAdaptationOutput,
     drawdown_state: DrawdownState,
     progressive_tiers: tuple[ProgressiveTier, ...],
-) -> Phase1EnforcementResult:
-    """Compose Phase 1 enforcement output from regime + drawdown inputs.
+) -> ActiveGuardrails:
+    """Compose active-guardrails output from regime + drawdown inputs.
 
     Extracts ``regime_output.active_risk_parameter_set`` as the regime-resolved
     starting point, calls :func:`compose_active_risk_parameters` to apply
@@ -64,7 +64,7 @@ def compose_phase_1_enforcement(
         drawdown_state=drawdown_state,
         progressive_tiers=progressive_tiers,
     )
-    return Phase1EnforcementResult(
+    return ActiveGuardrails(
         active_risk_parameters=active_risk_parameters,
         drawdown_tier=drawdown_tier,
     )

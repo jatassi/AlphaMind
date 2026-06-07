@@ -9,8 +9,8 @@ How the OMS integrates Alpaca-emitted corporate-action events into local positio
 - Position quantity, cost basis, ticker, and status mutations from Alpaca CA activities
 - Cash credits and debits (long dividends, short dividend obligations, fractional cash-out, merger proceeds)
 - Spin-off child position creation
-- Phase 1 integration sequencing alongside fill processing
-- Idempotency on Phase 1 retry
+- Fill collection integration sequencing alongside fill processing
+- Idempotency on fill collection retry
 - Ex-date detection and application timing
 - Activity log catalog additions
 
@@ -23,13 +23,13 @@ Alpaca handles corporate actions natively ([broker-adapter.md § Known gaps](bro
 Two Alpaca surfaces serve as inputs:
 
 1. **`GET /v1beta1/corporate-actions`** (v1beta1 Corporate Actions Market Data API) — per-CA event records with per-action-type typed shapes. Each typed model extends `ModelWithID` and carries a UUID `id` plus per-event parameters (`new_rate` / `old_rate` for splits, `rate` for dividends, `acquirer_*` / `acquiree_*` for mergers, `source_*` / `new_*` for spin-offs, `old_*` / `new_*` for name changes). The trigger and parameter source.
-2. **`GET /v2/positions` and `GET /v2/account`** — post-adjustment authoritative state. Used at end of Phase 1 to reconcile local state against Alpaca's view. On any unexplained delta, local state moves to match Alpaca's per the reconciliation discipline ([broker-adapter.md § Account state queries](broker-adapter.md#account-state-queries)).
+2. **`GET /v2/positions` and `GET /v2/account`** — post-adjustment authoritative state. Used at end of fill collection to reconcile local state against Alpaca's view. On any unexplained delta, local state moves to match Alpaca's per the reconciliation discipline ([broker-adapter.md § Account state queries](broker-adapter.md#account-state-queries)).
 
 The OMS reads, applies, and verifies — no parallel computation of Alpaca's behavior.
 
 Note on PTC (short-dividend pass-through): v1beta1 does not surface a separate PTC event code. The fetcher discriminates a `CashDividend` event into `CASH_DIVIDEND_LONG` vs. `CASH_DIVIDEND_SHORT` locally based on the matching position's `direction` (LONG / SHORT).
 
-Note on transaction-time anchoring: v1beta1 events carry date fields (`ex_date`, `process_date`, `effective_date`) rather than datetimes. The fetcher anchors each event at midnight UTC on its primary date (`ex_date` where present, else `process_date` / `effective_date`). The Phase 1 chronological merge ([Phase 1 integration sequence](#phase-1-integration-sequence)) compares this against fill `fill_timestamp` (a precise datetime); fills on the ex-date resolve before the CA after midnight-UTC anchoring as the design intends.
+Note on transaction-time anchoring: v1beta1 events carry date fields (`ex_date`, `process_date`, `effective_date`) rather than datetimes. The fetcher anchors each event at midnight UTC on its primary date (`ex_date` where present, else `process_date` / `effective_date`). The fill collection chronological merge ([Fill collection integration sequence](#fill-collection-integration-sequence)) compares this against fill `fill_timestamp` (a precise datetime); fills on the ex-date resolve before the CA after midnight-UTC anchoring as the design intends.
 
 ---
 
@@ -71,23 +71,23 @@ If the spun-off ticker is in the asset universe and signals warrant, the analyst
 
 ---
 
-## Phase 1 integration sequence
+## Fill collection integration sequence
 
-CA integration runs alongside fill integration in [Phase 1](state-persistence.md#phase-1-write-path-fill-integration). The OMS:
+CA integration runs alongside fill integration in [fill collection](state-persistence.md#fill-collection-write-path-fill-integration). The OMS:
 
 1. **Query Alpaca for unprocessed activities.** `GET /v1beta1/corporate-actions?start=<cursor_date>&end=<today>&types=...` returns typed CA events for the configured set of types. Symbols not matched to a local position are filtered out; activities whose `id` (UUID) is already in `corporate_action_integration_ledger` are skipped (dedup absorbs the lookback overlap that protects against Alpaca's late posts).
 2. **Merge with unprocessed fills chronologically.** Each fill carries `fill_timestamp` (a precise datetime); each CA event carries an `ex_date` / `process_date` / `effective_date` (a date) which the fetcher anchors at midnight UTC. Sort ascending. Ordering matters when a fill straddles an ex-date — fills before the CA reflect pre-action quantities, fills after reflect post-action. CAs typically apply outside market hours, and midnight-UTC anchoring guarantees an intra-day fill on the ex-date resolves before the CA.
-3. **Process each event in order.** Fills follow the existing Phase 1 sequence ([state-persistence.md § Phase 1 write path](state-persistence.md#phase-1-write-path-fill-integration)). CA activities follow the per-action-type matrix: apply the mutation, write activity log entries, cancel the bracket via [orders-and-brackets.md § Corporate action handling](orders-and-brackets.md#corporate-action-handling), set `corporate_action_adjustment_needed`, create spin-off children where applicable.
+3. **Process each event in order.** Fills follow the existing fill collection sequence ([state-persistence.md § Fill collection write path](state-persistence.md#fill-collection-write-path-fill-integration)). CA activities follow the per-action-type matrix: apply the mutation, write activity log entries, cancel the bracket via [orders-and-brackets.md § Corporate action handling](orders-and-brackets.md#corporate-action-handling), set `corporate_action_adjustment_needed`, create spin-off children where applicable.
 4. **Reconcile.** Compare local position state to `GET /v2/positions` and local cash to `GET /v2/account`. Unexplained deltas are logged as reconciliation alerts and resolved toward Alpaca — see [Reconciliation auto-correction](#reconciliation-auto-correction) for the tolerance and direction-flip policy.
-5. **Mark processed atomically.** Both unprocessed fills and unprocessed CA activities are marked processed as part of the Phase 1 transaction commit.
+5. **Mark processed atomically.** Both unprocessed fills and unprocessed CA activities are marked processed as part of the fill collection transaction commit.
 
-The full sequence is one atomic transaction. On any failure, the transaction rolls back; fills and CA activities remain unprocessed, and the next Phase 1 retries the full set. Matches the fail-closed mid-pipeline policy ([mid-pipeline-failure-handling.md](../mid-pipeline-failure-handling.md)) — no checkpoint, no partial commit.
+The full sequence is one atomic transaction. On any failure, the transaction rolls back; fills and CA activities remain unprocessed, and the next fill collection retries the full set. Matches the fail-closed mid-pipeline policy ([mid-pipeline-failure-handling.md](../mid-pipeline-failure-handling.md)) — no checkpoint, no partial commit.
 
 ---
 
 ## Reconciliation auto-correction
 
-Per [broker-adapter.md § Account state queries](broker-adapter.md#account-state-queries) — *"Alpaca's positions and account endpoints are the source of truth. On disagreement, Alpaca wins."* The reconcile step in [step 4](#phase-1-integration-sequence) operationalizes that principle by writing Alpaca's authoritative value back to local state in the same Phase 1 transaction whenever drift is detected on a row already present locally.
+Per [broker-adapter.md § Account state queries](broker-adapter.md#account-state-queries) — *"Alpaca's positions and account endpoints are the source of truth. On disagreement, Alpaca wins."* The reconcile step in [step 4](#fill-collection-integration-sequence) operationalizes that principle by writing Alpaca's authoritative value back to local state in the same fill collection transaction whenever drift is detected on a row already present locally.
 
 **Tolerance.** Auto-correction shares the same thresholds as alert emission — `1e-9` for position quantities and `0.01 USD` for cash. Anything quiet enough not to fire an alert is also quiet enough not to need correction; sub-threshold differences are floating-point noise. One threshold for both keeps the audit story simple — every alert pairs with a correction (when a correctable row exists), so the operator can scan either event type and see the full picture.
 
@@ -101,7 +101,7 @@ Per [broker-adapter.md § Account state queries](broker-adapter.md#account-state
 
 ## Idempotency
 
-A `processed_corporate_actions` ledger tracks integrated Alpaca activity IDs. One row per CA activity keyed on `alpaca_activity_id` (deduplication anchor), with `processing_invocation_id`, `processing_timestamp`, and `processing_status` (`processed` after the Phase 1 transaction commits). On Phase 1 retry, the OMS skips activity IDs already in the ledger.
+A `processed_corporate_actions` ledger tracks integrated Alpaca activity IDs. One row per CA activity keyed on `alpaca_activity_id` (deduplication anchor), with `processing_invocation_id`, `processing_timestamp`, and `processing_status` (`processed` after the fill collection transaction commits). On fill collection retry, the OMS skips activity IDs already in the ledger.
 
 Parallels the fill records' `processing_status` field. The narrow ledger keeps writes minimal — `/v1/corporate-actions` (v1beta1 Corporate Actions Market Data API) is the authoritative queryable store, and the activity log entry at integration time captures everything needed for audit.
 
@@ -109,11 +109,11 @@ Parallels the fill records' `processing_status` field. The narrow ledger keeps w
 
 ## Ex-date detection and timing
 
-Per [orders-and-brackets.md § Corporate action handling](orders-and-brackets.md#corporate-action-handling), scheduled CAs are applied at the first scheduled invocation on or after ex-date. The 9:00 AM ET pre-open invocation is the normal case: position-level adjustments fire first in Phase 1, brackets are cancelled, and the strategist and PM run in Phase 2 with the flagged positions in context, producing fresh brackets before the 9:30 AM open.
+Per [orders-and-brackets.md § Corporate action handling](orders-and-brackets.md#corporate-action-handling), scheduled CAs are applied at the first scheduled invocation on or after ex-date. The 9:00 AM ET pre-open invocation is the normal case: position-level adjustments fire first during fill collection, brackets are cancelled, and the strategist and PM run during command execution with the flagged positions in context, producing fresh brackets before the 9:30 AM open.
 
-Detection: the `GET /v1beta1/corporate-actions?start=<cursor_date>&end=<today>` query at Phase 1 start returns CA events whose `ex_date` (or `process_date` / `effective_date`) falls in the lookback window. Alpaca posts CA events on or after ex-date on its own schedule; the OMS does not pre-fetch. The lookback (`config.fetcher_lookback_days`, default 7) absorbs any late posts; the per-event UUID `id` dedup against the ledger prevents double-counting on the overlap.
+Detection: the `GET /v1beta1/corporate-actions?start=<cursor_date>&end=<today>` query at fill collection start returns CA events whose `ex_date` (or `process_date` / `effective_date`) falls in the lookback window. Alpaca posts CA events on or after ex-date on its own schedule; the OMS does not pre-fetch. The lookback (`config.fetcher_lookback_days`, default 7) absorbs any late posts; the per-event UUID `id` dedup against the ledger prevents double-counting on the overlap.
 
-Mid-day intraday CAs are picked up at the next scheduled invocation. During the gap, the local position record is briefly stale; the position-level max-loss guardrail ([rules-and-limits.md](../06-risk-guardrails/rules-and-limits.md)) and the continuous monitor's breach detection ([architecture.md § 4b](architecture.md)) operate against the stale local quantity until the next Phase 1 reconciles. Trading halts, bankruptcies, and delistings are surfaced through different Alpaca channels.
+Mid-day intraday CAs are picked up at the next scheduled invocation. During the gap, the local position record is briefly stale; the position-level max-loss guardrail ([rules-and-limits.md](../06-risk-guardrails/rules-and-limits.md)) and the continuous monitor's breach detection ([architecture.md § 4b](architecture.md)) operate against the stale local quantity until the next fill collection reconciles. Trading halts, bankruptcies, and delistings are surfaced through different Alpaca channels.
 
 ---
 
@@ -144,7 +144,7 @@ Event types named in the matrix are defined in [state-persistence.md § Event ty
 
 - Bracket lifecycle on CA: [orders-and-brackets.md § Corporate action handling](orders-and-brackets.md#corporate-action-handling)
 - Strategist re-evaluation per action type: [strategist.md § Corporate-action-pending positions](../04-decision-layer/strategist.md#corporate-action-pending-positions)
-- Phase 1 fill integration sequence: [state-persistence.md § Phase 1 write path](state-persistence.md#phase-1-write-path-fill-integration)
+- Fill collection integration sequence: [state-persistence.md § Fill collection write path](state-persistence.md#fill-collection-write-path-fill-integration)
 - Activity log event catalog: [state-persistence.md § Event type catalog](state-persistence.md#tier-2--lifecycle-entities)
 - Reconciliation discipline (Alpaca authoritative): [broker-adapter.md § Account state queries](broker-adapter.md#account-state-queries)
 - Fail-closed mid-pipeline policy: [mid-pipeline-failure-handling.md](../mid-pipeline-failure-handling.md)

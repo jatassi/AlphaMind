@@ -2,7 +2,7 @@
 
 Covers the pure compute function, the per-invocation persister, and the
 read function. The wiring-site tests live alongside their respective
-modules (``tests/scheduler/test_phase1_inputs.py`` and
+modules (``tests/scheduler/test_fill_collection_inputs.py`` and
 ``tests/execution/continuous_monitor/test_paper_enrichment_wiring.py``).
 """
 
@@ -78,8 +78,8 @@ def _seed_invocation(session: Session, invocation_id: str) -> None:
             invocation_id=invocation_id,
             process_lifetime_id=_PROCESS_LIFETIME_ID,
             start_at="2026-05-18T00:00:00Z",
-            phase1_completed_at=None,
-            phase2_completed_at=None,
+            fill_collection_completed_at=None,
+            command_execution_completed_at=None,
             trigger_type="manual",
             trigger_source="test",
             trigger_reason="test-fixture",

@@ -12,7 +12,7 @@ Formal JSON Schema: [proposal-pre-processor-bundle-schema.md](proposal-pre-proce
 
 - All analyst recommendations — the analyst's full output document (structured + narrative fields), conforming to [`analyst-output-schema.md`](analyst-output-schema.md)
 - All strategist position assessments and pending-order assessments — the strategist's full output document (structured + narrative fields), conforming to [`strategist-output-schema.md`](strategist-output-schema.md)
-- Current portfolio state snapshot — positions, sector exposures, capital, guardrail headroom from the same Phase 1 snapshot the analyst and strategist consumed
+- Current portfolio state snapshot — positions, sector exposures, capital, guardrail headroom from the same pre-decision snapshot the analyst and strategist consumed
 
 ---
 

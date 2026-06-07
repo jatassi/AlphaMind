@@ -2,7 +2,7 @@
 
 Ships the pure function ``compute_attribution`` that snapshots Reg T and
 PM-equivalent margins against pre- and post-fill position sets and packages
-the eight-field ``RegTMarginAttribution`` record consumed by the Phase 1
+the eight-field ``RegTMarginAttribution`` record consumed by the fill collection
 fill-integration write path (story 06a).
 
 Pure module: no I/O beyond the inputs' provider lookups, no clock reads, no

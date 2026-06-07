@@ -190,7 +190,7 @@ def _make_assembled_snapshot(
     """Build a minimal valid :class:`AssembledSnapshot` for substrate tests."""
     snapshot = PortfolioStateSnapshot(
         invocation_id="inv-test",
-        phase1_committed_at=_SNAPSHOT_AT,
+        fill_collection_committed_at=_SNAPSHOT_AT,
         snapshot_assembled_at=_SNAPSHOT_AT,
         open_positions=positions,
         pending_positions=(),
@@ -265,11 +265,11 @@ def _make_assembled_snapshot(
         brackets=(),
     )
     freshness = SnapshotFreshness(
-        phase1_committed_at=_SNAPSHOT_AT,
+        fill_collection_committed_at=_SNAPSHOT_AT,
         snapshot_assembled_at=_SNAPSHOT_AT,
-        phase1_to_snapshot_seconds=0.0,
-        max_phase1_to_snapshot_seconds=30.0,
-        phase1_to_snapshot_within_threshold=True,
+        fill_collection_to_snapshot_seconds=0.0,
+        max_fill_collection_to_snapshot_seconds=30.0,
+        fill_collection_to_snapshot_within_threshold=True,
         total_open_positions=len(positions),
         total_pending_positions=0,
         total_positions=len(positions),

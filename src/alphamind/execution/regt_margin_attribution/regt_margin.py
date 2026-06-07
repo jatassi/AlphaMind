@@ -159,7 +159,7 @@ def compute_regt_margin(
 
     Raises ``KeyError`` if a position's underlying symbol is missing from
     ``underlying_prices`` — that is an upstream contract violation
-    (Phase 1 driver is responsible for populating prices for every
+    (fill collection driver is responsible for populating prices for every
     open-position underlying).
     """
     total = 0.0

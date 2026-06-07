@@ -1,7 +1,7 @@
 """Tests for consumer-side recovery of unattributed fills (ALP-763).
 
 The fill-stream consumer used to silently drop a fill-bearing event that
-arrived before its local ``orders`` row was committed (deferred Phase-2
+arrived before its local ``orders`` row was committed (deferred command-execution
 writeback) — a permanent position/cash divergence. The fix never drops:
 
 * ``persist_fill_report`` does a short in-process retry, then quarantines the
@@ -152,7 +152,7 @@ async def _seed_order_row_for(
     order_id: str,
     alpaca_order_id: str,
 ) -> None:
-    """Insert the matching local order row (the deferred Phase-2 writeback)."""
+    """Insert the matching local order row (the deferred command-execution writeback)."""
     async with session_factory() as session:
         session.add(
             stub_order_row(
@@ -191,7 +191,7 @@ class TestFillBeforeOrderCommitRace:
         assert queued[0].broker_fill_key == derive_broker_fill_key(report)
         assert queued[0].alerted is True
 
-        # The deferred Phase-2 writeback lands: the order row now exists,
+        # The deferred command-execution writeback lands: the order row now exists,
         # keyed by the captured broker UUID.
         await _seed_order_row_for(
             session_factory,
@@ -404,7 +404,7 @@ class TestQuarantineWriteFailureDoesNotCrash:
 
 
 # ---------------------------------------------------------------------------
-# ALP-767 — drain triggers immediate Phase-1 integration
+# ALP-767 — drain triggers immediate fill collection integration
 # ---------------------------------------------------------------------------
 
 
@@ -418,12 +418,12 @@ _LEG_ORDER_ID = "ORD-767-leg-stop"
 _NOW_767 = datetime(2026, 6, 2, 14, 0, 0, tzinfo=UTC)
 
 
-async def _seed_phase1_substrate_for_767(
+async def _seed_fill_collection_substrate_for_767(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     alpaca_order_id: str,
 ) -> None:
-    """Seed all rows Phase-1 needs: process_lifetime, position, order, thesis,
+    """Seed all rows fill_collection needs: process_lifetime, position, order, thesis,
     bracket (with one PENDING_ACTIVATION leg), cash_ledger, drawdown_state.
 
     The entry order is PENDING with remaining_quantity=10 so a single-fill of
@@ -648,11 +648,11 @@ async def _seed_phase1_substrate_for_767(
         await sess.commit()
 
 
-class TestPhase1IntegrationOnDrain:
-    """ALP-767 — drain immediately converges local state via Phase-1 integration.
+class TestFillCollectionIntegrationOnDrain:
+    """ALP-767 — drain immediately converges local state via fill_collection integration.
 
     Verifies that supplying ``process_lifetime_id`` to
-    :func:`drain_unattributed_fills` triggers Phase-1 fill integration right
+    :func:`drain_unattributed_fills` triggers fill collection fill integration right
     after a fill is recovered, flipping the position from PENDING→OPEN and
     activating bracket legs within the same drain cycle rather than waiting for
     the next scheduled pipeline run.
@@ -664,7 +664,7 @@ class TestPhase1IntegrationOnDrain:
         tmp_path: Path,
     ) -> AsyncIterator[tuple[async_sessionmaker[AsyncSession], str]]:
         """Yield ``(factory, alpaca_order_id)`` over a fresh DB with the
-        full Phase-1 substrate seeded (position/order/bracket/leg/cash/drawdown)."""
+        full fill-collection substrate seeded (position/order/bracket/leg/cash/drawdown)."""
         db_path = tmp_path / "alphamind_767.db"
         import alphamind.state.tables  # noqa: F401
         from alphamind.persistence.models import Base
@@ -681,7 +681,7 @@ class TestPhase1IntegrationOnDrain:
         async_engine = make_async_engine(str(db_path))
         factory = make_async_session_factory(async_engine)
         alpaca_uuid = str(uuid4())
-        await _seed_phase1_substrate_for_767(factory, alpaca_order_id=alpaca_uuid)
+        await _seed_fill_collection_substrate_for_767(factory, alpaca_order_id=alpaca_uuid)
         try:
             yield factory, alpaca_uuid
         finally:
@@ -695,8 +695,8 @@ class TestPhase1IntegrationOnDrain:
         and flips the bracket leg PENDING_ACTIVATION→ACTIVE in one cycle."""
         from alphamind._kernel.money import money
         from alphamind._kernel.money import price as mk_price
+        from alphamind.execution.write_paths.fill_collection import integrate_recovered_fills
         from alphamind.execution.write_paths.fill_persistence import append_fill_record
-        from alphamind.execution.write_paths.phase1 import integrate_recovered_fills
         from alphamind.portfolio_state.records.orders import (
             BracketLegStatus,
             BracketStatus,
@@ -774,11 +774,11 @@ class TestPhase1IntegrationOnDrain:
             ).scalar_one()
             assert leg_row.leg_status == BracketLegStatus.ACTIVE.value
 
-    async def test_drain_with_process_lifetime_id_runs_phase1_end_to_end(
+    async def test_drain_with_process_lifetime_id_runs_fill_collection_end_to_end(
         self,
         substrate_factory: tuple[async_sessionmaker[AsyncSession], str],
     ) -> None:
-        """ALP-767: the full drain path — unattributed fill → drain → Phase-1 —
+        """ALP-767: the full drain path — unattributed fill → drain → fill_collection —
         converges the position to OPEN without waiting for the next scheduled run."""
         from alphamind.execution.continuous_monitor.fill_stream_consumer.translation import (
             derive_broker_fill_key,
@@ -820,7 +820,7 @@ class TestPhase1IntegrationOnDrain:
             await append_unattributed_fill(sess, unattributed)
             await sess.commit()
 
-        # Run drain with process_lifetime_id → Phase-1 fires immediately after
+        # Run drain with process_lifetime_id → fill collection fires immediately after
         # the fill is resolved and appended to fill_records.
         integrated = await drain_unattributed_fills(
             session_factory=factory,

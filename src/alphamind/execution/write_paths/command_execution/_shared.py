@@ -1,4 +1,4 @@
-"""Shared helpers for the Phase 2 command-execution write path.
+"""Shared helpers for the command execution command-execution write path.
 
 Cross-cutting machinery used by two or more of the per-command-kind modules
 (:mod:`.open`, :mod:`.close`, :mod:`.adjust`, :mod:`.cancel`, :mod:`.add`):
@@ -186,7 +186,7 @@ def _instrument_spec_for_position(position: PositionRecord) -> InstrumentSpec:
     underlying ticker. The pre-ALP-614 ``_build_pending_order`` defaulted to
     EquityInstrumentSpec for every non-strategy order regardless of the
     position's instrument type, and downstream cash-movement / consideration
-    code (``_fill_consideration_usd`` in phase1) keys off the order's spec —
+    code (``_fill_consideration_usd`` in fill_collection) keys off the order's spec —
     so an instrument-faithful shape on single-leg options orders would
     silently change cash-ledger semantics (multiplier scaling). Preserve the
     pre-PR shape on non-strategy orders; the strategy-aware branch is the
@@ -230,7 +230,7 @@ def _position_quantity(position: PositionRecord) -> float:
     """Best-effort quantity used to size replacement orders.
 
     OPEN positions return their fill count; PENDING positions (zero fills)
-    return ``1.0`` so the OrderRecord quantity invariant holds — Phase 1
+    return ``1.0`` so the OrderRecord quantity invariant holds — fill collection
     overwrites with the real quantity when the entry fills.
     """
     if isinstance(position.details, EquityPositionDetails):
@@ -389,7 +389,7 @@ def _build_entry_order_from_command(  # noqa: PLR0913 — distinct ID, position,
 async def _read_cash_row(handle: InvocationHandle) -> CashLedgerRow:
     row = await handle.session.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
     if row is None:
-        msg = "cash_ledger singleton missing — Phase 2 cannot reserve capital"
+        msg = "cash_ledger singleton missing — command execution cannot reserve capital"
         raise ValueError(msg)
     return row
 
@@ -447,12 +447,12 @@ async def _unprocessed_filled_quantity(handle: InvocationHandle, *, order_id: st
     """Summed quantity of UNPROCESSED ``fill_records`` recorded against *order_id*.
 
     The continuous monitor appends a ``fill_records`` row (status ``unprocessed``)
-    the instant a broker fill lands; Phase 1 later drains it into the order's
+    the instant a broker fill lands; fill collection later drains it into the order's
     ``filled_quantity``. Between those two events — exactly the stale-snapshot
     window a PM CANCEL is decided in (ALP-760) — the order row still reads
     zero-filled while shares already exist on the broker. Summing the unprocessed
     fills recovers that not-yet-integrated filled quantity. QUARANTINED fills are
-    excluded (Phase 1 rejected them as malformed — they back no real shares), and
+    excluded (fill collection rejected them as malformed — they back no real shares), and
     PROCESSED fills are already folded into ``filled_quantity`` so counting them
     here would double-count.
     """
@@ -549,7 +549,7 @@ _ALL_PROTECTIVE_ROLES: frozenset[str] = frozenset(
 )
 
 # The options capital-floor OrderRow's ``order_id`` prefix (ALP-856). Mirrors
-# ``phase2.open._capital_floor_order_id`` (``ORD-FLOOR-{suffix}``); duplicated as a
+# ``command_execution.open._capital_floor_order_id`` (``ORD-FLOOR-{suffix}``); duplicated as a
 # literal here because ``open`` imports from this module, so importing it back
 # would cycle. The floor row shares the PRICE_STOP role with the invalidation
 # stop, so its id prefix — not its role — is what identifies it.
@@ -586,8 +586,8 @@ async def _cancel_pending_protective_orders(
     entry-CANCEL teardown (``abandon_command`` → ``_writeback_cancel``) the
     bracket dissolves, so the floor must clear too: left ``PENDING_SUBMIT`` its
     ``inv-{id}.`` ``client_order_id`` keeps
-    :func:`alphamind.execution.write_paths.phase2.atomic.invocation_has_pending_submit_strand`
-    True forever → ``phase2_completed_at`` withheld with no recovery (FL3 /
+    :func:`alphamind.execution.write_paths.command_execution.atomic.invocation_has_pending_submit_strand`
+    True forever → ``command_execution_completed_at`` withheld with no recovery (FL3 /
     ALP-856). The floor reserves no capital (release none); cancelling the row
     clears the strand. A non-floor ``PENDING_SUBMIT`` row is a legitimately
     in-flight order and is NOT swept (only the floor leg is scoped in).
@@ -616,7 +616,7 @@ async def _cancel_pending_protective_orders(
 async def _cancel_all_bracket_legs(handle: InvocationHandle, *, bracket_id: str) -> None:
     """Transition every ``bracket_legs`` row for *bracket_id* to CANCELLED.
 
-    Symmetric with the phase1 dissolve path (``phase1._dissolve_bracket``):
+    Symmetric with the fill_collection dissolve path (``fill_collection._dissolve_bracket``):
     once a bracket is DISSOLVED the read-time invariant
     (``BracketRecord._check_dissolved_rule``) requires every leg row to be
     CANCELLED. This iterates ``bracket_legs`` directly rather than deriving

@@ -21,7 +21,7 @@ The motivating shape: the analyst SDK call hits its latency budget 9
 minutes into a run, the operator bumps `decision.analyst.latency_budget_s`
 in `config/run_types/<trigger>.yaml`, and re-invokes with
 `--resume-from inv-2026-05-25T14:00:00-abc123:analyst`. The new
-invocation re-runs the deterministic prefix (phase1, snapshot_assembly,
+invocation re-runs the deterministic prefix (fill_collection, snapshot_assembly,
 distillation — all cheap, all deterministic against the synthetic
 portfolio fixture), hydrates the six analysis-layer SDK outputs from the
 prior archive, then runs analyst + everything downstream with the new
@@ -30,7 +30,7 @@ iteration.
 
 In scope: the 9 SDK phases (3 domain researchers + qualitative +
 adaptive + synthesizer + analyst + strategist + PM). Deterministic
-phases (phase1, snapshot_assembly, distillation, pre_processor, phase2)
+phases (fill_collection, snapshot_assembly, distillation, pre_processor, command_execution)
 are always re-run from scratch — they are cheap and produce identical
 outputs against the synthetic fixture, so the resume contract does not
 need to special-case them. Out of scope: resume against `--debug-e2e`
@@ -202,7 +202,7 @@ inputs to the replayed phases. Skipping `wipe_and_seed` would force a
 side channel for preserving DB state between invocations; the cost of
 re-running it (~10s) is not worth that complexity.
 
-**Deterministic-prefix invariant.** Phase1 + snapshot_assembly +
+**Deterministic-prefix invariant.** Fill_collection + snapshot_assembly +
 distillation must produce byte-identical outputs on a resume run vs
 the source run. If they don't, the replayed downstream phases are
 operating against a different upstream than they originally saw — a
@@ -268,7 +268,7 @@ new check (`check_deterministic_prefix`) for a total of 8.
 ## 8. Out of scope
 
 - **Resume in non-debug-e2e mode.** Production runs against the real
-  broker have side effects (envelope dispatch in phase2) that cannot
+  broker have side effects (envelope dispatch in command_execution) that cannot
   be replayed safely. If an operator needs a paper-mode resume, that
   is a separate design.
 - **Resume across schema migrations.** If alembic head differs

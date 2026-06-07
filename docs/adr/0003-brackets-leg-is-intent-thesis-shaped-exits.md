@@ -5,7 +5,7 @@ Status: Accepted — 2026-06-03
 ## Context
 
 Bracket legs were stored as `orders` rows with **counterfeit `alp-{order_id}` broker ids**
-even when no broker order existed (`write_paths/phase2/_shared.py:305`), conflating Intent
+even when no broker order existed (`write_paths/command_execution/_shared.py:305`), conflating Intent
 with Broker-Owned Fact. This flattening is the generator of ALP-837 (CANCEL/ADJUST of a
 synthetic-id leg sends `alp-…` to Alpaca → 404 → `PermanentRejection`) and ALP-746
 (equity native legs need their real Alpaca ids captured at submit). AlphaMind options

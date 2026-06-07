@@ -19,7 +19,7 @@ from alphamind.commands.command_models import (
     NewTargetLevel,
 )
 from alphamind.commands.submission_results import SubmissionResult
-from alphamind.execution.write_paths.phase2._shared import (
+from alphamind.execution.write_paths.command_execution._shared import (
     _OMS_COMPONENT_TYPE_TO_PERSISTED,
     _append_bracket_modification,
     _build_pending_order,

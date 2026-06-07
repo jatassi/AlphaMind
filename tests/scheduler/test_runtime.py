@@ -38,14 +38,14 @@ def _make_invocation_record(
     invocation_id: str,
     start_at: str,
     active_regime: str,
-    phase2_completed_at: str | None,
+    command_execution_completed_at: str | None,
 ) -> InvocationRecord:
     return InvocationRecord(
         invocation_id=invocation_id,
         process_lifetime_id="proc-driver-1",
         start_at=start_at,
-        phase1_completed_at=None,
-        phase2_completed_at=phase2_completed_at,
+        fill_collection_completed_at=None,
+        command_execution_completed_at=command_execution_completed_at,
         trigger_type="scheduled",
         trigger_source="morning-cron",
         trigger_reason="0 9 * * 1-5",
@@ -161,7 +161,7 @@ class TestResolveActiveRegime:
                         invocation_id="inv-1",
                         start_at="2026-05-07T14:30:00Z",
                         active_regime="elevated",
-                        phase2_completed_at="2026-05-07T14:31:00Z",
+                        command_execution_completed_at="2026-05-07T14:31:00Z",
                     )
                 )
             )
@@ -183,7 +183,7 @@ class TestResolveActiveRegime:
                         invocation_id="inv-old",
                         start_at="2026-05-07T13:00:00Z",
                         active_regime="low_vol",
-                        phase2_completed_at="2026-05-07T13:01:00Z",
+                        command_execution_completed_at="2026-05-07T13:01:00Z",
                     )
                 )
             )
@@ -194,7 +194,7 @@ class TestResolveActiveRegime:
                         invocation_id="inv-aborted",
                         start_at="2026-05-07T14:30:00Z",
                         active_regime="crisis",
-                        phase2_completed_at=None,
+                        command_execution_completed_at=None,
                     )
                 )
             )
@@ -215,7 +215,7 @@ class TestResolveActiveRegime:
                         invocation_id="inv-aborted-only",
                         start_at="2026-05-07T14:30:00Z",
                         active_regime="crisis",
-                        phase2_completed_at=None,
+                        command_execution_completed_at=None,
                     )
                 )
             )
@@ -260,7 +260,7 @@ class TestResolveRuntimeDimensions:
                         invocation_id="inv-prior",
                         start_at="2026-05-07T14:30:00Z",
                         active_regime="elevated",
-                        phase2_completed_at="2026-05-07T14:31:00Z",
+                        command_execution_completed_at="2026-05-07T14:31:00Z",
                     )
                 )
             )

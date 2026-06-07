@@ -8,8 +8,8 @@ is the pre-filtered view 04a iterates.
 
 Frozen dataclasses, not Pydantic — the records are produced once per tick on
 the hot path; runtime validation buys nothing because every field originates
-from a validated source upstream (Phase 1 enforcement result, breach-behavior
-primitive outputs, zone classifier).
+from a validated source upstream (active-guardrails composition result,
+breach-behavior primitive outputs, zone classifier).
 
 Design reference:
 * ``docs/design/05-execution-layer/architecture.md`` § 4b — periodic evaluation
@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from alphamind.config.models.guardrails import BreachResponse
-from alphamind.execution.guardrail_enforcement import Phase1EnforcementResult
+from alphamind.execution.guardrail_enforcement import ActiveGuardrails
 from alphamind.risk_guardrails.breach_behavior import (
     DrawdownSample,
     HaltState,
@@ -67,7 +67,7 @@ class BreachLoopResult:
     """
 
     as_of: datetime
-    phase1_result: Phase1EnforcementResult
+    active_guardrails: ActiveGuardrails
     rule_evaluations: tuple[RuleEvaluation, ...]
     halt_state: HaltState | None
     immediate_action_breaches: tuple[RuleEvaluation, ...]

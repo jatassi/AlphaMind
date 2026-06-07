@@ -11,7 +11,7 @@ events (``BracketLegModification`` Pydantic instances) serialized via
 ``position_id`` and ``entry_order_id`` carry DEFERRABLE INITIALLY DEFERRED
 FKs to ``positions`` / ``orders`` (``ON DELETE RESTRICT``), matching the
 ``e9d2c4f7b3a1_tighten_state_persistence_fks`` migration. The deferral
-accommodates the orders↔brackets and positions↔brackets cycles that Phase 2's
+accommodates the orders↔brackets and positions↔brackets cycles that command execution's
 OPEN writeback seeds in a single transaction. The 1:1 invariant with
 positions is encoded via a UNIQUE index on ``position_id``.
 """

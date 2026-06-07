@@ -9,7 +9,7 @@ from alphamind._kernel.ids import OrderId
 from alphamind._kernel.money import Money, money
 from alphamind.commands.command_models import CancelCommand
 from alphamind.commands.submission_results import SubmissionResult
-from alphamind.execution.write_paths.phase2._shared import (
+from alphamind.execution.write_paths.command_execution._shared import (
     _assert_bracket_readable,
     _cancel_all_bracket_legs,
     _cancel_pending_protective_orders,
@@ -92,13 +92,13 @@ async def _writeback_cancel(
 
     **Partial-fill guard (ALP-760).** A PM CANCEL is decided on a snapshot frozen
     before intraday fills, so the targeted entry may have *already (partially)
-    filled* by Phase-2 commit time. Cancelling the unfilled remainder is correct,
+    filled* by command-execution commit time. Cancelling the unfilled remainder is correct,
     but dissolving the bracket and resolving the thesis ``CANCELLED_NEVER_ENTERED``
     would orphan the filled shares as an unguarded position. When any shares have
-    filled — recorded in ``filled_quantity`` (Phase-1-integrated) or as an
-    unprocessed ``fill_records`` row the broker reported but Phase-1 has not yet
+    filled — recorded in ``filled_quantity`` (fill-collection-integrated) or as an
+    unprocessed ``fill_records`` row the broker reported but fill-collection has not yet
     drained — only the unfilled remainder's reserved capital is released and the
-    bracket / thesis are left intact, so Phase-1 fill integration drives the
+    bracket / thesis are left intact, so fill-collection fill integration drives the
     position PENDING→OPEN with the bracket still protecting the filled portion.
     """
     del result  # Symmetric dispatch signature; CANCEL reads from command + DB.
@@ -122,9 +122,9 @@ async def _writeback_cancel(
     )
 
     # Recorded fills against this order so far (ALP-760): the order's own
-    # ``filled_quantity`` (fills Phase-1 already integrated) plus unprocessed
+    # ``filled_quantity`` (fills fill-collection already integrated) plus unprocessed
     # ``fill_records`` the broker reported in the stale-snapshot window but
-    # Phase-1 has not yet drained. ``filled + unprocessed`` is the true filled
+    # fill-collection has not yet drained. ``filled + unprocessed`` is the true filled
     # quantity at commit time regardless of integration ordering.
     unprocessed_filled = await _unprocessed_filled_quantity(handle, order_id=target.order_id)
     total_filled = target.filled_quantity + unprocessed_filled
@@ -140,14 +140,14 @@ async def _writeback_cancel(
         # Release only the *unfilled remainder*'s reserved notional, on the same
         # ``reservation_price * quantity`` basis OPEN / ADD reserved at
         # submission and the reprice path adjusts (ALP-741). The filled portion's
-        # reservation is released by Phase-1 when it integrates the fill
+        # reservation is released by fill-collection when it integrates the fill
         # (``_fill_reservation_release_usd``), so releasing it here too would
         # double-release. With no recorded fill, ``unprocessed_filled`` is 0 and
         # ``order.remaining_quantity`` is the full size, so this is exactly
         # ``_order_reserved_notional`` — the whole reservation (ALP-760).
         # Market entries carry no price → ``money(0)`` (they reserved nothing —
         # skip the no-op release/emit; a market order fills immediately and its
-        # consideration flows through Phase 1).
+        # consideration flows through fill collection).
         release_amount = _unfilled_remainder_notional(target, unprocessed_filled=unprocessed_filled)
         if release_amount > 0:
             await _release_capital(
@@ -165,7 +165,7 @@ async def _writeback_cancel(
     # ALP-760: shares have filled — never orphan them. The unfilled remainder was
     # cancelled on the broker (and the order is marked CANCELLED above), but the
     # bracket must keep protecting the filled portion and the thesis must NOT
-    # resolve ``CANCELLED_NEVER_ENTERED``. Phase-1 fill integration drives the
+    # resolve ``CANCELLED_NEVER_ENTERED``. fill-collection fill integration drives the
     # position PENDING→OPEN and activates the (still-intact) bracket.
     if total_filled > 0:
         return
@@ -195,7 +195,7 @@ async def _writeback_cancel(
     )
 
     # A never-filled position whose entry just cancelled has no terminal state
-    # in the fill path (phase1 only transitions PENDING→OPEN→CLOSED). Without
+    # in the fill path (fill_collection only transitions PENDING→OPEN→CLOSED). Without
     # this it strands in PENDING forever: never priced by the OPEN-only quote
     # stream, perpetually emitting the assembler's stale-sentinel warning
     # (ALP-744). Both the PM CANCEL and the ALP-737 entry-window auto-cancel
@@ -219,7 +219,7 @@ async def _writeback_cancel(
 def _unfilled_remainder_notional(order: OrderRecord, *, unprocessed_filled: float) -> Money:
     """Reserved notional still attributable to the *unfilled* remainder (ALP-760).
 
-    ``order.remaining_quantity`` already nets out Phase-1-integrated fills;
+    ``order.remaining_quantity`` already nets out fill-collection-integrated fills;
     subtracting the not-yet-integrated ``unprocessed_filled`` yields the quantity
     the broker still had working and just cancelled. Floors at zero and reuses
     the ``reservation_price * quantity`` basis (``_order_notional_usd``) the whole

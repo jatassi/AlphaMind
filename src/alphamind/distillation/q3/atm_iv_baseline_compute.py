@@ -4,7 +4,7 @@ The baseline computation operates over a per-ticker pre-loaded ATM-IV
 history (``Sequence[float]``) and produces both the calibrated rank value
 the q3 IV-rank block consumes and the upsert payload the loader applies
 back to ``distillation_ticker_baseline``. Splitting compute from upsert
-lets the orchestrator's Phase 2 run the pure compute under
+lets the per-category indicator compute step run the pure compute under
 ``asyncio.to_thread`` without touching the shared SQLAlchemy session.
 
 The constant :data:`ATM_IV_BASELINE_KIND` lives here so callers (compute,

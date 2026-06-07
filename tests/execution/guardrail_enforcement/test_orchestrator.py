@@ -1,6 +1,6 @@
-"""Tests for ``compose_phase_1_enforcement`` (story 02).
+"""Tests for ``compose_active_guardrails`` (story 02 / ALP-902 rename).
 
-Per-invocation Phase 1 entry point that wraps a regime-adaptation output with
+Per-invocation entry point that wraps a regime-adaptation output with
 the drawdown-tier composition primitive (story 01) and bundles the result.
 All tier values referenced come from the shipped ``config/guardrails.yaml`` —
 no hard-coded numerics in test bodies.
@@ -15,9 +15,9 @@ import pytest
 from alphamind._kernel.regime import RegimeTransitionState
 from alphamind.config.models.regimes import Regime
 from alphamind.execution.guardrail_enforcement import (
-    Phase1EnforcementResult,
+    ActiveGuardrails,
+    compose_active_guardrails,
     compose_active_risk_parameters,
-    compose_phase_1_enforcement,
 )
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.risk_guardrails.breach_behavior import DrawdownTier
@@ -83,13 +83,13 @@ def test_zero_drawdown_returns_input_unchanged_and_no_tier() -> None:
     regime_output = _build_regime_output(parameters=pre_params)
     drawdown = make_drawdown_state(intraday_pct=0.0, cumulative_pct=0.0)
 
-    result = compose_phase_1_enforcement(
+    result = compose_active_guardrails(
         regime_output=regime_output,
         drawdown_state=drawdown,
         progressive_tiers=TIERS,
     )
 
-    assert isinstance(result, Phase1EnforcementResult)
+    assert isinstance(result, ActiveGuardrails)
     assert result.active_risk_parameters is pre_params
     assert result.drawdown_tier is None
 
@@ -109,7 +109,7 @@ def test_first_non_halt_tier_yields_constrained_with_clamped_overrides() -> None
     regime_output = _build_regime_output(parameters=pre_params)
     drawdown = make_drawdown_state(intraday_pct=0.0, cumulative_pct=first_tier.trigger_pct)
 
-    result = compose_phase_1_enforcement(
+    result = compose_active_guardrails(
         regime_output=regime_output,
         drawdown_state=drawdown,
         progressive_tiers=TIERS,
@@ -135,7 +135,7 @@ def test_second_non_halt_tier_yields_heavily_constrained() -> None:
     regime_output = _build_regime_output(parameters=pre_params)
     drawdown = make_drawdown_state(intraday_pct=0.0, cumulative_pct=second_tier.trigger_pct)
 
-    result = compose_phase_1_enforcement(
+    result = compose_active_guardrails(
         regime_output=regime_output,
         drawdown_state=drawdown,
         progressive_tiers=TIERS,
@@ -154,7 +154,7 @@ def test_full_halt_tier_appends_tier_3_overlay() -> None:
         cumulative_pct=FULL_HALT_TIER.trigger_pct,
     )
 
-    result = compose_phase_1_enforcement(
+    result = compose_active_guardrails(
         regime_output=regime_output,
         drawdown_state=drawdown,
         progressive_tiers=TIERS,
@@ -169,7 +169,7 @@ def test_full_halt_tier_appends_tier_3_overlay() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_compose_phase_1_enforcement_is_deterministic() -> None:
+def test_compose_active_guardrails_is_deterministic() -> None:
     """Five identical-input invocations produce identical outputs."""
     pre_params = baseline_normal_parameters()
     regime_output = _build_regime_output(parameters=pre_params)
@@ -179,7 +179,7 @@ def test_compose_phase_1_enforcement_is_deterministic() -> None:
     )
 
     result = assert_deterministic(
-        lambda: compose_phase_1_enforcement(
+        lambda: compose_active_guardrails(
             regime_output=regime_output,
             drawdown_state=drawdown,
             progressive_tiers=TIERS,
@@ -209,7 +209,7 @@ def test_inputs_are_unchanged_by_invocation() -> None:
         cumulative_pct=NON_HALT_TIERS[0].trigger_pct,
     )
 
-    compose_phase_1_enforcement(
+    compose_active_guardrails(
         regime_output=regime_output,
         drawdown_state=drawdown,
         progressive_tiers=TIERS,
@@ -224,13 +224,13 @@ def test_inputs_are_unchanged_by_invocation() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_phase_1_enforcement_result_is_frozen() -> None:
-    """``Phase1EnforcementResult`` rejects mutation."""
+def test_active_guardrails_is_frozen() -> None:
+    """``ActiveGuardrails`` rejects mutation."""
     pre_params = baseline_normal_parameters()
     regime_output = _build_regime_output(parameters=pre_params)
     drawdown = make_drawdown_state(intraday_pct=0.0, cumulative_pct=0.0)
 
-    result = compose_phase_1_enforcement(
+    result = compose_active_guardrails(
         regime_output=regime_output,
         drawdown_state=drawdown,
         progressive_tiers=TIERS,
@@ -261,7 +261,7 @@ def test_result_matches_underlying_primitive_for_tier_1() -> None:
         progressive_tiers=TIERS,
     )
 
-    result = compose_phase_1_enforcement(
+    result = compose_active_guardrails(
         regime_output=regime_output,
         drawdown_state=drawdown,
         progressive_tiers=TIERS,

@@ -36,9 +36,9 @@ async def append_fill_record(session: AsyncSession, fill: FillRecord) -> None:
     """Persist *fill* as ``unprocessed`` if its dedupe key is new; no-op otherwise.
 
     Forces ``processing_status = unprocessed`` to defend against callers
-    accidentally trying to short-circuit Phase 1 by writing a pre-processed
+    accidentally trying to short-circuit fill collection by writing a pre-processed
     fill on the monitor path. The transition to ``processed`` belongs to
-    Phase 1 and must run inside the integration transaction.
+    fill collection and must run inside the integration transaction.
     """
     if fill.processing_status != FillProcessingStatus.UNPROCESSED:
         msg = (

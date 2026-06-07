@@ -112,8 +112,8 @@ from ._view_builders import (
 # Shared timestamps
 # ---------------------------------------------------------------------------
 
-_PHASE1_AT = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
-_NOW = datetime(2025, 6, 1, 9, 30, 0, tzinfo=UTC)  # 30 min after phase1
+_FILL_COLLECTION_AT = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
+_NOW = datetime(2025, 6, 1, 9, 30, 0, tzinfo=UTC)  # 30 min after fill_collection
 _ENTRY_AT = datetime(2025, 6, 1, 8, 0, 0, tzinfo=UTC)  # 1.5 h before _NOW
 _ORDER_SUBMITTED_AT = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)  # 30 min before _NOW
 _INV_ID = "inv-test-001"
@@ -128,7 +128,7 @@ def _make_config() -> PortfolioStateConfig:
         pm_decision_log_sliding_window_invocations=5,
         thesis_resolutions_lookback_trading_days=10,
         thesis_quality_aggregates_trailing_windows_days=(5, 20),
-        snapshot_freshness_max_phase1_to_snapshot_seconds=300.0,
+        snapshot_freshness_max_fill_collection_to_snapshot_seconds=300.0,
         snapshot_freshness_max_price_age_seconds=60.0,
         snapshot_freshness_max_option_price_age_seconds=300.0,
     )
@@ -183,7 +183,7 @@ def _make_thesis_quality_aggregates() -> ThesisQualityAggregate:
 def _make_invocation_metadata(invocation_id: str = _INV_ID) -> CurrentInvocationMetadata:
     return CurrentInvocationMetadata(
         invocation_id=invocation_id,
-        phase1_committed_at=_PHASE1_AT,
+        fill_collection_committed_at=_FILL_COLLECTION_AT,
         pipeline_invocation_started_at=None,
     )
 
@@ -195,12 +195,12 @@ def _make_prior_context(
         return PriorInvocationContext(
             prior_invocation_id=None,
             prior_active_risk_parameters=None,
-            prior_phase1_committed_at=None,
+            prior_fill_collection_committed_at=None,
         )
     return PriorInvocationContext(
         prior_invocation_id="inv-000",
         prior_active_risk_parameters=prior_params,
-        prior_phase1_committed_at=_PHASE1_AT,
+        prior_fill_collection_committed_at=_FILL_COLLECTION_AT,
     )
 
 
@@ -1367,7 +1367,9 @@ def test_assemble_snapshot_returns_assembled_snapshot_bundle() -> None:
 
     # Freshness sidecar corresponds to the snapshot
     assert assembled.freshness.snapshot_assembled_at == assembled.snapshot.snapshot_assembled_at
-    assert assembled.freshness.phase1_committed_at == assembled.snapshot.phase1_committed_at
+    assert assembled.freshness.fill_collection_committed_at == (
+        assembled.snapshot.fill_collection_committed_at
+    )
     assert assembled.freshness.total_open_positions == len(assembled.snapshot.open_positions)
     assert assembled.freshness.total_positions == (
         len(assembled.snapshot.open_positions) + len(assembled.snapshot.pending_positions)
@@ -1486,7 +1488,7 @@ def test_assembler_recomputes_available_buying_power_from_canonical_formula() ->
     overwrites whatever the cash_ledger row carries with the canonical
     formula ``settled_cash - reserved_capital - margin_held``.
 
-    Phase 1/2 stop maintaining this field; the persisted value is whatever
+    Fill collection / command execution stop maintaining this field; the persisted value is whatever
     the seed left there. The assembler is the single source of truth at
     read time.
     """
@@ -2023,18 +2025,18 @@ def test_strategy_position_with_bracket_assembles_without_crash() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase1→snapshot latency warning: monitor path vs pipeline path (ALP-772)
+# fill_collection→snapshot latency warning: monitor path vs pipeline path (ALP-772)
 # ---------------------------------------------------------------------------
 
 
-def test_phase1_latency_warning_suppressed_on_monitor_path(
+def test_fill_collection_latency_warning_suppressed_on_monitor_path(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """check_phase1_latency=False suppresses the phase1→snapshot warning.
+    """warn_on_fill_collection_latency=False suppresses the fill_collection→snapshot warning.
 
-    _PHASE1_AT is 30 min before _NOW (1800s), which exceeds the 300s config
+    _FILL_COLLECTION_AT is 30 min before _NOW (1800s), which exceeds the 300s config
     threshold — so without the flag the warning would fire.  The monitor passes
-    check_phase1_latency=False to avoid alarm fatigue on normal inter-run gaps.
+    warn_on_fill_collection_latency=False to avoid alarm fatigue on normal inter-run gaps.
     """
     fixture = _make_fixture()
     repo = StubPortfolioStateRepository(fixture)
@@ -2048,18 +2050,18 @@ def test_phase1_latency_warning_suppressed_on_monitor_path(
             sector_resolver=_null_sector_resolver,
             config=_make_config(),
             now=_NOW,
-            warn_on_phase1_latency=False,
+            warn_on_fill_collection_latency=False,
         )
 
     assert not any("latency exceeded" in r.message for r in caplog.records)
 
 
-def test_phase1_latency_warning_fires_on_pipeline_path(
+def test_fill_collection_latency_warning_fires_on_pipeline_path(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Default check_phase1_latency=True fires the warning when gap > threshold.
+    """Default warn_on_fill_collection_latency=True fires the warning when gap > threshold.
 
-    _PHASE1_AT is 30 min before _NOW (1800s > 300s threshold), so the pipeline
+    _FILL_COLLECTION_AT is 30 min before _NOW (1800s > 300s threshold), so the pipeline
     path — which uses the default — must emit the warning.
     """
     fixture = _make_fixture()

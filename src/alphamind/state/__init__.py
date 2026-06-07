@@ -9,7 +9,7 @@ the cross-cutting Pydantic record facades (``FillRecord``,
 ``RegTMarginAttribution``) consumed across scheduler, monitor, execution,
 decision, and verification scripts.
 
-OMS-specific write paths (Phase 1, Phase 2 by command kind, fill
+OMS-specific write paths (fill collection, command execution by command kind, fill
 persistence, and the corporate-action integration ledger) remain in
 ``alphamind.execution.write_paths`` — they are
 single-consumer to the execution layer.

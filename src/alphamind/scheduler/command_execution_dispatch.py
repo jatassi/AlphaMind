@@ -1,16 +1,16 @@
-"""Phase 2 envelope dispatcher.
+"""Command-execution envelope dispatcher.
 
 Iterates the PM's ``submission_log`` from the decision-pipeline result and
 persists each envelope's outcome via :func:`persist_envelope_outcome` **in
 its own transaction** — one fresh session per envelope. Matches the
 design's "each command's mutations commit atomically" guarantee
-(``docs/design/05-execution-layer/state-persistence.md`` § Phase 2 write
+(``docs/design/05-execution-layer/state-persistence.md`` § command-execution write
 path), so a mid-batch persistence failure leaves earlier envelopes' writes
 durable. Aggregates per-command accept/reject counts into the
-:class:`Phase2Summary` the orchestrator records.
+:class:`CommandExecutionSummary` the orchestrator records.
 
 Broker dispatch lives in the OMS layer (story 03e ALP-390); this module
-keeps the orchestrator dependency narrow — only Phase 2 writeback.
+keeps the orchestrator dependency narrow — only command-execution writeback.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.commands.submission_log import SubmissionLogEntry
-from alphamind.execution.write_paths.phase2 import (
+from alphamind.execution.write_paths.command_execution import (
     persist_command_abandoned,
     persist_envelope_outcome,
 )
@@ -41,13 +41,13 @@ from alphamind.state.tables.orders import OrderRow
 if TYPE_CHECKING:
     from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
 
-__all__ = ["PMResultLike", "Phase2Summary", "dispatch_phase2"]
+__all__ = ["CommandExecutionSummary", "PMResultLike", "dispatch_command_execution"]
 
 log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
-class Phase2Summary:
+class CommandExecutionSummary:
     """Aggregate envelope-dispatch outcome recorded on the invocation row."""
 
     commands_submitted: int
@@ -55,7 +55,7 @@ class Phase2Summary:
 
 
 class PMResultLike(Protocol):
-    """Structural shape ``dispatch_phase2`` consumes.
+    """Structural shape ``dispatch_command_execution`` consumes.
 
     The real :class:`~alphamind.decision.portfolio_manager.runner.PMResult`
     carries other fields; this dispatcher only reads ``submission_log``,
@@ -73,7 +73,7 @@ async def _envelope_already_persisted(
     envelope_id: str,
     accepted_command_ids: tuple[str, ...],
 ) -> bool:
-    """Return whether this envelope's Phase-2 outcome was already persisted in-turn.
+    """Return whether this envelope's command-execution outcome was already persisted in-turn.
 
     Primary key (ALP-836 / scope G): a pre-committed ``orders`` row keyed by the
     deterministic ``client_order_id`` (= an accepted command_id). The broker-active
@@ -109,13 +109,13 @@ async def _envelope_already_persisted(
     return False
 
 
-async def dispatch_phase2(
+async def dispatch_command_execution(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     invocation_id: str,
     pm_result: PMResultLike,
     state_persistence_config: StatePersistenceConfig,
-) -> Phase2Summary:
+) -> CommandExecutionSummary:
     """Persist every PM-submitted envelope in its own transaction; aggregate counts.
 
     Each :class:`SubmissionLogEntry` opens a fresh session via
@@ -146,7 +146,7 @@ async def dispatch_phase2(
         # active path the abandoned-audit loop below is gated off the same
         # ``already_persisted`` flag to avoid double-emitting those rows. On the
         # non-broker deferred path (debug-e2e / log-only) the in-turn write never
-        # ran, ``already_persisted`` is False, and ``dispatch_phase2`` is the sole
+        # ran, ``already_persisted`` is False, and ``dispatch_command_execution`` is the sole
         # emitter of both the writeback and the abandoned audit. The summary
         # counts are derived purely from ``submission_results`` and run regardless.
         async with session_factory() as session:
@@ -212,4 +212,4 @@ async def dispatch_phase2(
             elif result.status == "rejected":
                 rejected += 1
 
-    return Phase2Summary(commands_submitted=submitted, commands_rejected=rejected)
+    return CommandExecutionSummary(commands_submitted=submitted, commands_rejected=rejected)

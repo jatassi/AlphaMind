@@ -1,7 +1,7 @@
 """Persistence helpers for the ``unattributed_fills`` retry queue (ALP-763).
 
 A raw broker fill event arrives before its local ``orders`` row is committed
-(deferred Phase-2 writeback). The continuous monitor parks the event here and a
+(deferred command-execution writeback). The continuous monitor parks the event here and a
 later drain replays it once the order materializes. These helpers stage rows /
 run queries only; the caller owns the transaction boundary (commit/rollback),
 mirroring ``fill_persistence``.

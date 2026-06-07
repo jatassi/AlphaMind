@@ -8,10 +8,10 @@ The module exports two helpers shared across the pipeline composition tier:
   ``RunTypeConfig.agent_overrides`` fields onto each :class:`BaseAgentConfig`
   via Pydantic ``model_copy(update=...)`` and produces the string-keyed
   mapping the agent runners consume.
-* :func:`build_phase1_enforcement_inputs` — the Phase 1 enforcement input
+* :func:`build_active_guardrail_inputs` — the active-guardrails input
   gatherer (story ALP-433). Reads :class:`DrawdownState` from the supplied
   repository and returns the three-tuple suitable for
-  :func:`compose_phase_1_enforcement`. Lives here so the analysis pipeline
+  :func:`compose_active_guardrails`. Lives here so the analysis pipeline
   and other downstream consumers can reuse it if they need to compute the
   same view; the decision pipeline runner is the first caller.
 """
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from alphamind.portfolio_state.repository import PortfolioStateRepository
     from alphamind.risk_guardrails.regime_adaptation.types import RegimeAdaptationOutput
 
-__all__ = ["apply_agent_overrides", "build_phase1_enforcement_inputs"]
+__all__ = ["apply_agent_overrides", "build_active_guardrail_inputs"]
 
 
 def apply_agent_overrides(
@@ -57,17 +57,17 @@ def apply_agent_overrides(
     }
 
 
-def build_phase1_enforcement_inputs(
+def build_active_guardrail_inputs(
     *,
     repository: PortfolioStateRepository,
     regime_output: RegimeAdaptationOutput,
     progressive_tiers: tuple[ProgressiveTier, ...],
 ) -> tuple[RegimeAdaptationOutput, DrawdownState, tuple[ProgressiveTier, ...]]:
-    """Gather the three inputs ``compose_phase_1_enforcement`` requires.
+    """Gather the three inputs ``compose_active_guardrails`` requires.
 
     Reads :class:`DrawdownState` from the supplied repository and bundles it
     with the regime-adaptation output and progressive-tier sequence into a
-    tuple ready for unpacking into ``compose_phase_1_enforcement(**dict(
+    tuple ready for unpacking into ``compose_active_guardrails(**dict(
     zip([\"regime_output\", \"drawdown_state\", \"progressive_tiers\"],
     result)))``.
 

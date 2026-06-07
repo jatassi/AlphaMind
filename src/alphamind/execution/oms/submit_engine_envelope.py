@@ -30,7 +30,7 @@ the protective CLOSE submits through
 :mod:`alphamind.execution.oms.broker_dispatch` first and the persisted order
 carries the broker's real ``alpaca_order_id``; otherwise the synthetic-
 acknowledgment legacy path is preserved. The function persists the outcome
-via the Phase 2 writeback machinery and returns a :class:`SubmissionResult`
+via the command-execution writeback machinery and returns a :class:`SubmissionResult`
 matching the existing PM-side shape.
 """
 
@@ -135,7 +135,7 @@ async def submit_engine_envelope(
     ``(SubmissionResult, new_state)``.
 
     See module docstring for the validation layering. On accepted submission,
-    the protective CLOSE persists via the Phase 2 writeback machinery
+    the protective CLOSE persists via the command-execution writeback machinery
     (``_writeback_close``) and one ``order_submitted`` activity-log entry is
     appended carrying the engine-guardrail provenance, the trigger record's
     ``position_selection_rationale``, ``rule_breached``, and (when set) the
@@ -297,19 +297,19 @@ async def submit_engine_envelope(
         # at the submission boundary.
         submitted_ack_order_id = OrderId(dispatch_outcome)
 
-    # Persist the protective CLOSE via the Phase 2 writeback machinery.
+    # Persist the protective CLOSE via the command-execution writeback machinery.
     # Threading engine-guardrail provenance + position_selection_rationale +
     # cascade_id (when set) + rule_breached through extra_metadata so the
     # activity-log detail surfaces them on the order_submitted entry.
     # Inline import kept to defer SQLAlchemy load until first use; the
     # ALP-458 split eliminated the formerly-circular path through PM models.
-    from alphamind.execution.write_paths.phase2 import (
+    from alphamind.execution.write_paths.command_execution import (
         persist_engine_envelope_outcome,
     )
 
     # ``source_provenance`` is intentionally NOT threaded into extra_metadata:
     # ``_writeback_close`` already records ``risk_management_subtype="engine_guardrail"``
-    # from ``command.risk_management_subtype`` (see phase2.py rationale_metadata
+    # from ``command.risk_management_subtype`` (see command_execution rationale_metadata
     # build), so adding ``source_provenance="engine_guardrail"`` would duplicate
     # the same fact under a second key on the activity-log detail.
     extra_metadata: dict[str, Any] = {

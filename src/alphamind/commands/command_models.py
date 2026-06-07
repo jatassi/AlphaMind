@@ -456,7 +456,7 @@ class EntryWindow(BaseModel):
     (:class:`alphamind.decision.analyst.models.EntryWindow`) field-for-field so
     the PM copies the block through verbatim when authoring the OPEN command
     rather than transforming it (ALP-737). ``deadline`` is threaded into the
-    bracket's ``entry_window_deadline`` at writeback (``phase2/open.py``); the
+    bracket's ``entry_window_deadline`` at writeback (``command_execution/open.py``); the
     continuous monitor auto-cancels a still-``PENDING_ENTRY`` entry once
     ``now() > deadline`` (see ``orders.py`` ``BracketRecord`` lifecycle
     semantics). ``decay_type`` / ``rationale`` are preserved for the companion

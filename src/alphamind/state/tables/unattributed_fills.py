@@ -1,7 +1,7 @@
 """SQLAlchemy mapping for the ``unattributed_fills`` table (ALP-763).
 
 A transient holding table for raw broker fill events that arrive before the
-local ``orders`` row is committed (deferred Phase-2 writeback). The continuous
+local ``orders`` row is committed (deferred command-execution writeback). The continuous
 monitor's fill-stream consumer cannot resolve ``fill_records.order_id`` (a NOT
 NULL FK) for such fills, so it parks the raw ``FillReport`` here and retries on
 a later drain instead of silently dropping the fill.

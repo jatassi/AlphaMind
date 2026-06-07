@@ -8,8 +8,9 @@ override). The pure half lives here; the writes live in
 
 After the loader has refreshed the persistence row and run the pure
 compute, the resulting :class:`FundingStressResult` carries every value
-the Phase 2 ``asyncio.to_thread`` core needs to assemble the
-``q6.funding_stress`` :class:`OutputBlock` without further DB access.
+the per-category indicator compute ``asyncio.to_thread`` core needs to
+assemble the ``q6.funding_stress`` :class:`OutputBlock` without further
+DB access.
 """
 
 from __future__ import annotations

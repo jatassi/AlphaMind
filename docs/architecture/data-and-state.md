@@ -46,7 +46,7 @@ Logically distinct lifecycles, all in the same SQLite database.
 
 The system's memory across invocations — positions, theses, orders, cash, P/L, activity log, historical resolutions. Defined by the execution layer spec ([categories 1-6](../design/01-data-layer/internal/portfolio-state.md)).
 
-**Writers:** Pipeline (Phase 1: state updates from fills; Phase 2: new orders, thesis creation). Continuous monitor writes fills to the fill buffer, not portfolio state directly.
+**Writers:** Pipeline (fill collection: state updates from fills; command execution: new orders, thesis creation). Continuous monitor writes fills to the fill buffer, not portfolio state directly.
 **Readers:** Pipeline (data layer at invocation start; guardrails; distillation for internal metrics). Continuous monitor reads pending orders.
 
 **Key tables (conceptual):**
@@ -59,10 +59,10 @@ The system's memory across invocations — positions, theses, orders, cash, P/L,
 
 ### 2. Fill buffer (ephemeral, accumulating)
 
-Fills produced by the continuous monitor between invocations. Rows accumulate (minutes to hours); Phase 1 reads them, marks them processed, and retains them for audit.
+Fills produced by the continuous monitor between invocations. Rows accumulate (minutes to hours); fill collection reads them, marks them processed, and retains them for audit.
 
 **Writers:** Continuous monitor (one fill per trigger condition met).
-**Readers:** Pipeline (Phase 1: reads unprocessed fills, marks them processed).
+**Readers:** Pipeline (fill collection: reads unprocessed fills, marks them processed).
 
 **Key tables:**
 - `fill_reports` — fills with order ID, timestamp, price, quantity, slippage, fees, processed flag
@@ -111,14 +111,14 @@ Raw and historical market data (OHLCV bars, options, macro series) also lives in
 
 | Process | Phase | Operation | Frequency |
 |---------|-------|-----------|-----------|
-| Pipeline | Phase 1 (collect) | Read unprocessed fills | 8-10x/day |
-| Pipeline | Phase 1 (collect) | Write portfolio state updates | 8-10x/day |
+| Pipeline | Fill collection | Read unprocessed fills | 8-10x/day |
+| Pipeline | Fill collection | Write portfolio state updates | 8-10x/day |
 | Pipeline | Data collection | Write raw market data | 8-10x/day |
 | Pipeline | Distillation | Read trailing market data windows | 8-10x/day |
 | Pipeline | Distillation | Read/write rolling baselines and composites | 8-10x/day |
 | Pipeline | Analysis | Write briefs to brief store | 8-10x/day |
 | Pipeline | Decision | Read briefs by reference ID | 8-10x/day, multiple reads per invocation |
-| Pipeline | Phase 2 (execute) | Write new orders | 8-10x/day |
+| Pipeline | Command execution | Write new orders | 8-10x/day |
 | Monitor | Continuous | Read pending orders (on new order arrival) | 8-10x/day |
 | Monitor | Continuous | Read trigger prices from orders | Continuous (in-memory after initial load) |
 | Monitor | Continuous | Write fill reports | Sporadic (when triggers fire) |

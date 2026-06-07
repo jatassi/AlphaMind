@@ -8,10 +8,10 @@ Two processes did deferred **read→modify→write** on the same mutable rows (p
 cash, orders), producing immediate `SQLITE_BUSY_SNAPSHOT` aborts when one committed
 between the other's read snapshot and its write-upgrade (ALP-824). `busy_timeout` does not
 cover a stale-snapshot upgrade. The shipped fixes (`BEGIN IMMEDIATE` + bounded retry)
-*manage* the contention rather than removing it: ALP-824 (#292) applied them to Phase-1,
+*manage* the contention rather than removing it: ALP-824 (#292) applied them to fill collection,
 and ALP-836 (#300) extended the same `begin_write_immediate` / `run_with_sqlite_busy_retry`
-primitives to the Phase-2 submit path (`write_paths/phase2/atomic.py`) — the lost-commit
-incident occurred in the Phase-2 gap *before* #300 closed it. Both serialize writers and
+primitives to the command execution submit path (`write_paths/command_execution/atomic.py`) — the lost-commit
+incident occurred in the command execution gap *before* #300 closed it. Both serialize writers and
 retry; neither removes the cross-process read-modify-write that generates the race. The
 single-writer invariant
 `state-persistence.md` always *claimed* — *"all other entities have exactly one writer

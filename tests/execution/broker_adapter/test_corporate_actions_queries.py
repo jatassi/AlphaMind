@@ -148,7 +148,7 @@ async def test_passes_request_kwargs_through() -> None:
 async def test_default_types_request_captured_members_but_not_rights() -> None:
     """When ``types`` is omitted, the request fetches every event-log CA type —
     including the capture-only ``UnitSplit`` / ``Redemption`` / ``WorthlessRemoval``
-    (ALP-849 / W1c, so Phase 1 can append them to the log) — but still omits
+    (ALP-849 / W1c, so fill collection can append them to the log) — but still omits
     ``RightsDistribution`` (no event-log CA vocabulary member)."""
     from alphamind.execution.broker_adapter.corporate_actions_queries import (
         CorporateActionsQueries,
@@ -167,7 +167,7 @@ async def test_default_types_request_captured_members_but_not_rights() -> None:
     (request,), _ = client.get_corporate_actions.call_args
     assert request.types is not None
     sent_types = set(request.types)
-    # Capture-only types are now requested so Phase 1 captures them.
+    # Capture-only types are now requested so fill collection captures them.
     assert CorporateActionsType.UNIT_SPLIT in sent_types
     assert CorporateActionsType.REDEMPTION in sent_types
     assert CorporateActionsType.WORTHLESS_REMOVAL in sent_types

@@ -1,7 +1,7 @@
 """The poll is registered as a pipeline/scheduled task, not an always-on monitor.
 
 ADR-0004 evicts the activity poll to scheduled work — it runs in the pipeline's
-Phase-1 write transaction. The scheduler-layer entry point
+fill-collection write transaction. The scheduler-layer entry point
 ``run_account_activities_poll`` is the registration seam; it accepts an
 activities-source factory (the broker boundary) so the production path builds an
 Alpaca client while tests / debug-e2e substitute a fake without monkey-patching.

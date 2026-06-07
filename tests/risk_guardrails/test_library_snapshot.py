@@ -225,7 +225,7 @@ def _make_pydantic_snapshot(
     )
     return PortfolioStateSnapshot(
         invocation_id=_INV_ID,
-        phase1_committed_at=_PHASE1,
+        fill_collection_committed_at=_PHASE1,
         snapshot_assembled_at=_NOW,
         open_positions=tuple(open_positions),
         pending_positions=tuple(pending_positions),
@@ -1550,7 +1550,7 @@ def test_existing_positions_reserves_capital_from_pending_entry_limit() -> None:
     """ALP-506: a PENDING position with a pending entry LIMIT order gets its
     ``reserves_capital_usd`` populated as ``limit_price * remaining_quantity``,
     mirroring the OMS-side ``_order_reserved_notional`` formula in
-    ``execution/write_paths/phase2/_shared.py``.
+    ``execution/write_paths/command_execution/_shared.py``.
     """
     pos = _make_equity_position_view(
         "POS-AAPL",

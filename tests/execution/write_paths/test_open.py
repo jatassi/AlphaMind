@@ -1,4 +1,4 @@
-"""Tests for the Phase 2 OPEN write path's position builder (ALP-594).
+"""Tests for the command execution OPEN write path's position builder (ALP-594).
 
 Story 01c extends ``_build_pending_position`` so a :class:`StrategyInstrument`
 produces a PENDING strategy :class:`PositionRecord` carrying a
@@ -32,7 +32,7 @@ from alphamind.commands.command_models import (
     ThesisComponent as OMSThesisComponent,
 )
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
-from alphamind.execution.write_paths.phase2.open import (
+from alphamind.execution.write_paths.command_execution.open import (
     _build_active_thesis,
     _build_pending_bracket,
     _build_pending_position,
@@ -385,7 +385,7 @@ def test_build_pending_order_without_broker_id_carries_no_alpaca_id() -> None:
     and its chain is empty — never a placeholder. This is what renders the
     ALP-837 cancel-of-a-non-existent-order path unrepresentable.
     """
-    from alphamind.execution.write_paths.phase2._shared import _build_pending_order
+    from alphamind.execution.write_paths.command_execution._shared import _build_pending_order
     from alphamind.portfolio_state.records.orders import (
         OrderClass,
         OrderDirection,
@@ -420,7 +420,7 @@ def test_build_pending_order_with_override_carries_real_broker_id() -> None:
     both ``alpaca_order_id`` and the single-element chain — a leg backed by a
     Broker-Owned Fact, the broker-enforced case.
     """
-    from alphamind.execution.write_paths.phase2._shared import _build_pending_order
+    from alphamind.execution.write_paths.command_execution._shared import _build_pending_order
     from alphamind.portfolio_state.records.orders import (
         OrderClass,
         OrderDirection,

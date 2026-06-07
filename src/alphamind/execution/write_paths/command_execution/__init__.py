@@ -1,4 +1,4 @@
-"""Phase 2 command-execution write path (story 08 / ALP-366).
+"""command execution command-execution write path (story 08 / ALP-366).
 
 Public entry points the ``submit_envelope`` MCP wrapper invokes
 once an :class:`InvocationHandle` is supplied:
@@ -43,16 +43,16 @@ from alphamind.commands.submission_log import FailedSubmissionEntry
 from alphamind.commands.submission_results import SubmissionResult
 from alphamind.commands.validation_results import ValidationError as PMValidationError
 from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
-from alphamind.execution.write_paths.phase2._shared import _emit
-from alphamind.execution.write_paths.phase2.add import _writeback_add
-from alphamind.execution.write_paths.phase2.adjust import _writeback_adjust
-from alphamind.execution.write_paths.phase2.cancel import (
+from alphamind.execution.write_paths.command_execution._shared import _emit
+from alphamind.execution.write_paths.command_execution.add import _writeback_add
+from alphamind.execution.write_paths.command_execution.adjust import _writeback_adjust
+from alphamind.execution.write_paths.command_execution.cancel import (
     _writeback_cancel,
     persist_entry_window_cancel,
 )
-from alphamind.execution.write_paths.phase2.close import _writeback_close
-from alphamind.execution.write_paths.phase2.open import _writeback_open
-from alphamind.execution.write_paths.phase2.reprice import (
+from alphamind.execution.write_paths.command_execution.close import _writeback_close
+from alphamind.execution.write_paths.command_execution.open import _writeback_open
+from alphamind.execution.write_paths.command_execution.reprice import (
     persist_entry_window_reprice,
 )
 from alphamind.portfolio_state.events.activity_log import (
@@ -141,8 +141,8 @@ async def persist_envelope_outcome(
         originating_proposal_json=originating_proposal_json,
     )
     # Layer-1 parse rejections deliberately skip this — only an accepted
-    # envelope's full writeback counts as a Phase 2 commit.
-    await stamp_phase_completion(handle, column="phase2_completed_at")
+    # envelope's full writeback counts as a command execution commit.
+    await stamp_phase_completion(handle, column="command_execution_completed_at")
 
 
 async def persist_envelope_parse_failure(
@@ -264,7 +264,7 @@ async def persist_engine_envelope_outcome(
         source=EventSource.BRACKET_MANAGER,
         submitted_alpaca_order_id=submitted_alpaca_order_id,
     )
-    await stamp_phase_completion(handle, column="phase2_completed_at")
+    await stamp_phase_completion(handle, column="command_execution_completed_at")
 
 
 async def persist_command_abandoned(

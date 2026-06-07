@@ -946,7 +946,7 @@ class TestTerminalStatusEventLog:
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         # A partially-filled-then-expired entry appends NO terminal event: the
-        # fill path + Phase 1 own filled_quantity and integrate the partials.
+        # fill path + fill collection own filled_quantity and integrate the partials.
         await _set_order_status(session_factory, order_id="order-1", status="PENDING")
         # A second PENDING entry expires cleanly (zero fill) and acts as a
         # processing barrier: once its event lands, the earlier one is drained.
@@ -1060,7 +1060,7 @@ class TestUuidResolution:
         """A take-profit fill arrives keyed on the child's Alpaca UUID with an
         Alpaca-generated client_order_id; it resolves to the local leg row whose
         captured ``alpaca_order_id`` matches, and the fill_records row carries
-        the OMS leg id (so Phase 1 integrates it)."""
+        the OMS leg id (so fill collection integrates it)."""
         tp_uuid = uuid4()
         await _seed_leg_order(
             session_factory,

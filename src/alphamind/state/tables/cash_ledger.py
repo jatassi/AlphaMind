@@ -11,7 +11,7 @@ The persisted column set mirrors the persistent subset of
 fields (``cash_pct_of_portfolio``, ``true_deployable_capital_usd``,
 ``regt_excess_*``) are not stored — they are recomputed at delivery time.
 
-``available_buying_power_usd`` is also a derived field — Phase 1 / Phase 2
+``available_buying_power_usd`` is also a derived field — fill-collection / command-execution
 write paths do not maintain it and the persisted column carries whatever
 the seed left there. The snapshot assembler overwrites it on read using
 the canonical formula ``settled_cash - reserved - margin_held`` (the same

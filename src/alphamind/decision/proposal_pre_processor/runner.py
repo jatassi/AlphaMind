@@ -66,7 +66,7 @@ def run_proposal_pre_processor(
     """Compute the proposal pre-processor bundle.
 
     Inputs are the persisted analyst and strategist outputs (after their own
-    Layer-2/3 validation), the Phase-1 portfolio snapshot in library shape,
+    Layer-2/3 validation), the fill-collection portfolio snapshot in library shape,
     the library config + market inputs that the agent-side validation tool
     used, the snapshot's effective timestamp (for §1.A basis), and the
     bundle's finalization timestamp (for the bundle envelope's ``timestamp``

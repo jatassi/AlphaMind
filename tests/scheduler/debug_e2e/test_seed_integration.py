@@ -6,7 +6,7 @@ downstream snapshot-assembly path. This file fills that gap — a fresh DB
 goes through the production alembic chain, then :func:`wipe_and_seed`
 populates it from :data:`SYNTHETIC_PORTFOLIO`, then assertions confirm
 the seeded state satisfies the read-side invariants that the orchestrator
-hits during ``_assemble_phase1_snapshot``.
+hits during ``_assemble_fill_collection_snapshot``.
 
 These tests are the canonical regression net for the debug-e2e seeder's
 "fully-fresh DB" workflow. Each invariant maps to a verification-run
@@ -125,8 +125,8 @@ class TestSeederPostStateInvariants:
         Until the seeder explicitly populated the singleton, the snapshot
         assembler crashed during step 2 of :func:`assemble_snapshot` with
         ``RepositoryConsistencyError: drawdown_state singleton row is
-        missing — run Phase 1 to seed it``. Phase 1 cannot seed it because
-        the snapshot assembly runs BEFORE Phase 1's write paths.
+        missing — run fill collection to seed it``. Fill collection cannot seed it because
+        the snapshot assembly runs BEFORE fill collection's write paths.
         """
         db_path, factory = migrated_factory
         await _run_seed(factory, db_path)
@@ -382,7 +382,7 @@ class TestSeederAgainstProdSnapshot:
     scope into the data layer) lets ``wipe_and_seed`` continue to own
     state-persistence wipe + synthetic portfolio seed while the data
     layer comes from the production-faithful snapshot. These tests pin
-    the load-bearing invariants the orchestrator's Phase-1 prep / snapshot
+    the load-bearing invariants the orchestrator's fill-collection prep / snapshot
     assembly / distillation bootstrap rely on, without running any SDK
     calls.
     """

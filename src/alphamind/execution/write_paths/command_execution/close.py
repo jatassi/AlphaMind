@@ -7,7 +7,7 @@ from typing import Any
 
 from alphamind.commands.command_models import CloseCommand
 from alphamind.commands.submission_results import SubmissionResult
-from alphamind.execution.write_paths.phase2._shared import (
+from alphamind.execution.write_paths.command_execution._shared import (
     _build_pending_order,
     _close_order_direction_for_position,
     _emit_order_submitted,
@@ -59,12 +59,12 @@ async def _writeback_close(
       :class:`OrderType`).
     * ``command.limit_price`` — populated for limit orders.
     * ``command.close_rationale_type`` — feeds the eventual thesis resolution
-      category in Phase 1; recorded on the order via the originating
+      category in fill collection; recorded on the order via the originating
       pm_command_id linkage so post-fill processing can re-classify.
 
     The bracket-leg cancellation and position closure happen on the close
-    fill in Phase 1 (per design doc: state transitions from fills happen in
-    Phase 1).
+    fill in fill collection (per design doc: state transitions from fills happen in
+    fill collection).
 
     ``extra_metadata`` is folded into the ``order_parameters_json`` payload of
     the emitted ``order_submitted`` activity log entry — the engine-envelope
@@ -128,7 +128,7 @@ async def _writeback_close(
     )
     handle.session.add(order_record_to_row(close_order))
     # CLOSE-specific rationale metadata: close_rationale_type + invalidation_reason
-    # + risk_management_subtype feed the eventual thesis resolution in Phase 1.
+    # + risk_management_subtype feed the eventual thesis resolution in fill collection.
     # We surface them on the order_submitted detail via the order_parameters_json
     # so the post-fill processor can read them without re-fetching the command.
     rationale_metadata: dict[str, Any] = {

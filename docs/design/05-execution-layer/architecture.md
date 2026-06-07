@@ -40,11 +40,11 @@ The broker adapter is always asynchronous from the OMS's perspective. Every orde
 
 Each pipeline invocation has two phases:
 
-**Phase 1 — Collect.** At invocation start, the OMS drains the fill buffer written by the continuous monitor since the last invocation: fill reports, partial fills, stop triggers, order expirations, cancellations. This produces the activity changelog ([raw state category 5a](../01-data-layer/internal/portfolio-state.md)) and updates positions, P/L, cash, and thesis status. Collection happens *before* the ingestion layer snapshots portfolio state, so the pipeline operates on settled state with no in-flight orders.
+**Fill collection.** At invocation start, the OMS drains the fill buffer written by the continuous monitor since the last invocation: fill reports, partial fills, stop triggers, order expirations, cancellations. This produces the activity changelog ([raw state category 5a](../01-data-layer/internal/portfolio-state.md)) and updates positions, P/L, cash, and thesis status. Collection happens *before* the ingestion layer snapshots portfolio state, so the pipeline operates on settled state with no in-flight orders.
 
-**Phase 2 — Execute.** At invocation end, the portfolio manager issues commands. The OMS validates them against guardrails, routes them through the broker adapter to Alpaca, and receives acknowledgments (not fills). These become pending orders ([raw state category 4b](../01-data-layer/internal/portfolio-state.md)) that resolve in a future invocation's collect phase.
+**Command execution.** At invocation end, the portfolio manager issues commands. The OMS validates them against guardrails, routes them through the broker adapter to Alpaca, and receives acknowledgments (not fills). These become pending orders ([raw state category 4b](../01-data-layer/internal/portfolio-state.md)) that resolve in a future invocation's fill collection.
 
-*Fill timestamps reflect actual execution, not collection.* Fills arrive on `trade_updates` with Alpaca's event timestamps; the monitor writes them to the buffer as they arrive. Phase 1 preserves the Alpaca timestamp through to activity logs and position-age calculations.
+*Fill timestamps reflect actual execution, not collection.* Fills arrive on `trade_updates` with Alpaca's event timestamps; the monitor writes them to the buffer as they arrive. Fill collection preserves the Alpaca timestamp through to activity logs and position-age calculations.
 
 ---
 
@@ -54,7 +54,7 @@ A first-class system component running persistently during market hours — peer
 
 ### 4a. Alpaca fill-stream consumption
 
-The monitor subscribes to Alpaca's `trade_updates` websocket (via the [broker adapter](broker-adapter.md)) and writes every fill event into the fill buffer as it arrives. Paper and live mode work identically — same websocket shape, same event types; only the base URL differs. The OMS drains the buffer during Phase 1. Bracket lifecycle for equities — entry fill → protective leg activation → stop/target resolution → OCO cancellation — is handled natively by Alpaca and arrives as separate events the monitor passes through.
+The monitor subscribes to Alpaca's `trade_updates` websocket (via the [broker adapter](broker-adapter.md)) and writes every fill event into the fill buffer as it arrives. Paper and live mode work identically — same websocket shape, same event types; only the base URL differs. The OMS drains the buffer during fill collection. Bracket lifecycle for equities — entry fill → protective leg activation → stop/target resolution → OCO cancellation — is handled natively by Alpaca and arrives as separate events the monitor passes through.
 
 **Disconnect recovery.** On websocket disconnect, the monitor reconnects and queries `GET /v2/orders` with a `since` parameter to recover missed events. Alpaca's order state is authoritative; the OMS reconciles toward it and logs deltas.
 
@@ -109,7 +109,7 @@ resolves the live annualized fee via `build_borrow_cost_resolver`, reads
 the session's closing print from `equity_bars`, computes
 `today_cost_usd = abs(share_count × close_price) × annual_fee_pct / 100 / 252`,
 adds it to the position's `accrued_borrow_cost_usd` accumulator, and emits
-a `BORROW_COST_ACCRUED` activity-log entry. Cover-to-close (Phase 1's
+a `BORROW_COST_ACCRUED` activity-log entry. Cover-to-close (fill collection's
 `_apply_exit_fill`) flushes the accumulator into `realized_pnl_to_date_usd`.
 
 **Trigger.** Once per trading day at the configured local time

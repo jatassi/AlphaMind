@@ -4,7 +4,7 @@ Dispatches each canonical :class:`OMSCommand` variant to the right
 ``submit_*`` function in
 :mod:`alphamind.execution.broker_adapter` and folds the result into a unified
 :class:`BrokerDispatchResult` shape the OMS persists onto the
-:class:`OrderRecord` produced by the Phase 2 write path. This module is the
+:class:`OrderRecord` produced by the command-execution write path. This module is the
 broker-routing landing site for the engine-stub
 (:mod:`alphamind.decision.portfolio_manager.submit_envelope` /
 :mod:`alphamind.execution.oms.submit_engine_envelope`) per parent
@@ -118,7 +118,7 @@ class BrokerDispatchResult:
 
     ``leg_alpaca_order_ids`` maps a native equity bracket / OTO's protective
     role (``"take_profit"`` / ``"stop_loss"``) to the broker's real child id,
-    captured at submission (ALP-746). The Phase 2 OPEN writeback consumes it to
+    captured at submission (ALP-746). The command-execution OPEN writeback consumes it to
     stamp each protective-leg ``orders`` row with its real ``alpaca_order_id``.
     Empty for every non-equity-OPEN submission (options / mleg / replace /
     cancel and equity ADD / CLOSE carry no broker-side protective child).
@@ -759,7 +759,7 @@ def _adjust_to_replace_fields(command: AdjustCommand) -> ReplaceFields:
     Maps stop / target / time changes to the intersection of OMS-modifiable
     and Alpaca-PATCHable fields. Thesis-only or event-only adjustments produce
     no broker-level fields — caller should not dispatch those through the
-    broker (the OMS still persists the thesis update via Phase 2).
+    broker (the OMS still persists the thesis update via command execution).
     """
     if command.new_stop_level is not None:
         stop = command.new_stop_level

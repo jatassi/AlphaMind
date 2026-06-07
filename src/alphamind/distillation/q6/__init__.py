@@ -29,8 +29,9 @@ ALP-485 split the implementation along the compute/load boundary:
   funding_stress,market_liquidity,macro_surprise}_compute` — pure compute
   cores, pinned ORM-free by the import-linter contract.
 - :mod:`alphamind.distillation.q6.assemble` — pure
-  :func:`assemble_q6_blocks_from_inputs` (the function Phase 2 parallelism
-  calls) plus :func:`compute_q6_blocks` (session-accepting shim).
+  :func:`assemble_q6_blocks_from_inputs` (the function the per-category
+  indicator compute step calls) plus :func:`compute_q6_blocks`
+  (session-accepting shim).
 """
 
 from __future__ import annotations

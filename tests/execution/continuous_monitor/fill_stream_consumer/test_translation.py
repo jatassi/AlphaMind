@@ -176,7 +176,7 @@ class TestSingleLegOptionsEvent:
         record = fill_report_to_fill_record(report)
 
         # The persistence row carries no OCC field — the OCC lives on the
-        # parent order's instrument_spec, which Phase 1 resolves at
+        # parent order's instrument_spec, which fill collection resolves at
         # integration time. The translator's only obligation for single-leg
         # options is to produce a fill record with a populated price + qty;
         # the broker-adapter's projection of ``occ_symbol`` does not need to
