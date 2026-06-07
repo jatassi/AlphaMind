@@ -31,7 +31,9 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import yaml
@@ -201,18 +203,35 @@ class OutcomesBundle:
 _AGENTS_YAML = Path(__file__).resolve().parents[3] / "config" / "agents.yaml"
 
 
-def _packaged_agent_latency_budgets() -> dict[str, int]:
-    """Per-agent ``latency_budget_seconds`` read from the packaged ``agents.yaml``.
+@lru_cache(maxsize=1)
+def _load_agent_latency_budgets() -> Mapping[str, int]:
+    """Parse + validate the packaged ``agents.yaml`` once per process (memoized).
 
-    Uses the existing :class:`AgentsConfig` validator (no parallel YAML parsing) so the
-    budget the latency-headroom metric compares wall-clock against is config-sourced, not
-    a hard-coded literal. Stamped onto :class:`CostBudgetsBundle` as the default so a
-    hand-built test dataset omitting the loader still carries the real envelope.
+    The disk read and :class:`AgentsConfig` validation are pure and the packaged file is
+    immutable for the process's lifetime, so the result is cached. Returns an immutable
+    :class:`~types.MappingProxyType` snapshot so the cached object can never be mutated
+    by a caller; :func:`_packaged_agent_latency_budgets` hands out fresh ``dict`` copies.
     """
     with _AGENTS_YAML.open(encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
     cfg = AgentsConfig.model_validate(data)
-    return {name.value: entry.latency_budget_seconds for name, entry in cfg.agents.items()}
+    return MappingProxyType(
+        {name.value: entry.latency_budget_seconds for name, entry in cfg.agents.items()}
+    )
+
+
+def _packaged_agent_latency_budgets() -> dict[str, int]:
+    """Per-agent ``latency_budget_seconds`` read from the packaged ``agents.yaml``.
+
+    The budget the latency-headroom metric compares wall-clock against is config-sourced,
+    not a hard-coded literal. Stamped onto :class:`CostBudgetsBundle` as the default
+    factory so a hand-built test dataset omitting the loader still carries the real
+    envelope. The disk-read + validate is memoized by :func:`_load_agent_latency_budgets`
+    (``load_window`` builds a fresh bundle per call — 12× per default digest run);
+    a *fresh* ``dict`` copy is returned per call so the frozen bundle instances never
+    alias one shared mutable mapping.
+    """
+    return dict(_load_agent_latency_budgets())
 
 
 @dataclass(frozen=True, slots=True)

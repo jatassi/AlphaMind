@@ -206,3 +206,42 @@ class TestPureCoreSeam:
         assert result.sample_size == 2
         assert result.insufficient_sample is True
         assert result.posterior_band is None
+
+
+class TestPackagedAgentLatencyBudgets:
+    """The packaged agents.yaml latency-budget read is the ``CostBudgetsBundle``
+    default factory, invoked once per ``load_window`` (12× per default digest run). It
+    must parse/validate the file once per process and hand each caller a *fresh* dict so
+    the frozen budget bundles never alias one shared mutable mapping."""
+
+    def test_returns_a_distinct_equal_dict_per_call(self) -> None:
+        from alphamind.feedback_loop.dataset import _packaged_agent_latency_budgets
+
+        first = _packaged_agent_latency_budgets()
+        second = _packaged_agent_latency_budgets()
+
+        assert first == second
+        assert first is not second  # a fresh copy, not the shared cached mapping
+        first["analyst"] = -1  # mutating one caller's copy must not leak to the next
+        assert _packaged_agent_latency_budgets()["analyst"] != -1
+
+    def test_disk_read_is_memoized(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import yaml
+
+        from alphamind.feedback_loop import dataset as ds
+
+        ds._load_agent_latency_budgets.cache_clear()
+        calls = {"n": 0}
+        real_safe_load = yaml.safe_load
+
+        def _counting_safe_load(stream: object) -> object:
+            calls["n"] += 1
+            return real_safe_load(stream)
+
+        monkeypatch.setattr(ds.yaml, "safe_load", _counting_safe_load)
+
+        ds._packaged_agent_latency_budgets()
+        ds._packaged_agent_latency_budgets()
+        ds._packaged_agent_latency_budgets()
+
+        assert calls["n"] == 1  # parsed/validated once, then served from cache

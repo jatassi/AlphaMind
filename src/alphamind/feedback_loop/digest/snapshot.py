@@ -17,7 +17,10 @@ a pure function of its inputs.
 
 Idempotency rests on the ``week_start`` UNIQUE constraint: the shell reads
 ``read_weekly_digest_snapshot`` first and reports ``written=False`` without inserting
-when a snapshot for that boundary already exists (no duplicate, no error).
+when a snapshot for that boundary already exists. Should a concurrent run insert the
+row between that read and this commit, the UNIQUE fires as an ``IntegrityError``; the
+shell rolls back, re-reads the winning row, and reports the same ``written=False``
+no-op — so the reported-no-op contract holds under concurrency, not just single-cron.
 """
 
 from __future__ import annotations
@@ -27,6 +30,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
+
+from sqlalchemy.exc import IntegrityError
 
 from alphamind.feedback_loop.digest.codec import DIGEST_SCHEMA_VERSION, serialize_digest
 from alphamind.feedback_loop.digest.generator import generate_digest
@@ -143,6 +148,21 @@ async def snapshot_week(
         snapshot_id=minted_id,
         snapshotted_at=clock(),
     )
-    await session.run_sync(lambda sync_session: insert_weekly_digest_snapshot(sync_session, record))
-    await session.commit()
+    try:
+        await session.run_sync(
+            lambda sync_session: insert_weekly_digest_snapshot(sync_session, record)
+        )
+        await session.commit()
+    except IntegrityError:
+        # A concurrent run inserted the week's snapshot between the idempotency read
+        # and this commit (the week_start UNIQUE fired). Roll back, re-read, and report
+        # the same idempotent no-op the read-first path would have — so the
+        # reported-no-op contract holds under concurrency, not just single-cron.
+        await session.rollback()
+        winner = await session.run_sync(
+            lambda sync_session: read_weekly_digest_snapshot(sync_session, week_start)
+        )
+        if winner is None:  # pragma: no cover — IntegrityError without a surviving row
+            raise
+        return SnapshotOutcome(week_start=week_start, written=False, snapshot_id=winner.snapshot_id)
     return SnapshotOutcome(week_start=week_start, written=True, snapshot_id=minted_id)
