@@ -2,7 +2,7 @@
 
 The story defines an append-only Tier-2 lifecycle table: one row per fill event
 with a ``processing_status`` flag (unprocessed / processed / quarantined). The
-Phase 1 fill-integration write path queries unprocessed fills, integrates them,
+The fill collection fill-integration write path queries unprocessed fills, integrates them,
 and marks them processed inside the same transaction that mutates positions /
 orders / cash. The deduplication contract is enforced by a UNIQUE composite key
 on ``(order_id, fill_timestamp, fill_quantity, fill_price)``.

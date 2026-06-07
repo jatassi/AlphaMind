@@ -9,7 +9,7 @@ Decimal :class:`Price` at the boundary, and a one-sided / zero / missing quote
 returns ``None`` so the rewrite leaves the entry verbatim.
 
 ALP-753 adds the batch :meth:`AlpacaQuoteSource.latest_quotes` (one API call for
-many symbols) so phase-1 input gathering can anchor every active-universe
+many symbols) so fill-collection input gathering can anchor every active-universe
 candidate on a freshest-possible live quote, not a recorded bar.
 
 The IEX feed mirrors the continuous monitor's ``underlying_stream`` (the paper
@@ -102,12 +102,12 @@ class AlpacaQuoteSource:
         for the marketable-entry rewrite's leave-verbatim path), *any* failure of
         the whole batch — a broker / transport error, or a response that is not the
         documented symbol-keyed dict — is translated into ``RuntimeError``. The
-        phase-1 gatherer catches it to degrade the entire reference layer to
+        fill-collection gatherer catches it to degrade the entire reference layer to
         recorded bars and flip ``staleness_flag`` (parent decision H), so an
         unusable batch never silently anchors the agents on stale bars while the
         bundle reports itself fresh. (This differs from ``AccountStateQueries``,
         which propagates raw alpaca errors — the quote source translates here
-        precisely because the phase-1 caller catches ``RuntimeError`` only.) An
+        precisely because the fill-collection caller catches ``RuntimeError`` only.) An
         empty symbol list short-circuits to ``{}`` without an API call.
         """
         symbol_list = list(symbols)
@@ -126,7 +126,7 @@ class AlpacaQuoteSource:
             # APIError, transport (httpx/requests) errors, or — should the SDK ever
             # return a non-dict or a non-numeric bid/ask — a type/parse error. All
             # mean "the batch response is unusable". Re-raise as RuntimeError so the
-            # phase-1 degradation path (which catches RuntimeError) falls back to
+            # fill-collection degradation path (which catches RuntimeError) falls back to
             # recorded bars and flips staleness_flag, rather than the invocation
             # aborting on a raw SDK error or silently serving an empty map as if
             # every quote were legitimately dropped.

@@ -385,7 +385,7 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
 
     See module docstring for the six-stage sequence. The runner consumes
     a pre-built :class:`AssembledSnapshot` (assembled by the orchestrator
-    between Phase 1 and analysis per the three-transaction model in
+    between fill collection and analysis per the three-transaction model in
     ``docs/design/05-execution-layer/state-persistence.md`` § Snapshot
     isolation) and produces fresh validation-state cells + submit-envelope
     state on every invocation — no module-level state survives between

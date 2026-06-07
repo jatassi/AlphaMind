@@ -55,7 +55,7 @@ __all__ = [
 #
 # The ``~`` segments live *after* the base id, and :func:`synthesize_id_suffix`
 # / :func:`base_command_id` strip them before any id-suffix derivation. That
-# keeps the Phase-2 minted position / order / thesis ids — all of which hash
+# keeps the command-execution minted position / order / thesis ids — all of which hash
 # the command id via :func:`synthesize_id_suffix` — byte-for-byte identical to
 # the pre-ALP-844 base-id derivation, so embedding the link does not perturb
 # downstream id minting.
@@ -186,7 +186,7 @@ def derive_pm_base_command_id(
     Pattern: ``inv-{invocation_id}.{envelope_id}.{command_ordinal}.{attempt_seq}``.
     This is the SOLE definition of the base-id format string: both
     :func:`derive_pm_command_id` (which appends the ``~the-`` link) and the
-    Phase-2 OPEN-submit path (which resolves the originating thesis off the
+    Command-execution OPEN-submit path (which resolves the originating thesis off the
     base id before the link exists) build it through this function, so the
     format can never silently diverge between the two call sites.
 
@@ -372,7 +372,7 @@ def base_command_id(command_id: str) -> str:
     The base id is the legacy ``inv-…`` / ``MON.…`` form up to the first ``~``
     link delimiter (ALP-844). For an id that never carried a link the input is
     returned unchanged. Id-suffix derivation operates on the base so that the
-    Phase-2 minted thesis / position / order ids — which hash the command id —
+    Command-execution minted thesis / position / order ids — which hash the command id —
     stay identical to the pre-link derivation regardless of which thesis FK the
     id carries.
     """
@@ -383,7 +383,7 @@ def synthesize_id_suffix(command_id: str) -> str:
     """Return the stable 32-hex suffix the OMS appends to position / order ids
     minted from *command_id*.
 
-    Both the submit_envelope wrapper's acknowledgment and the Phase 2 writeback
+    Both the submit_envelope wrapper's acknowledgment and the command-execution writeback
     layer derive their position / order identifiers from the same suffix so the
     LLM sees identifiers that match what landed on the persisted rows. The
     broker-carried link (ALP-844) is stripped via :func:`base_command_id`
@@ -399,7 +399,7 @@ def derive_open_thesis_id(ticker: str, command_id: str) -> ThesisId:
     This is the SOLE place the OPEN thesis-id format string is constructed
     (ALP-844, A2 — the broker-carried link is the single source of truth for the
     OPEN thesis identity). PM-submit embeds the value this returns into the
-    ``client_order_id`` (the *one authoritative* copy), and Phase-2 OPEN
+    ``client_order_id`` (the *one authoritative* copy), and command-execution OPEN
     writeback reads it back by *parsing* the command id — neither hand-writes the
     format.
 

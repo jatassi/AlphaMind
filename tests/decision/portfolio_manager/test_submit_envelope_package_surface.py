@@ -39,7 +39,7 @@ def test_init_reexports_public_surface() -> None:
 def test_init_reexports_private_handler_and_helpers() -> None:
     """Tests still import a handful of underscore-prefixed helpers; preserve them.
 
-    ``_handle_submit_envelope`` is exercised directly by the phase-2 write-path
+    ``_handle_submit_envelope`` is exercised directly by the command-execution write-path
     and broker-routing test suites; ``_validate_envelope_payload`` by the
     state-persistence verify script; ``_adjust_command_context`` by the
     engine-stub broker-routing tests. Keeping them importable from the package

@@ -1,7 +1,7 @@
 """SQLAlchemy mapping for the ``capital_reservations`` Intent table (ALP-843 / W0a).
 
 A per-thesis capital reservation — a unit of Intent (CONTEXT.md): written by the
-Phase-2 OPEN path when capital is reserved for a thesis (single writer =
+Command-execution OPEN path when capital is reserved for a thesis (single writer =
 pipeline, ADR-0005), read by the projection / PnL derivations. Never overwritten
 by a broker snapshot.
 

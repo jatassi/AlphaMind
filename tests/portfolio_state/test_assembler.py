@@ -1488,7 +1488,7 @@ def test_assembler_recomputes_available_buying_power_from_canonical_formula() ->
     overwrites whatever the cash_ledger row carries with the canonical
     formula ``settled_cash - reserved_capital - margin_held``.
 
-    Phase 1/2 stop maintaining this field; the persisted value is whatever
+    Fill collection / command execution stop maintaining this field; the persisted value is whatever
     the seed left there. The assembler is the single source of truth at
     read time.
     """

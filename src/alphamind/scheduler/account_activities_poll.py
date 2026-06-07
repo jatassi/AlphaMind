@@ -2,7 +2,7 @@
 
 The option-lifecycle activity poll is **scheduled / pipeline-cadence** work
 (ADR-0004 evicts it from the always-on monitor): it runs inside the pipeline's
-Phase-1 write transaction, once per invocation, alongside fill integration and
+Fill-collection write transaction, once per invocation, alongside fill integration and
 corporate-actions. This module is the composition-root seam that builds the
 broker activities source and drives
 :func:`alphamind.execution.account_activities.poll.poll_account_activities`.
@@ -100,12 +100,12 @@ async def run_account_activities_poll(
     activities_source_factory: ActivitiesSourceFactory | None = None,
     after: str | None = None,
 ) -> PollResult:
-    """Run the option-lifecycle activity poll inside the Phase-1 write transaction.
+    """Run the option-lifecycle activity poll inside the fill-collection write transaction.
 
     Resolves the activities source (inline Alpaca default when
     *activities_source_factory* is ``None``) and drives
     :func:`poll_account_activities`. ``borrow_cost_resolver`` is the single
-    invocation-scoped resolver the orchestrator already built for the Phase-1
+    invocation-scoped resolver the orchestrator already built for the fill-collection
     write unit; it is forwarded so a SHORT equity-delivery assignment stamps its
     short-only fields. When *after* is not supplied, the resume cursor is derived
     from the durable ``broker_event_log`` (see :func:`_resolve_resume_cursor`) so

@@ -7,7 +7,7 @@ Verifies that:
 - An InvocationRow with an unrecognized trigger_source raises IntegrityError
   (the constraint is enforced).
 - ``borrow_accrual`` is NOT in _TRIGGER_SOURCES (story 04b relocated borrow accrual
-  into the pipeline Phase-1 write unit; it no longer mints its own InvocationRow —
+  into the pipeline fill-collection write unit; it no longer mints its own InvocationRow —
   ALP-842 CU4).
 """
 

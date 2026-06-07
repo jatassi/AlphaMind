@@ -18,7 +18,7 @@ from alphamind.state.tables.invocations import InvocationRow
 async def _resolve_active_regime(session: AsyncSession) -> Regime:
     """Return the active regime carried by the most recent successful invocation.
 
-    "Successful" means ``command_execution_completed_at IS NOT NULL`` — the Phase 2 write
+    "Successful" means ``command_execution_completed_at IS NOT NULL`` — the command-execution write
     path stamps that column once distillation has finished and the new regime
     label has been persisted. Aborted invocations are skipped because their
     ``active_regime`` reflects the regime they *operated under*, not a newly

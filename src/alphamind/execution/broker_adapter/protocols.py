@@ -59,7 +59,7 @@ class AccountStateQueriesP(Protocol):
 
 @runtime_checkable
 class CorporateActionsQueriesP(Protocol):
-    """Async v1beta1 corporate-actions surface the Phase 1 fetcher consumes.
+    """Async v1beta1 corporate-actions surface the fill collection fetcher consumes.
 
     Mirrors the as-built method on
     :class:`~alphamind.execution.broker_adapter.corporate_actions_queries.CorporateActionsQueries`.

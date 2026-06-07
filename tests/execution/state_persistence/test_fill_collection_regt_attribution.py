@@ -1,4 +1,4 @@
-"""Tests for the Phase 1 Reg T margin attribution wedge (story 06a / ALP-428).
+"""Tests for the fill collection Reg T margin attribution wedge (story 06a / ALP-428).
 
 The wedge in ``process_unprocessed_fills`` snapshots positions before and
 after each fill is integrated, calls ``compute_attribution`` to produce the
@@ -606,7 +606,7 @@ async def test_missing_market_inputs_for_underlying_propagates_key_error(
 
     The caller (in production: the continuous monitor) is responsible for
     populating prices for every open-position underlying before invoking
-    Phase 1. Surfacing the gap as a hard error prevents silent attribution
+    fill collection. Surfacing the gap as a hard error prevents silent attribution
     misreporting.
     """
     from alphamind.execution.write_paths.fill_collection import (

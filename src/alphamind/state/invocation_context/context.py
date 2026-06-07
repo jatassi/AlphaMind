@@ -8,9 +8,9 @@ Three pieces:
   across phase boundaries.
 * :func:`insert_invocation_row` — the "Step 0" of the three-transaction
   model. Inserts the supplied :class:`InvocationRecord` in its own
-  short-lived transaction and commits before Phase 1 begins, so the
+  short-lived transaction and commits before fill collection begins, so the
   invocation row is durable + visible to fresh-session reads from the
-  moment Phase 1 starts.
+  moment fill collection starts.
 * :class:`InvocationContext` — convenience async context manager bundling
   ``insert_invocation_row`` + one phase's session. **For tests and verify
   scripts that scope one phase's work to a single ``async with`` block.**
@@ -52,7 +52,7 @@ class InvocationHandle:
     """Per-phase binding of an open session to an invocation identity.
 
     The orchestrator builds a fresh handle for each phase's transaction
-    (Phase 1, Phase 2) — the handle is *not* shared across phase
+    (fill collection, command execution) — the handle is *not* shared across phase
     boundaries; the invocation_id is, but each phase's session is its
     own.
     """

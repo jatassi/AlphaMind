@@ -283,7 +283,7 @@ class TestComputeTickUncoveredFee:
     borrow is uncovered (no ``borrow_cost_daily`` row). The booking path stamps
     ``borrow_rate_pct=0.0`` for exactly that case and never raises; the accrual
     tick mirrors it — a ``None`` fee accrues 0.0 this tick rather than aborting
-    the whole Phase-1 write unit (which would roll back the just-opened short and
+    the whole fill-collection write unit (which would roll back the just-opened short and
     re-strand the broker short with no local Intent). The next tick catches up
     once a rate appears.
     """

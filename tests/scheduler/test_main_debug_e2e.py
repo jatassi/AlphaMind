@@ -420,7 +420,7 @@ class TestRunDebugE2E:
         """``wipe_and_seed`` must execute before ``record_process_lifetime``.
 
         The seeder wipes the ``process_lifetimes`` table; if it ran *after*
-        the row insert, the row would disappear and Phase 1's FK to
+        the row insert, the row would disappear and fill collection's FK to
         ``process_lifetime_id`` would fail.
         """
         from alphamind.scheduler.__main__ import _run_debug_e2e

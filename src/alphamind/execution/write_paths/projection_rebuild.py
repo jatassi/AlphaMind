@@ -10,7 +10,7 @@ snapshot/projection mismatch triggers a rebuild rather than a per-delta
 comparison-and-correct. No ``RECONCILIATION_ALERT`` / ``RECONCILIATION_CORRECTION``
 row is ever written here.
 
-Four derivations run in the open Phase-1 write transaction (single writer =
+Four derivations run in the open fill-collection write transaction (single writer =
 pipeline, ADR-0005):
 
 1. **Order-status projection** — fold every ``TERMINAL_ORDER_STATUS`` event in
@@ -142,7 +142,7 @@ class PendingWithBrokerHolding:
     the deleted reconciler's ``pending_with_broker_holding`` escalation provided
     (RD1): the rebuild only DETECTS it (surfaced here, never mutated), and the
     honest recovery is the fill drain / periodic backfill writing the real fill
-    into ``fill_records`` so the next Phase-1 integrates it and flips the position
+    into ``fill_records`` so the next fill-collection integrates it and flips the position
     PENDING → OPEN with the true basis. ``qty`` is the unsigned magnitude (Alpaca
     reports a signed qty for shorts; ``side`` carries the direction).
     """
@@ -307,7 +307,7 @@ async def rebuild_projection(
 ) -> ProjectionRebuildSummary:
     """Rebuild the positions/cash Projection from the event log + the live snapshot.
 
-    Runs after Phase-1 fill integration has folded the event log into the
+    Runs after fill-collection fill integration has folded the event log into the
     positions/cash projection. This step adds the two derivations the fill-fold
     does not own: the order-status projection and the broker-fact-no-Intent
     classification. The per-thesis PnL ledgers are re-derived separately by the
@@ -326,7 +326,7 @@ async def rebuild_projection(
     # ALP-863 — with ``orders.status`` now projected, run the entry-window cancel
     # cascade (relocated off the always-on monitor) for every never-filled entry
     # whose terminal status just landed: dissolve the bracket, release capital,
-    # resolve the thesis, cancel the position. Reuses the Phase-2 CANCEL cascade.
+    # resolve the thesis, cancel the position. Reuses the command-execution CANCEL cascade.
     entry_window_cancels_cascaded = await _dissolve_terminal_pending_entry_brackets(handle)
     # ALP-867 — relocate the monitor's reprice writeback here too: project the
     # ``ENTRY_REPRICED`` events onto every still-resting ``PENDING_ENTRY`` entry.
@@ -386,7 +386,7 @@ async def _project_terminal_order_statuses(session: AsyncSession) -> int:
     ``event_seq`` (rowid) already projected, so the SELECT reads only
     ``TERMINAL_ORDER_STATUS`` rows with ``event_seq`` greater than it — not the whole
     O(all-history) log every run. After scanning, the watermark advances to the max
-    ``event_seq`` read, in **this** Phase-1 write transaction, so the advance commits
+    ``event_seq`` read, in **this** fill-collection write transaction, so the advance commits
     atomically with the projection (a crash rolls both back and the next run
     re-scans). The first run finds no watermark row, treats it as ``0``, and scans
     from the beginning once.
@@ -463,7 +463,7 @@ def _advance_projection_watermark(
 
     *watermark* is the singleton row already loaded at the top of the rebuild
     (``None`` on the first run, before the row exists) — passing it back avoids a
-    second ``session.get`` of the same row. Single-writer (Phase-1 pipeline,
+    second ``session.get`` of the same row. Single-writer (fill-collection pipeline,
     ADR-0005), so the read-then-write on the singleton is race-free; the advance
     joins the open transaction and commits atomically with the projection it bounds.
     """

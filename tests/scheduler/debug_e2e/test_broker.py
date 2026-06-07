@@ -58,7 +58,7 @@ class TestProtocolSatisfaction:
 class TestLogOnlyBatchQuoteSource:
     """``LogOnlyBatchQuoteSource`` returns no live quotes (ALP-753).
 
-    Debug-e2e stays offline: the phase-1 reference layer falls back to the
+    Debug-e2e stays offline: the fill-collection reference layer falls back to the
     seeded bars for every active ticker rather than firing a live Alpaca fetch.
     """
 

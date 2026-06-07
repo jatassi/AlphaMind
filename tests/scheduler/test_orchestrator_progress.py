@@ -170,7 +170,7 @@ def _singleton_records() -> tuple[Any, Any]:
 async def _seed_singletons_via_handle(handle: Any) -> None:
     """Mirror ``process_unprocessed_fills``'s singleton-seeding side effects.
 
-    Joins the Phase 1 transaction so the singletons commit together with
+    Joins the fill collection transaction so the singletons commit together with
     ``fill_collection_completed_at`` — same shape as the helper in
     ``test_orchestrator.py``.
     """

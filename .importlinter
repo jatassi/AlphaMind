@@ -238,7 +238,7 @@ ignore_imports =
 
 # Forbidden contract (ALP-467 pilot): pure-compute cores split out by the
 # distillation compute/load boundary pilot must never import sqlalchemy.
-# This is the architectural seam that lets Phase 2 of the orchestrator run
+# This is the architectural seam that lets the distillation orchestrator run
 # ``asyncio.TaskGroup``-parallel over ``asyncio.to_thread(compute_*)`` calls
 # — no shared mutable session means no "Session is already flushing"
 # InvalidRequestError. Compute modules expand here as further sub-modules
@@ -375,7 +375,7 @@ layers =
 # OMS-only write-path subpackage from ``execution/state_persistence/
 # write_paths/`` to ``execution/write_paths/`` since nothing else
 # remained beneath ``state_persistence/``. The ``persist ->
-# execution.write_paths.phase2`` edge remains the load-bearing
+# execution.write_paths.command_execution`` edge remains the load-bearing
 # execution-side wiring entry.
 #
 # ALP-482 audit conclusion: keep this package here rather than hoisting
@@ -432,10 +432,10 @@ ignore_imports =
     alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.broker_adapter.quotes
     # ALP-836 — atomicity-first order persistence. ``submit_envelope.dispatch``
     # interleaves the per-command pre-commit / backfill / teardown
-    # (``execution.write_paths.phase2.atomic``) with the broker dispatch in the PM
+    # (``execution.write_paths.command_execution.atomic``) with the broker dispatch in the PM
     # composition root, and ``submit_envelope.server`` finalizes the envelope-level
     # audit (pm_decision + command_execution stamp) via the same module after the loop. Same
-    # permanent composition-root carve-out as the ``persist -> ...phase2`` edge.
+    # permanent composition-root carve-out as the ``persist -> ...command_execution`` edge.
     alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.write_paths.command_execution.atomic
     alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.write_paths.command_execution.atomic
     # ALP-470 hoisted ``state.config`` out of execution but its

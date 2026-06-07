@@ -153,7 +153,7 @@ class TestInvocationRecord:
         readback_record = invocation_record_from_row(readback_row)
         assert readback_record == record
 
-        # Verify Phase 1/2 columns can be filled with strings on a later
+        # Verify fill collection / command execution columns can be filled with strings on a later
         # update without breaking the round-trip.
         readback_row.fill_collection_completed_at = "2026-05-07T14:31:00Z"
         readback_row.staleness_flag = 0

@@ -304,7 +304,7 @@ def _check_conviction_band_deviation(
 
 
 # ---------------------------------------------------------------------------
-# Layer-2 (j)-(k) — bracket price coherence vs the phase-1 reference price (ALP-742)
+# Layer-2 (j)-(k) — bracket price coherence vs the fill-collection reference price (ALP-742)
 # ---------------------------------------------------------------------------
 
 
@@ -319,7 +319,7 @@ def _live_equity_close(rec: Recommendation, underlying_prices: Mapping[str, floa
 
     The value is the guardrail library's ``MarketInputs.underlying_prices`` entry
     — the freshest reference price the system holds for the ticker: a live broker
-    ``current_price`` for a held name, and for an unheld candidate a phase-1 batch
+    ``current_price`` for a held name, and for an unheld candidate a fill-collection batch
     live-quote mid when one was captured (ALP-753), else the freshest recorded
     ``ohlcv_bars`` close of any timeframe (an intraday 15min/1h/4h close that
     supersedes the lagging daily close on a fast move, per ALP-747). It is the
@@ -487,7 +487,7 @@ def _check_reference_price_staleness(
     Catches calibration drift the directional check can miss: a bracket whose
     target/stop happen to straddle the reference price can still have been *sized*
     against a stale reference, mis-stating notional and risk. Drift beyond
-    ``tolerance_pct`` of the phase-1 reference price (a live batch-quote mid when
+    ``tolerance_pct`` of the fill-collection reference price (a live batch-quote mid when
     available, else the freshest ``ohlcv_bars`` close) is flagged for redraft
     (the recurring 3+-cycle pattern the PM narrative named on 2026-05-29).
 

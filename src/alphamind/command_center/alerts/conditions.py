@@ -668,7 +668,7 @@ class EntryNoFillCondition:
 
     No-fill counterpart to ``command_abandoned`` (rule 16; ALP-739 flagged
     the overlap to check): that fires when a *PM command* is rolled back
-    after exhausting Phase 2 retries; this fires when an *accepted entry
+    after exhausting command execution retries; this fires when an *accepted entry
     order* the OMS submitted to the broker expires/cancels having never
     filled. Distinct upstreams, distinct debounce keys — no double alert.
 

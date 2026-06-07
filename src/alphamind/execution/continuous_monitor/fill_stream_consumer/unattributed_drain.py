@@ -1,12 +1,12 @@
 """Drain the ``unattributed_fills`` retry queue back into ``fill_records`` (ALP-763).
 
 A fill-bearing event that arrives before its local ``orders`` row is committed
-(deferred Phase-2 writeback) is parked on the ``unattributed_fills`` queue
+(deferred command-execution writeback) is parked on the ``unattributed_fills`` queue
 rather than silently dropped. This module's :func:`drain_unattributed_fills`
 re-attempts attribution for every queued row:
 
 * **resolved** (the order materialized — the race) → translate, append to
-  ``fill_records`` as unprocessed so Phase 1 integrates it, and delete the
+  ``fill_records`` as unprocessed so fill collection integrates it, and delete the
   queue row;
 * **still unresolved** (an out-of-band manual order that will never get a local
   row) → bump ``retry_count`` and emit a one-time alert; the row stays queued.
@@ -158,7 +158,7 @@ async def drain_unattributed_fills(
             process_lifetime_id=process_lifetime_id,
         )
         log.info(
-            "fill recovery Phase-1 integration completed: fills_processed=%d",
+            "fill recovery fill-collection integration completed: fills_processed=%d",
             count,
         )
 

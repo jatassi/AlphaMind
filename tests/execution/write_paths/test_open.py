@@ -1,4 +1,4 @@
-"""Tests for the Phase 2 OPEN write path's position builder (ALP-594).
+"""Tests for the command execution OPEN write path's position builder (ALP-594).
 
 Story 01c extends ``_build_pending_position`` so a :class:`StrategyInstrument`
 produces a PENDING strategy :class:`PositionRecord` carrying a

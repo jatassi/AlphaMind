@@ -2,7 +2,7 @@
 
 Story 05 / ALP-363. Tracks which Alpaca CA activities the OMS has integrated.
 One row per activity, keyed on ``alpaca_activity_id`` (the dedup anchor).
-Parallels the fill records' ``processing_status`` mechanism — on Phase 1 retry,
+Parallels the fill records' ``processing_status`` mechanism — on fill-collection retry,
 activities already present here are skipped.
 
 Only one terminal status: ``"processed"``. The full activity record is not

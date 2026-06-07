@@ -3,14 +3,14 @@
 Story 05 / ALP-363 introduces an append-only Tier-2 lifecycle record with no
 prior counterpart in ``portfolio_state.records``: ``FillRecord`` is the OMS-
 internal authoritative source for cost-basis reconstruction and the input to
-the Phase 1 fill-integration write path. The ``activity_log`` carries
+the fill-collection write path. The ``activity_log`` carries
 `order_filled` / `order_partially_filled` events for audit, but the fill
 record itself lives here.
 
 The application-level invariant below is stronger than the SQL CHECK can
 express: an ``unprocessed`` fill must have both ``processing_invocation_id``
 and ``processing_timestamp`` null; a ``processed`` or ``quarantined`` fill
-must have both non-null (set by the Phase 1 invocation that handled it).
+must have both non-null (set by the fill-collection invocation that handled it).
 """
 
 from __future__ import annotations
@@ -29,8 +29,8 @@ class FillProcessingStatus(StrEnum):
     """Lifecycle of a fill record.
 
     UNPROCESSED — persisted by the continuous monitor; not yet integrated.
-    PROCESSED   — integrated into positions / orders / cash by a Phase 1.
-    QUARANTINED — Phase 1 validation rejected the fill; excluded from
+    PROCESSED   — integrated into positions / orders / cash by fill collection.
+    QUARANTINED — fill-collection validation rejected the fill; excluded from
                   integration but preserved for reconciliation.
     """
 

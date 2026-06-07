@@ -36,8 +36,8 @@ __all__ = ["RunInvocationContext"]
 class RunInvocationContext:
     """Frozen bundle of the process-stable inputs ``run_invocation`` reads.
 
-    Two session factories travel together: the async one drives Phase 1 /
-    Phase 2 writes through ``aiosqlite``; the sync one backs the analysis
+    Two session factories travel together: the async one drives fill-collection /
+    command-execution writes through ``aiosqlite``; the sync one backs the analysis
     pipeline's between-phase read, where the distillation orchestrator's
     ``asyncio.to_thread`` callees consume a sync SQLAlchemy ``Session`` API.
 

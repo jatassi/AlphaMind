@@ -58,7 +58,7 @@ class PositionClosedDetail:
 
     ``exit_price`` carries ``Money`` rather than ``Price`` semantics because
     strategy-position closures emit ``exit_price=0`` as a placeholder while
-    Phase 1 reconciliation is pending (see
+    fill collection reconciliation is pending (see
     ``bracket_stops.task._estimated_exit_price_for``). The strategist's
     rendering treats ``0`` as "fill-time price unavailable".
 

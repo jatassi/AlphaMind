@@ -1,4 +1,4 @@
-"""Phase 2 command-execution write path (story 08 / ALP-366).
+"""command execution command-execution write path (story 08 / ALP-366).
 
 Public entry points the ``submit_envelope`` MCP wrapper invokes
 once an :class:`InvocationHandle` is supplied:
@@ -141,7 +141,7 @@ async def persist_envelope_outcome(
         originating_proposal_json=originating_proposal_json,
     )
     # Layer-1 parse rejections deliberately skip this — only an accepted
-    # envelope's full writeback counts as a Phase 2 commit.
+    # envelope's full writeback counts as a command execution commit.
     await stamp_phase_completion(handle, column="command_execution_completed_at")
 
 

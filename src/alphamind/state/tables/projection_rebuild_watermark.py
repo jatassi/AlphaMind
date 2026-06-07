@@ -3,9 +3,9 @@
 A single mutable row holding ``last_projected_event_seq`` — the max
 ``broker_event_log.event_seq`` (rowid) the terminal-status projection in
 ``write_paths/projection_rebuild.py`` has already folded onto the ``orders``
-cache. Each Phase-1 rebuild scans only ``TERMINAL_ORDER_STATUS`` events with
+cache. Each fill-collection rebuild scans only ``TERMINAL_ORDER_STATUS`` events with
 ``event_seq`` greater than this watermark, then advances it to the max scanned —
-all inside the open Phase-1 write transaction, so the advance commits atomically
+all inside the open fill-collection write transaction, so the advance commits atomically
 with the projection (a crash rolls both back and the next run re-scans).
 
 The singleton is enforced by a CHECK constraint pinning ``id = 'current'``,

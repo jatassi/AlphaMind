@@ -2,7 +2,7 @@
 
 One row per fill event with ``processing_status`` flag (unprocessed /
 processed / quarantined). The continuous monitor appends new fills as
-``unprocessed``; Phase 1 marks them ``processed`` inside the same atomic
+``unprocessed``; fill collection marks them ``processed`` inside the same atomic
 transaction that mutates positions / orders / cash.
 
 Two FKs with ``ON DELETE RESTRICT``:
@@ -10,7 +10,7 @@ Two FKs with ``ON DELETE RESTRICT``:
 * ``order_id`` → ``orders.order_id`` — the raw execution history must remain
   joinable to the parent order.
 * ``processing_invocation_id`` → ``invocations.invocation_id`` — null until
-  Phase 1 marks the fill processed; nullable on the SQL side, application-level
+  fill collection marks the fill processed; nullable on the SQL side, application-level
   invariant enforces the lifecycle (see ``write_paths.records.FillRecord``).
 
 Deduplication: composite UNIQUE on ``(order_id, fill_timestamp, fill_quantity,

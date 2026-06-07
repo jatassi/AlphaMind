@@ -1,4 +1,4 @@
-"""Tests for the Phase 2 command-execution write path (story 08 / ALP-366).
+"""Tests for the command execution write path (story 08 / ALP-366).
 
 Covers ``persist_envelope_outcome`` and ``persist_envelope_parse_failure`` —
 the two entry points the engine-stub ``submit_envelope`` MCP wrapper calls
@@ -8,7 +8,7 @@ the ``activity_log`` table; no separate ``envelopes`` or ``oms_commands``
 tables.
 
 All writes join the open ``InvocationContext`` transaction so the surrounding
-context commits or rolls back atomically per the design doc's Phase 2
+context commits or rolls back atomically per the design doc's command execution
 contract.
 """
 
@@ -553,7 +553,7 @@ def _open_command_id(
 
     Mirrors the production PM-submit path: mint the OPEN thesis off the
     link-free *base* id via the single canonical helper, then embed it into the
-    command id. Phase-2 OPEN writeback resolves the thesis by parsing this id, so
+    command id. Command-execution OPEN writeback resolves the thesis by parsing this id, so
     every OPEN test must thread a thesis-bearing id (the broker-carried link is
     the single source of truth for the OPEN thesis identity).
     """
@@ -1264,11 +1264,11 @@ async def test_pm_decision_carries_originating_proposal_json_and_reprice_markers
 async def test_open_persisted_thesis_id_equals_link_embedded_thesis(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """Single source of truth (ALP-844, A2): the ``thesis_id`` Phase-2 persists
+    """Single source of truth (ALP-844, A2): the ``thesis_id`` command execution persists
     on the OPEN's ``ThesisRecord`` EQUALS the thesis embedded in the broker-
     carried ``client_order_id`` (``parse_pm_command_id(command_id).thesis_id``).
 
-    Phase-2 no longer re-constructs ``THE-{ticker}-{suffix}``; it reads the
+    Command execution no longer re-constructs ``THE-{ticker}-{suffix}``; it reads the
     thesis straight off the command id, so the embedded link is the one
     authoritative copy. The position and entry order carry the SAME thesis_id,
     binding the whole OPEN graph to that single identity.
@@ -1429,7 +1429,7 @@ async def test_persist_envelope_outcome_stamps_command_execution_completion_on_i
 ) -> None:
     """An accepted envelope's writeback must set the bound invocation row's
     command_execution_completed_at as the final step of the open transaction so observers
-    can distinguish "Phase 2 in flight" from "Phase 2 committed".
+    can distinguish "command execution in flight" from "command execution committed".
     """
     from alphamind.execution.write_paths.command_execution import (
         persist_envelope_outcome,
@@ -1465,9 +1465,9 @@ async def test_persist_envelope_outcome_stamps_command_execution_completion_on_i
 async def test_persist_envelope_parse_failure_does_not_stamp_command_execution_completion(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """A Layer-1 parse failure is NOT a Phase 2 commit — the audit-trail
+    """A Layer-1 parse failure is NOT a command execution commit — the audit-trail
     activity-log entry persists but command_execution_completed_at must remain NULL so
-    observers can tell rejection apart from a real Phase 2 commit.
+    observers can tell rejection apart from a real command execution commit.
     """
     from alphamind.execution.write_paths.command_execution import (
         persist_envelope_parse_failure,
@@ -1605,7 +1605,7 @@ async def test_close_command_writes_close_order_and_emits_order_submitted(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """CLOSE command writeback: insert one PENDING close order; emit
-    order_submitted + pm_decision. Position closure happens in Phase 1."""
+    order_submitted + pm_decision. Position closure happens in fill collection."""
     from alphamind.execution.write_paths.command_execution import (
         persist_envelope_outcome,
     )
@@ -3397,7 +3397,7 @@ def _partial_entry_fill_record(
     """An UNPROCESSED partial fill recorded against an entry order (ALP-760).
 
     Mirrors the production incident: the continuous monitor appended this fill
-    the moment it landed on the broker, but Phase 1 has not yet drained it into
+    the moment it landed on the broker, but fill collection has not yet drained it into
     the order's ``filled_quantity`` — exactly the window a stale-snapshot PM
     CANCEL is decided in.
     """
@@ -3440,7 +3440,7 @@ def _partial_fill_entry_order_rec(
 
     ``filled_quantity`` defaults to 0 (the unprocessed-fill window, where the
     order row still reads zero-filled); pass a non-zero value to model the
-    already-integrated case (order ``PARTIALLY_FILLED`` after Phase 1 drained
+    already-integrated case (order ``PARTIALLY_FILLED`` after fill collection drained
     the fill).
     """
     from alphamind.portfolio_state.records.orders import (
@@ -3488,13 +3488,13 @@ async def test_cancel_command_on_entry_with_unprocessed_partial_fill_retains_bra
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """ALP-760: a PM CANCEL against an entry that has partially filled — where
-    the fill is recorded as an UNPROCESSED ``fill_record`` Phase 1 has not yet
+    the fill is recorded as an UNPROCESSED ``fill_record`` fill collection has not yet
     drained (the stale-snapshot window) — must NOT orphan the filled shares.
 
     The bracket survives (NOT dissolved), the thesis stays ACTIVE (NOT resolved
-    ``CANCELLED_NEVER_ENTERED``), the position stays PENDING (Phase 1 will drive
+    ``CANCELLED_NEVER_ENTERED``), the position stays PENDING (fill collection will drive
     PENDING→OPEN on integration), and only the *unfilled remainder*'s reserved
-    capital is released — the filled portion's reservation stays for Phase 1 to
+    capital is released — the filled portion's reservation stays for fill collection to
     release when it integrates the fill.
     """
     from alphamind.execution.write_paths.command_execution import (
@@ -3512,7 +3512,7 @@ async def test_cancel_command_on_entry_with_unprocessed_partial_fill_retains_bra
         _pending_entry_bracket_with_event_leg(),
         _partial_fill_entry_order_rec(limit_price="100.0", quantity=70.0),
     )
-    # 19 of 70 shares filled — recorded but not yet integrated by Phase 1.
+    # 19 of 70 shares filled — recorded but not yet integrated by fill collection.
     await _seed_fill_record(factory, _partial_entry_fill_record(fill_quantity=19.0))
 
     envelope = _make_strategist_envelope(
@@ -3546,13 +3546,13 @@ async def test_cancel_command_on_entry_with_unprocessed_partial_fill_retains_bra
         assert thesis.status == ThesisRecordStatus.ACTIVE.value
         assert thesis.resolution_category is None
 
-        # The position is NOT swept to CANCELLED — Phase 1 will open it.
+        # The position is NOT swept to CANCELLED — fill collection will open it.
         position = await sess.get(PositionRow, "POS-NVDA-001")
         assert position is not None
         assert position.status == PositionStatus.PENDING.value
 
         # Only the unfilled remainder (51 x $100 = $5,100) is released; the
-        # filled portion's reservation ($1,900) stays for Phase 1.
+        # filled portion's reservation ($1,900) stays for fill collection.
         cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
         assert cash is not None
         assert cash.reserved_capital_usd == pytest.approx(1_900.0)
@@ -3569,7 +3569,7 @@ async def test_cancel_command_on_entry_with_unprocessed_partial_fill_retains_bra
 async def test_cancel_command_on_entry_with_integrated_partial_fill_retains_bracket(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """ALP-760: when the partial fill was *already integrated* by Phase 1 (the
+    """ALP-760: when the partial fill was *already integrated* by fill collection (the
     entry order reads ``PARTIALLY_FILLED`` with ``filled_quantity>0`` and the
     position is OPEN), a CANCEL must still retain the bracket and leave the
     thesis ACTIVE — detection keys off the order's own fill state, not only
@@ -3580,7 +3580,7 @@ async def test_cancel_command_on_entry_with_integrated_partial_fill_retains_brac
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    # After Phase 1 integrated 19 of 70 shares it already released 19 x $100 =
+    # After fill collection integrated 19 of 70 shares it already released 19 x $100 =
     # $1,900, leaving 51 x $100 = $5,100 reserved.
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=5_100.0)
     await _seed_position_cluster(
@@ -4179,7 +4179,7 @@ async def test_persist_envelope_outcome_override_verdict(
     Pins the wire-literal → PMVerdict mapping in
     ``alphamind.execution.write_paths.command_execution._VERDICT_TO_PM_VERDICT`` so a
     future verdict-set change cannot silently drop the override mapping and
-    cause Phase-2 persistence to fall back to the default (or fail).
+    cause command-execution persistence to fall back to the default (or fail).
     """
     from alphamind.commands.pm_envelope import ConcernRecord
     from alphamind.execution.write_paths.command_execution import (
@@ -4234,7 +4234,7 @@ async def test_persist_envelope_outcome_override_verdict(
 async def test_command_abandoned_emission_survives_per_command_rollback(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """A failed Phase 2 transaction rolls back its state mutations but a
+    """A failed command execution transaction rolls back its state mutations but a
     follow-up ``persist_command_abandoned`` (in a fresh transaction) writes
     one COMMAND_ABANDONED activity log entry that survives the rollback."""
     from alphamind.execution.write_paths.command_execution import (
@@ -4391,7 +4391,7 @@ async def test_handle_submit_envelope_wires_sql_writeback_on_accepted_envelope(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """When InvocationHandle is supplied AND the envelope is accepted, the
-    Phase 2 writeback runs alongside the in-memory cumulative-state advance."""
+    Command execution writeback runs alongside the in-memory cumulative-state advance."""
     from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,

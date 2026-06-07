@@ -15,7 +15,7 @@ Two pieces:
   production IV-fetch callable (via the broker-adapter's
   ``submit_with_retry`` envelope), a default risk-free-rate provider
   (reads ``macro_observations`` for DTB3 with the same fallback the
-  Phase 1 input bundle uses), and the production activity-log emitter.
+  fill-collection input bundle uses), and the production activity-log emitter.
 """
 
 from __future__ import annotations
@@ -220,7 +220,7 @@ def make_risk_free_rate_provider(
 ) -> RiskFreeRateProvider:
     """Return an async callable that reads the latest DTB3 observation per cycle.
 
-    The Phase 1 path reads the same series with the same fallback; the
+    The fill-collection path reads the same series with the same fallback; the
     monitor mirrors the convention so paper-mode and live-mode greeks
     refresh use the same rate the validation greeks were computed with.
 

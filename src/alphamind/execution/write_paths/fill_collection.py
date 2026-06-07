@@ -1,4 +1,4 @@
-"""Phase 1 fill-integration write path (story 07 / ALP-365).
+"""fill collection fill-integration write path (story 07 / ALP-365).
 
 Drains every ``processing_status='unprocessed'`` fill record (and any
 unprocessed CA activity), integrates each into state (orders / positions /
@@ -155,7 +155,7 @@ _NON_INTEGRATABLE_STATUSES = frozenset({PositionStatus.CANCELLED, PositionStatus
 class StateInconsistencyError(RuntimeError):
     """Raised when a Tier-1 row references a parent FK target that is missing.
 
-    The Phase 1 mutators (``_activate_bracket``, ``_dissolve_bracket``,
+    The fill collection mutators (``_activate_bracket``, ``_dissolve_bracket``,
     ``_cancel_bracket_for_corporate_action``) expect every FK reference they
     read to point at a live row. A missing
     target would silently no-op and mask state corruption — we raise
@@ -249,7 +249,7 @@ async def process_unprocessed_fills(
 ) -> FillCollectionSummary:
     """Drain every unprocessed fill + CA activity and integrate them atomically.
 
-    Per ``corporate-actions.md § Phase 1 integration sequence``, fills and CA
+    Per ``corporate-actions.md § fill collection integration sequence``, fills and CA
     activities are interleaved by timestamp ascending so the post-state at
     each event reflects the chronologically correct quantity / cost basis. On
     exact-timestamp ties, fills resolve before CAs — fills are intra-day
@@ -281,7 +281,7 @@ async def process_unprocessed_fills(
     All state mutations and activity-log emissions join the open
     ``handle.session`` transaction; the surrounding ``InvocationContext``
     commits on clean exit and rolls back on exception, leaving fills and CA
-    activities unprocessed for the next invocation's Phase 1 to retry.
+    activities unprocessed for the next invocation's fill collection to retry.
 
     Args:
         handle: Open ``InvocationHandle`` from the surrounding
@@ -377,7 +377,7 @@ async def rederive_thesis_ledgers(handle: InvocationHandle) -> int:
     idempotent replace, so re-deriving from the same event set reproduces the
     same ledger rows.
 
-    CR1 — the orchestrator's Phase-1 write unit calls this **after**
+    CR1 — the orchestrator's fill-collection write unit calls this **after**
     ``run_account_activities_poll`` (ALP-846), so a thesis carrying a
     same-invocation OPEXP / OPEXC / OPASN / OPTRD option-lifecycle event has that
     event's realized-PnL delta folded into the ledger *this* invocation. The
@@ -443,7 +443,7 @@ def _iter_merged_events(
 ) -> tuple[FillRecord | CorporateActionActivity, ...]:
     """Return fills + CA activities interleaved by timestamp ascending.
 
-    Per ``corporate-actions.md § Phase 1 integration sequence`` step 2:
+    Per ``corporate-actions.md § fill collection integration sequence`` step 2:
     "Sort ascending. Ordering matters when a fill straddles an ex-date — fills
     before the CA reflect pre-action quantities, fills after reflect
     post-action."
@@ -705,7 +705,7 @@ def _failed_quarantine_message(fill: FillRecord, exc: Exception) -> str:
     """
     return (
         f"Fill {fill.fill_id!r} (order {fill.order_id!r}, {fill.fill_quantity} @ "
-        f"{fill.fill_price}) could not be integrated in Phase-1 "
+        f"{fill.fill_price}) could not be integrated in fill-collection "
         f"({type(exc).__name__}: {exc}); quarantined so the batch completes. Local "
         "state for the affected position is unchanged — review the fill and "
         "reconcile against the broker manually."
@@ -845,7 +845,7 @@ def _mark_processed(row: FillRecordRow, invocation_id: str) -> None:
 async def _read_order(handle: InvocationHandle, order_id: str) -> OrderRecord:
     row = await handle.session.get(OrderRow, order_id)
     if row is None:
-        msg = f"Phase 1 fill references missing order_id={order_id!r}"
+        msg = f"fill collection fill references missing order_id={order_id!r}"
         raise ValueError(msg)
     return order_row_to_record(row)
 
@@ -911,7 +911,7 @@ async def _read_position_for_order(
     position_id = order.position_id or await _resolve_position_id_via_bracket(handle, order)
     row = await handle.session.get(PositionRow, position_id)
     if row is None:
-        msg = f"Phase 1 fill references missing position_id={position_id!r}"
+        msg = f"fill collection fill references missing position_id={position_id!r}"
         raise ValueError(msg)
     return row, position_row_to_record(row)
 
@@ -920,7 +920,7 @@ async def _resolve_position_id_via_bracket(handle: InvocationHandle, order: Orde
     bracket_row = await handle.session.get(BracketRow, order.bracket_id)
     if bracket_row is None:
         msg = (
-            f"Phase 1 fill references missing bracket_id={order.bracket_id!r} "
+            f"fill collection fill references missing bracket_id={order.bracket_id!r} "
             "while resolving position for entry fill"
         )
         raise ValueError(msg)
@@ -960,7 +960,7 @@ def _apply_fill_to_position(
         return _apply_fill_to_options_position(position, details, fill, is_buy_side=is_buy_side)
     # Strategy positions are intercepted upstream; this branch defends against
     # a future detail variant being added without updating the dispatcher.
-    msg = f"Phase 1 fill integration: unhandled instrument type {details.instrument_type!r}"
+    msg = f"fill collection fill integration: unhandled instrument type {details.instrument_type!r}"
     raise NotImplementedError(msg)
 
 
@@ -1004,7 +1004,7 @@ def _apply_fill_to_equity_position(
                 position, details, fill, borrow_cost_resolver=borrow_cost_resolver
             )
         msg = (
-            f"Phase 1 received closing fill on PENDING position "
+            f"fill collection received closing fill on PENDING position "
             f"{position.position_id!r}; a position cannot close before it opens"
         )
         raise ValueError(msg)
@@ -1012,7 +1012,7 @@ def _apply_fill_to_equity_position(
         if _is_opening_fill(direction, is_buy_side):
             return _apply_add_fill(position, details, fill)
         return _apply_exit_fill(position, details, fill)
-    msg = f"Phase 1 cannot integrate fill against position status {position.status!r}"
+    msg = f"fill collection cannot integrate fill against position status {position.status!r}"
     raise ValueError(msg)
 
 
@@ -1045,7 +1045,7 @@ def _apply_fill_to_options_position(
         if _is_opening_fill(direction, is_buy_side):
             return _apply_options_add_fill(position, details, fill)
         return _apply_options_exit_fill(position, details, fill)
-    msg = f"Phase 1 cannot integrate fill against position status {position.status!r}"
+    msg = f"fill collection cannot integrate fill against position status {position.status!r}"
     raise ValueError(msg)
 
 
@@ -1118,7 +1118,7 @@ def _apply_entry_fill(
     A missing resolver (``None``) or a resolver returning ``None`` for the
     ticker is an upstream contract violation — the analyst's validation tool
     short-circuits with UNAVAILABLE on MISSING_BORROW_COST, so a missing rate
-    at entry-fill time means a SHORT EQUITY OpenCommand reached Phase 1
+    at entry-fill time means a SHORT EQUITY OpenCommand reached fill collection
     despite the rate being unavailable. The helper raises ``ValueError`` in
     both cases.
 
@@ -1136,14 +1136,14 @@ def _apply_entry_fill(
     if position.direction == Direction.SHORT:
         if borrow_cost_resolver is None:
             msg = (
-                f"Phase 1 SHORT-equity entry on {details.ticker!r} requires a "
+                f"fill collection SHORT-equity entry on {details.ticker!r} requires a "
                 "borrow_cost_resolver; got None"
             )
             raise ValueError(msg)
         annual_fee_pct = borrow_cost_resolver(details.ticker)
         if annual_fee_pct is None:
             msg = (
-                f"Phase 1 SHORT-equity entry on {details.ticker!r}: "
+                f"fill collection SHORT-equity entry on {details.ticker!r}: "
                 "borrow_cost_resolver returned None, but the analyst's validation "
                 "tool short-circuits with UNAVAILABLE on MISSING_BORROW_COST. "
                 "A missing rate at entry-fill time is an upstream contract violation."
@@ -1410,7 +1410,10 @@ async def _apply_strategy_fill_to_position(
         return await _apply_strategy_open_fill(
             handle, position, details, fill, updated_order=updated_order, leg=leg
         )
-    msg = f"Phase 1 cannot integrate strategy fill against position status {position.status!r}"
+    msg = (
+        "fill collection cannot integrate strategy fill against position status"
+        f" {position.status!r}"
+    )
     raise ValueError(msg)
 
 
@@ -1766,7 +1769,7 @@ async def _dissolve_bracket_for_incomplete_strategy(
 
     Returns the (possibly updated) bracket status change plus the
     ``incomplete_legs`` tuple. The leg list is cleared when the bracket is
-    already DISSOLVED — a prior fill in the same Phase 1 invocation has
+    already DISSOLVED — a prior fill in the same fill collection invocation has
     already emitted the warning, so subsequent fills suppress duplicates.
     """
     if bracket_id is None:
@@ -1887,7 +1890,7 @@ async def _apply_cash_movement(
     ``OptionsInstrumentSpec`` (typically 100). Equity consideration is
     ``fill_price * fill_quantity`` directly.
 
-    Buy-side fills additionally release the capital Phase 2 reserved for this
+    Buy-side fills additionally release the capital command execution reserved for this
     entry order — by the order's *reserved notional* attributable to the filled
     quantity (``_fill_reservation_release_usd``), NOT the fill consideration.
     Reserve and release share the ``reservation_price * quantity`` basis (ALP-741)
@@ -1925,7 +1928,7 @@ async def _apply_cash_movement(
     if is_buy:
         release = _fill_reservation_release_usd(order, fill)
         # Floor at zero (defensive) and wrap in money() — the same non-negative
-        # invariant _release_capital enforces on the Phase 2 side (ALP-741).
+        # invariant _release_capital enforces on the command execution side (ALP-741).
         cash_row.reserved_capital_usd = money(
             max(cash_row.reserved_capital_usd - release, Decimal(0))
         )
@@ -1952,7 +1955,7 @@ def _fill_reservation_release_usd(order: OrderRecord, fill: FillRecord) -> Decim
 
     The order's reservation price (``limit_price`` preferred, ``stop_trigger_price``
     fallback) times *this fill's* quantity — the same ``reservation_price *
-    quantity`` basis Phase 2 reserves at OPEN / ADD
+    quantity`` basis command execution reserves at OPEN / ADD
     (``_shared._order_reserved_notional``) and adjusts on reprice, scoped to the
     filled quantity so partial-fill releases sum to the order's full reservation.
     A market entry carries no price → ``Decimal(0)`` (it reserved nothing). NOT
@@ -1973,12 +1976,12 @@ async def _stamp_drawdown_state(handle: InvocationHandle) -> None:
     The full drawdown recomputation (HWM + current drawdown vs. live equity)
     requires market-price context the snapshot assembler owns; for the
     persistence layer this story leaves the running fields untouched and
-    simply stamps the row so observers see Phase 1 ran. The richer
+    simply stamps the row so observers see fill collection ran. The richer
     recomputation lands in the snapshot-assembler / breach-behavior wiring.
     """
     row = await handle.session.get(DrawdownStateRow, DRAWDOWN_STATE_SINGLETON_ID)
     if row is None:
-        msg = "drawdown_state singleton missing — Phase 1 cannot integrate fill"
+        msg = "drawdown_state singleton missing — fill collection cannot integrate fill"
         raise ValueError(msg)
     row.last_updated_at = datetime.now(UTC).isoformat()
 
@@ -1986,7 +1989,7 @@ async def _stamp_drawdown_state(handle: InvocationHandle) -> None:
 async def _read_cash_row_or_raise(handle: InvocationHandle) -> CashLedgerRow:
     row = await handle.session.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
     if row is None:
-        msg = "cash_ledger singleton missing — Phase 1 cannot integrate fill"
+        msg = "cash_ledger singleton missing — fill collection cannot integrate fill"
         raise ValueError(msg)
     return row
 
@@ -1999,7 +2002,7 @@ async def _read_cash_row_or_raise(handle: InvocationHandle) -> CashLedgerRow:
 async def _emit_capital_release(
     handle: InvocationHandle, order: OrderRecord, fill: FillRecord
 ) -> None:
-    """Buy-side fills release the capital reservation Phase 2 staked.
+    """Buy-side fills release the capital reservation command execution staked.
 
     The emitted amount is the order's reserved notional for the filled quantity
     (``_fill_reservation_release_usd``) — the same basis
@@ -2276,7 +2279,7 @@ def _build_recovery_invocation_row(
     process_lifetime_id: str,
     now: datetime,
 ) -> InvocationRow:
-    """Minimal InvocationRow for a fill-recovery Phase-1 pass (ALP-767).
+    """Minimal InvocationRow for a fill-recovery fill-collection pass (ALP-767).
 
     Mirrors the borrow-accrual tick pattern: only the execution-scaffolding
     columns are populated; snapshot / composition columns get inert sentinels
@@ -2332,7 +2335,7 @@ async def integrate_recovered_fills(
     SHORT equity ENTRY fills are skipped when ``borrow_cost_resolver`` is
     ``None``: ``_apply_entry_fill`` raises for those, the broad
     ``except Exception`` handler would permanently quarantine them, and
-    QUARANTINED rows are invisible to the scheduled Phase-1's
+    QUARANTINED rows are invisible to the scheduled fill-collection's
     ``_read_unprocessed_fill_rows``. Skipping here leaves them UNPROCESSED
     so the scheduled pipeline (which always has a resolver) can integrate them.
     """
@@ -2365,8 +2368,8 @@ async def integrate_recovered_fills(
                     _, _pos = await _read_position_for_order(handle, _order)
                     if _pos.direction == Direction.SHORT:
                         log.info(
-                            "recovery skip: SHORT entry fill %s deferred to scheduled Phase-1"
-                            " (no borrow_cost_resolver)",
+                            "recovery skip: SHORT entry fill %s deferred to scheduled"
+                            " fill-collection (no borrow_cost_resolver)",
                             fill.fill_id,
                         )
                         continue

@@ -72,7 +72,7 @@ if TYPE_CHECKING:
 class _AbandonedCommandEntry:
     """Per-command broker-failure marker — drives the ``command_abandoned`` emit.
 
-    Phase 2 writeback is skipped for an abandoned command (no order rows
+    command execution writeback is skipped for an abandoned command (no order rows
     persisted) but a single ``command_abandoned`` activity-log entry is emitted
     so post-hoc forensics can reconstruct why the command never reached the
     broker.

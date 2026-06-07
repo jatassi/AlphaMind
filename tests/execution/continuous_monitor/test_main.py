@@ -206,7 +206,7 @@ def test_main_registers_precision_and_data_tasks(
         f"breach_loop must be isolated into the safety core, not a monitor task; got {task_names!r}"
     )
     # ALP-855 / W4a — borrow accrual is accounting, evicted from the always-on
-    # monitor (ADR-0004) into the pipeline's Phase-1 write unit. It is no longer
+    # monitor (ADR-0004) into the pipeline's fill-collection write unit. It is no longer
     # a monitor task.
     assert "borrow_accrual" not in task_names, (
         f"borrow_accrual should be evicted from the monitor; got {task_names!r}"

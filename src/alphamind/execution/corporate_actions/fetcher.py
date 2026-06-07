@@ -1,10 +1,10 @@
 """v1beta1 corporate-actions fetcher (ALP-410).
 
-``fetch_unprocessed_ca_activities`` is the function Phase 1 invokes to pull
+``fetch_unprocessed_ca_activities`` is the function fill collection invokes to pull
 new typed CA events from Alpaca's v1beta1 ``GET /v1beta1/corporate-actions``
 endpoint, translate each into a :class:`CorporateActionActivity`, filter
 against the integration ledger, and return them in ascending
-``transaction_time`` order so Phase 1's chronological merge can interleave
+``transaction_time`` order so fill collection's chronological merge can interleave
 them with fills.
 
 Cursor derivation reads ``max(processing_timestamp)`` from
@@ -256,7 +256,7 @@ _TRANSLATORS: tuple[tuple[type[CorporateAction], _TranslatorFn], ...] = (
     (StockAndCashMerger, cast(_TranslatorFn, _from_stock_and_cash_merger)),
     (StockMerger, cast(_TranslatorFn, _from_stock_merger)),
     (NameChange, cast(_TranslatorFn, _from_name_change)),
-    # Capture-only types (ALP-849 / W1c): surfaced so Phase 1 appends them to the
+    # Capture-only types (ALP-849 / W1c): surfaced so fill collection appends them to the
     # event log, but with no position-mutation math (zero ratio / cash).
     (WorthlessRemoval, cast(_TranslatorFn, _from_worthless_removal)),
     (UnitSplit, cast(_TranslatorFn, _from_unit_split)),

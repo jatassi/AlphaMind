@@ -4,8 +4,8 @@ The orchestrator is the single async entrypoint the APScheduler driver
 (story 04a) and the emergency receiver (story 04b) both call. Per the
 design's snapshot-isolation contract
 (``docs/design/05-execution-layer/state-persistence.md`` § Snapshot isolation)
-it runs three separate transactions per invocation: Phase 1 commits → the
-snapshot read happens between phases → Phase 2 commits per envelope. The
+it runs three separate transactions per invocation: fill collection commits → the
+snapshot read happens between phases → command execution commits per envelope. The
 orchestrator wires the snapshot through ``SnapshotBackedSynthesizerReader``
 into the analysis pipeline and threads the same ``AssembledSnapshot`` into
 the decision pipeline.
@@ -74,9 +74,9 @@ async def async_factory_with_singletons(
     """Same as ``async_factory`` plus seeded ``cash_ledger`` + ``drawdown_state``.
 
     Production ``process_unprocessed_fills`` seeds the singletons as a side
-    effect of fill integration. Tests that drive the real Phase 1 writer
+    effect of fill integration. Tests that drive the real fill collection writer
     with zero fills (no broker) need the singletons pre-seeded so the
-    post-Phase-1 snapshot read sees a satisfied repository.
+    post-fill-collection snapshot read sees a satisfied repository.
     """
     db_path = tmp_path / "alphamind.db"
 
@@ -321,7 +321,7 @@ def _patch_no_op_pipeline(
         # on the bound row before returning (write_paths/fill_collection.py:294) AND
         # seeds the ``cash_ledger`` + ``drawdown_state`` singletons as a side
         # effect of fill integration. The stub mirrors both so the
-        # orchestrator's post-Phase-1 snapshot read finds the singletons + a
+        # orchestrator's post-fill-collection snapshot read finds the singletons + a
         # stamped row.
         from alphamind.state.invocation_context.context import (
             stamp_phase_completion,
@@ -366,7 +366,7 @@ def _patch_no_op_pipeline(
 
 
 class TestFillCollectionWriteLockResilience:
-    """ALP-824 — Phase-1 gathers inputs before taking the SQLite write lock, and a
+    """ALP-824 — fill collection gathers inputs before taking the SQLite write lock, and a
     transient cross-writer collision retries the write unit instead of aborting."""
 
     async def test_write_lock_taken_after_inputs_gathered(
@@ -534,7 +534,7 @@ class TestRunInvocationHappyPath:
         archive_root: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The row's ``fill_collection_summary_json`` is the Phase 1 summary JSON-serialized."""
+        """The row's ``fill_collection_summary_json`` is the fill collection summary JSON-serialized."""
         from alphamind.scheduler.orchestrator import run_invocation
 
         fc_summary = FillCollectionSummary(
@@ -575,7 +575,7 @@ class TestRunInvocationHappyPath:
         archive_root: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """CR1 — the Phase-1 write unit re-derives the thesis PnL ledger AFTER the
+        """CR1 — the fill-collection write unit re-derives the thesis PnL ledger AFTER the
         activities poll, so a thesis with a same-invocation OPASN/OPTRD event has
         its ledger reflect that event.
 
@@ -607,7 +607,7 @@ class TestRunInvocationHappyPath:
         )
 
         # Pre-seed the thesis (+ its position) the activity event attributes to —
-        # full records so the post-Phase-1 snapshot read decodes them cleanly. The
+        # full records so the post-fill-collection snapshot read decodes them cleanly. The
         # position carries no forward bracket/thesis FK (none is seeded); the thesis
         # FKs back to the position, which exists.
         async with async_factory() as session:
@@ -671,11 +671,11 @@ class TestRunInvocationFailures:
         archive_root: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Phase 1 abort: row stays (committed up-front), fill_collection_completed_at is NULL.
+        """Fill collection abort: row stays (committed up-front), fill_collection_completed_at is NULL.
 
         Under the three-transaction model the invocation row is committed by
-        ``insert_invocation_record`` before Phase 1 opens. A Phase 1 abort
-        rolls back Phase 1's own transaction only; the row persists with
+        ``insert_invocation_record`` before fill collection opens. A fill collection abort
+        rolls back fill collection's own transaction only; the row persists with
         ``fill_collection_completed_at IS NULL`` so the SQL repository's consistency
         guard refuses snapshot reads against this invocation, and the next
         invocation retries fills.
@@ -711,11 +711,11 @@ class TestRunInvocationFailures:
         archive_root: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Between-phase abort: Phase 1 stays committed; Phase 2 is skipped.
+        """Between-phase abort: fill collection stays committed; command execution is skipped.
 
         Per ``docs/design/mid-pipeline-failure-handling.md`` an analysis /
-        decision-pipeline failure leaves the already-committed Phase 1
-        writes durable and skips Phase 2. The row carries
+        decision-pipeline failure leaves the already-committed fill collection
+        writes durable and skips command execution. The row carries
         ``fill_collection_completed_at`` set, ``command_execution_completed_at`` NULL.
         """
         from alphamind.scheduler.orchestrator import run_invocation
@@ -826,7 +826,7 @@ class TestRunInvocationModeAndStaleness:
         archive_root: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Phase 1 degradation sets staleness on both the summary and the row."""
+        """Fill collection degradation sets staleness on both the summary and the row."""
         from alphamind.scheduler.orchestrator import run_invocation
 
         _patch_no_op_pipeline(monkeypatch, staleness_flag=True)
@@ -884,10 +884,10 @@ def _singleton_records() -> tuple[Any, Any]:
 
 
 async def _seed_singletons_via_handle(handle: Any) -> None:
-    """Seed the singletons inside Phase 1's open session.
+    """Seed the singletons inside the fill collection's open session.
 
     Mimics what production ``process_unprocessed_fills`` does as a side
-    effect of fill integration; joins the Phase 1 transaction so the
+    effect of fill integration; joins the fill collection transaction so the
     singletons commit together with ``fill_collection_completed_at``.
     """
     from alphamind.state.tables.cash_ledger_codec import (
@@ -908,7 +908,7 @@ class TestRunInvocationSnapshotWiring:
     Pre-ALP-449 the orchestrator wired a deferred ``_EmptySynthesizerReader``
     stub because the unified-transaction model prevented a fresh-session
     snapshot read from seeing the open transaction's ``fill_collection_completed_at``
-    write. The three-transaction refactor commits Phase 1 before the snapshot
+    write. The three-transaction refactor commits fill collection before the snapshot
     read, so ``SnapshotBackedSynthesizerReader`` wires correctly.
     """
 
@@ -960,7 +960,7 @@ class TestRunInvocationSnapshotWiring:
     ) -> None:
         """run_analysis_pipeline gets a SnapshotBackedSynthesizerReader, not an empty stub.
 
-        Forces the three-transaction restructure: Phase 1 commits, then the
+        Forces the three-transaction restructure: fill collection commits, then the
         orchestrator assembles a snapshot via fresh sessions (which now see
         committed ``fill_collection_completed_at``), then wires that snapshot through
         the synthesizer reader into the analysis pipeline.
@@ -970,7 +970,7 @@ class TestRunInvocationSnapshotWiring:
         )
         from alphamind.scheduler.orchestrator import run_invocation
 
-        # The Phase 1 stub seeds the snapshot singletons via the handle's
+        # The fill collection stub seeds the snapshot singletons via the handle's
         # open session, mimicking what production fill integration does.
         captured: dict[str, Any] = {}
         _patch_no_op_pipeline(monkeypatch, captured=captured)
@@ -1052,7 +1052,7 @@ class TestRunInvocationSnapshotWiring:
         """The synthesizer reader and the decision pipeline share one snapshot.
 
         Slice 2 of ALP-449: the orchestrator assembles the
-        ``AssembledSnapshot`` exactly once between Phase 1 and the
+        ``AssembledSnapshot`` exactly once between fill collection and the
         analysis pipeline; the same object threads through both
         ``SnapshotBackedSynthesizerReader`` and ``run_decision_pipeline``.
         A regression that re-assembles per consumer would show up as
@@ -1142,9 +1142,9 @@ class TestRunInvocationLibraryConfigWiring:
 class TestRunInvocationFailuresThreeTxBoundaries:
     """Failure semantics at the three transaction boundaries (ALP-449).
 
-    ``TestRunInvocationFailures`` covers Phase 1 abort and between-phase
-    abort already; this class fills in the Phase 2 boundary — a
-    dispatch-side raise must leave Phase 1 durable and ``command_execution_completed_at``
+    ``TestRunInvocationFailures`` covers fill collection abort and between-phase
+    abort already; this class fills in the command execution boundary — a
+    dispatch-side raise must leave fill collection durable and ``command_execution_completed_at``
     NULL (matches the design's "commands submitted before the abort
     remain committed" semantic; the per-envelope mechanics themselves
     are tested in ``tests/scheduler/test_command_execution_dispatch.py``).
@@ -1157,7 +1157,7 @@ class TestRunInvocationFailuresThreeTxBoundaries:
         archive_root: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A dispatch_command_execution raise propagates; the row keeps Phase 1, drops Phase 2."""
+        """A dispatch_command_execution raise propagates; the row keeps fill collection, drops command execution."""
         from alphamind.scheduler import orchestrator as module
         from alphamind.scheduler.orchestrator import run_invocation
 
@@ -1276,7 +1276,7 @@ class TestRunInvocationFailuresThreeTxBoundaries:
 def _stub_only_llm_and_broker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Stub LLM + broker callees; leave Phase 1/2 writers in production form.
+    """Stub LLM + broker callees; leave fill collection / command execution writers in production form.
 
     Differs from :func:`_patch_no_op_pipeline` by NOT stubbing
     ``process_unprocessed_fills`` and ``dispatch_command_execution`` — those are the
@@ -1570,7 +1570,7 @@ class TestRunInvocationBrokerDispatchWiring:
     Non-production runs (``context.debug_e2e is not None``) must leave all
     three at ``None`` so the submit_envelope wrapper's broker-routing gate
     stays False — preserving the log-only behavior the debug-e2e harness
-    already wires for Phase 1 reads.
+    already wires for fill collection reads.
     """
 
     async def test_production_path_threads_full_broker_routing_triple(

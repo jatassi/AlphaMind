@@ -325,7 +325,7 @@ def _swap_for_stock_merger(
         # operator-surfaced edge.
         msg = (
             "stock merger on multi-leg strategy positions is not implemented in "
-            "Phase 1; surface the activity to the operator (see corporate-actions.md "
+            "fill collection; surface the activity to the operator (see corporate-actions.md "
             "options-positions section: Alpaca emits these as a sequence of "
             "activities and the OMS applies the post-adjustment state)"
         )

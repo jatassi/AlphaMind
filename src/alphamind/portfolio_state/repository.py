@@ -27,7 +27,7 @@ class RepositoryReadError(RuntimeError):
 
 
 class RepositoryConsistencyError(RepositoryReadError):
-    """Raised when the production reader detects a Phase 1 / Phase 2 isolation violation."""
+    """Raised when the production reader detects a transaction-isolation violation."""
 
 
 # ---------------------------------------------------------------------------

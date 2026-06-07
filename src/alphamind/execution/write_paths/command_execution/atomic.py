@@ -7,7 +7,7 @@ three per-command steps the dispatch loop interleaves, each in its **own**
 committed transaction on a fresh session (the caller wraps each in
 ``begin_write_immediate`` + ``run_with_sqlite_busy_retry`` so a transient
 ``SQLITE_BUSY_SNAPSHOT`` waits/retries instead of silently rolling back — the
-Phase-2 extension of the ALP-824 fix):
+command-execution extension of the ALP-824 fix):
 
 * :func:`precommit_command` — (A) durable pre-broker intent. Writes the command's
   full local graph (OPEN: position + thesis + bracket + protective legs + entry;
@@ -457,7 +457,7 @@ async def finalize_broker_envelope(
     :func:`precommit_command` / :func:`backfill_command_broker_ids`; this writes
     only the once-per-envelope ``pm_decision`` and one ``command_abandoned`` per
     broker-rejected command. The ``command_execution_completed_at`` stamp is NOT emitted here
-    — it is the orchestrator's single authoritative phase-2 completion stamp,
+    — it is the orchestrator's single authoritative command-execution completion stamp,
     guarded by :func:`invocation_has_pending_submit_strand` (ALP-836). Stamping
     here too would be both redundant and ineffective (the orchestrator's
     unconditional stamp would overwrite it).
@@ -518,7 +518,7 @@ async def invocation_has_pending_submit_strand(
     there is no automatic reconcile-path that backfills a PENDING_SUBMIT row).
     Scoped to THIS invocation by the ``client_order_id`` prefix so a
     prior-invocation strand under recovery does not block an otherwise-clean
-    phase 2. Logs loudly on a hit.
+    command execution. Logs loudly on a hit.
     """
     prefix = _command_id_prefix(invocation_id)
     rows = (

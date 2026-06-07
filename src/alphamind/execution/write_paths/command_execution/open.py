@@ -301,7 +301,7 @@ async def _writeback_open(
     # notionals — negative, in the worst case, which crashes every subsequent
     # decision-pipeline invocation. A market entry carries no price, so its
     # notional is ``money(0)``: a marketable order reserves nothing and is
-    # filled immediately (its consideration flows through Phase 1).
+    # filled immediately (its consideration flows through fill collection).
     reserved_amount = _order_reserved_notional(entry_order)
 
     _emit_order_submitted(
@@ -621,7 +621,7 @@ def _build_strategy_skeleton(
     reflects state, not intent, mirroring the single-option branch. Payoff
     metrics (``net_premium_usd``, ``max_profit_usd``, ``max_loss_usd``,
     ``breakeven_levels``) and ``strategy_greeks`` are all skeleton zeros; the
-    Phase 1 entry-fill handler recomputes them from the filled legs.
+    fill collection entry-fill handler recomputes them from the filled legs.
 
     Leg ids are deterministic — ``{position_id}-leg-{idx}`` — and each wire
     leg's ``direction`` is carried straight through. The strategy branch does
@@ -668,12 +668,12 @@ def _build_pending_position(
     validation_greeks: Greeks | None = None,
     validation_iv: float | None = None,
 ) -> PositionRecord:
-    """Build a PENDING position; fills happen in Phase 1, so size is 0.
+    """Build a PENDING position; fills happen in fill collection, so size is 0.
 
     The position record's ``share_count`` (equity) / ``contract_count``
     (options) is always zero at OPEN time — the record reflects state, not
     intent. The OPEN command's ``position_size.quantity`` flows into the
-    entry order; once the entry fills, Phase 1 transitions the position to
+    entry order; once the entry fills, fill collection transitions the position to
     OPEN and writes the actual size from the fill.
 
     Dispatches on instrument variant: :class:`EquityInstrument` lands an
@@ -682,7 +682,7 @@ def _build_pending_position(
     per-leg greeks computed by the guardrail-evaluation library at
     OPEN-validation time) plus ``validation_iv`` (the IV the library
     consumed; surfaced through ``Acknowledgment.validation_metadata.implied_volatility``,
-    persisted as ``OptionGreeks.iv_used`` per ALP-399). Phase 1's
+    persisted as ``OptionGreeks.iv_used`` per ALP-399). fill collection's
     ``_apply_options_entry_fill`` preserves these greeks unchanged when the
     entry fills — refresh is the continuous monitor's job (architecture.md
     § 4d).
@@ -693,7 +693,7 @@ def _build_pending_position(
     read ``validation_greeks`` / ``validation_iv``; the validation metadata's
     strategy greeks are a per-leg average, not a net (parent ALP-588
     § Surfacing conditions), so they must not seed ``strategy_greeks``. The
-    Phase 1 entry-fill handler recomputes the payoff metrics from the filled legs.
+    fill collection entry-fill handler recomputes the payoff metrics from the filled legs.
     """
     if isinstance(instrument, OptionInstrument):
         if validation_greeks is None or validation_iv is None:

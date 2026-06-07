@@ -13,7 +13,7 @@ edge. The fill then appends to the append-only ``broker_event_log`` (idempotent
 on the ``event_key`` PK) carrying the decoded ``thesis_id`` / ``invocation_id``
 / ``position_id`` — **no local ``orders`` row is required for attribution**
 (ADR-0002). The order row demotes to an optional projection cache: when one
-resolves, the fill is *also* appended to ``fill_records`` so Phase 1 integrates
+resolves, the fill is *also* appended to ``fill_records`` so fill collection integrates
 it; when it does not, the event-log row still captures the fact gap-free.
 
 The strand path is retired: a fill is quarantined to ``unattributed_fills``
@@ -166,7 +166,7 @@ async def persist_fill_report(
       No AlphaMind-submitted fill reaches this branch (ADR-0002).
 
     When the ``orders`` row resolves it is *also* appended to ``fill_records`` so
-    Phase 1 integrates the fill. Paper-mode wiring (per ALP-528) injects
+    Fill collection integrates the fill. Paper-mode wiring (per ALP-528) injects
     ``enrichment_callable`` so each translated :class:`FillRecord` is enriched
     with a ``live_execution_estimate`` before that append; live mode passes
     ``None`` and the column persists as NULL.
@@ -534,7 +534,7 @@ async def _sync_terminal_status_if_any(
     mirroring the per-fill write.
 
     Scoped to **known zero-fill** terminals (``cumulative_filled_quantity == 0``):
-    a partially-filled-then-terminal order is left to the fill path + Phase 1,
+    a partially-filled-then-terminal order is left to the fill path + fill collection,
     which own ``filled_quantity`` and integrate the partials. The no-fill case is
     the one the fill path does not cover, so it is the only one this path owns
     (the ALP-739 zero-fill scoping, preserved).

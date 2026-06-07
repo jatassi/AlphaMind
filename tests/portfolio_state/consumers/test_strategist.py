@@ -842,7 +842,7 @@ class TestBetweenInvocationClosuresProjection:
             closure.position_id = "POS-002"  # type: ignore[misc]
 
     def test_rationale_renders_em_dash_for_zero_exit_price(self) -> None:
-        """Strategy-position closures emit ``exit_price=0.0`` (Phase 1
+        """Strategy-position closures emit ``exit_price=0.0`` (fill collection
         reconciliation overwrites the persisted P/L with the actual fill once
         the order lands). Rendering as ``$0.00`` reads as "filled at zero"
         and is operator-confusing; the rationale uses ``"—"`` instead.

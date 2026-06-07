@@ -79,7 +79,7 @@ class TestInsertInvocationRecord:
     ) -> None:
         """The row must be committed + visible to fresh-session reads on return.
 
-        The downstream snapshot read (between Phase 1 and Phase 2) reads
+        The downstream snapshot read (between fill collection and command execution) reads
         the row via fresh sessions through the SQL repository — the
         function's contract is that the row is durable by the time it
         returns, not later.

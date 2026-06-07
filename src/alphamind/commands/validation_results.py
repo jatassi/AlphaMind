@@ -4,7 +4,7 @@ Layer-2/3 invariant violations and warnings produced by all agent-side
 validators (portfolio-manager, analyst, strategist, domain researchers,
 qualitative researcher, adaptive researcher). The types live here in
 :mod:`alphamind.commands` so cross-layer consumers (e.g. the execution-side
-Phase 2 write path) can reference them without importing decision-layer code.
+command execution write path) can reference them without importing decision-layer code.
 
 Originally scoped to :class:`PMEnvelope` validation and hoisted from
 :mod:`alphamind.decision.portfolio_manager.validation` by ALP-458.

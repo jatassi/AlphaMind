@@ -141,7 +141,7 @@ async def _writeback_add(
     # repriced or cancelled releases exactly what it reserved and never drives
     # ``reserved_capital_usd`` negative. A market add carries no price →
     # ``money(0)`` (marketable: reserves nothing; consideration flows through
-    # Phase 1 on fill).
+    # fill collection on fill).
     reserved_amount = _order_reserved_notional(add_order)
     if reserved_amount > 0:
         await _reserve_capital(handle, amount_usd=reserved_amount)

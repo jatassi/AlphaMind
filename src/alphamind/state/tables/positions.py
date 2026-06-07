@@ -10,7 +10,7 @@ a CHECK constraint. ``thesis_id``, ``bracket_id``, and ``parent_position_id``
 are nullable TEXT columns carrying DEFERRABLE INITIALLY DEFERRED FKs to
 ``theses`` / ``brackets`` / ``positions`` (``ON DELETE RESTRICT``). The
 deferral matches the ``e9d2c4f7b3a1_tighten_state_persistence_fks`` migration
-and accommodates Phase 2's OPEN writeback, which seeds position + thesis +
+and accommodates command execution's OPEN writeback, which seeds position + thesis +
 bracket + entry order in a single transaction with cyclic cross-references
 that resolve at COMMIT.
 """

@@ -1,4 +1,4 @@
-"""Shared helpers for the Phase 2 command-execution write path.
+"""Shared helpers for the command execution command-execution write path.
 
 Cross-cutting machinery used by two or more of the per-command-kind modules
 (:mod:`.open`, :mod:`.close`, :mod:`.adjust`, :mod:`.cancel`, :mod:`.add`):
@@ -230,7 +230,7 @@ def _position_quantity(position: PositionRecord) -> float:
     """Best-effort quantity used to size replacement orders.
 
     OPEN positions return their fill count; PENDING positions (zero fills)
-    return ``1.0`` so the OrderRecord quantity invariant holds — Phase 1
+    return ``1.0`` so the OrderRecord quantity invariant holds — fill collection
     overwrites with the real quantity when the entry fills.
     """
     if isinstance(position.details, EquityPositionDetails):
@@ -389,7 +389,7 @@ def _build_entry_order_from_command(  # noqa: PLR0913 — distinct ID, position,
 async def _read_cash_row(handle: InvocationHandle) -> CashLedgerRow:
     row = await handle.session.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
     if row is None:
-        msg = "cash_ledger singleton missing — Phase 2 cannot reserve capital"
+        msg = "cash_ledger singleton missing — command execution cannot reserve capital"
         raise ValueError(msg)
     return row
 
@@ -447,12 +447,12 @@ async def _unprocessed_filled_quantity(handle: InvocationHandle, *, order_id: st
     """Summed quantity of UNPROCESSED ``fill_records`` recorded against *order_id*.
 
     The continuous monitor appends a ``fill_records`` row (status ``unprocessed``)
-    the instant a broker fill lands; Phase 1 later drains it into the order's
+    the instant a broker fill lands; fill collection later drains it into the order's
     ``filled_quantity``. Between those two events — exactly the stale-snapshot
     window a PM CANCEL is decided in (ALP-760) — the order row still reads
     zero-filled while shares already exist on the broker. Summing the unprocessed
     fills recovers that not-yet-integrated filled quantity. QUARANTINED fills are
-    excluded (Phase 1 rejected them as malformed — they back no real shares), and
+    excluded (fill collection rejected them as malformed — they back no real shares), and
     PROCESSED fills are already folded into ``filled_quantity`` so counting them
     here would double-count.
     """

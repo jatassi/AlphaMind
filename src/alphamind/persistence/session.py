@@ -103,7 +103,7 @@ def _resolve_path(path: str | None) -> str:
 
 
 # ALP-824 — selective per-transaction BEGIN-mode control, ASYNC engine only.
-# The scheduler's Phase-1 write unit races the continuous monitor on one WAL DB;
+# The scheduler's fill-collection write unit races the continuous monitor on one WAL DB;
 # :func:`begin_write_immediate` opts that one transaction into ``BEGIN IMMEDIATE``
 # so the write lock is taken up front and ``busy_timeout`` governs contention. To
 # control the BEGIN statement, the async engine disables pysqlite's implicit BEGIN
@@ -111,7 +111,7 @@ def _resolve_path(path: str | None) -> str:
 # ``sqlite_begin_mode`` execution option (default ``DEFERRED``).
 #
 # These two hooks are registered ONLY on the async engine, never the sync one:
-# ``begin_write_immediate`` is async-only (the async Phase-1 unit is its sole
+# ``begin_write_immediate`` is async-only (the async fill-collection unit is its sole
 # caller), and the sync engine must keep pysqlite's lazy implicit BEGIN so that a
 # ``PRAGMA foreign_keys=OFF`` issued inside an Alembic batch migration still runs
 # in autocommit (SQLite silently *ignores* that pragma once a transaction is
@@ -183,7 +183,7 @@ async def begin_write_immediate(session: AsyncSession) -> None:
     """Open *session*'s transaction with ``BEGIN IMMEDIATE`` (write lock up front).
 
     Call before the first read or write of a write unit that races the
-    continuous monitor (e.g. Phase-1 fill reconciliation). ``BEGIN IMMEDIATE``
+    continuous monitor (e.g. fill-collection fill reconciliation). ``BEGIN IMMEDIATE``
     takes the SQLite write lock eagerly, so a concurrent monitor write makes this
     transaction *wait* (governed by ``PRAGMA busy_timeout``) instead of leaving a
     deferred read snapshot that a later write-upgrade would race into an immediate
@@ -255,7 +255,7 @@ def make_async_engine(path: str | None = None) -> AsyncEngine:
     # The sync ``Engine`` underlying an ``AsyncEngine`` exposes the same ``connect``
     # / ``begin`` events. Pragmas fire on every fresh DBAPI connection (as on the
     # sync engine); the async engine additionally gets the BEGIN-mode hooks so the
-    # Phase-1 write unit can take the write lock up front via ``BEGIN IMMEDIATE``
+    # fill-collection write unit can take the write lock up front via ``BEGIN IMMEDIATE``
     # (ALP-824).
     event.listen(engine.sync_engine, "connect", _apply_pragmas)
     _register_immediate_begin_hooks(engine.sync_engine)
@@ -275,7 +275,7 @@ class EnginePair:
     """Paired sync + async engines and session factories bound to one DB path.
 
     The pipeline scheduler and verify script both need the pair: async writes
-    in Phase 1 / Phase 2, sync reads inside the analysis subtree's
+    in fill collection / command execution, sync reads inside the analysis subtree's
     ``asyncio.to_thread`` callsites. :func:`engine_pair_context` builds the
     pair as a unit and disposes both on exit.
     """

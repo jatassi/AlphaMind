@@ -228,7 +228,7 @@ async def handle_assignment_or_exercise(
     """Book an assignment / exercise: -premium on the option + open the equity leg.
 
     ``borrow_cost_resolver`` (the single invocation-scoped resolver the
-    orchestrator builds for the Phase-1 write unit) stamps the four short-only
+    orchestrator builds for the fill-collection write unit) stamps the four short-only
     fields when the delivery opens a SHORT equity leg — see
     :func:`alphamind.execution.account_activities.booking._opened_equity_from_trade`.
     """

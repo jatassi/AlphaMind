@@ -1,10 +1,10 @@
 """Tests for ``dispatch_command_execution`` (``scheduler.command_execution_dispatch``, ALP-449).
 
 The dispatcher iterates the PM result's ``submission_log`` and persists each
-envelope's outcome via the Phase 2 write path — **each envelope in its own
+envelope's outcome via the command execution write path — **each envelope in its own
 transaction** per the design's "each command's mutations commit atomically"
 guarantee
-(``docs/design/05-execution-layer/state-persistence.md`` § Phase 2 write
+(``docs/design/05-execution-layer/state-persistence.md`` § command execution write
 path). Aggregates accepted / rejected counts into the
 :class:`CommandExecutionSummary` the orchestrator records. Per the parent issue's
 fail-closed invariant, any submission exception propagates so the

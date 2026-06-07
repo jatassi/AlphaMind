@@ -1,7 +1,7 @@
 """Tests for the corporate-action integration-ledger table (story 05 / ALP-363).
 
 The table tracks which Alpaca CA activities have been integrated into state.
-One row per activity, keyed on ``alpaca_activity_id``. Idempotent on Phase 1
+One row per activity, keyed on ``alpaca_activity_id``. Idempotent on fill collection
 retry — re-marking the same activity is a no-op rather than an error.
 
 Covers:
@@ -225,7 +225,7 @@ class TestMarkCaActivityProcessed:
         self,
         async_engine_and_factory: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     ) -> None:
-        """Phase 1 retry on a new invocation must not double-mark."""
+        """Fill collection retry on a new invocation must not double-mark."""
         _, factory = async_engine_and_factory
         ctx1 = InvocationContext(session_factory=factory, record=_invocation_record("inv-1"))
         async with ctx1 as handle:

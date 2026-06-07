@@ -4,13 +4,13 @@ Iterates the PM's ``submission_log`` from the decision-pipeline result and
 persists each envelope's outcome via :func:`persist_envelope_outcome` **in
 its own transaction** — one fresh session per envelope. Matches the
 design's "each command's mutations commit atomically" guarantee
-(``docs/design/05-execution-layer/state-persistence.md`` § Phase 2 write
+(``docs/design/05-execution-layer/state-persistence.md`` § command-execution write
 path), so a mid-batch persistence failure leaves earlier envelopes' writes
 durable. Aggregates per-command accept/reject counts into the
 :class:`CommandExecutionSummary` the orchestrator records.
 
 Broker dispatch lives in the OMS layer (story 03e ALP-390); this module
-keeps the orchestrator dependency narrow — only Phase 2 writeback.
+keeps the orchestrator dependency narrow — only command-execution writeback.
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ async def _envelope_already_persisted(
     envelope_id: str,
     accepted_command_ids: tuple[str, ...],
 ) -> bool:
-    """Return whether this envelope's Phase-2 outcome was already persisted in-turn.
+    """Return whether this envelope's command-execution outcome was already persisted in-turn.
 
     Primary key (ALP-836 / scope G): a pre-committed ``orders`` row keyed by the
     deterministic ``client_order_id`` (= an accepted command_id). The broker-active

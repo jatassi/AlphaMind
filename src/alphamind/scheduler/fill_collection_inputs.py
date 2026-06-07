@@ -1,4 +1,4 @@
-"""Phase 1 input gatherer.
+"""Fill-collection input gatherer.
 
 Assembles the typed bundle ``process_unprocessed_fills`` consumes — Alpaca
 account + positions, v1beta1 corporate-action activities, and the
@@ -126,7 +126,7 @@ _UNKNOWN_TIMEFRAME_RANK = 99
 _MAX_REFERENCE_BAR_AGE_SECONDS = 7 * 24 * 60 * 60
 
 
-# ALP-759 — sanity bounds for a phase-1 live-quote mid before it becomes the
+# ALP-759 — sanity bounds for a fill-collection live-quote mid before it becomes the
 # active-universe reference price. Off-hours (weekend / pre-market / after-hours)
 # the free-tier IEX feed routinely returns a two-sided quote with one broken side
 # or an absurd spread (the 2026-05-31 weekend scan: MU $52.51 bid vs a real
@@ -215,7 +215,7 @@ def _default_quote_source_factory(
     Mirrors the client wiring ``submit_envelope.server.build_broker_routing_kwargs``
     uses for the marketable-entry rewrite: an :class:`AlpacaQuoteSource` over a
     fresh ``StockHistoricalDataClient`` (both default to ``DataFeed.IEX``, so the
-    phase-1 reference anchor and the submission-time repricer read the same feed).
+    fill-collection reference anchor and the submission-time repricer read the same feed).
     Used when ``gather_fill_collection_inputs`` is called without a ``quote_source_factory``
     kwarg (the production daemon path).
     """
@@ -353,7 +353,7 @@ async def _read_active_universe_tickers(session: AsyncSession) -> tuple[str, ...
     including tickers with no recorded bar yet — so an active candidate gets a
     live mid even when :func:`_read_active_universe_prices` would have returned
     nothing for it. This is the same ``is_active==1`` predicate that function's
-    join applies; the two reads share the Phase 1 transaction.
+    join applies; the two reads share the fill-collection transaction.
     """
     stmt = select(AssetUniverse.ticker).where(AssetUniverse.is_active == 1)
     rows = (await session.execute(stmt)).scalars().all()
@@ -367,7 +367,7 @@ def _quote_distrust_reason(
     divergence_tolerance_pct: float,
     max_relative_spread_pct: float,
 ) -> str | None:
-    """Why a phase-1 live-quote mid should not be trusted as the reference (ALP-759).
+    """Why a fill-collection live-quote mid should not be trusted as the reference (ALP-759).
 
     Returns a human-readable reason string when the quote trips a distrust check,
     else ``None`` (the mid is trustworthy). The off-hours IEX failure modes the
@@ -414,7 +414,7 @@ def _merge_quote_and_bar_prices(
     """Active-universe reference price per ticker: live quote mid primary, bar fallback.
 
     ALP-753 — for each active ticker the freshest-possible deterministic anchor
-    is the phase-1 live quote **mid** ``(bid + ask) / 2`` when a usable two-sided
+    is the fill-collection live quote **mid** ``(bid + ask) / 2`` when a usable two-sided
     quote was captured; otherwise the ticker falls back to the freshest recorded
     bar's ``unadj_close`` (the :func:`_read_active_universe_prices` result). A
     ticker with neither a quote nor a bar is omitted (the validation tool's
@@ -559,7 +559,7 @@ def _build_market_inputs(
     ``iv_provider`` is the caller-constructed IV-sourcing seam (ALP-642 —
     production-side this is :class:`SqlOptionsIvProvider`, resolved against
     ``options_contract_snapshots``). The provider's realized-vol fallback
-    map is owned by the caller (``gather_fill_collection_inputs`` for Phase 1) so
+    map is owned by the caller (``gather_fill_collection_inputs`` for fill collection) so
     the same lifecycle that builds the price layers builds the IV layer.
     """
     # ALP-462 — ``pos.current_price`` is ``Price`` (Decimal) on the
@@ -589,7 +589,7 @@ async def gather_fill_collection_inputs(
     ca_queries_factory: _CorporateActionsQueriesFactory | None = None,
     quote_source_factory: _QuoteSourceFactory | None = None,
 ) -> FillCollectionInputs:
-    """Assemble the Phase 1 input bundle for ``process_unprocessed_fills``.
+    """Assemble the fill-collection input bundle for ``process_unprocessed_fills``.
 
     Calls the broker adapter for account + positions, the v1beta1 fetcher
     for CA activities, the macro table for the risk-free rate, ``ohlcv_bars``

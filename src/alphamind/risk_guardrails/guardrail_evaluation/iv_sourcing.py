@@ -286,7 +286,7 @@ class SqlOptionsIvProvider:
 
     Sync-session-per-lookup so the synchronous ``IvProvider.lookup_iv``
     Protocol holds in async contexts. The brief block on the asyncio loop
-    is well within the breach-loop and Phase-1 budgets at current table
+    is well within the breach-loop and fill-collection budgets at current table
     cardinality — the per-call query is ``WHERE contract_ticker = ?
     ORDER BY snapshot_ts DESC LIMIT 1`` against the PK
     ``(snapshot_ts, contract_ticker)``; SQLite scans the leading prefix

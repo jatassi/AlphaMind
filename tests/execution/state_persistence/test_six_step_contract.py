@@ -3,12 +3,12 @@
 Per ``docs/design/05-execution-layer/state-persistence.md`` § Read paths the
 snapshot-isolation contract is::
 
-    1. Phase 1 begins a write transaction.
-    2. Phase 1 commits (fills integrate, ``fill_collection_completed_at`` stamped).
+    1. Fill collection begins a write transaction.
+    2. Fill collection commits (fills integrate, ``fill_collection_completed_at`` stamped).
     3. The ingestion layer reads a snapshot.
     4. The ingestion layer completes its read.
-    5. Phase 2 begins a write transaction.
-    6. Phase 2 commits (envelope writebacks land, ``command_execution_completed_at``
+    5. Command execution begins a write transaction.
+    6. Command execution commits (envelope writebacks land, ``command_execution_completed_at``
        stamped).
 
 This module exercises steps 1, 2, 5, and 6 plus the snapshot reads bracketing
@@ -23,7 +23,7 @@ out of surface for this test — it is exercised in
 Per-step unit tests live in ``test_fill_collection_write_path.py``,
 ``test_command_execution_write_path.py``, and ``test_sql_repository.py``. This module
 runs the full sequence inside a single invocation cycle to guard against
-read/write surfaces drifting out of contract once Phase 1 + Phase 2 share
+read/write surfaces drifting out of contract once fill collection + command execution share
 real state.
 """
 
@@ -192,7 +192,7 @@ async def db(
     """Yield (async_engine, factory) over a fresh DB migrated to ``head``.
 
     ``alembic upgrade head`` runs the FK-tightening migration so the
-    deferred FK constraints participate in every Phase 1 / Phase 2 commit.
+    deferred FK constraints participate in every fill collection / command execution commit.
     """
     db_path = tmp_path / "alphamind.db"
     repo_root = Path(__file__).parents[3]
@@ -222,7 +222,7 @@ def _config() -> StatePersistenceConfig:
 
 
 def _market_inputs() -> MarketInputs:
-    """Minimal ``MarketInputs`` for the six-step contract's Phase 1 step.
+    """Minimal ``MarketInputs`` for the six-step contract's fill collection step.
 
     The wedge in ``process_unprocessed_fills`` (story 06a / ALP-428) requires
     a price for every open-position underlying; this test seeds AAPL and
@@ -484,7 +484,7 @@ def _pending_protective_stop_order(
 
     The seeded ``BracketLeg`` carries ``order_id=OrderId(f"{bracket_id}-ord-stop")``;
     on the FK-tightened schema that reference must resolve. The order is
-    minimally shaped (PENDING protective stop) — Phase 1's fill integration
+    minimally shaped (PENDING protective stop) — fill collection's fill integration
     only mutates the entry order, so this row sits inert through the test.
     """
     return OrderRecord(
@@ -515,7 +515,7 @@ def _pending_protective_stop_order(
 
 
 async def _seed_initial_state(factory: async_sessionmaker[AsyncSession]) -> None:
-    """Seed the entities Phase 1 needs to integrate one entry fill cleanly.
+    """Seed the entities fill collection needs to integrate one entry fill cleanly.
 
     All cross-referenced rows commit in a single transaction so the
     DEFERRABLE-INITIALLY-DEFERRED FKs (positions↔theses↔brackets↔orders cycles)
@@ -563,7 +563,7 @@ async def _open_handle_for_existing_invocation(
     Production uses ``InvocationContext`` to insert the invocation row on
     enter — that's correct for one-transaction-per-invocation flows. The
     six-step contract spans two transactions on the same ``invocation_id``
-    (Phase 1 commit, then snapshot read, then Phase 2 commit), so the row
+    (fill collection commit, then snapshot read, then command execution commit), so the row
     must be inserted exactly once before either phase opens. The caller
     commits and closes the returned session.
     """
@@ -692,7 +692,7 @@ def _open_envelope(envelope_id: str = "ENV-REC-7") -> PMEnvelope:
 async def test_six_step_snapshot_isolation_contract(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """Phase 1 commit → snapshot read → Phase 2 commit → second snapshot read.
+    """Fill collection commit → snapshot read → command execution commit → second snapshot read.
 
     Both phases run under the SAME ``invocation_id`` (the design contract
     binds the entire six-step sequence to one invocation cycle). The schema
@@ -700,16 +700,16 @@ async def test_six_step_snapshot_isolation_contract(
     constraints are validated at every commit.
 
     Asserts:
-    * The Phase-1 snapshot sees the now-OPEN seeded position.
-    * The Phase-1 snapshot does NOT include Phase 2's PENDING position
-      (because Phase 2 hasn't run yet).
-    * The Phase-2 snapshot picks up the new PENDING position the OPEN
+    * The fill-collection snapshot sees the now-OPEN seeded position.
+    * The fill-collection snapshot does NOT include command execution's PENDING position
+      (because command execution hasn't run yet).
+    * The command-execution snapshot picks up the new PENDING position the OPEN
       command introduced.
     """
     _, factory = db
     await _seed_initial_state(factory)
 
-    # ---- Phase 1 commit ---------------------------------------------------
+    # ---- Fill collection commit -------------------------------------------
     # _seed_invocation_substrate already inserted the invocation row, so
     # both phases reuse it (the production InvocationContext insert step
     # is moved up-front for tests that span two transactions on one row).
@@ -733,11 +733,11 @@ async def test_six_step_snapshot_isolation_contract(
     # command_execution hasn't run; no other PENDING positions exist yet.
     assert pending_after_fill_collection == ()
 
-    # ---- Phase 2 commit ---------------------------------------------------
+    # ---- Command execution commit -----------------------------------------
     envelope = _open_envelope()
     # The OPEN command id carries the broker-carried thesis link (ALP-844); the
     # thesis is minted off the link-free base id, exactly as PM-submit derives
-    # it, and Phase-2 reads it back by parsing (single source of truth).
+    # it, and command execution reads it back by parsing (single source of truth).
     base_command_id = f"inv-{_INV_ID.removeprefix('inv-')}.{envelope.envelope_id}.0.0"
     open_command_id = derive_pm_command_id(
         invocation_id=_INV_ID,

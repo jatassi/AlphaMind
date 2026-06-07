@@ -1222,7 +1222,7 @@ class TestThesisShapedTriggerSelection:
 def _activate(leg: BracketLeg) -> BracketLeg:
     """Return *leg* with status ACTIVE — the monitor only fires ACTIVE legs.
 
-    The real OPEN writeback builds legs PENDING_ACTIVATION; Phase 1 entry-fill
+    The real OPEN writeback builds legs PENDING_ACTIVATION; fill collection entry-fill
     activates them. Tests that build a leg via the production constructor flip
     that one field so the firing kernel evaluates it, leaving every other field
     exactly as the constructor produced it (in particular: NO ``pl_anchor``).

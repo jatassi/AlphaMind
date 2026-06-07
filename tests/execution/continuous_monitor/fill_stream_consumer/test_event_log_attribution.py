@@ -319,7 +319,7 @@ class TestUncommittedThesisStrandHole:
         )
 
         # A linked PM command id whose thesis id is NOT one the fixture seeded —
-        # the OPEN's Phase-2 commit has not landed the ``theses`` row yet.
+        # the OPEN's command-execution commit has not landed the ``theses`` row yet.
         uncommitted_thesis_id = derive_open_thesis_id("MSFT", _BASE_COMMAND_ID)
         assert uncommitted_thesis_id != _THESIS_ID
         unlanded_command_id = derive_pm_command_id(
@@ -522,7 +522,7 @@ class TestTerminalStatusEvent:
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         """A partially-filled-then-terminal order appends NO terminal event — the
-        fill path + Phase 1 own ``filled_quantity`` and integrate the partials
+        fill path + fill collection own ``filled_quantity`` and integrate the partials
         (the ALP-739 zero-fill scoping, preserved)."""
         report = _fill_report(
             client_order_id=_PM_LINKED_COMMAND_ID,
@@ -546,7 +546,7 @@ class TestTerminalStatusEvent:
         A partially-filled-then-canceled order can arrive with a ``None``
         cumulative; defaulting that to ``0.0`` would let it pass the zero-fill
         terminal guard and mis-project a no-fill terminal over an order that had
-        partials. ``None`` is unknown-not-zero, so the fill path + Phase 1 own
+        partials. ``None`` is unknown-not-zero, so the fill path + fill collection own
         it and this path skips (FS3)."""
         unknown_cumulative = TradeUpdate(
             event="canceled",

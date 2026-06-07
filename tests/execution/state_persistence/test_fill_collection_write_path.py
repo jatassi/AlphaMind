@@ -1,6 +1,6 @@
-"""Tests for the Phase 1 fill-integration write path (story 07 / ALP-365).
+"""Tests for the fill collection fill-integration write path (story 07 / ALP-365).
 
-The Phase 1 write path drains every ``processing_status='unprocessed'`` fill
+The fill collection write path drains every ``processing_status='unprocessed'`` fill
 record, integrates each into state (orders / positions / brackets / theses /
 cash_ledger / drawdown_state), emits activity-log entries, and marks the
 fills processed — all in one transaction.
@@ -167,7 +167,7 @@ def _make_pending_entry_order(
     limit_price: float | None = None,
 ) -> OrderRecord:
     # A non-marketable LIMIT entry (limit_price set) is the case that reserves
-    # capital — Phase 1's buy-fill release drains the reservation by the entry's
+    # capital — fill collection's buy-fill release drains the reservation by the entry's
     # ``limit_price * fill_quantity`` notional (ALP-741). A MARKET entry (the
     # default) reserves nothing, so its fill releases nothing.
     order_type = OrderType.LIMIT if limit_price is not None else OrderType.MARKET
@@ -815,7 +815,7 @@ async def test_take_profit_leg_fill_marks_leg_filled_and_closes_position(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """ALP-746 — a protective TAKE_PROFIT leg fill (the fill the consumer now
-    resolves to the leg row by captured UUID) integrates through Phase 1: the
+    resolves to the leg row by captured UUID) integrates through fill collection: the
     leg order transitions to FILLED and the OPEN position closes out."""
     from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
@@ -1057,7 +1057,7 @@ async def test_failed_fill_quarantined_leaves_no_lifecycle_log_entries(
     opens"). The per-fill savepoint rolls back the fill's partial mutations and
     *every* lifecycle activity-log entry it had started to emit, so the only
     activity-log row left for the invocation is the reconciliation alert that
-    surfaces the orphan. Phase-1 completes normally.
+    surfaces the orphan. Fill collection completes normally.
     """
     from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
@@ -1092,7 +1092,7 @@ async def test_failed_fill_quarantined_leaves_no_lifecycle_log_entries(
         market_inputs=_make_market_inputs(),
         config=_make_state_persistence_config(),
     )
-    # Phase-1 returns normally — the ValueError did not escape.
+    # Fill collection returns normally — the ValueError did not escape.
     await ctx.__aexit__(None, None, None)
 
     assert summary.fills_processed == 0
@@ -1204,8 +1204,8 @@ async def test_buy_fill_decrements_reserved_capital_to_zero(
 ) -> None:
     """A buy fill consuming the full reservation must decrement
     reserved_capital_usd by the entry's reserved notional (``limit_price *
-    fill_quantity``, ALP-741), NOT the fill consideration. Without this, Phase 2's
-    OPEN reserve and Phase 1's fill double-count: current_cash drops AND
+    fill_quantity``, ALP-741), NOT the fill consideration. Without this, command execution's
+    OPEN reserve and fill collection's fill double-count: current_cash drops AND
     reserved_capital stays — overstating committed capital.
     """
     from alphamind.execution.write_paths.fill_collection import (
@@ -1222,7 +1222,7 @@ async def test_buy_fill_decrements_reserved_capital_to_zero(
         _make_active_thesis(),
         _make_pending_bracket(),
     )
-    # Seed cash with a $1000 reservation already in place (mirroring Phase 2's OPEN).
+    # Seed cash with a $1000 reservation already in place (mirroring command execution's OPEN).
     seeded = CashLedger(
         current_cash_usd=100_000.0,
         settled_cash_usd=100_000.0,
@@ -1359,7 +1359,7 @@ async def test_reprice_then_fill_returns_reserved_capital_to_zero(
         _make_active_thesis(),
         _make_pending_bracket(),
     )
-    # OPEN reserved the entry notional 100 * 10 = $1000 (mirrors Phase 2).
+    # OPEN reserved the entry notional 100 * 10 = $1000 (mirrors command execution).
     await _seed_cash_ledger(
         factory, _make_cash_ledger(current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
     )
@@ -1413,7 +1413,7 @@ async def test_pending_position_with_missing_bracket_row_rejected_at_commit(
     """FK enforcement prevents committing a position that references a non-existent
     bracket row — the deferred FK on positions.bracket_id raises IntegrityError at
     COMMIT, which is the database-level equivalent of the application-level
-    StateInconsistencyError that Phase 1 used to guard against.
+    StateInconsistencyError that fill collection used to guard against.
 
     This test verifies that the invariant is enforced at the schema layer.
     """
@@ -1436,7 +1436,7 @@ async def test_open_position_with_missing_bracket_row_rejected_at_commit(
     """FK enforcement prevents committing an OPEN position that references a
     non-existent bracket row — deferred FK on positions.bracket_id raises
     IntegrityError at COMMIT.  This is the schema-level guard for the
-    invariant that Phase 1's _dissolve_bracket path previously enforced at
+    invariant that fill collection's _dissolve_bracket path previously enforced at
     the application layer.
     """
     from sqlalchemy.exc import IntegrityError
@@ -1478,7 +1478,7 @@ async def test_corporate_action_position_with_missing_bracket_row_rejected_at_co
 ) -> None:
     """FK enforcement prevents committing a position that references a non-existent
     bracket row — deferred FK on positions.bracket_id raises IntegrityError at COMMIT.
-    This is the schema-level guard for the invariant that Phase 1's
+    This is the schema-level guard for the invariant that fill collection's
     _cancel_bracket_for_corporate_action path previously enforced at the application layer.
     """
     from sqlalchemy.exc import IntegrityError
@@ -2251,7 +2251,7 @@ async def test_fill_against_terminal_position_quarantined_not_raised(
 ) -> None:
     """AC (a): a fill whose target equity position is in a terminal status
     (CANCELLED or CLOSED) is quarantined (not raised), fills_quarantined
-    increments, a reconciliation alert is emitted, and Phase-1 completes
+    increments, a reconciliation alert is emitted, and fill collection completes
     normally. Parametrized over both members of _NON_INTEGRATABLE_STATUSES."""
     from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
@@ -2279,7 +2279,7 @@ async def test_fill_against_terminal_position_quarantined_not_raised(
         market_inputs=_make_market_inputs(),
         config=_make_state_persistence_config(),
     )
-    # Phase-1 returns normally — no ValueError escapes.
+    # Fill collection returns normally — no ValueError escapes.
     await ctx.__aexit__(None, None, None)
 
     assert summary.fills_processed == 0
@@ -2488,7 +2488,7 @@ async def test_over_fill_quarantined_not_integrated(
     Reproduces the GS 3-partials + recovery-sweep aggregate case: three genuine
     per-execution fills of 1 share each were persisted and processed; the recovery
     sweep appended a 4th aggregate fill (qty 3 @ avg price) that the dedupe
-    constraint could not suppress.  Phase-1 must quarantine it at the
+    constraint could not suppress.  Fill collection must quarantine it at the
     pre-integration gate, leaving share_count=3 and order.filled_quantity=3.
     """
     from alphamind.execution.write_paths.fill_collection import process_unprocessed_fills

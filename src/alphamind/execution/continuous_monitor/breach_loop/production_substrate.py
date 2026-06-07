@@ -720,7 +720,7 @@ def _resolve_regime_adaptation_sync(
     """Run :func:`resolve_regime_adaptation` against a fresh sync session.
 
     ``fallback`` covers the case where no :class:`RegimeAdaptationState`
-    has been persisted yet (the scheduler hasn't completed a Phase 1 that
+    has been persisted yet (the scheduler hasn't completed a fill-collection that
     folded a regime decision through the resolver). The monitor process
     can start before the scheduler does in fresh-DB environments, so the
     breach loop must keep ticking.

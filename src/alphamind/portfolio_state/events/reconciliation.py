@@ -12,7 +12,7 @@ from alphamind.portfolio_state.events.types import EventGroup, EventType
 class ReconciliationAlertDetail:
     """Detail payload for ``RECONCILIATION_ALERT`` events.
 
-    Emitted by the post-Phase-1 reconciliation step when local state diverges
+    Emitted by the post-fill-collection reconciliation step when local state diverges
     from Alpaca's authoritative ``GET /v2/positions`` / ``GET /v2/account``
     snapshot beyond the documented tolerance. One alert per unexplained delta.
 
@@ -56,7 +56,7 @@ class ReconciliationCorrectionDetail:
     """Detail payload for ``RECONCILIATION_CORRECTION`` events (ALP-619).
 
     Emitted alongside a :class:`ReconciliationAlertDetail` row whenever the
-    post-Phase-1 reconciliation step writes Alpaca's authoritative value back
+    post-fill-collection reconciliation step writes Alpaca's authoritative value back
     to local state — drift on an existing OPEN equity/options position
     (``share_count`` / ``contract_count``) or the singleton ``cash_ledger``
     row (``current_cash_usd``). Carries the forensic trail the operator needs
@@ -72,7 +72,7 @@ class ReconciliationCorrectionDetail:
     basis, and an execution history that can't be honestly synthesized from
     the Alpaca snapshot. Operator triage handles those out of band.
 
-    See ``docs/design/05-execution-layer/corporate-actions.md`` § Phase 1
+    See ``docs/design/05-execution-layer/corporate-actions.md`` § fill collection
     integration sequence step 4 and ``broker-adapter.md`` § Account state
     queries — "Alpaca's positions and account endpoints are the source of
     truth. On disagreement, Alpaca wins."

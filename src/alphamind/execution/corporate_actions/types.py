@@ -31,7 +31,7 @@ from alphamind.portfolio_state.records.positions import Direction
 class CorporateActionActivity(BaseModel):
     """Typed handle for a single Alpaca CA activity awaiting integration.
 
-    Phase 1 integrates one ``CorporateActionActivity`` per row drained by
+    fill collection integrates one ``CorporateActionActivity`` per row drained by
     the v1beta1 fetcher (:func:`fetch_unprocessed_ca_activities` in the
     ``fetcher`` module) from Alpaca's ``GET /v1beta1/corporate-actions``
     endpoint.
@@ -50,7 +50,7 @@ class CorporateActionActivity(BaseModel):
       construction time.
     * ``transaction_time`` — for v1beta1 events, anchored at midnight UTC on
       the event's ``ex_date`` where present, else ``process_date`` /
-      ``effective_date``.  The Phase 1 chronological merge compares this
+      ``effective_date``.  The fill collection chronological merge compares this
       against fill ``fill_timestamp`` (precise datetime); fills on the
       ex-date resolve before the CA after midnight-UTC anchoring.
     """

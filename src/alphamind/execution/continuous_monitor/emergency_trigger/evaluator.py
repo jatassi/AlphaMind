@@ -362,7 +362,7 @@ class EmergencyTriggerEvaluator:
             self._drawdown_window.popleft()
 
     def _daily_drawdown_limit_pct(self, result: BreachLoopResult) -> float:
-        """Resolve the active daily-drawdown limit from the Phase 1 result.
+        """Resolve the active daily-drawdown limit from the fill-collection result.
 
         The breach loop's ``ActiveGuardrails.active_risk_parameters``
         is the canonical source; the ``daily_drawdown_pct`` entry's value

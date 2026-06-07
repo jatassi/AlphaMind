@@ -1,4 +1,4 @@
-"""Tests for the Phase 1 fill-integration write path on strategy / mleg
+"""Tests for the fill collection fill-integration write path on strategy / mleg
 positions (story 04b / ALP-392).
 
 Mirrors :mod:`tests.execution.state_persistence.test_fill_collection_options` but for
@@ -401,7 +401,7 @@ def _make_leg_order(
 ) -> OrderRecord:
     """Build a per-leg ``OrderRecord`` (``OptionsInstrumentSpec`` + ``SIMPLE``).
 
-    Per-leg orders carry the strategy ``position_id`` so Phase 1 can correlate
+    Per-leg orders carry the strategy ``position_id`` so fill collection can correlate
     sibling legs; ``order_class`` stays ``SIMPLE`` because the leg itself is
     a single-instrument identifier — the strategy-as-mleg structure lives on
     the parent order.
@@ -576,7 +576,7 @@ def _make_strategy_thesis_with_resolved_components(
 ) -> ThesisRecord:
     """ACTIVE thesis whose components carry pre-set resolution outcomes.
 
-    Used in exit-fill tests so when Phase 1 transitions thesis.status to
+    Used in exit-fill tests so when fill collection transitions thesis.status to
     RESOLVED, the resulting record stays valid.
     """
     components = tuple(
@@ -745,7 +745,7 @@ async def _set_order_status(
 
     Real cancel events flow through the continuous monitor's run-loop and
     update per-leg order rows directly; for tests we mutate the row in place
-    so Phase 1 sees the post-cancel substrate.
+    so fill collection sees the post-cancel substrate.
     """
     async with factory() as sess:
         row = await sess.get(OrderRow, order_id)
@@ -1617,7 +1617,7 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
 
 
 # ---------------------------------------------------------------------------
-# Tests — Phase 1 strategy entry-fill payoff recompute (story 02 / ALP-598)
+# Tests — fill collection strategy entry-fill payoff recompute (story 02 / ALP-598)
 # ---------------------------------------------------------------------------
 
 
@@ -2266,7 +2266,7 @@ async def test_strategy_fill_failure_quarantined_state_unchanged(
     """A strategy close fill claiming more contracts than the leg holds is
     quarantined, not propagated (ALP-761). The per-fill savepoint rolls back its
     partial mutations so the strategy position and cash are untouched, the fill
-    row is QUARANTINED, a single reconciliation alert is emitted, and Phase-1
+    row is QUARANTINED, a single reconciliation alert is emitted, and fill collection
     completes normally."""
     from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
@@ -2330,7 +2330,7 @@ async def test_strategy_fill_failure_quarantined_state_unchanged(
         market_inputs=_make_market_inputs(),
         config=_make_state_persistence_config(),
     )
-    # Phase-1 returns normally — the ValueError did not escape.
+    # Fill collection returns normally — the ValueError did not escape.
     await ctx.__aexit__(None, None, None)
 
     assert summary.fills_processed == 0

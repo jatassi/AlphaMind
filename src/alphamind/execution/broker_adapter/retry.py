@@ -1,14 +1,14 @@
 """Bounded-retry helper for Alpaca submissions (story 01 / ALP-378).
 
 The submission retry window contract lives in
-``state-persistence.md § Phase 2 write path``: each Alpaca submission attempt
+``state-persistence.md § command execution write path``: each Alpaca submission attempt
 runs inside a brief exponential-backoff loop bounded by
 ``ExecutionConfig.submission_retry_window_seconds``. On exhaustion the command
 transaction rolls back and a ``command_abandoned`` activity-log entry surfaces
 to the originating agent.
 
 This helper handles only the retry mechanics; the rollback + activity-log
-emission are owned by the Phase 2 write path. The helper distinguishes
+emission are owned by the command execution write path. The helper distinguishes
 **transient** failures (network errors, timeouts, 5xx) — which it retries —
 from **permanent** rejections (4xx with rejection reasons per
 ``broker-adapter.md``) — which it re-raises so the caller can translate them
@@ -42,7 +42,7 @@ class Submitted[T]:
 class GatewaySubmissionFailed:
     """A submission attempt that exhausted the retry window without success.
 
-    Phase 2 of the OMS write path translates this into a ``command_abandoned``
+    command execution of the OMS write path translates this into a ``command_abandoned``
     activity-log entry per ``state-persistence.md``. ``last_error_class`` is a
     short identifier (the final exception's ``type(...).__name__``) suitable
     for log queries; the full exception chain is not preserved here — the

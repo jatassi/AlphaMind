@@ -116,7 +116,7 @@ def _limit_open() -> OpenCommand:
 def _open_cid(envelope_id: str, *, ticker: str = "NVDA") -> str:
     """A realistic broker-carried OPEN command id (ALP-844) for ``_limit_open``.
 
-    Phase-2 OPEN writeback (reached here via ``precommit_command`` →
+    Command-execution OPEN writeback (reached here via ``precommit_command`` →
     ``dispatched_order_id`` → ``_new_open_ids``) resolves the thesis by parsing
     the command id, so an OPEN's pre-commit must carry a thesis-bearing PM id.
     Mints the thesis off the link-free base id with the canonical helper, exactly

@@ -4,7 +4,7 @@ Story 02b: ``InvocationContext`` is the substrate the configuration loader
 and the three blocked distillation stories opt into. On enter, it opens an
 async transaction and INSERTs the supplied ``InvocationRecord``; downstream
 stories' write paths (story 03 activity-log emission, stories 07-08
-Phase 1/Phase 2 writes) join the same transaction via the handle's session.
+fill collection / command execution writes) join the same transaction via the handle's session.
 On clean exit, the transaction commits; on exception, it rolls back and
 re-raises.
 """

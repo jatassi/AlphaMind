@@ -8,8 +8,8 @@ it runs three separate transactions per invocation:
 
   1. Row insert: ``insert_invocation_row`` commits the ``invocations`` row in
      its own short transaction so the row is durable + visible to fresh-session
-     reads from the moment Phase 1 starts.
-  2. Phase 1: one transaction wrapping fill integration + activity-log writes
+     reads from the moment fill collection starts.
+  2. Fill collection: one transaction wrapping fill integration + activity-log writes
      + the ``fill_collection_completed_at`` stamp. Commits at the close of the phase.
   3. Snapshot read between phases: ``assemble_snapshot`` uses fresh sessions
      via the repository factory; it now correctly sees the committed
@@ -23,7 +23,7 @@ it runs three separate transactions per invocation:
      ``command_execution_completed_at`` stamp + row summary writeback.
 
 Per ``docs/design/mid-pipeline-failure-handling.md``:
-  * A Phase 1 abort rolls back Phase 1's writes; the invocation row stays
+  * A fill-collection abort rolls back fill collection's writes; the invocation row stays
     with ``fill_collection_completed_at IS NULL``, and the repository's consistency
     guard refuses snapshot reads against it — next invocation retries fills.
   * Between-phase aborts (snapshot assembly, analysis, decision) leave Phase
@@ -294,11 +294,11 @@ async def _update_row_fill_collection(
     fill_collection_summary: FillCollectionSummary,
     staleness_flag: bool,
 ) -> None:
-    """Persist Phase 1 outcomes onto the bound invocation row."""
+    """Persist fill-collection outcomes onto the bound invocation row."""
     row = await handle.session.get(InvocationRow, handle.invocation_id)
     if row is None:
         msg = (
-            f"invocations row {handle.invocation_id!r} disappeared mid-Phase-1 update; "
+            f"invocations row {handle.invocation_id!r} disappeared mid-fill-collection update; "
             "insert_invocation_record should have committed it before this phase opened"
         )
         raise RuntimeError(msg)
@@ -323,7 +323,7 @@ async def _update_row_command_execution(
     row = await handle.session.get(InvocationRow, handle.invocation_id)
     if row is None:
         msg = (
-            f"invocations row {handle.invocation_id!r} disappeared mid-Phase-2 update; "
+            f"invocations row {handle.invocation_id!r} disappeared mid-command-execution update; "
             "insert_invocation_record should have committed it before this phase opened"
         )
         raise RuntimeError(msg)
@@ -476,7 +476,7 @@ def _quote_source_factory_from_debug_e2e(
 def _price_provider_from_fill_collection(
     market_inputs: MarketInputs,
 ) -> StubCurrentPriceProvider:
-    """Wrap Phase 1's underlying-price map in the canonical stub price provider."""
+    """Wrap fill collection's underlying-price map in the canonical stub price provider."""
     quotes = {
         ticker: PriceQuote(
             ticker=ticker,
@@ -556,7 +556,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
 
     See the module docstring for the per-phase transaction boundaries and
     failure semantics. The sequence in this function: resolve runtime
-    dimensions → ``insert_invocation_record`` → Phase 1 (one session) →
+    dimensions → ``insert_invocation_record`` → fill collection (one session) →
     snapshot assembly (fresh sessions) → analysis + decision (read-only) →
     command execution (per-envelope sessions + final row stamp) → return
     :class:`InvocationSummary`.
@@ -693,15 +693,15 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         regime=runtime.active_regime,
     )
 
-    # Step 3 — Phase 1 transaction.
+    # Step 3 — fill-collection transaction.
     _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="collect")
     progress.phase_start("fill_collection")
-    # ALP-824 — Phase-1 and the continuous monitor are two writers on one WAL DB.
+    # ALP-824 — fill collection and the continuous monitor are two writers on one WAL DB.
     # Gather inputs FIRST in a read-only (deferred) session so no write lock is
     # held across the Alpaca network fetch; then run the write unit under an
     # up-front ``BEGIN IMMEDIATE`` (write lock taken eagerly, so ``busy_timeout``
     # governs contention with the monitor) wrapped in a bounded retry. A transient
-    # cross-writer collision then makes Phase-1 wait/retry rather than aborting the
+    # cross-writer collision then makes fill collection wait/retry rather than aborting the
     # whole invocation on an immediate ``SQLITE_BUSY_SNAPSHOT``.
     #
     # Story ALP-501 — ``context.debug_e2e`` is the SOLE signal the orchestrator is
@@ -844,7 +844,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     )
 
     pipeline_mode = PipelineMode.from_config_mode(runtime.active_mode)
-    # ``borrow_cost_resolver`` was built above (before Phase 1) and is reused
+    # ``borrow_cost_resolver`` was built above (before fill collection) and is reused
     # here — the latest-fee-per-ticker mapping is pure + total for the rest of
     # the invocation (ALP-586 / ALP-717).
     # ALP-711 — broker_dispatch inputs the PM submit_envelope wrapper needs to
@@ -905,7 +905,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
             command_execution_handle,
             command_execution_summary=command_execution_summary,
         )
-        # ALP-836 integrity guard — the single authoritative phase-2 stamp. Withhold
+        # ALP-836 integrity guard — the single authoritative command-execution stamp. Withhold
         # it (leaving command_execution_completed_at NULL) when any order is stuck in
         # PENDING_SUBMIT for this invocation: a lost post-submit backfill behind a
         # live broker order. The invocation reads as incomplete rather than papering
@@ -967,9 +967,9 @@ def _assemble_fill_collection_snapshot(
     fill_collection_market_inputs: MarketInputs,
     sector_resolver: Callable[[str], str],
 ) -> tuple[AssembledSnapshot, Any]:
-    """Build the post-Phase-1 portfolio snapshot once per invocation.
+    """Build the post-fill-collection portfolio snapshot once per invocation.
 
-    Opens fresh sessions through the repository factory; relies on Phase 1
+    Opens fresh sessions through the repository factory; relies on fill collection
     having already committed so the repository's bound invocation row has
     a non-NULL ``fill_collection_completed_at`` (the fallback-to-prior-invocation
     path in ``get_current_invocation_metadata`` is never reached here).
@@ -977,7 +977,7 @@ def _assemble_fill_collection_snapshot(
     decision pipeline.
 
     Returns the ``(AssembledSnapshot, repository)`` pair so the decision
-    pipeline's Phase 1 enforcement composition (story ALP-433) can read
+    pipeline's active-guardrails composition (story ALP-433) can read
     ``DrawdownState`` from the same repository — one canonical view per
     invocation.
     """
@@ -993,10 +993,10 @@ def _assemble_fill_collection_snapshot(
     price_provider = _price_provider_from_fill_collection(fill_collection_market_inputs)
     option_price_provider = SqlOptionPriceProvider(session_factory=session_factory)
     # ``snapshot_assembled_at`` must be >= ``fill_collection_committed_at`` per
-    # ``PortfolioStateSnapshot``'s ordering validator. Phase 1 stamps the row
+    # ``PortfolioStateSnapshot``'s ordering validator. Fill collection stamps the row
     # with wall-clock-at-stamp-time; using a fresh ``datetime.now(UTC)`` here
-    # guarantees the snapshot reflects post-Phase-1 reality even when the
-    # orchestrator's logical ``now`` predates Phase 1's actual completion
+    # guarantees the snapshot reflects post-fill-collection reality even when the
+    # orchestrator's logical ``now`` predates fill collection's actual completion
     # (the common case under test fixtures with a frozen ``now``).
     assembled = assemble_snapshot(
         repository=repository,
@@ -1165,11 +1165,11 @@ async def _run_analysis(  # noqa: PLR0913 — composition surface threads orches
     """Compose ``run_analysis_pipeline`` inputs from the loaded config + factory.
 
     The reader is built upstream by ``run_invocation`` (after the snapshot
-    assembly) so the synthesizer projects the same post-Phase-1 snapshot the
+    assembly) so the synthesizer projects the same post-fill-collection snapshot the
     decision pipeline consumes. The analysis pipeline's distillation orchestrator
     threads the session through ``asyncio.to_thread`` into sync SQLAlchemy
     callsites, so a fresh sync ``Session`` is opened here rather than reusing
-    the async Phase 1 handle.
+    the async fill-collection handle.
     """
     from alphamind.scripts._common import load_distillation_config
 

@@ -22,7 +22,7 @@ The package hosts:
   engine-originated submission paths.
 * Submission-log entry types
   (:mod:`~alphamind.commands.submission_log`) — what the submit_envelope
-  wrapper records per call for downstream Phase 2 writeback.
+  wrapper records per call for downstream command execution writeback.
 * Validation-result wire types
   (:mod:`~alphamind.commands.validation_results`) — Layer-2/3 violations
   and warnings that ride from the validator into persistence.

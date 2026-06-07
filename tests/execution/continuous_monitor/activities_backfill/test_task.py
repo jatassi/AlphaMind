@@ -1,6 +1,6 @@
 """Tests for the periodic fill-backfill backstop ``run_fill_backfill`` (ALP-763).
 
-A fast Phase-2 entry fill can be dropped / quarantined before its ``orders``
+A fast command-execution entry fill can be dropped / quarantined before its ``orders``
 row commits. The websocket disconnect-recovery only runs on a reconnect and
 keys its ``since`` off ``max(fill_records.fill_timestamp)`` — which permanently
 excludes an earlier dropped fill once a later one lands. This backstop sweeps

@@ -8,7 +8,7 @@ through the per-type handlers
 (:mod:`alphamind.execution.account_activities.dispatch`).
 
 This is a **scheduled / pipeline-cadence** task — it runs inside the pipeline's
-Phase-1 write transaction (the single writer, ADR-0005), not an always-on
+fill-collection write transaction (the single writer, ADR-0005), not an always-on
 monitor loop (ADR-0004 evicts the activity poll to scheduled work). The
 broker query is the only external dependency, behind the :class:`AccountActivitiesSource`
 Protocol so the production ``AccountStateQueries`` and the test fake share one

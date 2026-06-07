@@ -706,7 +706,7 @@ class TestBrokerCarriedLinkBudget:
 
 
 class TestIdSuffixIgnoresBrokerCarriedLink:
-    """The Phase-2 minted thesis / position / order ids hash the command id via
+    """The command-execution minted thesis / position / order ids hash the command id via
     ``synthesize_id_suffix``; embedding the broker-carried link must NOT shift
     them, or the embedded thesis FK would diverge from the persisted thesis_id.
     """

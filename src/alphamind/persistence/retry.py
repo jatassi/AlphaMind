@@ -1,6 +1,6 @@
 """Bounded retry for transient SQLite lock errors (ALP-824).
 
-AlphaMind runs two SQLite writers on one WAL database — the scheduler's Phase-1
+AlphaMind runs two SQLite writers on one WAL database — the scheduler's fill-collection
 fill reconciliation and the continuous monitor's live trade-update fills. A
 ``BEGIN IMMEDIATE`` write transaction (see
 :func:`alphamind.persistence.session.begin_write_immediate`) takes the write lock

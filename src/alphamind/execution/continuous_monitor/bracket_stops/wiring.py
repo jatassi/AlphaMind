@@ -467,7 +467,7 @@ def register_options_bracket_watcher_task(
     risk_free_rate_provider = make_risk_free_rate_provider(session_factory)
     # FS4 / ALP-836 — a monitor-fired close pre-commits a durable ``orders`` row
     # keyed by its engine client_order_id BEFORE the broker submit, so the
-    # returning fill resolves an oms_order_id and Phase 1 closes the position
+    # returning fill resolves an oms_order_id and fill collection closes the position
     # (rather than the fill stranding in broker_event_log and the position
     # staying phantom-open).
     close_order_precommitter = make_close_order_precommitter(session_factory)

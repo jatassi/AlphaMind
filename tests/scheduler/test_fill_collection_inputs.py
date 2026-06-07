@@ -417,7 +417,7 @@ class TestReadActiveUniversePrices:
 class TestMergeQuoteAndBarPrices:
     """``_merge_quote_and_bar_prices`` — live quote mid primary, recorded bar fallback.
 
-    ALP-753: every active-universe ticker is anchored on its phase-1 live quote
+    ALP-753: every active-universe ticker is anchored on its fill-collection live quote
     mid when one is available, falling back to the freshest recorded bar's
     ``unadj_close`` otherwise; a ticker with neither is omitted entirely.
     """
@@ -1140,7 +1140,7 @@ class TestGatherFillCollectionInputs:
         archive_root: Path,
     ) -> None:
         """ALP-753 — the held-position overlay still wins on overlap: a held
-        ticker keeps its broker ``current_price`` even when a phase-1 live quote
+        ticker keeps its broker ``current_price`` even when a fill-collection live quote
         mid is captured for it in the universe layer."""
         from alphamind.scheduler import fill_collection_inputs as module
 

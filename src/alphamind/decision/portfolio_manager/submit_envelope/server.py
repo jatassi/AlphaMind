@@ -3,7 +3,7 @@
 Hosts the runner-facing :func:`build_submit_envelope_mcp_server` factory and
 the orchestration handler :func:`_handle_submit_envelope` that threads the
 per-command pipeline (:mod:`.process`) → broker routing (:mod:`.dispatch`) →
-phase-2 persistence (:mod:`.persist`).
+command-execution persistence (:mod:`.persist`).
 
 The single registered tool is
 ``mcp__alphamind_execution_oms_submit__submit_envelope``; per-invocation state
@@ -196,12 +196,12 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
     wrapper does not consult them directly.
 
     When ``invocation_handle`` is supplied, the wrapper additionally
-    writes through every accepted envelope to SQL via the Phase 2 write
+    writes through every accepted envelope to SQL via the command execution write
     path (ALP-366) and persists Layer-1 parse failures as
     ``envelope_parse_failed`` activity log entries. Composition pipelines
     (ALP-310) inject the handle obtained from the surrounding
     ``InvocationContext``. ``state_persistence_config`` is forwarded
-    verbatim into every Phase-2 entrypoint so the engine's persistence
+    verbatim into every command-execution entrypoint so the engine's persistence
     knobs (sliding-window size, snapshot timeout, provenance roots) all
     resolve against the operator-supplied config (ALP-653).
 
@@ -305,7 +305,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
     cell with the returned state via ``nonlocal``.
 
     When ``invocation_handle`` is supplied (production composition path,
-    ALP-310), every accepted envelope writes through to SQL via the Phase 2
+    ALP-310), every accepted envelope writes through to SQL via the command execution
     ``persist_envelope_outcome`` and every Layer-1 parse failure additionally
     writes one ``envelope_parse_failed`` activity log entry. When the handle
     is ``None`` (legacy fixture-only path), only the in-memory state-cell
@@ -314,7 +314,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
     When ``client`` + ``queries`` + ``execution_config`` are supplied
     (broker-routing coordinated swap, story 03e / ALP-390), each command that
     passes Layer-1/2/3 validation routes through
-    :func:`dispatch_command_to_broker` before Phase 2 writeback.
+    :func:`dispatch_command_to_broker` before command execution writeback.
     """
     # Step 0: tolerant unwrap of a single-key ``{"envelope": {...}}`` wrapper
     # (ALP-700). The LLM occasionally hands in the wrapped form despite the
@@ -479,7 +479,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — orchestrator threads eve
 
     # Step 5: append to submission log (post-broker outcome). ALP-711 scope (C):
     # ``dispatch_results`` rides on the log entry so the orchestrator's
-    # Phase 2 dispatcher can forward broker outcomes (real Alpaca order ids,
+    # command execution dispatcher can forward broker outcomes (real Alpaca order ids,
     # broker rejection codes) to :func:`persist_envelope_outcome`; without it
     # the order persists with NO broker id (NULL, ALP-847 — never a placeholder).
     state = dataclasses.replace(
@@ -600,7 +600,7 @@ async def _maybe_route_accepted_commands(
       analyst ``entry_window``) into marketable limits through the live touch so
       a working short thesis fills at the quote instead of resting above a
       falling market. Rewriting the envelope here — before both broker dispatch
-      and Phase-2 writeback — keeps the persisted order row and the broker order
+      and command-execution writeback — keeps the persisted order row and the broker order
       in agreement. ``submission_results`` validated against the original
       commands stay aligned by ordinal (guardrails don't read ``limit_price``).
       A no-op when no enter-now entry is present or no quote source was wired.

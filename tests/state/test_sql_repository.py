@@ -1491,7 +1491,7 @@ async def test_get_prior_invocation_context_skips_maintenance_tick(
     but never resolve a config, so their ``resolved_config_snapshot_path`` is
     the empty string. The most-recent prior for a pipeline run is typically
     that evening's tick; selecting it and handing its empty path to the prior
-    provider crashed Phase 1. Selection must skip it and anchor on the most
+    provider crashed fill collection. Selection must skip it and anchor on the most
     recent invocation that actually ran the pipeline.
     """
     _, factory = db

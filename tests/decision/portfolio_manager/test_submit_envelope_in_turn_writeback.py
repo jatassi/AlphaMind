@@ -1,10 +1,10 @@
 """Race-closing: the PM turn is the synchronous writer on the broker-active path — ALP-763.
 
-A marketable Phase-2 entry is dispatched to the broker DURING the PM turn (capturing the
+A marketable command-execution entry is dispatched to the broker DURING the PM turn (capturing the
 real ``alpaca_order_id``). A fast fill (~3s) can beat the deferred order-row commit
 (~74s later in production), so the continuous monitor cannot resolve the fill and it gets
 dropped/quarantined. The fix (Option A): when broker routing is active, the submit_envelope
-tool handler runs the Phase-2 writeback IN THE PM TURN and commits on the invocation
+tool handler runs the command-execution writeback IN THE PM TURN and commits on the invocation
 handle's session right after dispatch — closing the race to ~0. ``dispatch_command_execution``
 then skips the already-persisted envelope (see ``test_command_execution_dispatch.py``).
 

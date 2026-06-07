@@ -767,7 +767,7 @@ async def test_capture_only_types_are_surfaced_for_event_log_capture(
 ) -> None:
     """``WorthlessRemoval`` / ``UnitSplit`` / ``Redemption`` — the v1beta1 types
     the fetcher used to drop — are now surfaced as capture-only activities (no
-    position-mutation math, ``signed_cash_impact_usd == 0``) so Phase 1 captures
+    position-mutation math, ``signed_cash_impact_usd == 0``) so fill collection captures
     them onto the append-only event log (W1c)."""
     _, factory = db
     await _seed_invocation_substrate(factory)

@@ -118,7 +118,7 @@ class BasisSection(BaseModel):
         ),
     )
     snapshot_timestamp: datetime = Field(
-        description="Phase 1 portfolio state snapshot used as the projection baseline."
+        description="fill collection portfolio state snapshot used as the projection baseline."
     )
 
     @model_validator(mode="after")

@@ -5,7 +5,7 @@ The PM-side submit_envelope wrapper
 :class:`SubmissionLogEntry` per ``submit_envelope`` call that parsed cleanly
 to a :class:`PMEnvelope`, and one :class:`FailedSubmissionEntry` per call
 that failed Layer-1 (Pydantic) coercion. Both logs are surfaced on the
-harness's ``HarnessSuccess`` and consumed by the execution-side Phase 2
+harness's ``HarnessSuccess`` and consumed by the execution-side command execution
 write path (:mod:`alphamind.execution.write_paths.command_execution`).
 
 Living in :mod:`alphamind.commands` lets both decision-side producers and
@@ -37,10 +37,10 @@ class SubmissionLogEntry:
     is typed ``tuple[Any, ...] | None`` because ``alphamind.commands`` is a
     leaf package per ``.importlinter``'s ``commands-leaf`` contract and may
     not import ``alphamind.execution.oms.broker_dispatch.BrokerDispatchResult``;
-    consumers downstream (the Phase 2 writeback) read the structural
+    consumers downstream (the command execution writeback) read the structural
     ``.alpaca_order_id`` attribute and cast back to the typed shape at
     their boundary. ``None`` (the default) signals the legacy / debug-e2e
-    log-only path that never routed through a broker — Phase 2 writeback
+    log-only path that never routed through a broker — command execution writeback
     persists the order with NO broker id (``alpaca_order_id`` NULL, ALP-847 —
     never a synthetic placeholder) in that case.
 

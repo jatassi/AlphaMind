@@ -62,7 +62,7 @@ def ca_event_key(alpaca_activity_id: str) -> str:
     """Stable ``broker_event_log`` idempotency key for a corporate-action.
 
     The Alpaca activity id is broker-unique, so ``ca:{id}`` is the natural
-    ``event_key`` — a Phase 1 retry or a late broker re-post of the same activity
+    ``event_key`` — a fill collection retry or a late broker re-post of the same activity
     collapses onto the one row (the idempotency guarantee ADR-0002's gap-free log
     relies on).
     """

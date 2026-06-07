@@ -1268,7 +1268,7 @@ async def test_layer_1_parse_failure_captured_in_failed_submission_log() -> None
 @pytest.mark.asyncio
 async def test_layer_1_no_longer_rejects_short_equity_open_command() -> None:
     """ALP-717: a SHORT equity OPEN command no longer trips Layer-1 schema
-    validation. The OMS-boundary guard from ALP-644 was retired once Phase 1
+    validation. The OMS-boundary guard from ALP-644 was retired once fill collection
     grew direction-aware fill integration (Story 02) and the four short-only
     fields on ``EquityPositionDetails`` (Story 01). The envelope parses
     cleanly through Layer-1 and reaches Layer-2/3 — when routing + risk
@@ -1971,7 +1971,7 @@ def test_failed_submission_entry_is_frozen() -> None:
 @pytest.mark.asyncio
 async def test_open_acknowledgment_carries_deterministic_position_and_order_ids() -> None:
     """OpenCommand acknowledgments carry deterministic ``POS-{ticker}-{suffix}``
-    / ``ORD-{ticker}-entry-{suffix}`` identifiers matching Phase 2's scheme,
+    / ``ORD-{ticker}-entry-{suffix}`` identifiers matching command execution's scheme,
     not the legacy ``-stub`` placeholders."""
     from alphamind.execution.oms.command_ids import (
         derive_pm_command_id,
@@ -1990,7 +1990,7 @@ async def test_open_acknowledgment_carries_deterministic_position_and_order_ids(
     ack = payload["submission_results"][0]["acknowledgment"]
     state = get_state()
 
-    # The Phase-2 minted ids hash the *base* command id; the broker-carried
+    # The command-execution minted ids hash the *base* command id; the broker-carried
     # link (ALP-844) is stripped by ``synthesize_id_suffix`` so the suffix is
     # identical regardless of which thesis FK the id carries. We pass the
     # OPEN's deterministic thesis here so the call is well-formed.

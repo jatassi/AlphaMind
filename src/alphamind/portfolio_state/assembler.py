@@ -572,7 +572,7 @@ def assemble_snapshot(
     )
     cash_ledger_raw: CashLedger = repository.get_cash_ledger()
     pending_orders_raw: tuple[OrderRecord, ...] = repository.get_pending_orders()
-    # Phase-1 snapshot emits an empty ``risk_budget``; the decision pipeline
+    # fill-collection snapshot emits an empty ``risk_budget``; the decision pipeline
     # populates the real consumption via ``build_risk_budget_consumption``
     # between ``to_library_snapshot`` and the per-consumer view projection.
     risk_budget = RiskBudgetConsumption(entries=())
@@ -721,7 +721,7 @@ def assemble_snapshot(
     # Step 11 — Enrich CashLedger with computed fields
     # ------------------------------------------------------------------
     # ``available_buying_power_usd`` is a derived field; the persisted
-    # ``cash_ledger`` row is whatever the seed left there (Phase 1 / Phase 2
+    # ``cash_ledger`` row is whatever the seed left there (fill collection / command execution
     # write paths no longer maintain it). The assembler is the single
     # source of truth and computes it here using the same canonical
     # formula as ``true_deployable_capital_usd``.
