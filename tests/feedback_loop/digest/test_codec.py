@@ -12,6 +12,7 @@ sparklines — and assert ``deserialize_digest(serialize_digest(d)) == d``.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -94,6 +95,38 @@ class TestRoundTrip:
         assert payload["week"] == digest.week
         band = payload["headline"]["current_drawdown"]["result"]["posterior_band"]
         assert set(band) == {"lower", "upper"}
+
+
+def _reject_non_finite(token: str) -> float:
+    """A strict-reader ``parse_constant`` hook: any non-finite JSON token is invalid."""
+    msg = f"non-finite JSON token {token!r} is not valid RFC 8259 JSON"
+    raise ValueError(msg)
+
+
+class TestNonFiniteValue:
+    """An all-wins ``outcome_profit_factor`` yields ``math.inf`` (06g); the codec must
+    keep the serialized text standard JSON (no bare ``Infinity`` token) yet round-trip
+    the float back."""
+
+    def test_serializes_to_standard_json_and_round_trips_infinity(
+        self, monkeypatch, digest_config
+    ) -> None:  # type: ignore[no-untyped-def]
+        weeks = fx.week_sequence(2)
+        # The headline pl_last_7d cell carries a non-finite reading.
+        fx.install_metrics(monkeypatch, (fx.constant_metric("outcome_pl_last_7d", math.inf),))
+        digest = generate_digest(weeks, digest_config)
+
+        text = codec.serialize_digest(digest)
+
+        # Standard JSON: a strict reader rejecting non-finite constants parses it fine,
+        # i.e. there is no bare ``Infinity`` token in the serialized text.
+        json.loads(text, parse_constant=_reject_non_finite)
+
+        # And the round-trip restores the float exactly.
+        rehydrated = codec.deserialize_digest(text)
+        assert rehydrated.headline.pl_last_7d.result is not None
+        assert rehydrated.headline.pl_last_7d.result.value == math.inf
+        assert rehydrated == digest
 
 
 class TestSchemaVersion:

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 from datetime import datetime
 from typing import Any, Final
 
@@ -49,11 +50,42 @@ from alphamind.feedback_loop.metrics.types import MetricId, MetricResult, Poster
 #: stale payloads (parent ALP-131 pre-resolved (G) ``digest_schema_version``).
 DIGEST_SCHEMA_VERSION: Final[int] = 1
 
+#: A non-finite ``MetricResult.value`` (an all-wins ``outcome_profit_factor`` yields
+#: ``math.inf`` to distinguish it from ``None``/no-data) is RFC-8259-invalid as a bare
+#: ``Infinity``/``NaN`` JSON token. The codec persists it as one of these JSON-valid
+#: string sentinels instead and maps it back on rehydration, so the snapshot
+#: ``digest_json`` stays standard JSON for any strict reader (the ALP-686 frontend,
+#: SQLite ``json()``, ``jq``) while round-trip equality holds.
+_NON_FINITE_SENTINELS: Final[dict[float, str]] = {
+    math.inf: "Infinity",
+    -math.inf: "-Infinity",
+}
+_NAN_SENTINEL: Final[str] = "NaN"
+_SENTINEL_TO_FLOAT: Final[dict[str, float]] = {
+    "Infinity": math.inf,
+    "-Infinity": -math.inf,
+    "NaN": math.nan,
+}
+
 __all__ = [
     "DIGEST_SCHEMA_VERSION",
     "deserialize_digest",
+    "metric_value_to_jsonable",
     "serialize_digest",
 ]
+
+
+def metric_value_to_jsonable(value: float | None) -> float | str | None:
+    """Render a ``MetricResult.value`` as a JSON-native value.
+
+    A non-finite float (``math.inf`` / ``-math.inf`` / ``nan``) becomes its JSON-valid
+    string sentinel (:data:`_NON_FINITE_SENTINELS`); a finite number or ``None`` passes
+    through. Shared with the read CLI (``cli._metric_result_json``) so both persistence
+    paths render a non-finite reading identically and standard-JSON-safely.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return _NAN_SENTINEL if math.isnan(value) else _NON_FINITE_SENTINELS[value]
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -65,8 +97,9 @@ def _to_jsonable(obj: Any) -> Any:
     """Recursively convert a frozen-dataclass digest tree into JSON-native values.
 
     Dataclasses become dicts (slots-friendly via :func:`dataclasses.fields`); tuples
-    and lists become lists; datetimes become ISO strings; everything else is passed
-    through. ``property`` attributes are not serialised — only declared fields.
+    and lists become lists; datetimes become ISO strings; non-finite floats become a
+    JSON-valid string sentinel (:data:`_NON_FINITE_SENTINELS`); everything else is
+    passed through. ``property`` attributes are not serialised — only declared fields.
     """
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         return {f.name: _to_jsonable(getattr(obj, f.name)) for f in dataclasses.fields(obj)}
@@ -76,12 +109,19 @@ def _to_jsonable(obj: Any) -> Any:
         return [_to_jsonable(v) for v in obj]
     if isinstance(obj, datetime):
         return obj.isoformat()
+    if isinstance(obj, float):
+        return metric_value_to_jsonable(obj)
     return obj
 
 
 def serialize_digest(digest: WeeklyDigest) -> str:
-    """Serialize *digest* to a stable JSON string (the snapshot ``digest_json``)."""
-    return json.dumps(_to_jsonable(digest), indent=2)
+    """Serialize *digest* to a stable JSON string (the snapshot ``digest_json``).
+
+    ``allow_nan=False`` so any non-finite float not pre-mapped to a string sentinel
+    (:func:`_to_jsonable`) raises loudly here rather than silently emitting a bare,
+    RFC-8259-invalid ``Infinity``/``NaN`` token.
+    """
+    return json.dumps(_to_jsonable(digest), indent=2, allow_nan=False)
 
 
 # ---------------------------------------------------------------------------
@@ -95,13 +135,25 @@ def _posterior_band(raw: dict[str, Any] | None) -> PosteriorBand | None:
     return PosteriorBand(lower=raw["lower"], upper=raw["upper"])
 
 
+def _metric_value(raw: float | str | None) -> float | None:
+    """Rehydrate a ``MetricResult.value``, mapping a non-finite string sentinel back.
+
+    The serializer renders a non-finite float as one of :data:`_SENTINEL_TO_FLOAT`'s
+    string keys (standard JSON); everything else (a finite number or ``None``) passes
+    through unchanged.
+    """
+    if isinstance(raw, str):
+        return _SENTINEL_TO_FLOAT[raw]
+    return raw
+
+
 def _metric_result(raw: dict[str, Any] | None) -> MetricResult | None:
     """Rebuild a :class:`MetricResult`, or ``None`` for the absent-cell sentinel."""
     if raw is None:
         return None
     return MetricResult(
         metric_id=MetricId(raw["metric_id"]),
-        value=raw["value"],
+        value=_metric_value(raw["value"]),
         posterior_band=_posterior_band(raw["posterior_band"]),
         sample_size=raw["sample_size"],
         insufficient_sample=raw["insufficient_sample"],

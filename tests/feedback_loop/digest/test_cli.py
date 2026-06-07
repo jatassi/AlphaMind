@@ -10,14 +10,21 @@ must emit without erroring.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
 
 import alphamind.state.tables  # noqa: F401 — register all tables on Base.metadata
 from alphamind.feedback_loop.digest import cli
+from alphamind.feedback_loop.metrics.types import MetricId, MetricResult
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine
+
+
+def _reject_non_finite(token: str) -> float:
+    msg = f"non-finite JSON token {token!r} is not valid RFC 8259 JSON"
+    raise ValueError(msg)
 
 
 @pytest.fixture
@@ -102,6 +109,25 @@ class TestMetricCommand:
         rc = cli.main(["--db-path", db_path, "metric", "no_such_metric"])
         assert rc == 1
         assert "unknown metric id" in capsys.readouterr().out
+
+
+class TestNonFiniteMetricValue:
+    """A non-finite ``MetricResult.value`` (an all-wins ``outcome_profit_factor`` yields
+    ``math.inf``) must emit standard JSON from the ``metric`` command, not a bare
+    ``Infinity`` token."""
+
+    def test_metric_json_serializes_non_finite_as_standard_json(self) -> None:
+        result = MetricResult(
+            metric_id=MetricId("outcome_profit_factor"),
+            value=math.inf,
+            posterior_band=None,
+            sample_size=5,
+            insufficient_sample=False,
+        )
+        text = json.dumps(cli._metric_result_json(result), indent=2, allow_nan=False)
+        # A strict reader rejecting non-finite constants parses it (no bare Infinity).
+        payload = json.loads(text, parse_constant=_reject_non_finite)
+        assert payload["value"] == "Infinity"
 
 
 class TestMetricsListCommand:

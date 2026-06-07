@@ -34,7 +34,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from alphamind.feedback_loop.digest.codec import serialize_digest
+from alphamind.feedback_loop.digest.codec import metric_value_to_jsonable, serialize_digest
 from alphamind.feedback_loop.digest.generator import WeekInput, generate_digest
 from alphamind.feedback_loop.digest.snapshot import SnapshotOutcome, snapshot_week
 from alphamind.feedback_loop.digest.windows import (
@@ -74,7 +74,10 @@ def _metric_result_json(result: MetricResult) -> dict[str, Any]:
     )
     return {
         "metric_id": str(result.metric_id),
-        "value": result.value,
+        # A non-finite reading (all-wins outcome_profit_factor → math.inf) renders as a
+        # JSON-valid string sentinel, matching the snapshot codec, so the emitted text
+        # is standard JSON for any strict reader.
+        "value": metric_value_to_jsonable(result.value),
         "posterior_band": band,
         "sample_size": result.sample_size,
         "insufficient_sample": result.insufficient_sample,
@@ -267,7 +270,7 @@ def _run_metric(args: argparse.Namespace) -> int:
         log.exception("Metric computation failed")
         return 2
 
-    print(json.dumps(_metric_result_json(result), indent=2))
+    print(json.dumps(_metric_result_json(result), indent=2, allow_nan=False))
     return 0
 
 
