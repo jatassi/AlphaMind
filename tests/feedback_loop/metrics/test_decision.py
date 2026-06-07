@@ -11,7 +11,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from alphamind.feedback_loop.dataset import WindowDataset
+from alphamind.feedback_loop.dataset import (
+    AnalystProposalObservation,
+    AnalystProposalsBundle,
+    RegimeBundle,
+    WindowDataset,
+)
 from alphamind.feedback_loop.metrics import get_metric, list_metrics
 from alphamind.feedback_loop.metrics.types import (
     UNCONDITIONED,
@@ -153,6 +158,8 @@ def _agent_call(
 def _dataset(
     pm_decision_log: tuple[ActivityLogEntry, ...] = (),
     agent_calls: tuple[AgentCallRecord, ...] = (),
+    analyst_proposals: AnalystProposalsBundle | None = None,
+    regimes: RegimeBundle | None = None,
 ) -> WindowDataset:
     return WindowDataset(
         start=_WINDOW_START,
@@ -160,6 +167,17 @@ def _dataset(
         agent_calls=agent_calls,
         pm_decision_log=pm_decision_log,
         validations=(),
+        analyst_proposals=analyst_proposals or AnalystProposalsBundle(),
+        regimes=regimes or RegimeBundle(),
+    )
+
+
+def _proposals(*counts_by_inv: tuple[str, int]) -> AnalystProposalsBundle:
+    return AnalystProposalsBundle(
+        observations=tuple(
+            AnalystProposalObservation(invocation_id=inv, proposal_count=count)
+            for inv, count in counts_by_inv
+        )
     )
 
 
@@ -374,6 +392,39 @@ class TestAntiPatternFrequency:
         result = _compute("anti_pattern_frequency__sunk_cost_persistence", _dataset(()))
         assert result.value is None
         assert result.sample_size == 0
+
+
+class TestAnalystProposalMetrics:
+    """ALP-911: analyst_inaction_rate + analyst_proposals_per_invocation.
+
+    Both rate over the analyst-proposals sub-bundle — one observation per analyst
+    invocation, ``proposal_count`` = ``len(recommendations)`` for a normal run or
+    ``0`` for a watchlist / empty-normal run.
+    """
+
+    def test_inaction_rate_counts_zero_proposal_invocations(self) -> None:
+        # Mixed fixture: a multi-rec normal run, an empty normal run (inaction),
+        # and a watchlist run (inaction). 2 of 3 are zero-proposal.
+        bundle = _proposals(("inv-multi", 3), ("inv-empty-normal", 0), ("inv-watchlist", 0))
+        result = _compute("analyst_inaction_rate", _dataset(analyst_proposals=bundle))
+        assert result.value == 2 / 3
+        assert result.sample_size == 3
+
+    def test_proposals_per_invocation_is_mean_count(self) -> None:
+        bundle = _proposals(("inv-a", 3), ("inv-b", 0), ("inv-c", 0))
+        result = _compute(
+            "analyst_proposals_per_invocation", _dataset(analyst_proposals=bundle)
+        )
+        assert result.value == 1.0
+        assert result.sample_size == 3
+
+    def test_empty_sample_gives_none(self) -> None:
+        inaction = _compute("analyst_inaction_rate", _dataset())
+        assert inaction.value is None
+        assert inaction.sample_size == 0
+        mean = _compute("analyst_proposals_per_invocation", _dataset())
+        assert mean.value is None
+        assert mean.sample_size == 0
 
 
 def _strategist_log() -> tuple[ActivityLogEntry, ...]:

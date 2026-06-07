@@ -54,7 +54,13 @@ from alphamind.state.repository.activity_log_queries import (
     read_activity_events_in_window,
     read_recent_pm_decision_log,
 )
-from alphamind.state.repository.agent_calls_queries import read_agent_calls_in_window
+from alphamind.state.repository.agent_calls_queries import (
+    read_agent_calls_for_agent,
+    read_agent_calls_in_window,
+)
+from alphamind.state.repository.invocation_queries import (
+    read_invocation_regimes_in_window,
+)
 from alphamind.state.repository.outcome_queries import read_resolved_theses_in_window
 from alphamind.state.repository.validation_queries import (
     read_pending_validations,
@@ -265,6 +271,52 @@ class ActivityEventsBundle:
 
 
 # ---------------------------------------------------------------------------
+# Decision-layer sub-bundles deferred from 06a (story 06f — ALP-911)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class AnalystProposalObservation:
+    """One analyst invocation's proposal count — the analyst-metric observation.
+
+    ``proposal_count`` is the number of ``recommendations`` a normal-mode analyst
+    run emitted, or ``0`` for a watchlist-mode run (a deliberate no-new-entry
+    invocation — an inaction). One observation per analyst *invocation* (retries
+    deduped), so the analyst process metrics rate over invocations, not calls.
+    """
+
+    invocation_id: str
+    proposal_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class AnalystProposalsBundle:
+    """Per-invocation analyst proposal observations the analyst metrics rate over.
+
+    Populated by :func:`load_window` from each successful analyst ``agent_calls``
+    run's ``output.json`` (``AnalystOutput``); empty until the loader fills it. The
+    analyst process-metric cores (``analyst_inaction_rate`` /
+    ``analyst_proposals_per_invocation``) compute purely over ``observations``.
+    """
+
+    observations: tuple[AnalystProposalObservation, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeBundle:
+    """Per-invocation ``active_regime`` map — the REGIME conditioning source.
+
+    ``by_invocation`` maps each in-window invocation id to its
+    ``invocations.active_regime`` value, so the decision metrics' ``REGIME``
+    conditioning slice resolves an invocation's held regime without the
+    ``pm_decision_log`` / analyst observation carrying the dimension. Empty until
+    the loader fills it; an absent invocation simply does not match any slice.
+    """
+
+    by_invocation: Mapping[str, str] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
 # WindowDataset
 # ---------------------------------------------------------------------------
 
@@ -308,6 +360,11 @@ class WindowDataset:
     # activity-log slice the execution-process metrics count.
     budgets: CostBudgetsBundle = field(default_factory=CostBudgetsBundle)
     activity_events: ActivityEventsBundle = field(default_factory=ActivityEventsBundle)
+    # Decision-layer sub-bundles deferred from 06a (story 06f). ``analyst_proposals``
+    # carries one proposal-count observation per analyst invocation; ``regimes`` the
+    # per-invocation active-regime map the REGIME conditioning slice resolves through.
+    analyst_proposals: AnalystProposalsBundle = field(default_factory=AnalystProposalsBundle)
+    regimes: RegimeBundle = field(default_factory=RegimeBundle)
 
 
 # ---------------------------------------------------------------------------
@@ -539,6 +596,74 @@ async def _load_activity_events(
 
 
 # ---------------------------------------------------------------------------
+# Decision-layer loader hooks deferred from 06a (story 06f — ALP-911)
+#
+# A distinct region from the citation (_load_refs) / 06b / outcomes hooks so the
+# concurrent dataset.py edits never collide here.
+# ---------------------------------------------------------------------------
+
+
+async def _load_analyst_proposals(
+    session: AsyncSession, start: datetime, end: datetime
+) -> AnalystProposalsBundle:
+    """Per-invocation analyst proposal-count sub-bundle loader hook (story 06f).
+
+    Over each **successful** analyst ``agent_calls`` run in ``[start, end)``, reads
+    its ``output.json`` (``AnalystOutput``) and records one observation per
+    *invocation* carrying ``proposal_count`` = ``len(recommendations)`` for a
+    normal-mode run, or ``0`` for a watchlist-mode run (a deliberate no-new-entry
+    invocation — an inaction). A call whose payload is absent / unparseable is
+    skipped (a failed analyst call aborts the whole invocation per the
+    uniform-criticality invariant, so it is not a measurable invocation); retries
+    are deduped by ``invocation_id`` (one observation per invocation, first wins).
+    """
+    calls = await read_agent_calls_for_agent(session, AgentName.analyst.value, start, end)
+    by_invocation: dict[str, AnalystProposalObservation] = {}
+    for call in calls:
+        if not call.success or call.invocation_id in by_invocation:
+            continue
+        payload = _read_output_payload(call.output_artifact_ref)
+        count = _analyst_proposal_count(payload)
+        if count is None:
+            continue
+        by_invocation[call.invocation_id] = AnalystProposalObservation(
+            invocation_id=call.invocation_id, proposal_count=count
+        )
+    return AnalystProposalsBundle(observations=tuple(by_invocation.values()))
+
+
+def _analyst_proposal_count(payload: object) -> int | None:
+    """Proposal count for one analyst ``output.json`` payload, or ``None`` to skip.
+
+    A normal-mode run contributes ``len(recommendations)``; a watchlist-mode run
+    contributes ``0`` (a deliberate inaction). An absent / unparseable payload, or
+    one whose ``mode`` is neither, is unmeasurable and skipped.
+    """
+    if not isinstance(payload, dict):
+        return None
+    mode = payload.get("mode")
+    if mode == "watchlist":
+        return 0
+    if mode == "normal":
+        recommendations = payload.get("recommendations")
+        return len(recommendations) if isinstance(recommendations, list) else 0
+    return None
+
+
+async def _load_regimes(
+    session: AsyncSession, start: datetime, end: datetime
+) -> RegimeBundle:
+    """Per-invocation active-regime sub-bundle loader hook (story 06f).
+
+    Reads the ``invocation_id -> active_regime`` map over invocations started in
+    ``[start, end)`` — the REGIME conditioning source the decision metrics resolve
+    a held regime through.
+    """
+    by_invocation = await read_invocation_regimes_in_window(session, start, end)
+    return RegimeBundle(by_invocation=by_invocation)
+
+
+# ---------------------------------------------------------------------------
 # The loader — the only DB-touching function in the analytics layer
 # ---------------------------------------------------------------------------
 
@@ -584,6 +709,8 @@ async def load_window(
     replays = await _load_replays(session, start, end)
     outcomes = await _load_outcomes(session, start, end, config)
     activity_events = await _load_activity_events(session, start, end)
+    analyst_proposals = await _load_analyst_proposals(session, start, end)
+    regimes = await _load_regimes(session, start, end)
     return WindowDataset(
         start=start,
         end=end,
@@ -595,15 +722,20 @@ async def load_window(
         replays=replays,
         outcomes=outcomes,
         activity_events=activity_events,
+        analyst_proposals=analyst_proposals,
+        regimes=regimes,
     )
 
 
 __all__ = [
     "ActivityEventsBundle",
+    "AnalystProposalObservation",
+    "AnalystProposalsBundle",
     "ConditioningAttributes",
     "CostBudgetsBundle",
     "OutcomesBundle",
     "RefsBundle",
+    "RegimeBundle",
     "ReplaysBundle",
     "ThesisOutcome",
     "WindowDataset",

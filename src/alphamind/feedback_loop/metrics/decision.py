@@ -58,28 +58,37 @@ def _conditioned(dataset: WindowDataset, conditioning: Conditioning) -> WindowDa
     The unconditioned slice (``dimension is None``) returns the dataset unchanged.
     A ``MODEL_VERSION`` / ``PROMPT_VERSION`` slice keeps only PM decisions whose owning
     invocation produced a ``portfolio_manager`` agent call matching the held-fixed
-    value — the join key is ``invocation_id``, present on both bundles. Dimensions with
-    no reachable field in the existing bundles (e.g. ``REGIME``) are not declared as
-    ``supported_conditioning`` by any metric here, so they never reach this filter.
+    value; a ``REGIME`` slice keeps decisions whose invocation held that
+    ``invocations.active_regime`` (resolved through the loader's regime map). The join
+    key is ``invocation_id``, present on every bundle.
     """
-    if conditioning.dimension is None:
+    matching = _conditioning_invocation_filter(dataset, conditioning)
+    if matching is None:
         return dataset
-    invocation_ids = _invocations_matching(dataset, conditioning)
     sliced = tuple(
-        entry for entry in dataset.pm_decision_log if entry.invocation_id in invocation_ids
+        entry for entry in dataset.pm_decision_log if entry.invocation_id in matching
     )
     return replace(dataset, pm_decision_log=sliced)
 
 
-def _invocations_matching(dataset: WindowDataset, conditioning: Conditioning) -> frozenset[str]:
-    """Invocation ids whose ``portfolio_manager`` agent call matches the slice value.
+def _conditioning_invocation_filter(
+    dataset: WindowDataset, conditioning: Conditioning
+) -> frozenset[str] | None:
+    """The invocation-id set a slice narrows to, or ``None`` when unconditioned.
 
-    A conditioning dimension with no reachable ``AgentCallRecord`` field (anything
-    other than ``MODEL_VERSION`` / ``PROMPT_VERSION``) yields an empty set, so the
-    metric degrades to a no-data reading rather than raising ``KeyError`` —
-    ``supported_conditioning`` is descriptive metadata the registry does not enforce
-    on ``compute`` callers.
+    ``None`` (the unconditioned case) means "apply no narrowing". A conditioned slice
+    on an unreachable dimension yields the *empty* set, so the metric degrades to a
+    no-data reading rather than raising — ``supported_conditioning`` is descriptive
+    metadata the registry does not enforce on ``compute`` callers.
     """
+    if conditioning.dimension is None:
+        return None
+    if conditioning.dimension is ConditioningDimension.REGIME:
+        return frozenset(
+            invocation_id
+            for invocation_id, regime in dataset.regimes.by_invocation.items()
+            if regime == conditioning.value
+        )
     field = _CONDITIONING_AGENT_CALL_FIELD.get(conditioning.dimension)
     if field is None:
         return frozenset()
@@ -90,7 +99,9 @@ def _invocations_matching(dataset: WindowDataset, conditioning: Conditioning) ->
     )
 
 
-#: The ``AgentCallRecord`` field each supported conditioning dimension filters on.
+#: The ``AgentCallRecord`` field each agent-call-sourced conditioning dimension
+#: filters on. ``REGIME`` resolves through the loader's regime map instead (see
+#: :func:`_conditioning_invocation_filter`).
 _CONDITIONING_AGENT_CALL_FIELD: dict[ConditioningDimension | None, str] = {
     ConditioningDimension.MODEL_VERSION: "model_id",
     ConditioningDimension.PROMPT_VERSION: "prompt_git_sha",
@@ -392,11 +403,87 @@ def _analyst_convictions(dataset: WindowDataset) -> tuple[int, ...]:
     return tuple(convictions)
 
 
-_ANALYST_METRICS: tuple[Metric, ...] = _distribution_metrics(
+_ANALYST_CONVICTION_METRICS: tuple[Metric, ...] = _distribution_metrics(
     id_prefix="analyst_conviction_rate",
     bins=tuple((str(level), level) for level in _CONVICTION_LEVELS),
     population=_analyst_convictions,
 )
+
+
+# ---------------------------------------------------------------------------
+# Analyst proposal-volume metrics (story 06f — over the analyst-proposals bundle)
+# ---------------------------------------------------------------------------
+
+_ANALYST_INACTION_RATE = MetricId("analyst_inaction_rate")
+_ANALYST_PROPOSALS_PER_INVOCATION = MetricId("analyst_proposals_per_invocation")
+
+#: The analyst proposal-volume metrics condition on ``REGIME`` — the
+#: per-invocation ``active_regime`` resolves an observation's held regime through
+#: the loader's regime map (the analyst run's model/prompt are not the PM-call
+#: fields the agent-call join exposes, so only the regime slice is reachable here).
+_ANALYST_SUPPORTED_CONDITIONING: tuple[ConditioningDimension, ...] = (
+    ConditioningDimension.REGIME,
+)
+
+
+def _analyst_proposal_counts(
+    dataset: WindowDataset, conditioning: Conditioning
+) -> tuple[int, ...]:
+    """The (conditioned) per-invocation analyst proposal counts.
+
+    One entry per analyst invocation in the window; ``0`` for a watchlist run or a
+    normal run that emitted no recommendations (both inactions). When a conditioning
+    slice is active, only observations whose invocation matches the held-fixed value
+    contribute — the same invocation-narrowing the ``pm_decision_log`` slice uses.
+    """
+    observations = dataset.analyst_proposals.observations
+    matching = _conditioning_invocation_filter(dataset, conditioning)
+    if matching is not None:
+        observations = tuple(o for o in observations if o.invocation_id in matching)
+    return tuple(o.proposal_count for o in observations)
+
+
+def _compute_analyst_inaction_rate(
+    dataset: WindowDataset, conditioning: Conditioning
+) -> MetricResult:
+    counts = _analyst_proposal_counts(dataset, conditioning)
+    inactions = sum(c == 0 for c in counts)
+    return rate_result(_ANALYST_INACTION_RATE, inactions, len(counts))
+
+
+def _compute_analyst_proposals_per_invocation(
+    dataset: WindowDataset, conditioning: Conditioning
+) -> MetricResult:
+    counts = _analyst_proposal_counts(dataset, conditioning)
+    if not counts:
+        return rate_result(_ANALYST_PROPOSALS_PER_INVOCATION, 0, 0)
+    return MetricResult(
+        metric_id=_ANALYST_PROPOSALS_PER_INVOCATION,
+        value=sum(counts) / len(counts),
+        posterior_band=None,
+        sample_size=len(counts),
+        insufficient_sample=False,
+    )
+
+
+_ANALYST_PROPOSAL_METRICS: tuple[Metric, ...] = (
+    Metric(
+        metric_id=_ANALYST_INACTION_RATE,
+        po_type="process",
+        default_window=Window.WEEKLY,
+        supported_conditioning=_ANALYST_SUPPORTED_CONDITIONING,
+        compute=_compute_analyst_inaction_rate,
+    ),
+    Metric(
+        metric_id=_ANALYST_PROPOSALS_PER_INVOCATION,
+        po_type="process",
+        default_window=Window.WEEKLY,
+        supported_conditioning=_ANALYST_SUPPORTED_CONDITIONING,
+        compute=_compute_analyst_proposals_per_invocation,
+    ),
+)
+
+_ANALYST_METRICS: tuple[Metric, ...] = _ANALYST_CONVICTION_METRICS + _ANALYST_PROPOSAL_METRICS
 
 
 # ---------------------------------------------------------------------------

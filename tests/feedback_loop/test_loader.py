@@ -172,6 +172,62 @@ class TestLoadWindow:
         dataset = await load_window(seeded_session, _WINDOW_START, _WINDOW_END)
         assert dataset.pm_decision_log == ()
 
+    async def test_regimes_mapped_for_in_window_invocations(
+        self, seeded_session: AsyncSession
+    ) -> None:
+        # Both fixture invocations carry the stub default regime "normal"; only the
+        # in-window one is mapped (the out-of-window invocation is excluded).
+        dataset = await load_window(seeded_session, _WINDOW_START, _WINDOW_END)
+        assert dataset.regimes.by_invocation == {_INV_IN: "normal"}
+
+
+class TestAnalystProposalsLoad:
+    """The analyst-proposals sub-bundle counts recommendations off ``output.json``."""
+
+    @pytest.fixture()
+    async def session_with_analyst_artifact(
+        self, tmp_path: Path
+    ) -> AsyncIterator[AsyncSession]:
+        """A normal-mode analyst call with a real ``output.json`` carrying 2 recs."""
+        artifact_dir = tmp_path / "analyst_artifact"
+        artifact_dir.mkdir()
+        (artifact_dir / "output.json").write_text(
+            '{"invocation_id":"' + _INV_IN + '","timestamp":"2026-06-01T09:00:00+00:00",'
+            '"mode":"normal","recommendations":[{"a":1},{"b":2}],"watchlist":null}',
+            encoding="utf-8",
+        )
+
+        db_path = tmp_path / "analyst_loader_test.db"
+        sync_engine = make_engine(str(db_path))
+        Base.metadata.create_all(sync_engine)
+        with make_session_factory(sync_engine)() as sess:
+            sess.add(stub_process_lifetime_row(_PLT))
+            sess.flush()
+            in_inv = stub_invocation_row(_INV_IN, process_lifetime_id=_PLT)
+            in_inv.start_at = _TS_IN
+            sess.add(in_inv)
+            sess.commit()
+        sync_engine.dispose()
+
+        async_engine: AsyncEngine = make_async_engine(str(db_path))
+        factory: async_sessionmaker[AsyncSession] = make_async_session_factory(async_engine)
+        async with factory() as sess_async:
+            call = _agent_call("call-analyst", _INV_IN)
+            object.__setattr__(call, "output_artifact_ref", str(artifact_dir))
+            await insert_agent_call(sess_async, call)
+            await sess_async.commit()
+            yield sess_async
+        await async_engine.dispose()
+
+    async def test_normal_run_counts_recommendations(
+        self, session_with_analyst_artifact: AsyncSession
+    ) -> None:
+        dataset = await load_window(session_with_analyst_artifact, _WINDOW_START, _WINDOW_END)
+        observations = dataset.analyst_proposals.observations
+        assert len(observations) == 1
+        assert observations[0].invocation_id == _INV_IN
+        assert observations[0].proposal_count == 2
+
 
 class TestPureCoreSeam:
     def test_metric_compute_runs_without_db(self) -> None:
