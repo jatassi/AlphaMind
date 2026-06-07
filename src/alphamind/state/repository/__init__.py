@@ -22,6 +22,12 @@ from alphamind.state.repository.activity_log_queries import (
     read_position_modification_trail,
     read_recent_pm_decision_log,
 )
+from alphamind.state.repository.agent_calls_queries import (
+    insert_agent_call,
+    read_agent_calls_for_agent,
+    read_agent_calls_for_invocation,
+    read_agent_calls_in_window,
+)
 from alphamind.state.repository.counterfactual_replays import (
     insert_counterfactual_replay,
     load_counterfactual_replays_for_envelope,
@@ -70,9 +76,13 @@ __all__ = [
     "SqlOptionPriceProvider",
     "SqlPortfolioStateRepository",
     "build_sql_portfolio_state_repository",
+    "insert_agent_call",
     "insert_counterfactual_replay",
     "load_counterfactual_replays_for_envelope",
     "load_position_state_at",
+    "read_agent_calls_for_agent",
+    "read_agent_calls_for_invocation",
+    "read_agent_calls_in_window",
     "read_intra_invocation_changelog",
     "read_most_recent_config_change_new_hash",
     "read_position_modification_trail",

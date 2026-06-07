@@ -7,6 +7,7 @@ them without having to remember each module name.
 """
 
 from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.agent_calls import AgentCallsRow
 from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.brackets import BracketRow
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
@@ -32,6 +33,7 @@ from alphamind.state.tables.unattributed_fills import UnattributedFillRow
 
 __all__ = [
     "ActivityLogRow",
+    "AgentCallsRow",
     "BracketLegRow",
     "BracketRow",
     "BrokerEventLogRow",
