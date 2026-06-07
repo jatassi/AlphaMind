@@ -26,6 +26,8 @@ from alphamind.state.tables.position_greeks import PositionGreeksRow
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
 from alphamind.state.tables.projection_rebuild_watermark import ProjectionRebuildWatermarkRow
+from alphamind.state.tables.retrospective_decisions import RetrospectiveDecisionsRow
+from alphamind.state.tables.retrospective_reports import RetrospectiveReportsRow
 from alphamind.state.tables.theses import ThesisRow
 from alphamind.state.tables.thesis_components import ThesisComponentRow
 from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
@@ -53,6 +55,8 @@ __all__ = [
     "PositionRow",
     "ProcessLifetimeRow",
     "ProjectionRebuildWatermarkRow",
+    "RetrospectiveDecisionsRow",
+    "RetrospectiveReportsRow",
     "ThesisComponentRow",
     "ThesisPnlLedgerRow",
     "ThesisRow",

@@ -42,6 +42,13 @@ from alphamind.state.repository.position_state import (
     PositionStateSnapshot,
     load_position_state_at,
 )
+from alphamind.state.repository.retrospective_queries import (
+    insert_retrospective_decision,
+    insert_retrospective_report,
+    read_decisions_for_report,
+    read_retrospective_report,
+    read_unresolved_followup_decisions,
+)
 from alphamind.state.repository.sql_option_price_provider import (
     SqlOptionPriceProvider,
 )
@@ -102,6 +109,8 @@ __all__ = [
     "derive_validation_status",
     "insert_agent_call",
     "insert_counterfactual_replay",
+    "insert_retrospective_decision",
+    "insert_retrospective_report",
     "insert_validation",
     "insert_validation_outcome",
     "insert_weekly_digest_snapshot",
@@ -111,12 +120,15 @@ __all__ = [
     "read_agent_calls_for_agent",
     "read_agent_calls_for_invocation",
     "read_agent_calls_in_window",
+    "read_decisions_for_report",
     "read_intra_invocation_changelog",
     "read_most_recent_config_change_new_hash",
     "read_outcomes_by_artifact",
     "read_pending_validations",
     "read_position_modification_trail",
     "read_recent_pm_decision_log",
+    "read_retrospective_report",
+    "read_unresolved_followup_decisions",
     "read_validation",
     "read_weekly_digest_snapshot",
     "read_weekly_digest_snapshots_in_range",
