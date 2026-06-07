@@ -26,6 +26,7 @@ from alphamind.feedback_loop.metrics.outcomes import (
     METRIC_PROFIT_FACTOR,
     METRIC_RESOLUTION_DISTRIBUTION,
     METRIC_STATUS_CALIBRATION,
+    METRIC_WEEKLY_PL,
     METRIC_WIN_RATE,
     METRICS,
 )
@@ -350,6 +351,52 @@ class TestInsufficientSample:
         assert result.insufficient_sample is True
 
 
+class TestWeeklyPl:
+    def test_registration_outcome_weekly_window(self) -> None:
+        from alphamind.feedback_loop.metrics.types import Window
+
+        metric = get_metric(METRIC_WEEKLY_PL)
+        assert metric is not None
+        assert metric.po_type == "outcome"
+        assert metric.default_window is Window.WEEKLY
+
+    def test_sum_mixed_sign_pnl(self) -> None:
+        metric = get_metric(METRIC_WEEKLY_PL)
+        assert metric is not None
+        dataset = _dataset(
+            make_thesis_outcome(thesis_id="t1", resolution_pnl_usd=200.0),
+            make_thesis_outcome(thesis_id="t2", resolution_pnl_usd=-50.0),
+            make_thesis_outcome(thesis_id="t3", resolution_pnl_usd=30.0),
+        )
+        result = metric.compute(dataset, UNCONDITIONED)
+        assert result.value == 180.0
+        assert result.sample_size == 3
+        assert result.posterior_band is None
+
+    def test_empty_slice_yields_none_value_zero_sample(self) -> None:
+        metric = get_metric(METRIC_WEEKLY_PL)
+        assert metric is not None
+        result = metric.compute(_dataset(), UNCONDITIONED)
+        assert result.value is None
+        assert result.sample_size == 0
+        assert result.posterior_band is None
+
+    def test_regime_conditioning_filters_correctly(self) -> None:
+        metric = get_metric(METRIC_WEEKLY_PL)
+        assert metric is not None
+        dataset = _dataset(
+            make_thesis_outcome(thesis_id="t1", resolution_pnl_usd=100.0, regime="elevated"),
+            make_thesis_outcome(thesis_id="t2", resolution_pnl_usd=50.0, regime="elevated"),
+            make_thesis_outcome(thesis_id="t3", resolution_pnl_usd=-200.0, regime="calm"),
+        )
+        result = metric.compute(
+            dataset, Conditioning(dimension=ConditioningDimension.REGIME, value="elevated")
+        )
+        assert result.value == 150.0
+        assert result.sample_size == 2
+        assert result.posterior_band is None
+
+
 class TestRegistration:
     def test_all_metrics_discoverable(self) -> None:
         for metric in METRICS:
@@ -366,6 +413,7 @@ class TestRegistration:
             METRIC_PL_PER_TOKEN,
             METRIC_CONVICTION_CALIBRATION,
             METRIC_STATUS_CALIBRATION,
+            METRIC_WEEKLY_PL,
         }
         assert expected <= ids
         for metric in METRICS:

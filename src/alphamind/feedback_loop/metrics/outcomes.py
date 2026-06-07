@@ -60,6 +60,7 @@ METRIC_PL_PER_RESOLVED_THESIS = MetricId("outcome_pl_per_resolved_thesis")
 METRIC_PL_PER_TOKEN = MetricId("outcome_pl_per_token")
 METRIC_CONVICTION_CALIBRATION = MetricId("outcome_conviction_calibration_win_rate")
 METRIC_STATUS_CALIBRATION = MetricId("outcome_status_calibration_adverse_rate")
+METRIC_WEEKLY_PL = MetricId("outcome_weekly_pl")
 
 # The conditioning dimensions every outcome metric supports (§ Conditioning surface).
 _ALL_CONDITIONING: tuple[ConditioningDimension, ...] = (
@@ -358,6 +359,34 @@ def _compute_pl_per_token(dataset: WindowDataset, conditioning: Conditioning) ->
     )
 
 
+def _compute_weekly_pl(dataset: WindowDataset, conditioning: Conditioning) -> MetricResult:
+    """Total realized P/L across theses resolved in the weekly window.
+
+    A point sum (not a rate or mean), so ``posterior_band`` is always ``None``.
+    ``value=None`` on an empty slice — the "no honest reading" signal matching the
+    weekly-digest graceful-degradation placeholder (digest Section 3 — Trajectory,
+    ``_M_WEEKLY_PL``).
+    """
+    outcomes = _slice(dataset, conditioning)
+    total = len(outcomes)
+    if total == 0:
+        return MetricResult(
+            metric_id=METRIC_WEEKLY_PL,
+            value=None,
+            posterior_band=None,
+            sample_size=0,
+            insufficient_sample=True,
+        )
+    value = sum(o.resolution_pnl_usd for o in outcomes)
+    return MetricResult(
+        metric_id=METRIC_WEEKLY_PL,
+        value=value,
+        posterior_band=None,
+        sample_size=total,
+        insufficient_sample=_insufficient(total, dataset, Window.WEEKLY),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Registry tuple — discovered by feedback_loop.metrics._discover
 # ---------------------------------------------------------------------------
@@ -424,6 +453,13 @@ METRICS: tuple[Metric, ...] = (
         supported_conditioning=_ALL_CONDITIONING,
         compute=_compute_status_calibration,
     ),
+    Metric(
+        metric_id=METRIC_WEEKLY_PL,
+        po_type="outcome",
+        default_window=Window.WEEKLY,
+        supported_conditioning=_ALL_CONDITIONING,
+        compute=_compute_weekly_pl,
+    ),
 )
 
 
@@ -436,5 +472,6 @@ __all__ = [
     "METRIC_PROFIT_FACTOR",
     "METRIC_RESOLUTION_DISTRIBUTION",
     "METRIC_STATUS_CALIBRATION",
+    "METRIC_WEEKLY_PL",
     "METRIC_WIN_RATE",
 ]
