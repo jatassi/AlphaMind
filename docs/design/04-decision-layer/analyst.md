@@ -134,7 +134,7 @@ Conviction descending, with entry-window urgency as tiebreaker (binary decay wit
 
 ## Abandoned openings from prior invocation
 
-OPEN commands approved by the PM but abandoned at broker submission (per the Phase 2 write-path policy in [state-persistence.md](../05-execution-layer/state-persistence.md) and [broker-adapter.md](../05-execution-layer/broker-adapter.md)) are surfaced in the analyst guardrail state header's `Abandoned openings` block — see [state-delivery.md](../06-risk-guardrails/state-delivery.md#analyst-guardrail-state-header).
+OPEN commands approved by the PM but abandoned at broker submission (per the command execution write-path policy in [state-persistence.md](../05-execution-layer/state-persistence.md#command-execution-write-path) and [broker-adapter.md](../05-execution-layer/broker-adapter.md)) are surfaced in the analyst guardrail state header's `Abandoned openings` block — see [state-delivery.md](../06-risk-guardrails/state-delivery.md#analyst-guardrail-state-header).
 
 Each entry is a prompt to re-evaluate the original thesis on current signals, not a retry obligation. If re-expressed as a new recommendation (new `REC-n`), the [Conviction scale](#conviction-scale) and [Inclusion threshold](#inclusion-threshold) apply unchanged — prior PM approval does not elevate conviction or relax the threshold, and the new narrative must cite current synthesizer references. If current signals no longer support the thesis, the entry lapses; no "decline" artifact is required.
 

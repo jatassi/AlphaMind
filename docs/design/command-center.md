@@ -266,7 +266,7 @@ Full graph for one `invocation_id`, rendered as a single navigable page:
 | Strategist output | Per-position assessments (`SA-N`) and pending-order assessments (`SA-ORD-N`) — thesis status with `prior_status` transition arrow, recommended action with parameters, status and action rationales | `archive/.../decision/` plus structured envelope from activity log |
 | Pre-processor bundle | §1 aggregate observations (combined-set impact, conviction distribution, book-health summary), §2 strategist section, §3 analyst section, conflict cross-references | bundle file in archive |
 | PM envelopes | One per evaluated proposal — verdict, evaluation criteria pass/fail with notes, modifications, concerns, anti-patterns, rationale narrative, resulting commands | `pm_decision` activity log entries plus archived envelope |
-| Commands and fills | OMS commands submitted, fills collected (this invocation's Phase 1), guardrail rejections | activity log filtered by `invocation_id` |
+| Commands and fills | OMS commands submitted, fills collected (this invocation's fill collection), guardrail rejections | activity log filtered by `invocation_id` |
 
 Every reference ID, position ID, thesis ID, order ID, command ID is a hyperlink to its detail view.
 
