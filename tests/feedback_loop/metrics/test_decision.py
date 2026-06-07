@@ -469,3 +469,34 @@ class TestStrategistHoldOnNonOnTrack:
         result = _compute("strategist_hold_on_non_on_track_rate", _dataset(log))
         assert result.value == 0.5
         assert result.sample_size == 2
+
+
+class TestConditioning:
+    def test_model_version_slice_filters_pm_decisions(self) -> None:
+        log = (
+            _pm_entry(verdict=PMVerdict.APPROVE, invocation_id="inv-new"),
+            _pm_entry(verdict=PMVerdict.REJECT, invocation_id="inv-new"),
+            _pm_entry(verdict=PMVerdict.APPROVE, invocation_id="inv-old"),
+        )
+        calls = (
+            _agent_call(invocation_id="inv-new", model_id="claude-opus-4-8"),
+            _agent_call(invocation_id="inv-old", model_id="claude-sonnet-4-5"),
+        )
+        dataset = _dataset(log, calls)
+
+        # Unconditioned: 2 approve / 3 total.
+        assert _compute("pm_approval_rate", dataset).value == 2 / 3
+
+        # Conditioned to the new model: only inv-new decisions (1 approve / 2 total).
+        sliced = _compute(
+            "pm_approval_rate",
+            dataset,
+            Conditioning(dimension=ConditioningDimension.MODEL_VERSION, value="claude-opus-4-8"),
+        )
+        assert sliced.value == 0.5
+        assert sliced.sample_size == 2
+
+    def test_metric_declares_supported_conditioning(self) -> None:
+        metric = get_metric(MetricId("pm_approval_rate"))
+        assert metric is not None
+        assert ConditioningDimension.MODEL_VERSION in metric.supported_conditioning

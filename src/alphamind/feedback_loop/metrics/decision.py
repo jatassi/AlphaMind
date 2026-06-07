@@ -21,6 +21,7 @@ expressed as one ``MetricId`` per bin so a single bin flows losslessly into
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from typing import TYPE_CHECKING, get_args
 
 from alphamind.commands.pm_envelope import (
@@ -41,7 +42,6 @@ from alphamind.portfolio_state.events.types import EventType, PMVerdict
 if TYPE_CHECKING:
     from alphamind.feedback_loop.dataset import WindowDataset
     from alphamind.portfolio_state.events.pm_decision import PMDecisionDetail
-    from alphamind.portfolio_state.events.types import ActivityLogEntry
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ def _conditioned(dataset: WindowDataset, conditioning: Conditioning) -> WindowDa
     sliced = tuple(
         entry for entry in dataset.pm_decision_log if entry.invocation_id in invocation_ids
     )
-    return _replace_pm_decision_log(dataset, sliced)
+    return replace(dataset, pm_decision_log=sliced)
 
 
 def _invocations_matching(dataset: WindowDataset, conditioning: Conditioning) -> frozenset[str]:
@@ -76,20 +76,6 @@ def _invocations_matching(dataset: WindowDataset, conditioning: Conditioning) ->
         for call in dataset.agent_calls
         if call.agent_name == "portfolio_manager"
         and getattr(call, field) == conditioning.value
-    )
-
-
-def _replace_pm_decision_log(
-    dataset: WindowDataset, pm_decision_log: tuple[ActivityLogEntry, ...]
-) -> WindowDataset:
-    return WindowDataset(
-        start=dataset.start,
-        end=dataset.end,
-        agent_calls=dataset.agent_calls,
-        pm_decision_log=pm_decision_log,
-        validations=dataset.validations,
-        refs=dataset.refs,
-        replays=dataset.replays,
     )
 
 
@@ -285,12 +271,22 @@ def _modification_categories(dataset: WindowDataset) -> tuple[str, ...]:
     )
 
 
+# The conditioning dimensions reachable from the existing WindowDataset bundles: the
+# pm_decision_log↔agent_calls join on invocation_id exposes the PM agent call's
+# model_id (MODEL_VERSION) and prompt_git_sha (PROMPT_VERSION). REGIME / SECTOR / etc.
+# have no field in either bundle, so no metric here declares them.
+_PM_SUPPORTED_CONDITIONING: tuple[ConditioningDimension, ...] = (
+    ConditioningDimension.MODEL_VERSION,
+    ConditioningDimension.PROMPT_VERSION,
+)
+
+
 _PM_METRICS: tuple[Metric, ...] = (
     Metric(
         metric_id=_PM_APPROVAL_RATE,
         po_type="process",
         default_window=Window.WEEKLY,
-        supported_conditioning=(),
+        supported_conditioning=_PM_SUPPORTED_CONDITIONING,
         compute=_compute_pm_approval_rate,
     ),
     Metric(
