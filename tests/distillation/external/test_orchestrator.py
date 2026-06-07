@@ -864,9 +864,7 @@ def test_orchestrator_emits_one_anomaly_entry_per_flag(
         (activity_log_entry_from_row(r).detail.block_id, _flag_name_from_row(r)) for r in rows
     }
     produced_keys = {
-        (block.block_id, flag.name)
-        for block in outputs.all_blocks
-        for flag in block.anomaly_flags
+        (block.block_id, flag.name) for block in outputs.all_blocks for flag in block.anomaly_flags
     }
     assert emitted_keys == produced_keys
 

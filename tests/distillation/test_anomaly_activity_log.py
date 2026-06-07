@@ -54,9 +54,7 @@ def test_mapper_builds_distillation_anomaly_flag_entry() -> None:
     detail populated from the flag/summary and the taxonomy resolved."""
     summary = _summary(name="volume_anomaly", magnitude=4.2, severity="investigate_now")
 
-    entry = anomaly_summary_to_activity_log_entry(
-        summary, invocation_id="inv-1", timestamp=_AS_OF
-    )
+    entry = anomaly_summary_to_activity_log_entry(summary, invocation_id="inv-1", timestamp=_AS_OF)
 
     assert entry.invocation_id == "inv-1"
     assert entry.timestamp == _AS_OF

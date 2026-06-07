@@ -235,6 +235,16 @@ ignore_imports =
     # for the upsert + read paths. Retires under the same punch-list #9
     # split alongside the q*/loaders entries above.
     alphamind.distillation.realized_vol -> alphamind.persistence.models
+    # ALP-881 (story 04b) — the orchestrator is the distillation layer's
+    # imperative shell and persists each produced anomaly flag as a
+    # ``DISTILLATION_ANOMALY_FLAG`` activity-log row on its sync session, the
+    # same way it already persists the correlation-regime brief via
+    # ``persistence.models.Brief``. The shared activity-log codec
+    # (``activity_log_entry_to_row``) lives in ``state.invocation_context`` and
+    # reaches sqlalchemy only through ``state.tables.activity_log`` (the ORM
+    # row). This is an IO-shell carve-out mirroring the
+    # ``orchestrator -> persistence.models`` exception above.
+    alphamind.distillation.orchestrator -> alphamind.state.invocation_context.activity_log
 
 # Forbidden contract (ALP-467 pilot): pure-compute cores split out by the
 # distillation compute/load boundary pilot must never import sqlalchemy.
