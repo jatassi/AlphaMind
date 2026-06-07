@@ -74,8 +74,7 @@ def _invocations_matching(dataset: WindowDataset, conditioning: Conditioning) ->
     return frozenset(
         call.invocation_id
         for call in dataset.agent_calls
-        if call.agent_name == "portfolio_manager"
-        and getattr(call, field) == conditioning.value
+        if call.agent_name == "portfolio_manager" and getattr(call, field) == conditioning.value
     )
 
 
@@ -194,9 +193,7 @@ def _verdicts(dataset: WindowDataset) -> tuple[PMVerdict, ...]:
 
 def _compute_pm_approval_rate(dataset: WindowDataset, conditioning: Conditioning) -> MetricResult:
     verdicts = _verdicts(_conditioned(dataset, conditioning))
-    approved = sum(
-        v in (PMVerdict.APPROVE, PMVerdict.APPROVE_WITH_MODIFICATION) for v in verdicts
-    )
+    approved = sum(v in (PMVerdict.APPROVE, PMVerdict.APPROVE_WITH_MODIFICATION) for v in verdicts)
     return _rate_result(_PM_APPROVAL_RATE, approved, len(verdicts))
 
 
@@ -209,7 +206,7 @@ def _compute_pm_modification_rate(
 
 
 # ---------------------------------------------------------------------------
-# PM per-criterion fail rate (per source agent × criterion)
+# PM per-criterion fail rate (per source agent x criterion)
 # ---------------------------------------------------------------------------
 
 #: Canonical criterion keys per source provenance — derived from the field names on the
@@ -229,7 +226,9 @@ def _criterion_fail_rate_compute(
             for d in _pm_decisions(_conditioned(dataset, conditioning))
             if d.source_provenance_json.get("source_provenance") == source_provenance
         ]
-        failed = sum(d.evaluation_json.get(criterion, {}).get("status") == "fail" for d in decisions)
+        failed = sum(
+            d.evaluation_json.get(criterion, {}).get("status") == "fail" for d in decisions
+        )
         return _rate_result(metric_id, failed, len(decisions))
 
     return _compute

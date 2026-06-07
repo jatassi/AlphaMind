@@ -119,7 +119,9 @@ def _pm_entry(
     )
 
 
-def _agent_call(*, invocation_id: str, model_id: str, agent_name: str = "portfolio_manager") -> AgentCallRecord:
+def _agent_call(
+    *, invocation_id: str, model_id: str, agent_name: str = "portfolio_manager"
+) -> AgentCallRecord:
     _ENTRY_SEQ[0] += 1
     return AgentCallRecord(
         agent_call_id=f"call-{_ENTRY_SEQ[0]}",
@@ -159,7 +161,9 @@ def _dataset(
     )
 
 
-def _compute(metric_id: str, dataset: WindowDataset, conditioning: Conditioning = UNCONDITIONED) -> Any:
+def _compute(
+    metric_id: str, dataset: WindowDataset, conditioning: Conditioning = UNCONDITIONED
+) -> Any:
     metric = get_metric(MetricId(metric_id))
     assert metric is not None, f"{metric_id} not registered"
     return metric.compute(dataset, conditioning)
@@ -390,21 +394,15 @@ class TestStrategistTransitionMatrix:
             ),
         )
         dataset = _dataset(log)
-        ar_to_ot = _compute(
-            "strategist_status_transition_rate__at_risk__to__on_track", dataset
-        )
+        ar_to_ot = _compute("strategist_status_transition_rate__at_risk__to__on_track", dataset)
         assert ar_to_ot.value == 2 / 3
         assert ar_to_ot.sample_size == 3
         assert (
-            _compute(
-                "strategist_status_transition_rate__on_track__to__at_risk", dataset
-            ).value
+            _compute("strategist_status_transition_rate__on_track__to__at_risk", dataset).value
             == 1 / 3
         )
         assert (
-            _compute(
-                "strategist_status_transition_rate__stale__to__invalidated", dataset
-            ).value
+            _compute("strategist_status_transition_rate__stale__to__invalidated", dataset).value
             == 0.0
         )
 
@@ -428,9 +426,7 @@ class TestStrategistTransitionMatrix:
                 ),
             ),
         )
-        result = _compute(
-            "strategist_status_transition_rate__at_risk__to__on_track", _dataset(log)
-        )
+        result = _compute("strategist_status_transition_rate__at_risk__to__on_track", _dataset(log))
         assert result.value == 1.0
         assert result.sample_size == 1
 
@@ -500,3 +496,24 @@ class TestConditioning:
         metric = get_metric(MetricId("pm_approval_rate"))
         assert metric is not None
         assert ConditioningDimension.MODEL_VERSION in metric.supported_conditioning
+
+
+class TestRegistryDiscovery:
+    def test_decision_metrics_are_listed_and_process_tier(self) -> None:
+        listed = {m.metric_id: m for m in list_metrics()}
+        # A representative id from each decision metric group is discoverable via the
+        # dynamic registry (the module's METRICS tuple aggregated with no __init__ edit).
+        for metric_id in (
+            "pm_approval_rate",
+            "pm_verdict_rate__reject",
+            "pm_analyst_criterion_fail_rate__falsifiability",
+            "pm_modification_category_rate__risk_reduction",
+            "analyst_conviction_rate__3",
+            "strategist_status_rate__on_track",
+            "strategist_action_rate__hold",
+            "strategist_status_transition_rate__on_track__to__at_risk",
+            "strategist_hold_on_non_on_track_rate",
+        ):
+            metric = listed.get(MetricId(metric_id))
+            assert metric is not None, f"{metric_id} not listed"
+            assert metric.po_type == "process"
