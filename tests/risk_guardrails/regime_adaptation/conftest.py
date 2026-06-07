@@ -62,6 +62,7 @@ from alphamind.config.models.assets import AssetsConfig
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.digest import DigestConfig
 from alphamind.config.models.execution import ExecutionConfig
+from alphamind.config.models.feedback import FeedbackLoopConfig
 from alphamind.config.models.guardrails import GuardrailsConfig
 from alphamind.config.models.llm_failure import LLMFailureConfig
 from alphamind.config.models.main import MainConfig
@@ -120,6 +121,7 @@ def loaded_config_micro_normal() -> LoadedConfig:
         guardrails=GuardrailsConfig.model_validate(_read_yaml("guardrails.yaml")),
         llm_failure=LLMFailureConfig.model_validate(_read_yaml("llm_failure.yaml")),
         digest=DigestConfig.model_validate(_read_yaml("digest.yaml")),
+        feedback=FeedbackLoopConfig.model_validate(_read_yaml("feedback.yaml")),
         assets=AssetsConfig.model_validate(_read_yaml("assets.yaml")),
         agents=AgentsConfig.model_validate(_read_yaml("agents.yaml")),
         continuous_monitor=ContinuousMonitorConfig.model_validate(
