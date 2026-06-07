@@ -59,9 +59,9 @@ __all__ = [
     "error_class_for_failure",
     "new_agent_call_id",
     "persist_agent_call",
-    "provenance_dir",
     "prompt_content_hash",
     "prompt_git_sha",
+    "provenance_dir",
 ]
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -96,6 +96,7 @@ def prompt_git_sha(prompt_path: str) -> str:
     except (OSError, subprocess.CalledProcessError):
         return ""
     return completed.stdout.strip()
+
 
 _SYSTEM_PROMPT_FILENAME = "system_prompt.md"
 _OUTPUT_SCHEMA_FILENAME = "output_schema.json"
@@ -259,10 +260,15 @@ class CaptureSignals(Protocol):
     output_payload: dict[str, Any] | None
     tokens_used: TokensUsed
     agent_call_id: str | None
-    attempt_number: int
     last_success: bool | None
     last_wall_clock_seconds: float | None
     last_stop_reason: str | None
+
+    @property
+    def attempt_number(self) -> int:
+        """1-indexed aggregated attempt count — each diag derives it from its
+        own retry/attempt counter (read-only)."""
+        ...
 
 
 def build_capture_from_diag(

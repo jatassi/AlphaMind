@@ -46,7 +46,6 @@ from alphamind.state.repository.agent_calls_queries import read_agent_calls_for_
 from alphamind.state.tables.agent_calls import AgentCallErrorClass
 from tests.state._fk_substrate import stub_invocation_row, stub_process_lifetime_row
 
-
 _INV = "inv-cap-001"
 _PLT = "plt-cap-tests"
 

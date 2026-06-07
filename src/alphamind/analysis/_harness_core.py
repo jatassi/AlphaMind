@@ -556,7 +556,7 @@ async def capture_agent_call(
     *,
     telemetry_session: AsyncSession | None,
     provenance_root: Path | None,
-) -> AsyncGenerator[None, None]:
+) -> AsyncGenerator[None]:
     """Drain *diag*'s agent_calls capture once, on exit of the harness body.
 
     Wraps a harness's single attempt-loop scope. On exit — clean OR a raised
@@ -606,7 +606,7 @@ async def _drain_capture(
         return
     try:
         await persist_agent_call(telemetry_session, capture, provenance_root=provenance_root)
-    except Exception:  # noqa: BLE001 — telemetry must never break the observed call
+    except Exception:
         logging.getLogger(__name__).exception(
             "agent_calls capture failed for %s/%s", diag.invocation_id, diag.agent_name
         )

@@ -510,7 +510,6 @@ _PLT_TELEM_SYNTH = "plt-telem-synth"
 @pytest.fixture()
 async def telemetry_factory(tmp_path: Path):  # type: ignore[no-untyped-def]
     """On-disk SQLite with the invocation FK target for the capture row seeded."""
-    from collections.abc import AsyncIterator
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -578,6 +577,7 @@ async def test_synthesizer_capture_writes_row_with_null_output_payload(
     assert row.agent_name == "synthesizer"
     assert row.success is True
     assert row.output_schema_ref is None  # no structured-output contract
+    assert row.output_artifact_ref is not None
     pdir = Path(row.output_artifact_ref)
     assert json.loads((pdir / "output.json").read_text()) is None
     assert (pdir / "system_prompt.md").read_text(encoding="utf-8")  # non-empty prompt

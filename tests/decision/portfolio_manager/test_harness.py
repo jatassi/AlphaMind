@@ -1423,7 +1423,6 @@ _PLT_TELEM_PM = "plt-telem-pm"
 @pytest.fixture()
 async def telemetry_factory(tmp_path: Path):  # type: ignore[no-untyped-def]
     """On-disk SQLite with the invocation FK target for the capture row seeded."""
-    from collections.abc import AsyncIterator
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -1509,6 +1508,7 @@ async def test_pm_capture_writes_row_and_artifacts(
     assert row.success is True
     assert row.model_id == str(agent_config.model)
     assert row.output_schema_ref is not None  # PM has a structured-output schema
+    assert row.output_artifact_ref is not None
     pdir = Path(row.output_artifact_ref)
     for name in ("system_prompt.md", "output_schema.json", "tools_definition.json", "output.json"):
         assert (pdir / name).exists()

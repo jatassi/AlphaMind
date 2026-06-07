@@ -871,6 +871,7 @@ async def test_completed_call_writes_one_agent_call_row_and_artifacts(
     assert row.stop_reason == "end_turn"
     assert json.loads(row.sampling_params_json)["max_tokens"] == agent_config.output_token_budget
 
+    assert row.output_artifact_ref is not None
     pdir = Path(row.output_artifact_ref)
     assert pdir == provenance_root / "invocations" / _INV_TELEM / "agent_calls" / row.agent_call_id
     for name in ("system_prompt.md", "output_schema.json", "tools_definition.json", "output.json"):
