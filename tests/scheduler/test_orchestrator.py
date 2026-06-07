@@ -2071,8 +2071,8 @@ def _read_recent_thesis_resolutions(
             config=config,
             thesis_quality_aggregates_trailing_windows_days=(5, 20),
         )
-        resolutions: tuple[RecentThesisResolution, ...] = (
-            repository.get_recent_thesis_resolutions(lookback_trading_days=20)
+        resolutions: tuple[RecentThesisResolution, ...] = repository.get_recent_thesis_resolutions(
+            lookback_trading_days=20
         )
         return resolutions
     finally:
