@@ -67,6 +67,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind._kernel.mode import PipelineMode
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
+from alphamind.analysis.thesis_resolution import resolve_closed_position_theses
 from alphamind.config.assets_views import (
     build_sector_resolver,
     sectors_config_from_assets,
@@ -77,6 +78,7 @@ from alphamind.config.guardrails_helpers import (
 )
 from alphamind.config.load import PipelineConfig
 from alphamind.config.loaders import load_overlays, read_yaml_file
+from alphamind.config.models.agents import AllowedModel, BaseAgentConfig
 from alphamind.config.models.execution import ExecutionConfig
 from alphamind.config.models.guardrails import ProgressiveTier
 from alphamind.config.models.main import ExecutionMode, MainConfig
@@ -799,6 +801,22 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     fill_collection_summary = await run_with_sqlite_busy_retry(_run_fill_collection_write_unit)
     progress.phase_done("fill_collection", fills_processed=fill_collection_summary.fills_processed)
 
+    # Step 3b — Thesis resolution (ALP-834 / ALP-899). Fill collection (or the
+    # continuous monitor) left closed-position theses ACTIVE; author ACTIVE →
+    # RESOLVED here, in its OWN transaction — a slow LLM component-evaluation
+    # must not sit inside the fill-collection write lock — and BEFORE snapshot
+    # assembly, so a thesis whose position closed this invocation feeds the same
+    # invocation's snapshot (the recent-resolutions feed + thesis_quality
+    # aggregates) and ``get_recent_thesis_resolutions`` no longer raises on a
+    # half-written RESOLVED row.
+    await _run_thesis_resolution_step(
+        session_factory=session_factory,
+        invocation_id=invocation_id,
+        archive_root=archive_root,
+        progress=progress,
+        now=now,
+    )
+
     # Step 4 — Between-phase snapshot read.
     _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="distill")
     progress.phase_start("snapshot_assembly")
@@ -956,6 +974,54 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         staleness_flag=fill_collection_inputs.staleness_flag,
         duration_seconds=duration,
     )
+
+
+# The targeted thesis-component evaluator (story 04d) is a non-roster agent —
+# no ``AgentName`` slot, no ``agents.yaml`` entry. The resolver supplies a
+# ``BaseAgentConfig`` on demand pointing at the committed minimal-eval prompt;
+# the analysis-layer model + an LLM-call budget match the analysis researchers.
+_THESIS_EVALUATOR_PROMPT = "prompts/analysis/thesis_component_evaluator.md"
+
+
+def _build_thesis_evaluator_config() -> BaseAgentConfig:
+    """The non-roster config the resolver hands the LLM component-evaluator."""
+    return BaseAgentConfig(
+        model=AllowedModel.sonnet_4_6,
+        prompt=_THESIS_EVALUATOR_PROMPT,
+        latency_budget_seconds=120,
+        context_token_budget=4000,
+        output_token_budget=2000,
+        tools=[],
+    )
+
+
+async def _run_thesis_resolution_step(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    invocation_id: str,
+    archive_root: Path,
+    progress: ProgressEmitter,
+    now: datetime,
+) -> None:
+    """Resolve closed-position theses in their own transaction (ALP-899).
+
+    Opens a fresh session, runs the resolver (which persists ACTIVE → RESOLVED
+    and appends the ``THESIS_RESOLVED`` entries), and commits. A failure rolls
+    back the resolution writes and propagates — resolution authorship is part
+    of the deliberative invocation, not a best-effort side task.
+    """
+    progress.phase_start("thesis_resolution")
+    async with session_factory() as session:
+        handle = InvocationHandle(session=session, invocation_id=invocation_id)
+        resolved = await resolve_closed_position_theses(
+            handle,
+            evaluator_config=_build_thesis_evaluator_config(),
+            now=now,
+            archive_root=archive_root,
+            progress=progress,
+        )
+        await session.commit()
+    progress.phase_done("thesis_resolution", theses_resolved=len(resolved))
 
 
 def _assemble_fill_collection_snapshot(
