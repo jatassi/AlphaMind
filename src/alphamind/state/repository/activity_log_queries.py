@@ -12,7 +12,7 @@ isomorphic with the writes the emission helper performs.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,25 +24,9 @@ from alphamind.portfolio_state.events.activity_log import (
 from alphamind.state.invocation_context.activity_log import (
     activity_log_entry_from_row,
 )
+from alphamind.state.repository._window_prefix import SECOND_PREFIX_LEN, second_prefix
 from alphamind.state.tables.activity_log import ActivityLogRow
 from alphamind.state.tables.invocations import InvocationRow
-
-# Length of the ``YYYY-MM-DDTHH:MM:SS`` second-precision prefix shared by every
-# ISO-8601 timestamp the codebase writes, regardless of its sub-second suffix.
-_SECOND_PREFIX_LEN = 19
-
-
-def _second_prefix(value: datetime) -> str:
-    """Render a window bound as its ``YYYY-MM-DDTHH:MM:SS`` second prefix (UTC).
-
-    ``activity_log.entry_at`` is a Text column written by paths with differing
-    sub-second precision; comparing the bound's second prefix against
-    ``substr(entry_at, 1, 19)`` is chronologically faithful at second granularity
-    for every stored value regardless of its suffix — the same technique
-    :func:`alphamind.state.repository.outcome_queries.read_resolved_theses_in_window`
-    uses.
-    """
-    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 async def read_intra_invocation_changelog(
@@ -164,13 +148,13 @@ async def read_activity_events_in_window(
     """
     if not event_types:
         return ()
-    entry_at_prefix = func.substr(ActivityLogRow.entry_at, 1, _SECOND_PREFIX_LEN)
+    entry_at_prefix = func.substr(ActivityLogRow.entry_at, 1, SECOND_PREFIX_LEN)
     stmt = (
         select(ActivityLogRow)
         .where(
             ActivityLogRow.event_type.in_([et.value for et in event_types]),
-            entry_at_prefix >= _second_prefix(start),
-            entry_at_prefix < _second_prefix(end),
+            entry_at_prefix >= second_prefix(start),
+            entry_at_prefix < second_prefix(end),
         )
         .order_by(ActivityLogRow.entry_at.asc(), ActivityLogRow.entry_id.asc())
     )
