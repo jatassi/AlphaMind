@@ -1,8 +1,8 @@
 """Thesis-level resolution classifier — relocated from execution/thesis_model/ (ALP-897).
 
 Lives in the thesis domain (portfolio_state) so that analysis-layer code can
-import it without an upward layer edge. execution/ still re-exports the
-function from here for any consumers that reference the old path.
+import it without an upward layer edge. The old execution/thesis_model path no
+longer re-exports it — import it from here.
 """
 
 from __future__ import annotations

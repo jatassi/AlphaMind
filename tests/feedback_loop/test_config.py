@@ -53,3 +53,14 @@ def test_rejects_missing_threshold() -> None:
 
     with pytest.raises(ValidationError):
         FeedbackLoopConfig.model_validate(raw)
+
+
+def test_rejects_quarterly_below_monthly() -> None:
+    # Quarterly aggregates a longer window than monthly, so it must require at
+    # least as many resolved theses; a transposed pair is invalid config.
+    raw = _read_feedback_yaml()
+    raw["min_resolved_theses_monthly"] = 60
+    raw["min_resolved_theses_quarterly"] = 30
+
+    with pytest.raises(ValidationError):
+        FeedbackLoopConfig.model_validate(raw)
