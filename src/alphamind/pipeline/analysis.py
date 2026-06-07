@@ -707,6 +707,10 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
         invocation_id,
         archive_root=archive_root,
         provenance_root=provenance_root,
+        # Persist each produced anomaly flag as a DISTILLATION_ANOMALY_FLAG
+        # activity-log row keyed to this invocation (story 04b / ALP-881). The
+        # replay harness calls the orchestrator directly and leaves this off.
+        emit_anomaly_flags=True,
     )
     progress.phase_done("distillation")
 

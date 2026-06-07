@@ -64,6 +64,7 @@ from alphamind.distillation._repository_sql import SqlDistillationRepository
 from alphamind.distillation._severity_cap import cap_blocks_for_calibration
 from alphamind.distillation.aggregation import (
     AnomalySummary,
+    anomaly_summary_to_activity_log_entry,
     collect_anomalies,
     group_anomalies_by_audience,
     partition_blocks,
@@ -134,6 +135,7 @@ from alphamind.persistence.models import (
     MacroObservations,
     OhlcvBars,
 )
+from alphamind.state.invocation_context.activity_log import activity_log_entry_to_row
 
 logger = logging.getLogger(__name__)
 
@@ -1012,6 +1014,44 @@ def _populate_brief_store(
 
 
 # ---------------------------------------------------------------------------
+# Anomaly activity-log emission (ALP-881 / story 04b)
+# ---------------------------------------------------------------------------
+
+
+def _emit_anomaly_activity_log(
+    session: Session,
+    *,
+    summaries: Sequence[AnomalySummary],
+    invocation_id: str,
+    as_of: datetime,
+) -> int:
+    """Persist one ``DISTILLATION_ANOMALY_FLAG`` row per produced anomaly flag.
+
+    Mirrors :func:`_populate_brief_store`: each summary is mapped to a typed
+    :class:`~alphamind.portfolio_state.events.ActivityLogEntry` by
+    :func:`~alphamind.distillation.aggregation.anomaly_summary_to_activity_log_entry`
+    (which resolves the threshold taxonomy via story 02g) and added to the sync
+    session inside the fail-closed :func:`_refresh_transaction` boundary. Returns
+    the number of rows written. A zero-flag run writes nothing (and skips the
+    transaction entirely — a clean no-op).
+
+    The distillation orchestrator runs on a synchronous ``Session``, so the
+    async OMS helper ``append_activity_log_entry`` (which requires an
+    ``AsyncSession``-backed ``InvocationHandle``) is not applicable here; the
+    row is added directly on the sync session via the shared codec.
+    """
+    if not summaries:
+        return 0
+    with _refresh_transaction(session):
+        for summary in summaries:
+            entry = anomaly_summary_to_activity_log_entry(
+                summary, invocation_id=invocation_id, timestamp=as_of
+            )
+            session.add(activity_log_entry_to_row(entry))
+    return len(summaries)
+
+
+# ---------------------------------------------------------------------------
 # Main entry point — run_external_distillation
 # ---------------------------------------------------------------------------
 
@@ -1194,6 +1234,7 @@ async def run_external_distillation(
     *,
     archive_root: Path | None = None,
     provenance_root: Path | None = None,
+    emit_anomaly_flags: bool = False,
 ) -> DistillationOutputs:
     """The single ``async`` entry point the pipeline process calls.
 
@@ -1208,6 +1249,14 @@ async def run_external_distillation(
     where the per-invocation calibration-state snapshot lands per
     ``docs/design/05-execution-layer/state-persistence.md`` § Tier 2.
     Tests pass explicit paths.
+
+    ``emit_anomaly_flags`` (story 04b / ALP-881) opts into persisting each
+    produced :class:`~alphamind.distillation.output.AnomalyFlag` as a
+    ``DISTILLATION_ANOMALY_FLAG`` activity-log row on ``session``. It defaults
+    to ``False`` so callers without an invocation context — notably the replay
+    harness, which runs against a throwaway DB — degrade to a clean no-op
+    (mirroring the ``diag_dir=None`` pattern in the analysis harness). The
+    production pipeline (``alphamind.pipeline.analysis``) passes ``True``.
     """
     if archive_root is None:
         archive_root = _default_archive_root()
@@ -1280,6 +1329,20 @@ async def run_external_distillation(
     partitioned = partition_blocks(all_blocks)
     anomaly_summaries: list[AnomalySummary] = collect_anomalies(all_blocks)
     grouped_anomalies = group_anomalies_by_audience(anomaly_summaries)
+    # Anomaly activity-log emission (story 04b / ALP-881). ``anomaly_summaries``
+    # holds one entry per produced flag (``collect_anomalies`` does not
+    # broadcast), so this writes exactly N rows for N flags. Gated on
+    # ``emit_anomaly_flags`` so the replay harness (no invocation context)
+    # degrades to a no-op; runs the sync write off the event loop like the
+    # brief-store population below.
+    if emit_anomaly_flags:
+        await asyncio.to_thread(
+            _emit_anomaly_activity_log,
+            session,
+            summaries=anomaly_summaries,
+            invocation_id=invocation_id,
+            as_of=as_of,
+        )
     logger.info(
         "aggregation complete: audiences=%d total_anomalies=%d elapsed=%.3fs",
         len(partitioned),

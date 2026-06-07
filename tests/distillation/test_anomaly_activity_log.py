@@ -78,3 +78,35 @@ def test_mapper_builds_distillation_anomaly_flag_entry() -> None:
     assert detail.block_id == "q1.volume.NVDA"
     # Market-wide flag (no embedded ticker) -> None.
     assert detail.ticker is None
+
+
+def test_mapper_extracts_ticker_from_ticker_bearing_flag() -> None:
+    """``correlation_locus_flag:{ticker}`` carries the ticker into the detail."""
+    summary = _summary(name="correlation_locus_flag:NVDA", block_id="q7.correlation_locus.NVDA")
+
+    detail = anomaly_summary_to_activity_log_entry(
+        summary, invocation_id="inv-1", timestamp=_AS_OF
+    ).detail
+    assert isinstance(detail, DistillationAnomalyFlagDetail)
+    assert detail.ticker == "NVDA"
+    # The dynamic suffix is stripped before taxonomy resolution.
+    assert detail.threshold_class == "narrative_lag"
+    assert detail.threshold_key == "correlation_locus_pair_count_threshold"
+
+
+def test_mapper_pair_key_flag_has_no_ticker() -> None:
+    """A pair / pair-key flag (two-segment or pair-key suffix) resolves ticker to ``None``.
+
+    ``correlation_breakdown_flag:{row}:{col}`` is a pair; ``overdue_lag_flag:{pair_key}``
+    is a pair-key. Neither names a single subject ticker, so the detail's ``ticker``
+    is ``None`` even though a ``:``-suffix is present.
+    """
+    pair = _summary(name="correlation_breakdown_flag:NVDA:AMD", block_id="q7.cbd.NVDA_AMD")
+    pair_key = _summary(name="overdue_lag_flag:SOXX_QQQ", block_id="q7.lead_lag.SOXX_QQQ")
+
+    for summary in (pair, pair_key):
+        detail = anomaly_summary_to_activity_log_entry(
+            summary, invocation_id="inv-1", timestamp=_AS_OF
+        ).detail
+        assert isinstance(detail, DistillationAnomalyFlagDetail)
+        assert detail.ticker is None
