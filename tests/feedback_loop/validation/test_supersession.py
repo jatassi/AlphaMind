@@ -166,15 +166,46 @@ def _read(db_path: str, validation_id: str) -> object:
         engine.dispose()
 
 
-def _run_detect(db_path: str) -> int:
+def _run_detect(db_path: str, *, repo_root: Path | None = None) -> int:
     engine = make_engine(db_path)
     try:
         with make_session_factory(engine)() as sess:
-            marked = detect_supersessions(sess)
+            marked = detect_supersessions(sess, repo_root=repo_root)
             sess.commit()
     finally:
         engine.dispose()
     return marked
+
+
+def _git(repo: Path, *args: str, env_at: datetime | None = None) -> None:
+    """Run a git command in *repo*, optionally pinning the commit date to *env_at*."""
+    env = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+        "PATH": "/usr/bin:/bin:/usr/local/bin",
+    }
+    if env_at is not None:
+        stamp = env_at.astimezone(UTC).isoformat()
+        env["GIT_AUTHOR_DATE"] = stamp
+        env["GIT_COMMITTER_DATE"] = stamp
+    subprocess.run(["git", *args], cwd=str(repo), env=env, check=True, capture_output=True)
+
+
+@pytest.fixture()
+def temp_repo(tmp_path: Path) -> Path:
+    """A throwaway git repo with the watched artifact committed at registration."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    artifact = repo / _ARTIFACT
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text("v1\n", encoding="utf-8")
+    _git(repo, "add", _ARTIFACT)
+    # The baseline commit predates the registration window.
+    _git(repo, "commit", "-q", "-m", "baseline", env_at=_REGISTERED_AT - timedelta(days=1))
+    return repo
 
 
 class TestRegimeTransition:
@@ -193,3 +224,88 @@ class TestRegimeTransition:
         assert record is not None
         assert record.superseded_at is not None  # type: ignore[attr-defined]
         assert record.superseded_reason is SupersededReason.REGIME_TRANSITION  # type: ignore[attr-defined]
+
+    def test_same_regime_in_window_is_not_superseded(self, db_path: str) -> None:
+        _add_validation(db_path, _validation_row("val-stable"))
+        _add_invocation(
+            db_path,
+            "inv-post",
+            start_at=_REGISTERED_AT + timedelta(days=3),
+            regime=_REG_REGIME,
+        )
+        assert _run_detect(db_path) == 0
+        record = _read(db_path, "val-stable")
+        assert record is not None
+        assert record.superseded_at is None  # type: ignore[attr-defined]
+
+
+class TestModelVersionChange:
+    def test_post_window_model_shift_supersedes(self, db_path: str) -> None:
+        _add_validation(db_path, _validation_row("val-model"))
+        # Same regime in the window, but a post-window agent call on a new model.
+        _add_invocation(
+            db_path,
+            "inv-post",
+            start_at=_REGISTERED_AT + timedelta(days=3),
+            regime=_REG_REGIME,
+        )
+        _add_agent_call(db_path, "call-post", "inv-post", model_id="claude-opus-4-9")
+        marked = _run_detect(db_path)
+        assert marked == 1
+        record = _read(db_path, "val-model")
+        assert record is not None
+        assert record.superseded_reason is SupersededReason.MODEL_VERSION_CHANGE  # type: ignore[attr-defined]
+
+
+class TestConcurrentEdit:
+    def test_commit_to_artifact_in_window_supersedes(
+        self, db_path: str, temp_repo: Path
+    ) -> None:
+        _add_validation(db_path, _validation_row("val-edit"))
+        # A new commit to the watched artifact lands inside the post-edit window.
+        (temp_repo / _ARTIFACT).write_text("v2\n", encoding="utf-8")
+        _git(temp_repo, "add", _ARTIFACT)
+        _git(
+            temp_repo,
+            "commit",
+            "-q",
+            "-m",
+            "edit",
+            env_at=_REGISTERED_AT + timedelta(days=2),
+        )
+        marked = _run_detect(db_path, repo_root=temp_repo)
+        assert marked == 1
+        record = _read(db_path, "val-edit")
+        assert record is not None
+        assert (
+            record.superseded_reason  # type: ignore[attr-defined]
+            is SupersededReason.CONCURRENT_EDIT_ON_WATCHED_ARTIFACT
+        )
+
+    def test_no_commit_in_window_is_not_superseded(
+        self, db_path: str, temp_repo: Path
+    ) -> None:
+        # Only the pre-window baseline commit exists; nothing lands in the window.
+        _add_validation(db_path, _validation_row("val-clean"))
+        assert _run_detect(db_path, repo_root=temp_repo) == 0
+        record = _read(db_path, "val-clean")
+        assert record is not None
+        assert record.superseded_at is None  # type: ignore[attr-defined]
+
+    def test_commit_to_other_path_in_window_is_not_superseded(
+        self, db_path: str, temp_repo: Path
+    ) -> None:
+        # A commit lands in the window, but touches a different artifact.
+        _add_validation(db_path, _validation_row("val-other"))
+        other = temp_repo / "prompts/decision/analyst.md"
+        other.write_text("x\n", encoding="utf-8")
+        _git(temp_repo, "add", "prompts/decision/analyst.md")
+        _git(
+            temp_repo,
+            "commit",
+            "-q",
+            "-m",
+            "unrelated edit",
+            env_at=_REGISTERED_AT + timedelta(days=2),
+        )
+        assert _run_detect(db_path, repo_root=temp_repo) == 0
