@@ -621,7 +621,7 @@ def make_regime_provider(
     :class:`ActiveRiskParameterSet` from the latest invocation's snapshot
     file, fetch the live composite-alert state, then invoke
     :func:`resolve_regime_adaptation` so the breach loop's
-    :func:`compose_phase_1_enforcement` call site receives a real output
+    :func:`compose_active_guardrails` call site receives a real output
     bundle — active overlays bookkeeping, ``parameter_change_flag``
     computation, transition-state semantics, and
     ``regime_skip_emergency`` policy all flow through.

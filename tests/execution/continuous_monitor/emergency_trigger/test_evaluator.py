@@ -34,7 +34,7 @@ from alphamind.execution.continuous_monitor.emergency_trigger.evaluator import (
     MarginCallObserver,
 )
 from alphamind.execution.continuous_monitor.session import MonitorSession
-from alphamind.execution.guardrail_enforcement import Phase1EnforcementResult
+from alphamind.execution.guardrail_enforcement import ActiveGuardrails
 from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
@@ -109,12 +109,12 @@ def _active_risk_parameters(
     )
 
 
-def _phase1_result(
+def _active_guardrails(
     *,
     regime_label: RegimeLabel = RegimeLabel.NORMAL,
     daily_limit_pct: float = 5.0,
-) -> Phase1EnforcementResult:
-    return Phase1EnforcementResult(
+) -> ActiveGuardrails:
+    return ActiveGuardrails(
         active_risk_parameters=_active_risk_parameters(
             regime_label=regime_label,
             daily_limit_pct=daily_limit_pct,
@@ -150,7 +150,7 @@ def _result(
     when = as_of if as_of is not None else _now()
     return BreachLoopResult(
         as_of=when,
-        phase1_result=_phase1_result(
+        active_guardrails=_active_guardrails(
             regime_label=regime_label,
             daily_limit_pct=daily_limit_pct,
         ),

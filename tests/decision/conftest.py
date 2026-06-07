@@ -20,7 +20,7 @@ from alphamind._kernel.regime import (
     RiskZone,
 )
 from alphamind.config.models.regimes import Regime
-from alphamind.execution.guardrail_enforcement import compose_phase_1_enforcement
+from alphamind.execution.guardrail_enforcement import compose_active_guardrails
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.risk_guardrails.regime_adaptation import (
@@ -113,9 +113,9 @@ def compose_active_risk_parameters_via_orchestrator(
     # With ``current_drawdown_pct == 0.0`` the classifier returns ``None``
     # regardless of tier values — the override is a no-op and the baseline
     # parameters pass through unchanged.
-    result = compose_phase_1_enforcement(
+    guardrails = compose_active_guardrails(
         regime_output=regime_output,
         drawdown_state=drawdown,
         progressive_tiers=TIERS,
     )
-    return result.active_risk_parameters
+    return guardrails.active_risk_parameters

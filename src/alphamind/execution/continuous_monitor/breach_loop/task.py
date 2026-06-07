@@ -9,7 +9,7 @@ On each tick (``breach_evaluation_cadence_seconds`` apart):
 2. Read open positions + ``DrawdownState`` from the repository, regime
    resolution from the supplied provider, and the underlying-price snapshot
    from :class:`UnderlyingPriceCache`.
-3. Call :func:`compose_phase_1_enforcement` → :class:`Phase1EnforcementResult`.
+3. Call :func:`compose_active_guardrails` → :class:`ActiveGuardrails`.
 4. Build the per-tick :class:`MarketInputs` and :class:`LibraryConfig`
    (the latter via the injected ``library_config_factory`` so the loop does
    not duplicate the resolver's adapter logic).
@@ -69,8 +69,8 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
     UnderlyingPriceCache,
 )
 from alphamind.execution.guardrail_enforcement import (
-    Phase1EnforcementResult,
-    compose_phase_1_enforcement,
+    ActiveGuardrails,
+    compose_active_guardrails,
 )
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
@@ -431,12 +431,12 @@ async def _run_one_tick(  # noqa: PLR0913
     drawdown_state: DrawdownState = repository.get_drawdown_state()
     regime_output: RegimeAdaptationOutput = await regime_provider()
 
-    phase1_result: Phase1EnforcementResult = compose_phase_1_enforcement(
+    active_guardrails: ActiveGuardrails = compose_active_guardrails(
         regime_output=regime_output,
         drawdown_state=drawdown_state,
         progressive_tiers=progressive_tiers,
     )
-    active_risk_parameters = phase1_result.active_risk_parameters
+    active_risk_parameters = active_guardrails.active_risk_parameters
 
     library_snapshot: LibrarySnapshot = await snapshot_provider()
     library_config = library_config_factory(active_risk_parameters)
@@ -499,12 +499,12 @@ async def _run_one_tick(  # noqa: PLR0913
         for projection in library_output.per_rule
     )
 
-    # ``Phase1EnforcementResult.drawdown_tier`` is the freshly re-classified
+    # ``ActiveGuardrails.drawdown_tier`` is the freshly re-classified
     # tier from the current progressive_tiers; ``compute_halt_state`` reads
     # ``drawdown_state.cumulative_tier`` so we override it with the fresh value
     # to avoid relying on the repository's last-write classification.
     classified_drawdown_state = dataclasses.replace(
-        drawdown_state, cumulative_tier=phase1_result.drawdown_tier
+        drawdown_state, cumulative_tier=active_guardrails.drawdown_tier
     )
     halt_state: HaltState | None = compute_halt_state(
         drawdown_state=classified_drawdown_state,
@@ -521,7 +521,7 @@ async def _run_one_tick(  # noqa: PLR0913
     )
     result = BreachLoopResult(
         as_of=as_of,
-        phase1_result=phase1_result,
+        active_guardrails=active_guardrails,
         rule_evaluations=rule_evaluations,
         halt_state=halt_state,
         immediate_action_breaches=immediate_action_breaches,

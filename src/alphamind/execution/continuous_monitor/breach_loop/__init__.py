@@ -3,7 +3,7 @@
 The continuous monitor's breach loop wakes every
 ``breach_evaluation_cadence_seconds``, composes the canonical
 ``ActiveRiskParameterSet`` via the same primitive the decision pipeline uses
-(``compose_phase_1_enforcement``), evaluates every guardrail rule via the
+(``compose_active_guardrails``), evaluates every guardrail rule via the
 guardrail-evaluation library against current portfolio state, and dispatches
 two downstream paths via injected callbacks:
 

@@ -1,6 +1,6 @@
 """Tests for ``make_active_risk_parameters_provider`` (story 03a).
 
-Adapter that turns a ``Phase1EnforcementResult`` into the zero-arg callable
+Adapter that turns an ``ActiveGuardrails`` into the zero-arg callable
 shape ``SqlPortfolioStateRepository`` expects for its
 ``active_risk_parameters_provider`` slot.
 
@@ -13,15 +13,15 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from alphamind.execution.guardrail_enforcement import (
-    Phase1EnforcementResult,
+    ActiveGuardrails,
     make_active_risk_parameters_provider,
 )
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from tests.execution.guardrail_enforcement._helpers import baseline_normal_parameters
 
 
-def _build_result(parameters: ActiveRiskParameterSet) -> Phase1EnforcementResult:
-    return Phase1EnforcementResult(
+def _build_guardrails(parameters: ActiveRiskParameterSet) -> ActiveGuardrails:
+    return ActiveGuardrails(
         active_risk_parameters=parameters,
         drawdown_tier=None,
     )
@@ -33,15 +33,15 @@ def _build_result(parameters: ActiveRiskParameterSet) -> Phase1EnforcementResult
 
 
 def test_provider_yields_result_active_risk_parameters() -> None:
-    """The provider returns ``result.active_risk_parameters`` (object identity)."""
+    """The provider returns ``guardrails.active_risk_parameters`` (object identity)."""
     parameters = baseline_normal_parameters()
-    result = _build_result(parameters)
+    guardrails = _build_guardrails(parameters)
 
-    provider = make_active_risk_parameters_provider(result)
+    provider = make_active_risk_parameters_provider(guardrails)
 
     yielded = provider()
 
-    assert yielded is result.active_risk_parameters
+    assert yielded is guardrails.active_risk_parameters
 
 
 # ---------------------------------------------------------------------------
@@ -52,9 +52,9 @@ def test_provider_yields_result_active_risk_parameters() -> None:
 def test_provider_returns_same_parameter_set_on_multiple_calls() -> None:
     """Calling the provider multiple times yields the same parameter set object."""
     parameters = baseline_normal_parameters()
-    result = _build_result(parameters)
+    guardrails = _build_guardrails(parameters)
 
-    provider = make_active_risk_parameters_provider(result)
+    provider = make_active_risk_parameters_provider(guardrails)
 
     a = provider()
     b = provider()
@@ -78,9 +78,11 @@ def test_provider_signature_matches_repository_slot() -> None:
     annotated type so a regression in the return signature surfaces in mypy.
     """
     parameters = baseline_normal_parameters()
-    result = _build_result(parameters)
+    guardrails = _build_guardrails(parameters)
 
-    provider: Callable[[], ActiveRiskParameterSet] = make_active_risk_parameters_provider(result)
+    provider: Callable[[], ActiveRiskParameterSet] = make_active_risk_parameters_provider(
+        guardrails
+    )
 
     yielded = provider()
     assert isinstance(yielded, ActiveRiskParameterSet)

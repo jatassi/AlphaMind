@@ -1,7 +1,7 @@
-"""Tests for the decision pipeline's Phase 1 enforcement composition wiring — story ALP-433.
+"""Tests for the decision pipeline's active-guardrails composition wiring — story ALP-433.
 
-The decision pipeline composes the canonical Phase 1 enforcement output via
-``compose_phase_1_enforcement`` + ``make_active_risk_parameters_provider`` so
+The decision pipeline composes the canonical active-guardrails output via
+``compose_active_guardrails`` + ``make_active_risk_parameters_provider`` so
 callers no longer pass a pre-built provider. The pipeline also surfaces the
 classified ``drawdown_tier`` on the bundled result.
 
@@ -148,11 +148,11 @@ def _regime_output(parameters: ActiveRiskParameterSet) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Helper: ``build_phase1_enforcement_inputs`` is exported and synchronous.
+# Helper: ``build_active_guardrail_inputs`` is exported and synchronous.
 # ---------------------------------------------------------------------------
 
 
-def test_build_phase1_enforcement_inputs_is_sync_and_exported() -> None:
+def test_build_active_guardrail_inputs_is_sync_and_exported() -> None:
     """The helper lives in ``alphamind.pipeline._shared`` and is a sync function.
 
     Per ALP-468 (sync strip): the repository surface is sync over SQLite, so
@@ -160,15 +160,15 @@ def test_build_phase1_enforcement_inputs_is_sync_and_exported() -> None:
     """
     from alphamind.pipeline import _shared
 
-    assert "build_phase1_enforcement_inputs" in _shared.__all__
-    helper = _shared.build_phase1_enforcement_inputs
+    assert "build_active_guardrail_inputs" in _shared.__all__
+    helper = _shared.build_active_guardrail_inputs
     assert not inspect.iscoroutinefunction(helper)
 
 
-def test_build_phase1_enforcement_inputs_reads_drawdown_from_repository() -> None:
+def test_build_active_guardrail_inputs_reads_drawdown_from_repository() -> None:
     """The helper calls ``repository.get_drawdown_state()`` and threads its
     return value into the tuple."""
-    from alphamind.pipeline._shared import build_phase1_enforcement_inputs
+    from alphamind.pipeline._shared import build_active_guardrail_inputs
 
     expected_drawdown = _drawdown_state(current_drawdown_pct=8.5)
 
@@ -184,14 +184,14 @@ def test_build_phase1_enforcement_inputs_reads_drawdown_from_repository() -> Non
     # full Protocol with ~17 methods. Stubbing the rest is unwarranted
     # ceremony for a unit-scoped helper test; suppress the arg-type
     # narrowing instead.
-    result = build_phase1_enforcement_inputs(
+    result = build_active_guardrail_inputs(
         repository=_Repo(),  # type: ignore[arg-type]
         regime_output=regime_output,
         progressive_tiers=progressive_tiers,
     )
 
     # The helper returns a 3-tuple suitable for unpacking into
-    # ``compose_phase_1_enforcement(**dict(zip([...], result)))``.
+    # ``compose_active_guardrails(**dict(zip([...], result)))``.
     assert isinstance(result, tuple)
     assert len(result) == 3
     returned_regime, returned_drawdown, returned_tiers = result
