@@ -164,9 +164,7 @@ def _assignment_event() -> LifecycleEvent:
     )
 
 
-async def _run_handler(
-    factory: async_sessionmaker[AsyncSession], event: LifecycleEvent
-) -> None:
+async def _run_handler(factory: async_sessionmaker[AsyncSession], event: LifecycleEvent) -> None:
     ctx, handle = await open_handle(factory)
     try:
         await integrate_lifecycle_event(handle, event, borrow_cost_resolver=_borrow_resolver)
