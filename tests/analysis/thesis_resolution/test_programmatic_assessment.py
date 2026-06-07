@@ -34,6 +34,7 @@ PM = PositionExitMethod.PM_DECISION
 MARGIN = PositionExitMethod.MARGIN_LIQUIDATION
 FORCED = PositionExitMethod.FORCED_BUY_IN
 CASH_MERGER = PositionExitMethod.CORPORATE_ACTION_CASH_MERGER
+OPTION_EXPIRY = PositionExitMethod.OPTION_EXPIRY
 
 
 def _make_component(
@@ -84,12 +85,18 @@ def test_target_rationale_time_expired_returns_wrong() -> None:
 
 # ---------------------------------------------------------------------------
 # TARGET_RATIONALE: external/judgment exits → INCONCLUSIVE
+#
+# OPTION_EXPIRY is direction-dependent (a long option expiring worthless missed
+# its target → WRONG; a short option capturing premium → VALIDATED) and the
+# assessor sees only component-type + exit-method, not direction — so it must
+# stay out of _TARGET_MISS_EXITS and route to the LLM evaluator (ALP-918 AC3,
+# mirroring CORPORATE_ACTION_CASH_MERGER). The assessor itself is unchanged.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     "exit_method",
-    [PM, MARGIN, FORCED, CASH_MERGER],
+    [PM, MARGIN, FORCED, CASH_MERGER, OPTION_EXPIRY],
 )
 def test_target_rationale_external_exit_returns_inconclusive(
     exit_method: PositionExitMethod,
