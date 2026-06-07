@@ -36,12 +36,16 @@ from typing import TYPE_CHECKING, Any
 
 from alphamind.feedback_loop.digest.codec import serialize_digest
 from alphamind.feedback_loop.digest.generator import WeekInput, generate_digest
+from alphamind.feedback_loop.digest.windows import (
+    load_week_inputs,
+    trailing_weeks,
+    week_bounds,
+    week_monday,
+)
 from alphamind.feedback_loop.metrics import get_metric, list_metrics
 from alphamind.feedback_loop.metrics.types import UNCONDITIONED, MetricId
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
     from alphamind.config.models.digest import DigestConfig
     from alphamind.config.models.feedback import FeedbackLoopConfig
     from alphamind.feedback_loop.metrics.types import ComputeFn, MetricResult
@@ -53,29 +57,6 @@ log = logging.getLogger(__name__)
 #: Default number of trailing weeks to load for the trajectory sparklines and shift
 #: baselines (the design's 8-12-week trajectory; 12 covers the longest baseline span).
 _DEFAULT_TRAJECTORY_WEEKS = 12
-
-_DAYS_PER_WEEK = 7
-
-
-# ---------------------------------------------------------------------------
-# Week-range helpers (pure)
-# ---------------------------------------------------------------------------
-
-
-def _week_monday(reference: date) -> date:
-    """The Monday on or before *reference* — the canonical week start."""
-    return reference - timedelta(days=reference.weekday())
-
-
-def _week_bounds(monday: date) -> tuple[datetime, datetime]:
-    """The ``[start, end)`` UTC datetimes for the week beginning *monday*."""
-    start = datetime(monday.year, monday.month, monday.day, tzinfo=UTC)
-    return start, start + timedelta(days=_DAYS_PER_WEEK)
-
-
-def _trailing_weeks(current_monday: date, count: int) -> list[date]:
-    """The *count* week-Mondays ending at *current_monday*, oldest-first."""
-    return [current_monday - timedelta(weeks=offset) for offset in range(count - 1, -1, -1)]
 
 
 # ---------------------------------------------------------------------------
@@ -113,27 +94,6 @@ def _load_configs(config_dir: Path) -> tuple[DigestConfig, FeedbackLoopConfig]:
     digest = DigestConfig.model_validate(read_yaml_file(config_dir / "digest.yaml"))
     feedback = FeedbackLoopConfig.model_validate(read_yaml_file(config_dir / "feedback.yaml"))
     return digest, feedback
-
-
-# ---------------------------------------------------------------------------
-# Window loading (shell)
-# ---------------------------------------------------------------------------
-
-
-async def _load_week_inputs(
-    session: AsyncSession,
-    mondays: list[date],
-    feedback: FeedbackLoopConfig,
-) -> list[WeekInput]:
-    """Call ``load_window`` once per week-Monday, building the generator's input."""
-    from alphamind.feedback_loop.dataset import load_window
-
-    weeks: list[WeekInput] = []
-    for monday in mondays:
-        start, end = _week_bounds(monday)
-        dataset = await load_window(session, start, end, config=feedback)
-        weeks.append((monday.isoformat(), dataset))
-    return weeks
 
 
 # ---------------------------------------------------------------------------
@@ -201,9 +161,9 @@ def _build_parser() -> argparse.ArgumentParser:
 def _resolve_current_monday(week_arg: str | None) -> date | None:
     """Resolve ``--week`` to its week-Monday, or ``None`` on a parse error."""
     if week_arg is None:
-        return _week_monday(datetime.now(UTC).date())
+        return week_monday(datetime.now(UTC).date())
     try:
-        return _week_monday(date.fromisoformat(week_arg))
+        return week_monday(date.fromisoformat(week_arg))
     except ValueError:
         return None
 
@@ -241,7 +201,7 @@ def _run_digest(args: argparse.Namespace) -> int:
         log.exception("Configuration load failed")
         return 2
 
-    mondays = _trailing_weeks(current_monday, args.trajectory_weeks)
+    mondays = trailing_weeks(current_monday, args.trajectory_weeks)
     try:
         weeks = _open_and_load(args.db_path, mondays, feedback_config)
     except Exception:
@@ -275,8 +235,8 @@ def _run_metric(args: argparse.Namespace) -> int:
     # Aggregate over the trailing --window weeks ending at the target week: one
     # contiguous window, not a sequence, so the metric sees the whole span.
     oldest = current_monday - timedelta(weeks=args.window - 1)
-    start, _ = _week_bounds(oldest)
-    _, end = _week_bounds(current_monday)
+    start, _ = week_bounds(oldest)
+    _, end = week_bounds(current_monday)
     try:
         result = _open_and_compute(args.db_path, start, end, feedback_config, metric.compute)
     except Exception:
@@ -304,7 +264,7 @@ def _open_and_load(
         try:
             factory = make_async_session_factory(engine)
             async with factory() as session:
-                return await _load_week_inputs(session, mondays, feedback)
+                return await load_week_inputs(session, mondays, feedback)
         finally:
             await engine.dispose()
 
