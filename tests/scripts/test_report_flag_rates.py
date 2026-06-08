@@ -512,6 +512,43 @@ class TestFilters:
         assert macro.is_market_wide is True
         assert macro.flag_count == 2
 
+    def test_ticker_filter_keeps_rate_and_silence_universe_wide(
+        self, session: Session, config: Any, universe_size: int
+    ) -> None:
+        """``--ticker`` scopes counts/coverage but rate + silence stay universe-wide.
+
+        A key the filtered ticker never fired — but the rest of the universe did —
+        must not be marked universe-wide silent, and its rate must reflect the
+        whole universe (structured trigger #2 is universe-wide, not per-ticker).
+        """
+        _seed_invocations(session, 3)
+        for i, ticker in enumerate(("MSFT", "GOOG", "MSFT")):
+            _add_anomaly_flag(
+                session,
+                invocation_id="inv-0",
+                timestamp=_NOW - timedelta(days=1, seconds=i),
+                entry_id=f"vol-{i}",
+                threshold_class="anomaly_detection",
+                threshold_key="volume_anomaly_sigma",
+                ticker=ticker,
+            )
+        session.commit()
+
+        report = compute_flag_rate_report(
+            session=session,
+            config=config,
+            universe_size=universe_size,
+            now=_NOW,
+            window_days=_WINDOW_DAYS,
+            ticker="AAPL",
+        )
+
+        volume = _find_key(report, "anomaly_detection", "volume_anomaly_sigma")
+        assert volume.flag_count == 0  # AAPL drill-in is empty
+        assert volume.coverage == 0
+        assert volume.silence is False  # universe fired it — not universe-wide silent
+        assert volume.rate == pytest.approx(3 / (universe_size * _WINDOW_DAYS))
+
 
 # ---------------------------------------------------------------------------
 # JSON output

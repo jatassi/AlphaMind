@@ -224,37 +224,42 @@ def _metrics_for_key(
     threshold_key: str,
     all_details: Sequence[DistillationAnomalyFlagDetail],
 ) -> ThresholdKeyMetrics:
-    """Compute one key's metrics, applying the ``--ticker`` filter.
+    """Compute one key's metrics.
+
+    ``rate`` and ``silence`` are universe-wide signals — they describe the whole
+    universe and are deliberately unaffected by ``--ticker`` (structured trigger
+    #2 is *universe-wide* silence, not per-ticker silence). ``--ticker`` scopes
+    only the drill-in observables ``flag_count``, ``coverage``, and the
+    calibration split (spec E restricts "counts and coverage" to the ticker).
 
     Market-wide-ness is decided from the full observed set (every flag carries
-    no ticker) so the ``--ticker`` filter never reclassifies a ticker-bearing
-    key — it only restricts that key's counts and coverage to the named ticker.
+    no ticker) so ``--ticker`` never reclassifies a ticker-bearing key.
     """
     is_market_wide = bool(all_details) and all(d.ticker is None for d in all_details)
+    universe_count = len(all_details)
 
     if is_market_wide or ctx.ticker is None:
-        counted: list[DistillationAnomalyFlagDetail] = list(all_details)
+        scoped: list[DistillationAnomalyFlagDetail] = list(all_details)
     else:
-        counted = [d for d in all_details if d.ticker == ctx.ticker]
+        scoped = [d for d in all_details if d.ticker == ctx.ticker]
 
-    flag_count = len(counted)
     if is_market_wide:
         coverage: int | None = None
-        rate = flag_count / ctx.invocation_count if ctx.invocation_count else 0.0
+        rate = universe_count / ctx.invocation_count if ctx.invocation_count else 0.0
     else:
-        coverage = len({d.ticker for d in counted if d.ticker is not None})
+        coverage = len({d.ticker for d in scoped if d.ticker is not None})
         denominator = ctx.universe_size * ctx.window_days
-        rate = flag_count / denominator if denominator else 0.0
+        rate = universe_count / denominator if denominator else 0.0
 
     return ThresholdKeyMetrics(
         threshold_key=threshold_key,
-        flag_count=flag_count,
+        flag_count=len(scoped),
         rate=rate,
-        calibration_split=_calibration_split(counted),
+        calibration_split=_calibration_split(scoped),
         coverage=coverage,
         is_market_wide=is_market_wide,
         configured_value=_configured_value(ctx.config, threshold_class, threshold_key),
-        silence=flag_count == 0 and ctx.invocation_count > 0,
+        silence=universe_count == 0 and ctx.invocation_count > 0,
     )
 
 
