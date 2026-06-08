@@ -2351,14 +2351,113 @@ class TestRunInvocationThesisResolution:
         assert row.output_artifact_ref is not None
         call_dir = Path(row.output_artifact_ref)
         expected_dir = (
-            provenance_root
-            / "invocations"
-            / _CLOSER_INV_ID
-            / "agent_calls"
-            / row.agent_call_id
+            provenance_root / "invocations" / _CLOSER_INV_ID / "agent_calls" / row.agent_call_id
         )
         assert call_dir == expected_dir
         assert (call_dir / "system_prompt.md").exists()
         assert (call_dir / "output_schema.json").exists()
         assert (call_dir / "tools_definition.json").exists()
         assert (call_dir / "output.json").exists()
+
+    async def test_no_provenance_root_writes_no_agent_calls_and_still_resolves(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """ALP-922 — with ``provenance_root=None`` (the in-process / test default
+        and a non-telemetry-wired invocation) the ``capture_agent_call`` no-op is
+        preserved: zero ``agent_calls`` rows, and the resolution still completes
+        (the thesis is RESOLVED). The evaluator path runs identically — only
+        capture is inert."""
+        import claude_agent_sdk
+
+        from alphamind.portfolio_state.events.activity_log import PositionExitMethod
+        from alphamind.scheduler import orchestrator as module
+        from alphamind.state.repository.agent_calls_queries import (
+            read_agent_calls_for_invocation,
+        )
+        from alphamind.state.tables.theses import ThesisRow
+
+        await _seed_closed_position_active_thesis(
+            async_factory, exit_method=PositionExitMethod.STOP_TRIGGERED
+        )
+        monkeypatch.setattr(claude_agent_sdk, "query", _thesis_resolved_sdk_stub("WRONG"))
+
+        await module._run_thesis_resolution_step(
+            session_factory=async_factory,
+            invocation_id=_CLOSER_INV_ID,
+            archive_root=archive_root,
+            progress=NOOP_PROGRESS_EMITTER,
+            now=_NOW,
+            underlying_prices={},
+            provenance_root=None,
+        )
+
+        async with async_factory() as session:
+            rows = await read_agent_calls_for_invocation(session, _CLOSER_INV_ID)
+            thesis_row = (
+                await session.execute(
+                    select(ThesisRow).where(ThesisRow.thesis_id == "thesis-res-1")
+                )
+            ).scalar_one()
+
+        assert rows == ()
+        assert thesis_row.status == "RESOLVED"
+
+    async def test_failing_telemetry_commit_does_not_abort_resolution(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        archive_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """ALP-922 — capture is best-effort: a failing telemetry-session commit
+        (injected at the DB boundary) is swallowed, so it neither aborts the
+        resolution nor changes the resolved outcome. The thesis still resolves
+        RESOLVED; only the agent_calls row is lost."""
+        import claude_agent_sdk
+        from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
+
+        from alphamind.portfolio_state.events.activity_log import PositionExitMethod
+        from alphamind.scheduler import orchestrator as module
+        from alphamind.state.tables.theses import ThesisRow
+
+        await _seed_closed_position_active_thesis(
+            async_factory, exit_method=PositionExitMethod.STOP_TRIGGERED
+        )
+        monkeypatch.setattr(claude_agent_sdk, "query", _thesis_resolved_sdk_stub("WRONG"))
+        provenance_root = tmp_path / "provenance"
+
+        # The telemetry session is the only one committed during phase 1 (the
+        # read session is read-only); fail its commit at the DB boundary.
+        real_commit = _AsyncSession.commit
+        commit_calls = {"n": 0}
+
+        async def _flaky_commit(self: _AsyncSession) -> None:
+            commit_calls["n"] += 1
+            if commit_calls["n"] == 1:
+                raise OperationalError("COMMIT", {}, Exception("telemetry commit boom"))
+            await real_commit(self)
+
+        monkeypatch.setattr(_AsyncSession, "commit", _flaky_commit)
+
+        # Must not raise — capture never breaks the call it observes.
+        await module._run_thesis_resolution_step(
+            session_factory=async_factory,
+            invocation_id=_CLOSER_INV_ID,
+            archive_root=archive_root,
+            progress=NOOP_PROGRESS_EMITTER,
+            now=_NOW,
+            underlying_prices={},
+            provenance_root=provenance_root,
+        )
+
+        assert commit_calls["n"] >= 1  # the telemetry commit was attempted
+        async with async_factory() as session:
+            thesis_row = (
+                await session.execute(
+                    select(ThesisRow).where(ThesisRow.thesis_id == "thesis-res-1")
+                )
+            ).scalar_one()
+        assert thesis_row.status == "RESOLVED"

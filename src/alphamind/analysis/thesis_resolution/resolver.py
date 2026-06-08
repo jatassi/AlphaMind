@@ -188,7 +188,7 @@ class _LLMEvalContext:
     provenance_root: Path | None
 
 
-async def prepare_closed_position_resolutions(
+async def prepare_closed_position_resolutions(  # noqa: PLR0913 — read session + the harness kwargs (config / now / prices / sdk_fn / archive / progress) the resolver threads to every evaluator call, now incl. the ALP-922 telemetry factory + provenance_root
     read_session: AsyncSession,
     *,
     invocation_id: str,
