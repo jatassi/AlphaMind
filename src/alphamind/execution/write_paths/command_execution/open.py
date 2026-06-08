@@ -9,6 +9,7 @@ from typing import Literal
 
 from alphamind._kernel.ids import (
     BracketId,
+    InvocationId,
     OrderId,
     PositionId,
     ThesisId,
@@ -206,6 +207,7 @@ async def _writeback_open(
         position_id=ids["position_id"],
         thesis=command.thesis,
         timestamp=timestamp,
+        invocation_id=handle.invocation_id,
     )
     # ALP-856 / FS4 — an options OPEN submits an always-on broker-enforced capital
     # floor alongside the entry. The floor is a tracked broker order with its OWN
@@ -759,6 +761,7 @@ def _build_active_thesis(
     position_id: str,
     thesis: Thesis,
     timestamp: datetime,
+    invocation_id: str | None = None,
 ) -> ThesisRecord:
     """Build an ACTIVE thesis from the canonical command's :class:`Thesis`.
 
@@ -856,6 +859,7 @@ def _build_active_thesis(
         resolution_category=None,
         resolution_pnl_usd=None,
         entry_fill_gap_usd=None,
+        invocation_id=None if invocation_id is None else InvocationId(invocation_id),
     )
 
 
