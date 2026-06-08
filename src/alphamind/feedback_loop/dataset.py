@@ -713,9 +713,7 @@ def _replay_version_ordinal(version: str) -> tuple[tuple[int, int | str], ...]:
     ``"fbl-verify-v1"``), not just clean ``vN``.
     """
     return tuple(
-        (0, int(run)) if run.isdigit() else (1, run)
-        for run in re.split(r"(\d+)", version)
-        if run
+        (0, int(run)) if run.isdigit() else (1, run) for run in re.split(r"(\d+)", version) if run
     )
 
 

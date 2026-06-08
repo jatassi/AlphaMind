@@ -1616,13 +1616,6 @@ async def test_get_thesis_quality_aggregates_zero_theses_returns_zeroed_shape(
     }
     for entry in result.resolution_counts_by_window:
         assert entry.total_resolutions == 0
-    assert result.signal_hit_rates == ()
-    # The 5 deferred cross-layer fields stay empty (ALP-906).
-    assert result.performance_attribution == ()
-    assert result.alpha_beta_decomposition_by_window == ()
-    assert result.conviction_calibration == ()
-    assert result.conviction_sizing_deviation_by_window == ()
-    assert result.signal_to_thesis_conversions == ()
 
 
 async def test_get_thesis_quality_aggregates_populates_from_resolved_theses(
@@ -1652,12 +1645,6 @@ async def test_get_thesis_quality_aggregates_populates_from_resolved_theses(
     assert inception.validated == 1
     five = result.counts_for(TrailingWindow.FIVE_DAYS)
     assert five is not None and five.total_resolutions == 1
-    # Signal hit rate derives from the entry component's key assumption
-    # ("Earnings beat") — cited but unscored (outcome None) at write time.
-    cited = result.signal_hit_rate("Earnings beat", TrailingWindow.INCEPTION)
-    assert cited is not None
-    assert cited.cited_count == 1
-    assert cited.validated_count == 0
 
 
 async def test_get_thesis_quality_aggregates_uses_passed_now_as_window_clock(

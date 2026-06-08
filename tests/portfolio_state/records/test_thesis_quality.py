@@ -9,20 +9,11 @@ from typing import Any
 import pytest
 
 from alphamind.portfolio_state.aggregates.thesis_quality import (
-    AlphaBetaDecomposition,
-    AttributionDimension,
-    ConvictionCalibrationEntry,
-    ConvictionSizingDeviation,
     InvalidationTimingClass,
     InvalidationTimingStat,
-    PerformanceAttributionEntry,
-    RegimeLabel,
     ResolutionWindowCounts,
-    SignalHitRate,
-    SignalToThesisConversion,
     ThesisDurationStat,
     ThesisQualityAggregate,
-    ThesisType,
     TrailingWindow,
 )
 
@@ -44,25 +35,6 @@ class TestTrailingWindow:
         assert len(TrailingWindow) == 3
 
 
-class TestThesisType:
-    def test_members(self) -> None:
-        assert {m.name for m in ThesisType} == {
-            "EVENT_DRIVEN",
-            "MEAN_REVERSION",
-            "MOMENTUM",
-            "CROSS_ASSET_DIVERGENCE",
-        }
-
-    def test_string_values(self) -> None:
-        assert ThesisType.EVENT_DRIVEN == "EVENT_DRIVEN"
-        assert ThesisType.MEAN_REVERSION == "MEAN_REVERSION"
-        assert ThesisType.MOMENTUM == "MOMENTUM"
-        assert ThesisType.CROSS_ASSET_DIVERGENCE == "CROSS_ASSET_DIVERGENCE"
-
-    def test_exact_count(self) -> None:
-        assert len(ThesisType) == 4
-
-
 class TestInvalidationTimingClass:
     def test_members(self) -> None:
         assert {m.name for m in InvalidationTimingClass} == {"EARLY", "ON_TIME", "LATE"}
@@ -74,19 +46,6 @@ class TestInvalidationTimingClass:
 
     def test_exact_count(self) -> None:
         assert len(InvalidationTimingClass) == 3
-
-
-class TestAttributionDimension:
-    def test_members(self) -> None:
-        assert {m.name for m in AttributionDimension} == {"SECTOR", "THESIS_TYPE", "REGIME"}
-
-    def test_string_values(self) -> None:
-        assert AttributionDimension.SECTOR == "SECTOR"
-        assert AttributionDimension.THESIS_TYPE == "THESIS_TYPE"
-        assert AttributionDimension.REGIME == "REGIME"
-
-    def test_exact_count(self) -> None:
-        assert len(AttributionDimension) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -254,279 +213,6 @@ class TestInvalidationTimingStat:
 
 
 # ---------------------------------------------------------------------------
-# SignalHitRate
-# ---------------------------------------------------------------------------
-
-
-class TestSignalHitRate:
-    def test_valid_construction(self) -> None:
-        obj = SignalHitRate(
-            signal_type="unusual_options_activity",
-            window=TrailingWindow.FIVE_DAYS,
-            cited_count=10,
-            validated_count=7,
-        )
-        assert obj.signal_type == "unusual_options_activity"
-
-    def test_hit_rate_nonzero(self) -> None:
-        obj = SignalHitRate(
-            signal_type="earnings_revisions",
-            window=TrailingWindow.TWENTY_DAYS,
-            cited_count=4,
-            validated_count=3,
-        )
-        assert obj.hit_rate == pytest.approx(3 / 4)
-
-    def test_hit_rate_zero_cited(self) -> None:
-        obj = SignalHitRate(
-            signal_type="earnings_revisions",
-            window=TrailingWindow.TWENTY_DAYS,
-            cited_count=0,
-            validated_count=0,
-        )
-        assert obj.hit_rate is None
-
-    def test_validated_count_greater_than_cited_permitted(self) -> None:
-        # No constraint — counts track different slices across windows
-        obj = SignalHitRate(
-            signal_type="x", window=TrailingWindow.INCEPTION, cited_count=3, validated_count=5
-        )
-        assert obj.hit_rate == pytest.approx(5 / 3)
-
-
-# ---------------------------------------------------------------------------
-# SignalToThesisConversion
-# ---------------------------------------------------------------------------
-
-
-class TestSignalToThesisConversion:
-    def test_valid_construction(self) -> None:
-        obj = SignalToThesisConversion(
-            signal_type="prediction_market_shift",
-            window=TrailingWindow.FIVE_DAYS,
-            signal_observed_count=8,
-            pm_approved_count=3,
-        )
-        assert obj.conversion_rate == pytest.approx(3 / 8)
-
-    def test_conversion_rate_zero_denominator(self) -> None:
-        obj = SignalToThesisConversion(
-            signal_type="prediction_market_shift",
-            window=TrailingWindow.FIVE_DAYS,
-            signal_observed_count=0,
-            pm_approved_count=0,
-        )
-        assert obj.conversion_rate is None
-
-
-# ---------------------------------------------------------------------------
-# ConvictionCalibrationEntry
-# ---------------------------------------------------------------------------
-
-
-class TestConvictionCalibrationEntry:
-    def test_valid_construction(self) -> None:
-        obj = ConvictionCalibrationEntry(
-            conviction_level=3,
-            window=TrailingWindow.FIVE_DAYS,
-            count=5,
-            validation_rate=0.6,
-            mean_realized_pnl_pct=2.5,
-        )
-        assert obj.conviction_level == 3
-
-    def test_conviction_level_zero_raises(self) -> None:
-        with pytest.raises((ValueError, TypeError)):
-            ConvictionCalibrationEntry(
-                conviction_level=0,
-                window=TrailingWindow.FIVE_DAYS,
-                count=5,
-                validation_rate=0.6,
-                mean_realized_pnl_pct=None,
-            )
-
-    def test_conviction_level_six_raises(self) -> None:
-        with pytest.raises((ValueError, TypeError)):
-            ConvictionCalibrationEntry(
-                conviction_level=6,
-                window=TrailingWindow.FIVE_DAYS,
-                count=5,
-                validation_rate=0.6,
-                mean_realized_pnl_pct=None,
-            )
-
-    def test_non_finite_validation_rate_raises(self) -> None:
-        with pytest.raises((ValueError, TypeError)):
-            ConvictionCalibrationEntry(
-                conviction_level=3,
-                window=TrailingWindow.FIVE_DAYS,
-                count=5,
-                validation_rate=float("inf"),
-                mean_realized_pnl_pct=None,
-            )
-
-    def test_none_validation_rate_when_count_zero(self) -> None:
-        obj = ConvictionCalibrationEntry(
-            conviction_level=1,
-            window=TrailingWindow.FIVE_DAYS,
-            count=0,
-            validation_rate=None,
-            mean_realized_pnl_pct=None,
-        )
-        assert obj.validation_rate is None
-
-
-# ---------------------------------------------------------------------------
-# ConvictionSizingDeviation
-# ---------------------------------------------------------------------------
-
-
-class TestConvictionSizingDeviation:
-    def _valid(self, **overrides: object) -> dict[str, Any]:
-        base: dict[str, Any] = {
-            "window": TrailingWindow.FIVE_DAYS,
-            "total_proposals": 10,
-            "pm_sized_above_advisory_count": 3,
-            "pm_sized_below_advisory_count": 2,
-            "pm_sized_within_advisory_count": 5,
-            "outcome_correlation_above": 1.5,
-            "outcome_correlation_below": -0.5,
-        }
-        base.update(overrides)
-        return base
-
-    def test_valid_construction(self) -> None:
-        obj = ConvictionSizingDeviation(**self._valid())
-        assert obj.total_proposals == 10
-
-    def test_deviation_rate_nonzero(self) -> None:
-        obj = ConvictionSizingDeviation(**self._valid())
-        assert obj.deviation_rate == pytest.approx((3 + 2) / 10)
-
-    def test_deviation_rate_zero_denominator(self) -> None:
-        obj = ConvictionSizingDeviation(
-            **self._valid(
-                total_proposals=0,
-                pm_sized_above_advisory_count=0,
-                pm_sized_below_advisory_count=0,
-                pm_sized_within_advisory_count=0,
-            )
-        )
-        assert obj.deviation_rate is None
-
-    def test_conservation_violation_raises(self) -> None:
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
-            ConvictionSizingDeviation(**self._valid(pm_sized_above_advisory_count=4))
-
-    def test_finite_outcome_correlation_accepted(self) -> None:
-        obj = ConvictionSizingDeviation(**self._valid(outcome_correlation_above=0.5))
-        assert obj.outcome_correlation_above == pytest.approx(0.5)
-
-    def test_none_outcome_correlation_accepted(self) -> None:
-        obj = ConvictionSizingDeviation(
-            **self._valid(outcome_correlation_above=None, outcome_correlation_below=None)
-        )
-        assert obj.outcome_correlation_above is None
-
-
-# ---------------------------------------------------------------------------
-# PerformanceAttributionEntry
-# ---------------------------------------------------------------------------
-
-
-class TestPerformanceAttributionEntry:
-    def test_valid_sector_dimension(self) -> None:
-        obj = PerformanceAttributionEntry(
-            dimension=AttributionDimension.SECTOR,
-            key="Technology",
-            window=TrailingWindow.FIVE_DAYS,
-            cumulative_realized_pnl_usd=1500.0,
-            realized_pnl_pct_of_window_capital=2.5,
-            count=3,
-        )
-        assert obj.dimension == AttributionDimension.SECTOR
-
-    def test_valid_thesis_type_dimension(self) -> None:
-        obj = PerformanceAttributionEntry(
-            dimension=AttributionDimension.THESIS_TYPE,
-            key=ThesisType.MOMENTUM,
-            window=TrailingWindow.TWENTY_DAYS,
-            cumulative_realized_pnl_usd=-200.0,
-            realized_pnl_pct_of_window_capital=None,
-            count=1,
-        )
-        assert obj.key == "MOMENTUM"
-
-    def test_valid_regime_dimension(self) -> None:
-        obj = PerformanceAttributionEntry(
-            dimension=AttributionDimension.REGIME,
-            key=RegimeLabel.CRISIS,
-            window=TrailingWindow.INCEPTION,
-            cumulative_realized_pnl_usd=300.0,
-            realized_pnl_pct_of_window_capital=None,
-            count=2,
-        )
-        assert obj.key == "CRISIS"
-
-    def test_non_finite_pnl_usd_raises(self) -> None:
-        with pytest.raises((ValueError, TypeError)):
-            PerformanceAttributionEntry(
-                dimension=AttributionDimension.SECTOR,
-                key="Energy",
-                window=TrailingWindow.FIVE_DAYS,
-                cumulative_realized_pnl_usd=float("nan"),
-                realized_pnl_pct_of_window_capital=None,
-                count=0,
-            )
-
-
-# ---------------------------------------------------------------------------
-# AlphaBetaDecomposition
-# ---------------------------------------------------------------------------
-
-
-class TestAlphaBetaDecomposition:
-    def _valid(self, **overrides: object) -> dict[str, Any]:
-        base: dict[str, Any] = {
-            "window": TrailingWindow.FIVE_DAYS,
-            "total_realized_pnl_usd": 1000.0,
-            "market_component_usd": 400.0,
-            "sector_component_usd": 200.0,
-            "alpha_component_usd": 400.0,
-        }
-        base.update(overrides)
-        return base
-
-    def test_valid_construction(self) -> None:
-        obj = AlphaBetaDecomposition(**self._valid())
-        assert obj.total_realized_pnl_usd == pytest.approx(1000.0)
-
-    def test_attribution_ratio_nonzero(self) -> None:
-        obj = AlphaBetaDecomposition(**self._valid())
-        assert obj.attribution_ratio == pytest.approx(400.0 / 1000.0)
-
-    def test_attribution_ratio_zero_total(self) -> None:
-        obj = AlphaBetaDecomposition(
-            **self._valid(
-                total_realized_pnl_usd=0.0,
-                market_component_usd=0.0,
-                sector_component_usd=0.0,
-                alpha_component_usd=0.0,
-            )
-        )
-        assert obj.attribution_ratio is None
-
-    def test_attribution_ratio_negative_alpha(self) -> None:
-        obj = AlphaBetaDecomposition(**self._valid(alpha_component_usd=-200.0))
-        assert obj.attribution_ratio is not None
-        assert obj.attribution_ratio < 0
-
-    def test_non_finite_component_raises(self) -> None:
-        with pytest.raises((FrozenInstanceError, ValueError, TypeError)):
-            AlphaBetaDecomposition(**self._valid(alpha_component_usd=float("inf")))
-
-
-# ---------------------------------------------------------------------------
 # ThesisQualityAggregate
 # ---------------------------------------------------------------------------
 
@@ -568,28 +254,6 @@ def _make_invalidation_stat(window: TrailingWindow) -> InvalidationTimingStat:
     )
 
 
-def _make_sizing_deviation(window: TrailingWindow) -> ConvictionSizingDeviation:
-    return ConvictionSizingDeviation(
-        window=window,
-        total_proposals=4,
-        pm_sized_above_advisory_count=1,
-        pm_sized_below_advisory_count=1,
-        pm_sized_within_advisory_count=2,
-        outcome_correlation_above=None,
-        outcome_correlation_below=None,
-    )
-
-
-def _make_alpha_beta(window: TrailingWindow) -> AlphaBetaDecomposition:
-    return AlphaBetaDecomposition(
-        window=window,
-        total_realized_pnl_usd=500.0,
-        market_component_usd=200.0,
-        sector_component_usd=100.0,
-        alpha_component_usd=200.0,
-    )
-
-
 def _make_full_aggregate() -> ThesisQualityAggregate:
     """Build a minimal but complete aggregate."""
     w5 = TrailingWindow.FIVE_DAYS
@@ -613,82 +277,6 @@ def _make_full_aggregate() -> ThesisQualityAggregate:
             _make_invalidation_stat(w20),
             _make_invalidation_stat(wi),
         ),
-        signal_hit_rates=(
-            SignalHitRate(
-                signal_type="options_activity", window=w5, cited_count=4, validated_count=3
-            ),
-            SignalHitRate(
-                signal_type="earnings_revisions", window=w5, cited_count=2, validated_count=1
-            ),
-            SignalHitRate(
-                signal_type="options_activity", window=w20, cited_count=8, validated_count=5
-            ),
-        ),
-        signal_to_thesis_conversions=(
-            SignalToThesisConversion(
-                signal_type="options_activity",
-                window=w5,
-                signal_observed_count=6,
-                pm_approved_count=4,
-            ),
-            SignalToThesisConversion(
-                signal_type="earnings_revisions",
-                window=w5,
-                signal_observed_count=3,
-                pm_approved_count=2,
-            ),
-        ),
-        conviction_calibration=(
-            ConvictionCalibrationEntry(
-                conviction_level=3,
-                window=w5,
-                count=4,
-                validation_rate=0.75,
-                mean_realized_pnl_pct=1.5,
-            ),
-            ConvictionCalibrationEntry(
-                conviction_level=5,
-                window=w5,
-                count=2,
-                validation_rate=1.0,
-                mean_realized_pnl_pct=3.0,
-            ),
-            ConvictionCalibrationEntry(
-                conviction_level=3,
-                window=w20,
-                count=7,
-                validation_rate=0.6,
-                mean_realized_pnl_pct=1.0,
-            ),
-        ),
-        conviction_sizing_deviation_by_window=(
-            _make_sizing_deviation(w5),
-            _make_sizing_deviation(w20),
-            _make_sizing_deviation(wi),
-        ),
-        performance_attribution=(
-            PerformanceAttributionEntry(
-                dimension=AttributionDimension.SECTOR,
-                key="Technology",
-                window=w5,
-                cumulative_realized_pnl_usd=500.0,
-                realized_pnl_pct_of_window_capital=1.5,
-                count=3,
-            ),
-            PerformanceAttributionEntry(
-                dimension=AttributionDimension.THESIS_TYPE,
-                key="MOMENTUM",
-                window=w5,
-                cumulative_realized_pnl_usd=200.0,
-                realized_pnl_pct_of_window_capital=None,
-                count=1,
-            ),
-        ),
-        alpha_beta_decomposition_by_window=(
-            _make_alpha_beta(w5),
-            _make_alpha_beta(w20),
-            _make_alpha_beta(wi),
-        ),
     )
 
 
@@ -711,37 +299,8 @@ class TestThesisQualityAggregate:
             resolution_counts_by_window=(_make_resolution_counts(TrailingWindow.FIVE_DAYS),),
             duration_stats_by_window=(),
             invalidation_timing_stats_by_window=(),
-            signal_hit_rates=(),
-            signal_to_thesis_conversions=(),
-            conviction_calibration=(),
-            conviction_sizing_deviation_by_window=(),
-            performance_attribution=(),
-            alpha_beta_decomposition_by_window=(),
         )
         assert agg.counts_for(TrailingWindow.INCEPTION) is None
-
-    def test_signal_hit_rate_existing(self) -> None:
-        agg = _make_full_aggregate()
-        result = agg.signal_hit_rate("options_activity", TrailingWindow.FIVE_DAYS)
-        assert result is not None
-        assert result.signal_type == "options_activity"
-        assert result.window == TrailingWindow.FIVE_DAYS
-
-    def test_signal_hit_rate_absent(self) -> None:
-        agg = _make_full_aggregate()
-        assert agg.signal_hit_rate("nonexistent", TrailingWindow.FIVE_DAYS) is None
-
-    def test_conviction_entries_for_existing_window(self) -> None:
-        agg = _make_full_aggregate()
-        entries = agg.conviction_entries_for(TrailingWindow.FIVE_DAYS)
-        assert len(entries) == 2
-        levels = {e.conviction_level for e in entries}
-        assert levels == {3, 5}
-
-    def test_conviction_entries_for_absent_window(self) -> None:
-        agg = _make_full_aggregate()
-        entries = agg.conviction_entries_for(TrailingWindow.INCEPTION)
-        assert entries == ()
 
     def test_naive_timestamp_raises(self) -> None:
         with pytest.raises((ValueError, TypeError)):
@@ -750,12 +309,6 @@ class TestThesisQualityAggregate:
                 resolution_counts_by_window=(),
                 duration_stats_by_window=(),
                 invalidation_timing_stats_by_window=(),
-                signal_hit_rates=(),
-                signal_to_thesis_conversions=(),
-                conviction_calibration=(),
-                conviction_sizing_deviation_by_window=(),
-                performance_attribution=(),
-                alpha_beta_decomposition_by_window=(),
             )
 
     def test_duplicate_window_in_resolution_counts_raises(self) -> None:
@@ -768,100 +321,4 @@ class TestThesisQualityAggregate:
                 ),
                 duration_stats_by_window=(),
                 invalidation_timing_stats_by_window=(),
-                signal_hit_rates=(),
-                signal_to_thesis_conversions=(),
-                conviction_calibration=(),
-                conviction_sizing_deviation_by_window=(),
-                performance_attribution=(),
-                alpha_beta_decomposition_by_window=(),
-            )
-
-    def test_duplicate_signal_type_window_in_signal_hit_rates_raises(self) -> None:
-        with pytest.raises((ValueError, TypeError)):
-            ThesisQualityAggregate(
-                as_of_timestamp=_TS_AWARE,
-                resolution_counts_by_window=(),
-                duration_stats_by_window=(),
-                invalidation_timing_stats_by_window=(),
-                signal_hit_rates=(
-                    SignalHitRate(
-                        signal_type="x",
-                        window=TrailingWindow.FIVE_DAYS,
-                        cited_count=1,
-                        validated_count=1,
-                    ),
-                    SignalHitRate(
-                        signal_type="x",
-                        window=TrailingWindow.FIVE_DAYS,
-                        cited_count=2,
-                        validated_count=2,
-                    ),
-                ),
-                signal_to_thesis_conversions=(),
-                conviction_calibration=(),
-                conviction_sizing_deviation_by_window=(),
-                performance_attribution=(),
-                alpha_beta_decomposition_by_window=(),
-            )
-
-    def test_duplicate_conviction_level_window_raises(self) -> None:
-        with pytest.raises((ValueError, TypeError)):
-            ThesisQualityAggregate(
-                as_of_timestamp=_TS_AWARE,
-                resolution_counts_by_window=(),
-                duration_stats_by_window=(),
-                invalidation_timing_stats_by_window=(),
-                signal_hit_rates=(),
-                signal_to_thesis_conversions=(),
-                conviction_calibration=(
-                    ConvictionCalibrationEntry(
-                        conviction_level=3,
-                        window=TrailingWindow.FIVE_DAYS,
-                        count=0,
-                        validation_rate=None,
-                        mean_realized_pnl_pct=None,
-                    ),
-                    ConvictionCalibrationEntry(
-                        conviction_level=3,
-                        window=TrailingWindow.FIVE_DAYS,
-                        count=0,
-                        validation_rate=None,
-                        mean_realized_pnl_pct=None,
-                    ),
-                ),
-                conviction_sizing_deviation_by_window=(),
-                performance_attribution=(),
-                alpha_beta_decomposition_by_window=(),
-            )
-
-    def test_duplicate_dimension_key_window_in_performance_attribution_raises(self) -> None:
-        with pytest.raises((ValueError, TypeError)):
-            ThesisQualityAggregate(
-                as_of_timestamp=_TS_AWARE,
-                resolution_counts_by_window=(),
-                duration_stats_by_window=(),
-                invalidation_timing_stats_by_window=(),
-                signal_hit_rates=(),
-                signal_to_thesis_conversions=(),
-                conviction_calibration=(),
-                conviction_sizing_deviation_by_window=(),
-                performance_attribution=(
-                    PerformanceAttributionEntry(
-                        dimension=AttributionDimension.SECTOR,
-                        key="Tech",
-                        window=TrailingWindow.FIVE_DAYS,
-                        cumulative_realized_pnl_usd=100.0,
-                        realized_pnl_pct_of_window_capital=None,
-                        count=1,
-                    ),
-                    PerformanceAttributionEntry(
-                        dimension=AttributionDimension.SECTOR,
-                        key="Tech",
-                        window=TrailingWindow.FIVE_DAYS,
-                        cumulative_realized_pnl_usd=200.0,
-                        realized_pnl_pct_of_window_capital=None,
-                        count=2,
-                    ),
-                ),
-                alpha_beta_decomposition_by_window=(),
             )
