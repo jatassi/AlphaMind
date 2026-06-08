@@ -71,6 +71,11 @@ from alphamind.state.repository.validation_queries import (
     read_pending_validations,
     read_validations_superseded_in_window,
 )
+from alphamind.state.tables.counterfactual_replays import (
+    Confidence,
+    ReplayKind,
+    ReplayStatus,
+)
 from alphamind.state.tables.theses import ThesisRow
 from alphamind.state.tables.thesis_components import ThesisComponentRow
 
@@ -122,14 +127,53 @@ class RefsBundle:
 
 
 @dataclass(frozen=True, slots=True)
-class ReplaysBundle:
-    """Counterfactual-replay records for the window (story 06e fills this).
+class ReplayObservation:
+    """One counterfactual replay joined to its originating PM envelope (story 06e).
 
-    Pre-declared empty and gated on ALP-129; the PM-accuracy / modification-
-    effectiveness metrics read it. Absent until 06e wires the loader hook.
+    The flat join the PM-accuracy cores read — a counterfactual
+    :class:`~alphamind.state.tables.counterfactual_replays.CounterfactualReplayRecord`
+    paired with the facts of the PM decision it descends from, so the pure cores
+    never re-walk the activity log. Mirrors :class:`ThesisOutcome`: the loader
+    flattens the join once and the cores compute over the flat observation.
+
+    * ``counterfactual_pnl`` — the replay's hypothetical realized P/L (``None`` when
+      the replay did not enter), in dollars; ``Money`` is decoded to ``float`` at the
+      loader boundary so the pure cores stay arithmetic.
+    * ``actual_modified_pnl`` — for a ``modification_original_form`` replay, the
+      realized P/L of the *actual* modified-form trade the PM approved (the resolved
+      thesis on the originating position), or ``None`` when that trade has not yet
+      resolved. ``None`` for ``rejection`` replays (the rejected trade was never taken).
+    * ``is_sizing_modification`` — whether the PM modification was a sizing-down
+      (``risk_reduction`` adjustment category) — the sizing-effectiveness subset.
+    * ``anti_patterns`` — the canonical anti-pattern names the PM tagged on this
+      envelope. Always empty until the anti-pattern persistence join lands (the
+      ``pm_decision`` activity-log detail does not yet carry ``anti_patterns_identified``
+      — see ALP-887 report / ALP-906), so anti-pattern detector accuracy reads empty in
+      production and is exercised by fixtures; fixtures populate it directly.
     """
 
-    replays: tuple[object, ...] = ()
+    envelope_id: str
+    replay_kind: ReplayKind
+    replay_status: ReplayStatus
+    confidence: Confidence | None
+    counterfactual_pnl: float | None
+    actual_modified_pnl: float | None = None
+    is_sizing_modification: bool = False
+    anti_patterns: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ReplaysBundle:
+    """Counterfactual-replay observations for the window (story 06e fills this).
+
+    Gated on ALP-129; the PM-accuracy / modification-effectiveness metrics read it.
+    The loader filters to a single ``replay_engine_version`` before stamping these
+    (aggregated metrics never mix versions — ALP-129 pre-resolved (B)) and carries
+    low-confidence / unevaluable replays too — the cores exclude them from aggregated
+    values but the bundle still loads them, per the engine's confidence rule.
+    """
+
+    replays: tuple[ReplayObservation, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -806,6 +850,7 @@ __all__ = [
     "OutcomesBundle",
     "RefsBundle",
     "RegimeBundle",
+    "ReplayObservation",
     "ReplaysBundle",
     "ThesisOutcome",
     "WindowDataset",
