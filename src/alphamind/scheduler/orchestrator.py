@@ -294,6 +294,23 @@ def _load_base_profile_rule_values(config_dir: Path) -> dict[str, float]:
 # ---------------------------------------------------------------------------
 
 
+async def _bind_invocation_row(handle: InvocationHandle, *, phase_label: str) -> InvocationRow:
+    """Fetch the bound invocation row or raise — the shared get-row-or-raise shape.
+
+    ``insert_invocation_record`` commits the row before any phase update opens, so a
+    missing row is an invariant breach, not an expected absence; *phase_label* names
+    the phase for the ``RuntimeError`` message.
+    """
+    row = await handle.session.get(InvocationRow, handle.invocation_id)
+    if row is None:
+        msg = (
+            f"invocations row {handle.invocation_id!r} disappeared mid-{phase_label} update; "
+            "insert_invocation_record should have committed it before this phase opened"
+        )
+        raise RuntimeError(msg)
+    return row
+
+
 async def _update_row_fill_collection(
     handle: InvocationHandle,
     *,
@@ -301,13 +318,7 @@ async def _update_row_fill_collection(
     staleness_flag: bool,
 ) -> None:
     """Persist fill-collection outcomes onto the bound invocation row."""
-    row = await handle.session.get(InvocationRow, handle.invocation_id)
-    if row is None:
-        msg = (
-            f"invocations row {handle.invocation_id!r} disappeared mid-fill-collection update; "
-            "insert_invocation_record should have committed it before this phase opened"
-        )
-        raise RuntimeError(msg)
+    row = await _bind_invocation_row(handle, phase_label="fill-collection")
     row.fill_collection_summary_json = json.dumps(
         {
             "fills_processed": fill_collection_summary.fills_processed,
@@ -326,13 +337,7 @@ async def _update_row_command_execution(
     command_execution_summary: CommandExecutionSummary,
 ) -> None:
     """Persist command execution outcomes onto the bound invocation row."""
-    row = await handle.session.get(InvocationRow, handle.invocation_id)
-    if row is None:
-        msg = (
-            f"invocations row {handle.invocation_id!r} disappeared mid-command-execution update; "
-            "insert_invocation_record should have committed it before this phase opened"
-        )
-        raise RuntimeError(msg)
+    row = await _bind_invocation_row(handle, phase_label="command-execution")
     row.command_execution_summary_json = json.dumps(
         {
             "commands_submitted": command_execution_summary.commands_submitted,
@@ -442,6 +447,24 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     }
 
 
+def _debug_e2e_source_factory(
+    context: RunInvocationContext,
+    select: Callable[[Any], Any],
+) -> Any:
+    """Shared ``(venue, mode) -> source`` factory derived from ``context.debug_e2e``.
+
+    Returns ``None`` on the production daemon path so the caller falls back to its
+    inline Alpaca-backed default; on a debug-e2e run, returns a ``(venue, mode)``
+    closure yielding ``select(debug_settings)`` — the bundle's log-only stand-in for
+    that source — so the harness stays offline and deterministic (story ALP-501). The
+    four ``*_from_debug_e2e`` factories below differ only in *select*.
+    """
+    debug_settings = context.debug_e2e
+    if debug_settings is None:
+        return None
+    return lambda _venue, _mode: select(debug_settings)
+
+
 def _account_queries_factory_from_debug_e2e(
     context: RunInvocationContext,
 ) -> Any:
@@ -452,10 +475,7 @@ def _account_queries_factory_from_debug_e2e(
     default. Returns a closure over the bundle's log-only queries when
     debug-e2e is active (story ALP-501).
     """
-    debug_settings = context.debug_e2e
-    if debug_settings is None:
-        return None
-    return lambda _venue, _mode: debug_settings.account_queries
+    return _debug_e2e_source_factory(context, lambda settings: settings.account_queries)
 
 
 def _ca_queries_factory_from_debug_e2e(
@@ -466,10 +486,7 @@ def _ca_queries_factory_from_debug_e2e(
     Mirrors :func:`_account_queries_factory_from_debug_e2e`; ``None`` on
     the production path, the bundle's log-only queries on debug-e2e.
     """
-    debug_settings = context.debug_e2e
-    if debug_settings is None:
-        return None
-    return lambda _venue, _mode: debug_settings.ca_queries
+    return _debug_e2e_source_factory(context, lambda settings: settings.ca_queries)
 
 
 def _activities_source_factory_from_debug_e2e(
@@ -484,10 +501,7 @@ def _activities_source_factory_from_debug_e2e(
     ``get_account_activities`` yields nothing — the synthetic portfolio carries
     no option-lifecycle events.
     """
-    debug_settings = context.debug_e2e
-    if debug_settings is None:
-        return None
-    return lambda _venue, _mode: debug_settings.account_queries
+    return _debug_e2e_source_factory(context, lambda settings: settings.account_queries)
 
 
 def _quote_source_factory_from_debug_e2e(
@@ -502,10 +516,7 @@ def _quote_source_factory_from_debug_e2e(
     Alpaca quote request for the whole active universe — breaking the harness's
     offline, deterministic contract.
     """
-    debug_settings = context.debug_e2e
-    if debug_settings is None:
-        return None
-    return lambda _venue, _mode: debug_settings.quote_source
+    return _debug_e2e_source_factory(context, lambda settings: settings.quote_source)
 
 
 def _price_provider_from_fill_collection(
@@ -1300,11 +1311,7 @@ def _resolve_last_invocation_time(
     raw = session.execute(stmt).scalar_one_or_none()
     if raw is None:
         return now - _LAST_INVOCATION_FALLBACK
-    text = raw.replace("Z", "+00:00") if raw.endswith("Z") else raw
-    parsed = datetime.fromisoformat(text)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed
+    return _parse_invocation_timestamp(raw)
 
 
 async def _run_analysis(  # noqa: PLR0913 — composition surface threads orchestrator state into the analysis pipeline; the alternative (a kwargs dict) loses the typed signature.
