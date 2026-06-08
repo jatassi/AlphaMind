@@ -28,9 +28,10 @@ from alphamind.portfolio_state.computations.activity_log import (
 )
 from alphamind.portfolio_state.events.activity_log import ActivityLogEntry, EventType
 from alphamind.portfolio_state.events.configuration import ProfileSwitchedDetail
-from alphamind.portfolio_state.events.types import EventGroup, EventSource
+from alphamind.portfolio_state.events.types import EventSource
 from alphamind.state.invocation_context.activity_log import (
     append_activity_log_entry,
+    emit_activity_log_entry,
 )
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
@@ -169,17 +170,13 @@ def emit_profile_switch_entry(
         new_profile=outcome.new_profile,
         is_no_op=outcome.is_no_op,
     )
-    entry_id = f"{handle.invocation_id}-{EventType.PROFILE_SWITCHED.value}-{uuid.uuid4().hex}"
-    entry = ActivityLogEntry(
-        entry_id=entry_id,
-        invocation_id=handle.invocation_id,
-        timestamp=now if now is not None else datetime.now(UTC),
+    emit_activity_log_entry(
+        handle,
         event_type=EventType.PROFILE_SWITCHED,
-        event_group=EventGroup.CONFIGURATION,
         position_id=None,
         order_id=None,
         thesis_id=None,
-        source=EventSource.OPERATOR_CONSOLE,
+        timestamp=now if now is not None else datetime.now(UTC),
         detail=detail,
+        source=EventSource.OPERATOR_CONSOLE,
     )
-    append_activity_log_entry(handle, entry)
