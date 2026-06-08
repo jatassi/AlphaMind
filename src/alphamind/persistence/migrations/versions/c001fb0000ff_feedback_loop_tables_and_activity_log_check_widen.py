@@ -51,6 +51,12 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+from alphamind.persistence.migrations._check_rebuild import (
+    check_in,
+    persisted_check_has_member,
+    rebuild_check,
+)
+
 # revision identifiers, used by Alembic.
 revision: str = "c001fb0000ff"
 down_revision: str | Sequence[str] | None = "b001fc0000ee"
@@ -168,39 +174,25 @@ _ACTIVITY_LOG_NEW_MEMBER = "DISTILLATION_ANOMALY_FLAG"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _check_in(column: str, values: tuple[str, ...]) -> str:
-    rendered = ", ".join(repr(v) for v in values)
-    return f"{column} IN ({rendered})"
-
-
-def _persisted_check_has_member(bind: sa.engine.Connection, table: str, member: str) -> bool:
-    """True if *table*'s persisted DDL already lists *member* in a CHECK constraint."""
-    sql = bind.execute(
-        sa.text("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = :name"),
-        {"name": table},
-    ).scalar_one_or_none()
-    return sql is not None and repr(member) in sql
+#
+# The CHECK-rebuild mechanics (``check_in`` / ``persisted_check_has_member`` /
+# ``rebuild_check``) live in the shared ``migrations._check_rebuild`` module; the
+# frozen vocabulary tuples above stay local to this revision (the CHECK-vocab trap).
 
 
 def _rebuild_activity_log_event_type_check(values: tuple[str, ...]) -> None:
     """Rebuild the activity_log table to reset the event_type CHECK vocabulary.
 
-    SQLite cannot ALTER a CHECK in place -- a table rebuild via
-    ``batch_alter_table(recreate="always")`` is the only path. The rebuild
-    drops the named CHECK and adds it back over *values*.
-
-    Migrations run with ``PRAGMA foreign_keys=OFF`` (see the alembic env), so
-    the intermediate ``DROP TABLE`` does not trip the incoming FKs on
+    Routes the shared :func:`rebuild_check` mechanics over this migration's frozen
+    *values*. Migrations run with ``PRAGMA foreign_keys=OFF`` (see the alembic env),
+    so the intermediate ``DROP TABLE`` does not trip the incoming FKs on
     ``positions``, ``orders``, ``theses``, and ``invocations``.
     """
-    with op.batch_alter_table(_ACTIVITY_LOG_TABLE, recreate="always") as batch_op:
-        batch_op.drop_constraint(_ACTIVITY_LOG_EVENT_TYPE_CHECK_NAME, type_="check")
-        batch_op.create_check_constraint(
-            _ACTIVITY_LOG_EVENT_TYPE_CHECK_NAME,
-            _check_in("event_type", values),
-        )
+    rebuild_check(
+        _ACTIVITY_LOG_TABLE,
+        _ACTIVITY_LOG_EVENT_TYPE_CHECK_NAME,
+        check_in("event_type", values),
+    )
 
 
 def _create_agent_calls(existing_tables: set[str], existing_indexes: set[str]) -> None:
@@ -231,7 +223,7 @@ def _create_agent_calls(existing_tables: set[str], existing_indexes: set[str]) -
             sa.Column("output_artifact_ref", sa.Text(), nullable=True),
             sa.CheckConstraint(
                 "error_class IS NULL OR "
-                + _check_in("error_class", _AGENT_CALLS_ERROR_CLASS_VALUES),
+                + check_in("error_class", _AGENT_CALLS_ERROR_CLASS_VALUES),
                 name="ck_agent_calls_error_class",
             ),
             sa.ForeignKeyConstraint(
@@ -274,12 +266,12 @@ def _create_validations(existing_tables: set[str], existing_indexes: set[str]) -
             sa.Column("superseded_at", sa.Text(), nullable=True),
             sa.Column("superseded_reason", sa.Text(), nullable=True),
             sa.CheckConstraint(
-                _check_in("expected_direction", _VALIDATIONS_EXPECTED_DIRECTION_VALUES),
+                check_in("expected_direction", _VALIDATIONS_EXPECTED_DIRECTION_VALUES),
                 name="ck_validations_expected_direction",
             ),
             sa.CheckConstraint(
                 "superseded_reason IS NULL OR "
-                + _check_in("superseded_reason", _VALIDATIONS_SUPERSEDED_REASON_VALUES),
+                + check_in("superseded_reason", _VALIDATIONS_SUPERSEDED_REASON_VALUES),
                 name="ck_validations_superseded_reason",
             ),
             sa.PrimaryKeyConstraint("validation_id"),
@@ -308,11 +300,11 @@ def _create_validation_outcomes(existing_tables: set[str], existing_indexes: set
             sa.Column("rollback_status", sa.Text(), nullable=False),
             sa.UniqueConstraint("validation_id", name="uq_validation_outcomes_validation_id"),
             sa.CheckConstraint(
-                _check_in("verdict", _VALIDATION_OUTCOMES_VERDICT_VALUES),
+                check_in("verdict", _VALIDATION_OUTCOMES_VERDICT_VALUES),
                 name="ck_validation_outcomes_verdict",
             ),
             sa.CheckConstraint(
-                _check_in("rollback_status", _VALIDATION_OUTCOMES_ROLLBACK_STATUS_VALUES),
+                check_in("rollback_status", _VALIDATION_OUTCOMES_ROLLBACK_STATUS_VALUES),
                 name="ck_validation_outcomes_rollback_status",
             ),
             sa.ForeignKeyConstraint(
@@ -378,11 +370,11 @@ def _create_retrospective_decisions(existing_tables: set[str], existing_indexes:
             sa.Column("rationale", sa.Text(), nullable=False),
             sa.Column("linked_validation_id", sa.Text(), nullable=True),
             sa.CheckConstraint(
-                _check_in("decision_type", _RETROSPECTIVE_DECISIONS_DECISION_TYPE_VALUES),
+                check_in("decision_type", _RETROSPECTIVE_DECISIONS_DECISION_TYPE_VALUES),
                 name="ck_retrospective_decisions_decision_type",
             ),
             sa.CheckConstraint(
-                _check_in("verdict", _RETROSPECTIVE_DECISIONS_VERDICT_VALUES),
+                check_in("verdict", _RETROSPECTIVE_DECISIONS_VERDICT_VALUES),
                 name="ck_retrospective_decisions_verdict",
             ),
             sa.ForeignKeyConstraint(
@@ -456,7 +448,7 @@ def upgrade() -> None:
     )
     _create_weekly_digest_snapshots(existing_tables)
 
-    if not _persisted_check_has_member(bind, _ACTIVITY_LOG_TABLE, _ACTIVITY_LOG_NEW_MEMBER):
+    if not persisted_check_has_member(bind, _ACTIVITY_LOG_TABLE, _ACTIVITY_LOG_NEW_MEMBER):
         _rebuild_activity_log_event_type_check(_ACTIVITY_LOG_EVENT_TYPE_NEW)
 
 
@@ -468,7 +460,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Drop the six feedback-loop tables and narrow the activity_log CHECK back."""
     bind = op.get_bind()
-    if _persisted_check_has_member(bind, _ACTIVITY_LOG_TABLE, _ACTIVITY_LOG_NEW_MEMBER):
+    if persisted_check_has_member(bind, _ACTIVITY_LOG_TABLE, _ACTIVITY_LOG_NEW_MEMBER):
         _rebuild_activity_log_event_type_check(_ACTIVITY_LOG_EVENT_TYPE_OLD)
 
     inspector = sa.inspect(bind)

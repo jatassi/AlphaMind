@@ -43,8 +43,13 @@ rebuild runs only on the narrow-CHECK path (a DB created before
 
 from collections.abc import Sequence
 
-import sqlalchemy as sa
 from alembic import op
+
+from alphamind.persistence.migrations._check_rebuild import (
+    check_in,
+    persisted_check_has_member,
+    rebuild_check,
+)
 
 # revision identifiers, used by Alembic.
 revision: str = "b899tr0000ff"
@@ -73,42 +78,25 @@ _OLD_SOURCES: tuple[str, ...] = (
 _NEW_SOURCES: tuple[str, ...] = (*_OLD_SOURCES, _NEW_MEMBER)
 
 
-def _persisted_check_has_member(bind: sa.engine.Connection, member: str) -> bool:
-    """True if ``activity_log``'s persisted CHECK DDL already lists *member*."""
-    sql = bind.execute(
-        sa.text("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = :name"),
-        {"name": _TABLE},
-    ).scalar_one_or_none()
-    return sql is not None and f"'{member}'" in sql
-
-
-def _check_condition(values: tuple[str, ...]) -> str:
-    rendered = ", ".join(f"'{v}'" for v in values)
-    return f"source IN ({rendered})"
-
-
 def _rebuild_source_check(values: tuple[str, ...]) -> None:
     """Recreate ``activity_log`` with the ``source`` CHECK over *values*.
 
-    SQLite cannot ALTER a CHECK in place, so this is a table rebuild via
-    ``batch_alter_table``: drop the named CHECK and add it back over the target
-    vocabulary. Migrations run with ``PRAGMA foreign_keys=OFF`` (see the alembic
-    env), so the intermediate ``DROP TABLE`` does not trip the incoming FKs.
+    Routes the shared :func:`rebuild_check` mechanics over this migration's frozen
+    *values*. Migrations run with ``PRAGMA foreign_keys=OFF`` (see the alembic env),
+    so the intermediate ``DROP TABLE`` does not trip the incoming FKs.
     """
-    with op.batch_alter_table(_TABLE, recreate="always") as batch_op:
-        batch_op.drop_constraint(_CHECK_NAME, type_="check")
-        batch_op.create_check_constraint(_CHECK_NAME, _check_condition(values))
+    rebuild_check(_TABLE, _CHECK_NAME, check_in("source", values))
 
 
 def upgrade() -> None:
     """Widen the CHECK to include ``ANALYSIS_PIPELINE`` (no-op if already present)."""
-    if _persisted_check_has_member(op.get_bind(), _NEW_MEMBER):
+    if persisted_check_has_member(op.get_bind(), _TABLE, _NEW_MEMBER):
         return
     _rebuild_source_check(_NEW_SOURCES)
 
 
 def downgrade() -> None:
     """Narrow the CHECK to the pre-``ANALYSIS_PIPELINE`` set (no-op if already narrow)."""
-    if not _persisted_check_has_member(op.get_bind(), _NEW_MEMBER):
+    if not persisted_check_has_member(op.get_bind(), _TABLE, _NEW_MEMBER):
         return
     _rebuild_source_check(_OLD_SOURCES)
