@@ -56,6 +56,17 @@ class InvocationConditioning:
     time_of_day: str
 
 
+async def _load_components_by_thesis_ids(
+    session: AsyncSession, thesis_ids: list[str]
+) -> dict[str, list[ThesisComponentRow]]:
+    """``thesis_id → component rows`` for *thesis_ids*, in one follow-up query."""
+    comp_stmt = select(ThesisComponentRow).where(ThesisComponentRow.thesis_id.in_(thesis_ids))
+    components_by_thesis: dict[str, list[ThesisComponentRow]] = {tid: [] for tid in thesis_ids}
+    for comp in (await session.execute(comp_stmt)).scalars():
+        components_by_thesis[comp.thesis_id].append(comp)
+    return components_by_thesis
+
+
 async def read_resolved_theses_in_window(
     session: AsyncSession,
     start: datetime,
@@ -89,10 +100,7 @@ async def read_resolved_theses_in_window(
         return ()
 
     thesis_ids = [row.thesis_id for row in thesis_rows]
-    comp_stmt = select(ThesisComponentRow).where(ThesisComponentRow.thesis_id.in_(thesis_ids))
-    components_by_thesis: dict[str, list[ThesisComponentRow]] = {tid: [] for tid in thesis_ids}
-    for comp in (await session.execute(comp_stmt)).scalars():
-        components_by_thesis[comp.thesis_id].append(comp)
+    components_by_thesis = await _load_components_by_thesis_ids(session, thesis_ids)
 
     return tuple(
         rows_to_record(row, tuple(components_by_thesis[row.thesis_id])) for row in thesis_rows
@@ -126,15 +134,19 @@ async def read_resolved_thesis_pnl_by_position(
     if not thesis_rows:
         return {}
     thesis_ids = [row.thesis_id for row in thesis_rows]
-    comp_stmt = select(ThesisComponentRow).where(ThesisComponentRow.thesis_id.in_(thesis_ids))
-    components_by_thesis: dict[str, list[ThesisComponentRow]] = {tid: [] for tid in thesis_ids}
-    for comp in (await session.execute(comp_stmt)).scalars():
-        components_by_thesis[comp.thesis_id].append(comp)
+    components_by_thesis = await _load_components_by_thesis_ids(session, thesis_ids)
     pnl_by_position: dict[str, float] = {}
     for row in thesis_rows:
         record = rows_to_record(row, tuple(components_by_thesis[row.thesis_id]))
-        # A RESOLVED record's resolution_pnl_usd is non-None by ThesisRecord's validators.
-        assert record.resolution_pnl_usd is not None
+        # A RESOLVED record's resolution_pnl_usd is non-None by ThesisRecord's validators;
+        # a null here is inconsistent persisted state, surfaced loudly (not a bare assert,
+        # which `python -O` would strip — silently storing None as a float).
+        if record.resolution_pnl_usd is None:
+            msg = (
+                f"thesis {record.thesis_id} has status RESOLVED but a null "
+                "resolution_pnl_usd — inconsistent persisted state"
+            )
+            raise ValueError(msg)
         pnl_by_position[str(record.position_id)] = record.resolution_pnl_usd
     return pnl_by_position
 

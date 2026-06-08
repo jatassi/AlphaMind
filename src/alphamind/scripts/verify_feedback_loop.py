@@ -77,6 +77,7 @@ from alphamind.analysis.thesis_resolution.resolver import (
     ResolvedThesis,
     resolve_closed_position_theses,
 )
+from alphamind.config.loaders import read_yaml_file
 from alphamind.config.models.agents import AllowedModel, BaseAgentConfig
 from alphamind.config.models.digest import DigestConfig
 from alphamind.config.models.feedback import FeedbackLoopConfig
@@ -719,10 +720,7 @@ def _feedback_config() -> FeedbackLoopConfig:
 
 def _digest_config() -> DigestConfig:
     """The packaged digest config (notable-shift detector thresholds)."""
-    import yaml
-
-    with (_REPO_ROOT / "config" / "digest.yaml").open(encoding="utf-8") as fh:
-        return DigestConfig.model_validate(yaml.safe_load(fh))
+    return DigestConfig.model_validate(read_yaml_file(_REPO_ROOT / "config" / "digest.yaml"))
 
 
 @asynccontextmanager
@@ -736,16 +734,24 @@ async def _provisioned_db(db_path: str | None) -> AsyncIterator[async_sessionmak
     if db_path is None:
         with tempfile.TemporaryDirectory() as tmp:
             scratch = str(Path(tmp) / "alphamind-fbl-verify.db")
-            async for factory in _open_after_upgrade(scratch):
+            async with _open_after_upgrade(scratch) as factory:
                 yield factory
     else:
-        async for factory in _open_after_upgrade(db_path):
+        async with _open_after_upgrade(db_path) as factory:
             yield factory
 
 
+@asynccontextmanager
 async def _open_after_upgrade(
     scratch: str,
 ) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """Upgrade *scratch* to schema head, yield its async factory, dispose on exit.
+
+    A proper async context manager (not a bare async generator) so the engine is
+    disposed promptly when the body raises — otherwise the dispose is deferred to
+    GC and, on Windows, the open connection's file lock can fail the enclosing
+    ``TemporaryDirectory`` cleanup and shadow the original error.
+    """
     _alembic_upgrade_head(scratch)
     engine = make_async_engine(scratch)
     try:

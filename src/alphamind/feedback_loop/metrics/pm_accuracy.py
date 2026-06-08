@@ -230,11 +230,10 @@ def _compute_anti_pattern_detector_accuracy(
     ``ANTI_PATTERN`` conditioning dimension — the whole-window (``UNCONDITIONED``)
     slice has no pattern to score and returns the empty result.
 
-    Note: the anti-pattern tags ride on the observation but are empty in production
-    until the anti-pattern persistence join lands (the ``pm_decision`` activity-log
-    detail does not yet carry ``anti_patterns_identified`` — see ALP-887 report /
-    ALP-906). This core is exercised by fixtures and degrades to insufficient-sample
-    until that join populates the tags.
+    The anti-pattern tags ride on the observation, read off the originating
+    ``PMDecisionDetail.anti_patterns_json`` (ALP-911 persists the PM's tags at
+    ``_emit_pm_decision``; ALP-928 wires the loader join). A window with no tagged
+    rejections still degrades to insufficient-sample.
     """
     if (
         conditioning.dimension is not ConditioningDimension.ANTI_PATTERN
