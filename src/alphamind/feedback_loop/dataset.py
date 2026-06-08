@@ -42,6 +42,7 @@ from sqlalchemy import select
 from alphamind.config.models.agents import AgentName, AgentsConfig
 from alphamind.feedback_loop.citation.parser import (
     ComponentCitation,
+    InvocationRefs,
     assemble_chains,
     extract_payload_citations,
 )
@@ -70,6 +71,7 @@ from alphamind.state.repository.validation_queries import (
     read_pending_validations,
     read_validations_superseded_in_window,
 )
+from alphamind.state.tables.theses import ThesisRow
 from alphamind.state.tables.thesis_components import ThesisComponentRow
 
 if TYPE_CHECKING:
@@ -376,38 +378,63 @@ class WindowDataset:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(slots=True)
+class _InvocationRefAccumulator:
+    """Mutable per-invocation accumulator for the citation refs of one invocation.
+
+    Upstream reference IDs restart per invocation, so :func:`_load_refs` keeps
+    each invocation's synthesis text, retrieved universe, and decision citations
+    distinct rather than pooling them flat across the window (ALP-917). Frozen
+    into a :class:`~alphamind.feedback_loop.citation.parser.InvocationRefs` once
+    the window's calls are fully scanned.
+    """
+
+    synthesis_text: str = ""
+    universe: set[str] = field(default_factory=set)
+    decision_citations: set[str] = field(default_factory=set)
+
+
 async def _load_refs(session: AsyncSession, agent_calls: tuple[AgentCallRecord, ...]) -> RefsBundle:
-    """Citation-reference sub-bundle loader hook (story 06d / ALP-886).
+    """Citation-reference sub-bundle loader hook (story 06d / ALP-886; ALP-917).
 
     The imperative shell for the citation chain: over the window's already-loaded
     *agent_calls* (read once by :func:`load_window`), reads each call's
     ``output.json`` provenance artifact, extracts the cited upstream refs per layer
-    (synthesizer brief vs. decision-layer narratives), joins to the resolved thesis
-    components via *session*, and delegates the pure assembly to
-    :func:`~alphamind.feedback_loop.citation.parser.assemble_chains`. The file read
-    is the sole impurity; parsing and chain assembly are pure.
+    (synthesizer brief vs. decision-layer narratives) **partitioned by the emitting
+    ``invocation_id``**, bounds the resolved-thesis-component read to those same
+    in-window invocations, and delegates the pure per-invocation assembly to
+    :func:`~alphamind.feedback_loop.citation.parser.assemble_chains`. Refs are kept
+    per invocation because upstream reference IDs restart per invocation, so a
+    window's ``QR-1`` must resolve only against components from its own generating
+    invocation. The file read is the sole impurity; parsing and chain assembly are
+    pure.
     """
-    synthesis_text = ""
-    universe: set[str] = set()
-    decision_citations: set[str] = set()
+    by_invocation: dict[str, _InvocationRefAccumulator] = {}
     for call in agent_calls:
         payload = _read_output_payload(call.output_artifact_ref)
         if payload is None:
             continue
         if call.agent_name == AgentName.synthesizer.value:
-            synthesis_text = _synthesis_text(payload)
-            universe |= _retrieval_store_refs(payload)
+            acc = by_invocation.setdefault(call.invocation_id, _InvocationRefAccumulator())
+            acc.synthesis_text = _synthesis_text(payload)
+            acc.universe |= _retrieval_store_refs(payload)
         elif call.agent_name in _DECISION_AGENT_NAMES:
-            decision_citations |= set(extract_payload_citations(payload))
+            acc = by_invocation.setdefault(call.invocation_id, _InvocationRefAccumulator())
+            acc.decision_citations |= set(extract_payload_citations(payload))
+    invocation_ids = {call.invocation_id for call in agent_calls}
     components = await session.run_sync(
-        lambda sync_session: _read_component_citations(sync_session)
+        lambda sync_session: _read_component_citations(sync_session, invocation_ids)
     )
-    citations = assemble_chains(
-        universe=universe,
-        synthesis_text=synthesis_text,
-        decision_citations=decision_citations,
-        components=components,
+    invocation_refs = tuple(
+        InvocationRefs(
+            invocation_id=inv_id,
+            synthesis_text=acc.synthesis_text,
+            universe=frozenset(acc.universe),
+            decision_citations=frozenset(acc.decision_citations),
+        )
+        for inv_id, acc in by_invocation.items()
     )
+    citations = assemble_chains(invocation_refs=invocation_refs, components=components)
     return RefsBundle(citations=citations)
 
 
@@ -472,17 +499,32 @@ def _retrieval_store_refs(payload: object) -> set[str]:
     return {key for key in entries if isinstance(key, str)}
 
 
-def _read_component_citations(session: Session) -> tuple[ComponentCitation, ...]:
-    """Read resolved thesis components and the upstream refs each narrative cites.
+def _read_component_citations(
+    session: Session, invocation_ids: set[str]
+) -> tuple[ComponentCitation, ...]:
+    """Read thesis components generated by the window's invocations + their cited refs.
 
-    The chain terminus. ``feedback_loop`` is read-only over trading state, so
-    this is a plain windowless read of the component rows (a component's
-    resolution is point-in-time, not window-bounded); the per-ref join filters
-    to refs the component actually cites.
+    The chain terminus, bounded to the window (ALP-917). Joins each component to
+    its parent thesis (``thesis_components.thesis_id → theses.thesis_id``) and
+    filters to components whose parent thesis's ``theses.invocation_id`` is one of
+    the window's *invocation_ids* — the generating invocation, carried onto each
+    :class:`ComponentCitation` so the per-invocation assembly can key its terminus
+    map on ``(invocation_id, ref_id)``. A component whose parent thesis has a NULL
+    ``invocation_id`` (legacy row) cannot match the ``IN`` filter and is excluded:
+    it has no generating invocation to disambiguate a chain. An empty
+    *invocation_ids* short-circuits with no query. The per-ref join filters to refs
+    the component actually cites. ``feedback_loop`` stays read-only over trading
+    state (no ``execution`` import).
     """
-    rows = session.execute(select(ThesisComponentRow)).scalars().all()
+    if not invocation_ids:
+        return ()
+    stmt = (
+        select(ThesisComponentRow, ThesisRow.invocation_id)
+        .join(ThesisRow, ThesisComponentRow.thesis_id == ThesisRow.thesis_id)
+        .where(ThesisRow.invocation_id.in_(invocation_ids))
+    )
     citations: list[ComponentCitation] = []
-    for row in rows:
+    for row, invocation_id in session.execute(stmt).all():
         cited = set(extract_payload_citations(row.narrative))
         cited |= set(extract_payload_citations(row.supporting_signals_json))
         if not cited:
@@ -492,7 +534,13 @@ def _read_component_citations(session: Session) -> tuple[ComponentCitation, ...]
             if row.resolution_outcome is not None
             else None
         )
-        citations.append(ComponentCitation(cited_refs=frozenset(cited), resolution_outcome=outcome))
+        citations.append(
+            ComponentCitation(
+                invocation_id=invocation_id,
+                cited_refs=frozenset(cited),
+                resolution_outcome=outcome,
+            )
+        )
     return tuple(citations)
 
 

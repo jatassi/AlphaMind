@@ -10,6 +10,7 @@ impurity; the DB is the sanctioned boundary here (real on-disk SQLite, mirroring
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -17,10 +18,15 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import Session
 
 import alphamind.state.tables  # noqa: F401 — register all tables on Base.metadata
+from alphamind._kernel.ids import InvocationId
+from alphamind.feedback_loop.citation.chain import metric_id_for
 from alphamind.feedback_loop.citation.parser import CitationSource
 from alphamind.feedback_loop.dataset import load_window
+from alphamind.feedback_loop.metrics import get_metric
+from alphamind.feedback_loop.metrics.types import UNCONDITIONED, MetricId
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
@@ -28,9 +34,16 @@ from alphamind.persistence.session import (
     make_engine,
     make_session_factory,
 )
+from alphamind.portfolio_state.records.theses import ThesisComponentOutcome
 from alphamind.state.repository.agent_calls_queries import insert_agent_call
 from alphamind.state.tables.agent_calls import AgentCallRecord
-from tests.state._fk_substrate import stub_invocation_row, stub_process_lifetime_row
+from alphamind.state.tables.theses_codec import record_to_rows
+from tests.feedback_loop.metrics._outcome_fixtures import make_resolved_thesis_record
+from tests.state._fk_substrate import (
+    stub_invocation_row,
+    stub_position_row,
+    stub_process_lifetime_row,
+)
 
 _WINDOW_START = datetime(2026, 5, 1, tzinfo=UTC)
 _WINDOW_END = datetime(2026, 7, 1, tzinfo=UTC)
@@ -39,10 +52,12 @@ _INV = "inv-refs"
 _PLT = "plt-refs-tests"
 
 
-def _agent_call(call_id: str, agent_name: str, artifact_ref: str | None) -> AgentCallRecord:
+def _agent_call(
+    call_id: str, agent_name: str, artifact_ref: str | None, invocation_id: str = _INV
+) -> AgentCallRecord:
     return AgentCallRecord(
         agent_call_id=call_id,
-        invocation_id=_INV,
+        invocation_id=invocation_id,
         agent_name=agent_name,
         attempt_number=1,
         model_id="claude-opus-4-8",
@@ -191,3 +206,264 @@ class TestRefsHook:
         assert by_id["AR-1"].cited_in_decision is False
         # No thesis components seeded → no resolution.
         assert by_id["SA-TECH-1"].thesis_component_outcome is None
+
+
+# ---------------------------------------------------------------------------
+# ALP-917 — per-invocation citation-chain lineage (de-contamination)
+# ---------------------------------------------------------------------------
+
+
+def _seed_thesis_citing_ref(
+    sess: Session,
+    *,
+    thesis_id: str,
+    position_id: str,
+    invocation_id: str | None,
+    cited_ref: str,
+    outcome: ThesisComponentOutcome,
+) -> None:
+    """Seed a RESOLVED thesis whose first component cites *cited_ref*.
+
+    The component carries *outcome* as its resolution; the parent thesis is
+    wired to *invocation_id* (NULL for a legacy row). Reuses the round-trip
+    codec for a well-formed parent + component rows, then overrides one
+    component's narrative to cite the ref and its outcome.
+    """
+    record = make_resolved_thesis_record(thesis_id, position_id, resolution_timestamp=_RES_TS)
+    if invocation_id is not None:
+        record = dataclasses.replace(record, invocation_id=InvocationId(invocation_id))
+    thesis_row, comp_rows = record_to_rows(record)
+    comp_rows[0].narrative = f"Driven by [{cited_ref}]."
+    comp_rows[0].resolution_outcome = outcome.value
+    sess.add(stub_position_row(position_id))
+    sess.flush()
+    sess.add(thesis_row)
+    for crow in comp_rows:
+        sess.add(crow)
+    sess.flush()
+
+
+_RES_TS = datetime(2026, 6, 15, 12, 0, tzinfo=UTC)
+_INV_A = "inv-a"
+_INV_B = "inv-b"
+_INV_OUT_OF_WINDOW = "inv-oow"
+
+
+def _synth_payload(ref: str) -> dict[str, object]:
+    return {
+        "synthesis_text": f"see [{ref}]",
+        "retrieval_store": {"entries": {ref: "..."}, "freshness_by_source": {}},
+    }
+
+
+@pytest.fixture()
+async def multi_inv_db(
+    tmp_path: Path,
+) -> AsyncIterator[tuple[async_sessionmaker[AsyncSession], Path]]:
+    """On-disk SQLite with two in-window invocations + one out-of-window invocation."""
+    db_path = tmp_path / "lineage.db"
+    sync_engine = make_engine(str(db_path))
+    Base.metadata.create_all(sync_engine)
+    with make_session_factory(sync_engine)() as sess:
+        sess.add(stub_process_lifetime_row(_PLT))
+        sess.flush()
+        for inv_id in (_INV_A, _INV_B, _INV_OUT_OF_WINDOW):
+            inv = stub_invocation_row(inv_id, process_lifetime_id=_PLT)
+            inv.start_at = _TS_IN
+            sess.add(inv)
+        sess.commit()
+    sync_engine.dispose()
+
+    async_engine = make_async_engine(str(db_path))
+    factory = make_async_session_factory(async_engine)
+    try:
+        yield factory, tmp_path
+    finally:
+        await async_engine.dispose()
+
+
+class TestPerInvocationLineage:
+    async def test_two_invocations_same_ref_resolve_to_own_component(
+        self, multi_inv_db: tuple[async_sessionmaker[AsyncSession], Path]
+    ) -> None:
+        # inv-a and inv-b both emit QR-1; inv-a's terminus is VALIDATED, inv-b's is
+        # WRONG. Each window ref must resolve against its own invocation's component.
+        # This is the discriminating case the bare-ref_id design cannot pass.
+        factory, root = multi_inv_db
+        async with factory() as sess:
+            await sess.run_sync(
+                lambda s: _seed_thesis_citing_ref(
+                    s,
+                    thesis_id="thes-a",
+                    position_id="pos-a",
+                    invocation_id=_INV_A,
+                    cited_ref="QR-1",
+                    outcome=ThesisComponentOutcome.VALIDATED,
+                )
+            )
+            await sess.run_sync(
+                lambda s: _seed_thesis_citing_ref(
+                    s,
+                    thesis_id="thes-b",
+                    position_id="pos-b",
+                    invocation_id=_INV_B,
+                    cited_ref="QR-1",
+                    outcome=ThesisComponentOutcome.WRONG,
+                )
+            )
+            await insert_agent_call(
+                sess,
+                _agent_call(
+                    "synth-a",
+                    "synthesizer",
+                    _write_output(root / "synth_a", _synth_payload("QR-1")),
+                    invocation_id=_INV_A,
+                ),
+            )
+            await insert_agent_call(
+                sess,
+                _agent_call(
+                    "synth-b",
+                    "synthesizer",
+                    _write_output(root / "synth_b", _synth_payload("QR-1")),
+                    invocation_id=_INV_B,
+                ),
+            )
+            await sess.commit()
+
+            dataset = await load_window(sess, _WINDOW_START, _WINDOW_END)
+
+        qr_chains = [c for c in dataset.refs.citations if c.ref.ref_id == "QR-1"]
+        outcomes = {c.thesis_component_outcome for c in qr_chains}
+        assert outcomes == {ThesisComponentOutcome.VALIDATED, ThesisComponentOutcome.WRONG}
+        # Per-source metrics see both correctly-attributed termini: 1 validated of 2.
+        survival = metric_id_for("signal_survival_rate", CitationSource.QR)
+        validation = metric_id_for("per_source_validation_rate", CitationSource.QR)
+        survival_metric = get_metric(survival)
+        validation_metric = get_metric(validation)
+        assert survival_metric is not None
+        assert validation_metric is not None
+        assert survival_metric.compute(dataset, UNCONDITIONED).value == 0.5
+        assert validation_metric.compute(dataset, UNCONDITIONED).value == 0.5
+
+    async def test_out_of_window_invocation_component_excluded(
+        self, multi_inv_db: tuple[async_sessionmaker[AsyncSession], Path]
+    ) -> None:
+        # A resolved component generated by an invocation with no in-window agent
+        # calls must not supply a terminus to an in-window ref.
+        factory, root = multi_inv_db
+        async with factory() as sess:
+            await sess.run_sync(
+                lambda s: _seed_thesis_citing_ref(
+                    s,
+                    thesis_id="thes-oow",
+                    position_id="pos-oow",
+                    invocation_id=_INV_OUT_OF_WINDOW,
+                    cited_ref="QR-1",
+                    outcome=ThesisComponentOutcome.VALIDATED,
+                )
+            )
+            # Only inv-a has an in-window agent call; it also emits QR-1.
+            await insert_agent_call(
+                sess,
+                _agent_call(
+                    "synth-a",
+                    "synthesizer",
+                    _write_output(root / "synth_a", _synth_payload("QR-1")),
+                    invocation_id=_INV_A,
+                ),
+            )
+            await sess.commit()
+
+            dataset = await load_window(sess, _WINDOW_START, _WINDOW_END)
+
+        by_id = {c.ref.ref_id: c for c in dataset.refs.citations}
+        # inv-a's QR-1 has no in-window component → no terminus; the out-of-window
+        # VALIDATED component does not leak in.
+        assert by_id["QR-1"].thesis_component_outcome is None
+
+    async def test_single_invocation_citation_rates_unchanged_by_partitioning(
+        self, multi_inv_db: tuple[async_sessionmaker[AsyncSession], Path]
+    ) -> None:
+        # Regression guard (out of scope): the citation-rate numerators and
+        # synthesizer_recall derive only from the universe / synthesis / decision
+        # sets and must be unaffected by per-invocation partitioning. On a single
+        # invocation, partitioning is a no-op, so the aggregate values stand.
+        factory, root = multi_inv_db
+        synth_payload = {
+            "synthesis_text": "lean on [QR-1]",
+            "retrieval_store": {
+                "entries": {"QR-1": "...", "QR-2": "..."},
+                "freshness_by_source": {},
+            },
+        }
+        analyst_payload = {
+            "recommendations": [{"thesis_narrative": "Driven by [QR-2].", "source_references": []}]
+        }
+        async with factory() as sess:
+            await insert_agent_call(
+                sess,
+                _agent_call(
+                    "synth-a",
+                    "synthesizer",
+                    _write_output(root / "synth_a", synth_payload),
+                    invocation_id=_INV_A,
+                ),
+            )
+            await insert_agent_call(
+                sess,
+                _agent_call(
+                    "analyst-a",
+                    "analyst",
+                    _write_output(root / "analyst_a", analyst_payload),
+                    invocation_id=_INV_A,
+                ),
+            )
+            await sess.commit()
+            dataset = await load_window(sess, _WINDOW_START, _WINDOW_END)
+
+        synth_rate = get_metric(metric_id_for("synthesizer_citation_rate", CitationSource.QR))
+        decision_rate = get_metric(metric_id_for("decision_layer_citation_rate", CitationSource.QR))
+        recall = get_metric(MetricId("synthesizer_recall"))
+        assert synth_rate is not None
+        assert decision_rate is not None
+        assert recall is not None
+        # QR-1 cited in synthesis, QR-2 not → 1/2.
+        assert synth_rate.compute(dataset, UNCONDITIONED).value == 0.5
+        # QR-2 cited in a decision narrative, QR-1 not → 1/2.
+        assert decision_rate.compute(dataset, UNCONDITIONED).value == 0.5
+        # Of the uncited-by-synthesizer refs (QR-2), 1 recovered by decision → 1/1.
+        assert recall.compute(dataset, UNCONDITIONED).value == 1.0
+
+    async def test_legacy_null_invocation_component_excluded(
+        self, multi_inv_db: tuple[async_sessionmaker[AsyncSession], Path]
+    ) -> None:
+        # A component whose parent thesis has a NULL invocation_id contributes no
+        # terminus — it has no generating invocation to key on.
+        factory, root = multi_inv_db
+        async with factory() as sess:
+            await sess.run_sync(
+                lambda s: _seed_thesis_citing_ref(
+                    s,
+                    thesis_id="thes-null",
+                    position_id="pos-null",
+                    invocation_id=None,
+                    cited_ref="QR-1",
+                    outcome=ThesisComponentOutcome.VALIDATED,
+                )
+            )
+            await insert_agent_call(
+                sess,
+                _agent_call(
+                    "synth-a",
+                    "synthesizer",
+                    _write_output(root / "synth_a", _synth_payload("QR-1")),
+                    invocation_id=_INV_A,
+                ),
+            )
+            await sess.commit()
+
+            dataset = await load_window(sess, _WINDOW_START, _WINDOW_END)
+
+        by_id = {c.ref.ref_id: c for c in dataset.refs.citations}
+        assert by_id["QR-1"].thesis_component_outcome is None
