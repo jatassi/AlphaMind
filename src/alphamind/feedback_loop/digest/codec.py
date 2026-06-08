@@ -94,23 +94,15 @@ def metric_value_to_jsonable(value: float | None) -> float | str | None:
 # ---------------------------------------------------------------------------
 
 
-def _to_jsonable(obj: Any) -> Any:
-    """Recursively convert a frozen-dataclass digest tree into JSON-native values.
+def _leaf_jsonable(obj: Any) -> Any:
+    """Encode a non-recursive leaf into a JSON-native value.
 
-    Dataclasses become dicts (slots-friendly via :func:`dataclasses.fields`); tuples
-    and lists become lists; datetimes become ISO strings; a plain ``Enum`` becomes its
-    ``.value`` (mirroring ``portfolio_state.events.codec._try_encode_leaf`` — a forward
-    guard so a non-``StrEnum`` field never ``TypeError``s at ``json.dumps``); non-finite
-    floats become a JSON-valid string sentinel (:data:`_NON_FINITE_SENTINELS`); everything
-    else is passed through. ``property`` attributes are not serialised — only declared
-    fields.
+    A ``datetime`` becomes its ISO string; a plain ``Enum`` becomes its ``.value``
+    (mirroring ``portfolio_state.events.codec._try_encode_leaf`` — a forward guard so a
+    non-``StrEnum`` field never ``TypeError``s at ``json.dumps``); a non-finite float
+    becomes a JSON-valid string sentinel (:data:`_NON_FINITE_SENTINELS`); everything else
+    passes through unchanged.
     """
-    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        return {f.name: _to_jsonable(getattr(obj, f.name)) for f in dataclasses.fields(obj)}
-    if isinstance(obj, dict):
-        return {str(k): _to_jsonable(v) for k, v in obj.items()}
-    if isinstance(obj, (tuple, list)):
-        return [_to_jsonable(v) for v in obj]
     if isinstance(obj, datetime):
         return obj.isoformat()
     if isinstance(obj, Enum):
@@ -118,6 +110,22 @@ def _to_jsonable(obj: Any) -> Any:
     if isinstance(obj, float):
         return metric_value_to_jsonable(obj)
     return obj
+
+
+def _to_jsonable(obj: Any) -> Any:
+    """Recursively convert a frozen-dataclass digest tree into JSON-native values.
+
+    Dataclasses become dicts (slots-friendly via :func:`dataclasses.fields`); tuples
+    and lists become lists; the recursion bottoms out at :func:`_leaf_jsonable` for the
+    scalar leaves. ``property`` attributes are not serialised — only declared fields.
+    """
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        return {f.name: _to_jsonable(getattr(obj, f.name)) for f in dataclasses.fields(obj)}
+    if isinstance(obj, dict):
+        return {str(k): _to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (tuple, list)):
+        return [_to_jsonable(v) for v in obj]
+    return _leaf_jsonable(obj)
 
 
 def serialize_digest(digest: WeeklyDigest) -> str:

@@ -21,10 +21,15 @@ import argparse
 import asyncio
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from alphamind.feedback_loop._cli_utils import (
+    emit_json,
+    open_async_session,
+    open_sync_session,
+    parse_aware_datetime,
+)
 from alphamind.feedback_loop.metrics.types import MetricId
 from alphamind.feedback_loop.validation.evaluate import (
     EvaluationJudgments,
@@ -43,16 +48,11 @@ from alphamind.feedback_loop.validation.register import (
     register_validation,
 )
 from alphamind.feedback_loop.validation.supersession import detect_supersessions
-from alphamind.persistence.session import (
-    make_async_engine,
-    make_async_session_factory,
-    make_engine,
-    make_session_factory,
-)
 from alphamind.state.repository.validation_queries import read_pending_validations
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from datetime import datetime
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -70,15 +70,6 @@ def _read_payload(path: str) -> Mapping[str, object]:
 
 def _read_file(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
-
-
-def _parse_dt(value: str) -> datetime:
-    """Parse an ISO-8601 string into a tz-aware datetime, rejecting naive input."""
-    parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        msg = f"{value!r} is a naive datetime; provide a tz-aware ISO-8601 value"
-        raise ValueError(msg)
-    return parsed
 
 
 def _validation_to_dict(record: ValidationRecord) -> dict[str, object]:
@@ -125,16 +116,12 @@ def _result_to_dict(result: EvaluationResult) -> dict[str, object]:
     }
 
 
-def _emit(payload: object) -> None:
-    print(json.dumps(payload))
-
-
 def _cmd_register(args: argparse.Namespace) -> int:
     payload = _read_payload(args.input)
     request = RegistrationRequest(
         validation_id=str(payload["validation_id"]),
         registering_invocation_id=_opt_str(payload.get("registering_invocation_id")),
-        registered_at=_parse_dt(str(payload["registered_at"])),
+        registered_at=parse_aware_datetime(str(payload["registered_at"]), "registered_at"),
         edited_artifact=str(payload["edited_artifact"]),
         pre_edit_version=str(payload["pre_edit_version"]),
         post_edit_version=str(payload["post_edit_version"]),
@@ -148,37 +135,25 @@ def _cmd_register(args: argparse.Namespace) -> int:
         registered_regime=_opt_str(payload.get("registered_regime")),
         registered_model_id=_opt_str(payload.get("registered_model_id")),
     )
-    engine = make_engine(args.db_path)
-    try:
-        with make_session_factory(engine)() as session:
-            validation_id = register_validation(session, request)
-            session.commit()
-    finally:
-        engine.dispose()
-    _emit({"validation_id": str(validation_id)})
+    with open_sync_session(args.db_path) as session:
+        validation_id = register_validation(session, request)
+        session.commit()
+    emit_json({"validation_id": str(validation_id)})
     return EXIT_OK
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
-    engine = make_engine(args.db_path)
-    try:
-        with make_session_factory(engine)() as session:
-            pending = read_pending_validations(session)
-    finally:
-        engine.dispose()
-    _emit({"pending": [_validation_to_dict(v) for v in pending]})
+    with open_sync_session(args.db_path) as session:
+        pending = read_pending_validations(session)
+    emit_json({"pending": [_validation_to_dict(v) for v in pending]})
     return EXIT_OK
 
 
 def _cmd_detect_supersessions(args: argparse.Namespace) -> int:
-    engine = make_engine(args.db_path)
-    try:
-        with make_session_factory(engine)() as session:
-            marked = detect_supersessions(session)
-            session.commit()
-    finally:
-        engine.dispose()
-    _emit({"marked": marked})
+    with open_sync_session(args.db_path) as session:
+        marked = detect_supersessions(session)
+        session.commit()
+    emit_json({"marked": marked})
     return EXIT_OK
 
 
@@ -194,13 +169,13 @@ def _cmd_evaluate(args: argparse.Namespace) -> int:
             db_path=args.db_path,
             validation_id=ValidationId(args.validation_id),
             outcome_id=OutcomeId(args.outcome_id),
-            evaluated_at=_parse_dt(args.evaluated_at),
+            evaluated_at=parse_aware_datetime(args.evaluated_at, "--evaluated-at"),
             judgments=judgments,
             narrative=str(payload["narrative"]),
             evaluated_by_session_id=_opt_str(payload.get("evaluated_by_session_id")),
         )
     )
-    _emit(_result_to_dict(result))
+    emit_json(_result_to_dict(result))
     return EXIT_OK
 
 
@@ -214,21 +189,17 @@ async def _run_evaluate(
     narrative: str,
     evaluated_by_session_id: str | None,
 ) -> EvaluationResult:
-    engine = make_async_engine(db_path)
-    try:
-        async with make_async_session_factory(engine)() as session:
-            result = await evaluate_validation(
-                session,
-                validation_id=validation_id,
-                outcome_id=outcome_id,
-                evaluated_at=evaluated_at,
-                judgments=judgments,
-                narrative=narrative,
-                evaluated_by_session_id=evaluated_by_session_id,
-            )
-            await session.commit()
-    finally:
-        await engine.dispose()
+    async with open_async_session(db_path) as session:
+        result = await evaluate_validation(
+            session,
+            validation_id=validation_id,
+            outcome_id=outcome_id,
+            evaluated_at=evaluated_at,
+            judgments=judgments,
+            narrative=narrative,
+            evaluated_by_session_id=evaluated_by_session_id,
+        )
+        await session.commit()
     return result
 
 
@@ -302,7 +273,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         handler = args.handler
         return int(handler(args))
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError, argparse.ArgumentTypeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR
 

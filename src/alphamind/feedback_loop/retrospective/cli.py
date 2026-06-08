@@ -34,9 +34,13 @@ import argparse
 import asyncio
 import logging
 import sys
-from datetime import datetime
 from pathlib import Path
 
+from alphamind.feedback_loop._cli_utils import (
+    open_async_session,
+    open_sync_session,
+    parse_aware_datetime,
+)
 from alphamind.feedback_loop.retrospective.ingestion import ingest_window
 from alphamind.feedback_loop.retrospective.records import (
     DecisionType,
@@ -47,33 +51,10 @@ from alphamind.feedback_loop.retrospective.report import (
     capture_decision,
     save_report,
 )
-from alphamind.persistence.session import (
-    make_async_engine,
-    make_async_session_factory,
-    make_engine,
-    make_session_factory,
-)
 
 __all__ = ["main"]
 
 log = logging.getLogger(__name__)
-
-
-def _parse_aware_datetime(value: str, arg_name: str) -> datetime:
-    """Parse *value* as ISO-8601 and reject naive datetimes."""
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            f"{arg_name}: {value!r} is not a valid ISO-8601 datetime. "
-            "Provide a tz-aware value, e.g. 2026-01-01T00:00:00+00:00."
-        ) from exc
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise argparse.ArgumentTypeError(
-            f"{arg_name}: {value!r} is a naive datetime (no timezone offset). "
-            "Provide a tz-aware value, e.g. 2026-01-01T00:00:00+00:00."
-        )
-    return parsed
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -129,8 +110,8 @@ def _warn_default_db_path(db_path: str | None) -> None:
 
 def _run_ingest(args: argparse.Namespace) -> int:
     try:
-        start = _parse_aware_datetime(args.start, "--start")
-        end = _parse_aware_datetime(args.end, "--end")
+        start = parse_aware_datetime(args.start, "--start")
+        end = parse_aware_datetime(args.end, "--end")
     except argparse.ArgumentTypeError as exc:
         print(str(exc))
         return 1
@@ -138,13 +119,8 @@ def _run_ingest(args: argparse.Namespace) -> int:
     _warn_default_db_path(args.db_path)
 
     async def _ingest() -> int:
-        engine = make_async_engine(args.db_path)
-        try:
-            factory = make_async_session_factory(engine)
-            async with factory() as session:
-                ingestion = await ingest_window(session, start, end)
-        finally:
-            await engine.dispose()
+        async with open_async_session(args.db_path) as session:
+            ingestion = await ingest_window(session, start, end)
         window = ingestion.window
         print(f"agent_calls: {len(window.agent_calls)}")
         print(f"thesis_resolutions: {len(window.outcomes.theses)}")
@@ -168,8 +144,8 @@ def _run_ingest(args: argparse.Namespace) -> int:
 
 def _run_save_report(args: argparse.Namespace) -> int:
     try:
-        start = _parse_aware_datetime(args.start, "--start")
-        end = _parse_aware_datetime(args.end, "--end")
+        start = parse_aware_datetime(args.start, "--start")
+        end = parse_aware_datetime(args.end, "--end")
     except argparse.ArgumentTypeError as exc:
         print(str(exc))
         return 1
@@ -183,9 +159,8 @@ def _run_save_report(args: argparse.Namespace) -> int:
     _warn_default_db_path(args.db_path)
     data_root = Path(args.data_root) if args.data_root is not None else None
 
-    engine = make_engine(args.db_path)
     try:
-        with make_session_factory(engine)() as session:
+        with open_sync_session(args.db_path) as session:
             record = save_report(
                 session,
                 start,
@@ -198,8 +173,6 @@ def _run_save_report(args: argparse.Namespace) -> int:
     except Exception:
         log.exception("Retrospective report save failed")
         return 2
-    finally:
-        engine.dispose()
 
     print(record.report_id)
     return 0
@@ -207,9 +180,8 @@ def _run_save_report(args: argparse.Namespace) -> int:
 
 def _run_capture_decision(args: argparse.Namespace) -> int:
     _warn_default_db_path(args.db_path)
-    engine = make_engine(args.db_path)
     try:
-        with make_session_factory(engine)() as session:
+        with open_sync_session(args.db_path) as session:
             record = capture_decision(
                 session,
                 ReportId(args.report_id),
@@ -223,8 +195,6 @@ def _run_capture_decision(args: argparse.Namespace) -> int:
     except Exception:
         log.exception("Retrospective decision capture failed")
         return 2
-    finally:
-        engine.dispose()
 
     print(record.decision_id)
     return 0

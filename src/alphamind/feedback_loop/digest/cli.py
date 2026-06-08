@@ -34,6 +34,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from alphamind.feedback_loop._cli_utils import open_async_session
 from alphamind.feedback_loop.digest.codec import metric_value_to_jsonable, serialize_digest
 from alphamind.feedback_loop.digest.generator import WeekInput, generate_digest
 from alphamind.feedback_loop.digest.snapshot import SnapshotOutcome, snapshot_week
@@ -332,15 +333,8 @@ def _open_and_load(
     """Open an async session and build the per-week input sequence."""
 
     async def _run() -> list[WeekInput]:
-        from alphamind.persistence.session import make_async_engine, make_async_session_factory
-
-        engine = make_async_engine(db_path)
-        try:
-            factory = make_async_session_factory(engine)
-            async with factory() as session:
-                return await load_week_inputs(session, mondays, feedback)
-        finally:
-            await engine.dispose()
+        async with open_async_session(db_path) as session:
+            return await load_week_inputs(session, mondays, feedback)
 
     return asyncio.run(_run())
 
@@ -356,16 +350,10 @@ def _open_and_compute(
 
     async def _run() -> MetricResult:
         from alphamind.feedback_loop.dataset import load_window
-        from alphamind.persistence.session import make_async_engine, make_async_session_factory
 
-        engine = make_async_engine(db_path)
-        try:
-            factory = make_async_session_factory(engine)
-            async with factory() as session:
-                dataset = await load_window(session, start, end, config=feedback)
-                return compute(dataset, UNCONDITIONED)
-        finally:
-            await engine.dispose()
+        async with open_async_session(db_path) as session:
+            dataset = await load_window(session, start, end, config=feedback)
+            return compute(dataset, UNCONDITIONED)
 
     return asyncio.run(_run())
 
@@ -380,21 +368,14 @@ def _open_and_snapshot(
     """Open an async session and snapshot the week — the producer's engine shell."""
 
     async def _run() -> SnapshotOutcome:
-        from alphamind.persistence.session import make_async_engine, make_async_session_factory
-
-        engine = make_async_engine(db_path)
-        try:
-            factory = make_async_session_factory(engine)
-            async with factory() as session:
-                return await snapshot_week(
-                    session,
-                    week_start,
-                    digest_config=digest_config,
-                    feedback_config=feedback,
-                    trajectory_weeks=trajectory_weeks,
-                )
-        finally:
-            await engine.dispose()
+        async with open_async_session(db_path) as session:
+            return await snapshot_week(
+                session,
+                week_start,
+                digest_config=digest_config,
+                feedback_config=feedback,
+                trajectory_weeks=trajectory_weeks,
+            )
 
     return asyncio.run(_run())
 
