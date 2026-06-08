@@ -166,3 +166,63 @@ def test_mapper_pair_key_flag_has_no_ticker() -> None:
         ).detail
         assert isinstance(detail, DistillationAnomalyFlagDetail)
         assert detail.ticker is None
+
+
+def test_mapper_per_ticker_q1_anomalies_get_distinct_entry_ids_and_ticker() -> None:
+    """Two per-ticker q1 flags of one threshold → distinct entry_ids + populated ticker.
+
+    The prod abort (ALP-934): q1 anomaly detection fires *per ticker* but the
+    flag name was the block-level constant ``"volume_anomaly"``, so two tickers
+    breaching the threshold in one ``q1.volume_anomaly`` block produced two flags
+    with the *identical* ``(invocation_id, block_id, flag.name)`` triple — hence
+    one shared ``entry_id`` PK, colliding inside the emission ``executemany``.
+    Embedding the ticker (``volume_anomaly:{ticker}``) restores both PK
+    uniqueness and the per-ticker attribution dropped to ``ticker=None``.
+    """
+    block_id = "q1.volume_anomaly"
+    nvda = _summary(name="volume_anomaly:NVDA", magnitude=1.787, block_id=block_id)
+    amd = _summary(name="volume_anomaly:AMD", magnitude=1.693, block_id=block_id)
+
+    nvda_entry = anomaly_summary_to_activity_log_entry(
+        nvda, invocation_id="inv-1", timestamp=_AS_OF
+    )
+    amd_entry = anomaly_summary_to_activity_log_entry(amd, invocation_id="inv-1", timestamp=_AS_OF)
+
+    # Distinct PKs within one block — the collision the prod run hit.
+    assert nvda_entry.entry_id != amd_entry.entry_id
+
+    # The subject ticker is recovered into the detail (no longer ticker=None),
+    # while the taxonomy still resolves off the stripped canonical prefix.
+    for entry, ticker in ((nvda_entry, "NVDA"), (amd_entry, "AMD")):
+        detail = entry.detail
+        assert isinstance(detail, DistillationAnomalyFlagDetail)
+        assert detail.ticker == ticker
+        assert detail.threshold_class == "anomaly_detection"
+        assert detail.threshold_key == "volume_anomaly_sigma"
+
+
+def test_mapper_per_contract_prediction_market_deltas_get_distinct_entry_ids() -> None:
+    """Two per-contract prediction-market deltas in one block → distinct entry_ids.
+
+    Prediction markets are not ticker-scoped, so the embedded ``:{contract_id}``
+    suffix only disambiguates the PK — the detail's ``ticker`` stays ``None``
+    (``prediction_market_delta`` is deliberately not a ticker-bearing prefix).
+    """
+    block_id = "qual.prediction_market_delta"
+    first = _summary(name="prediction_market_delta:KX-A", block_id=block_id)
+    second = _summary(name="prediction_market_delta:KX-B", block_id=block_id)
+
+    first_entry = anomaly_summary_to_activity_log_entry(
+        first, invocation_id="inv-1", timestamp=_AS_OF
+    )
+    second_entry = anomaly_summary_to_activity_log_entry(
+        second, invocation_id="inv-1", timestamp=_AS_OF
+    )
+
+    assert first_entry.entry_id != second_entry.entry_id
+    for entry in (first_entry, second_entry):
+        detail = entry.detail
+        assert isinstance(detail, DistillationAnomalyFlagDetail)
+        assert detail.ticker is None
+        assert detail.threshold_class == "prediction_market"
+        assert detail.threshold_key == "prediction_market_delta_pp_threshold"

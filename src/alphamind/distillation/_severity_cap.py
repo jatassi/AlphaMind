@@ -138,13 +138,16 @@ def _cap_per_ticker_payload(
     """Return ``(new_payload, changed)`` with per-ticker severities capped.
 
     Only ``payload["per_ticker"][ticker]["severity"]`` is rewritten. The
-    target severity is the unique capped value from the block's flags —
-    q1 anomaly blocks emit one flag-name per block (``volume_anomaly`` or
-    ``price_move_anomaly``), so the mapping is unambiguous. A block whose
-    flags split across multiple distinct names while also baking severity
-    into the per-ticker payload would have no defined per-row mapping;
-    that combination doesn't occur in production today and is rejected
-    rather than silently regressing to the ALP-627 bug.
+    target severity is the unique *capped* value across the block's flags.
+    The q1 anomaly blocks now carry one flag *per firing ticker*
+    (``volume_anomaly:{ticker}`` / ``price_move_anomaly:{ticker}`` since
+    ALP-934 — distinct names so each row gets its own ``activity_log``
+    entry_id), but every such flag shares the block's single calibration
+    state, so they cap to one common severity and the per-row mapping stays
+    unambiguous. A block whose flags resolve to *different* capped severities
+    while also baking severity into the per-ticker payload would have no
+    defined per-row mapping; that combination doesn't occur in production
+    today and is rejected rather than silently regressing to the ALP-627 bug.
     """
     per_ticker = payload.get(_PER_TICKER_KEY)
     if not isinstance(per_ticker, Mapping):
@@ -156,8 +159,8 @@ def _cap_per_ticker_payload(
         ):
             raise AssertionError(
                 f"block {block_id!r}: per-ticker payload severity requires a single "
-                f"flag-name per block, but flags resolved to "
-                f"{sorted(capped_severity_by_name)} with severities "
+                f"capped severity across the block's flags, but flags "
+                f"{sorted(capped_severity_by_name)} resolved to severities "
                 f"{sorted(distinct_severities)}"
             )
         return payload, False

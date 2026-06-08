@@ -412,7 +412,8 @@ def test_record_price_move_anomaly_still_fires_on_calibrated_baseline() -> None:
     )
 
     assert len(acc.flags) == 1, f"expected one flag; got {acc.flags}"
-    assert acc.flags[0].name == "price_move_anomaly"
+    # The firing ticker is embedded in the flag name (ALP-934).
+    assert acc.flags[0].name == "price_move_anomaly:APA"
     assert "APA" in acc.per_ticker
 
 

@@ -167,7 +167,9 @@ class TestNewsPriceDivergence:
         flags = blocks[0].anomaly_flags
         assert len(flags) == 1
         assert isinstance(flags[0], AnomalyFlag)
-        assert flags[0].name == "news_price_divergence"
+        # The firing ticker is embedded as a ``:``-suffix (ALP-934) so two
+        # tickers in one block don't collide on the activity_log entry_id PK.
+        assert flags[0].name == "news_price_divergence:AAPL"
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +328,9 @@ class TestPredictionMarketDeltas:
         delta_block = blocks[0]
         assert delta_block.payload["per_contract"]["POLY-1"]["delta_anomaly"] is True
         assert len(delta_block.anomaly_flags) == 1
-        assert delta_block.anomaly_flags[0].name == "prediction_market_delta"
+        # The subject contract_id is embedded as a ``:``-suffix (ALP-934) so two
+        # anomalous contracts in one block don't collide on the entry_id PK.
+        assert delta_block.anomaly_flags[0].name == "prediction_market_delta:POLY-1"
         assert delta_block.anomaly_flags[0].magnitude == pytest.approx(8.0)
 
     def test_low_liquidity_tag_fires_below_volume_threshold(self) -> None:
@@ -771,7 +775,10 @@ class TestPredictionMarketDeltas:
         )
         delta_block = next(b for b in blocks if b.block_id == "qual.prediction_market_delta")
         assert set(delta_block.payload["per_contract"]) == {"POLY-ANOM"}
-        assert [flag.name for flag in delta_block.anomaly_flags] == ["prediction_market_delta"]
+        # Subject contract_id embedded as a ``:``-suffix (ALP-934).
+        assert [flag.name for flag in delta_block.anomaly_flags] == [
+            "prediction_market_delta:POLY-ANOM"
+        ]
         assert delta_block.anomaly_flags[0].magnitude == pytest.approx(15.0)
 
     def test_normalized_block_suppressed_when_no_constituent_passes_curation(self) -> None:
