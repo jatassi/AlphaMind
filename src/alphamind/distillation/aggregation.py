@@ -141,14 +141,25 @@ def collect_anomalies(blocks: Iterable[OutputBlock]) -> list[AnomalySummary]:
 # of the resulting row.
 
 # Flag prefixes that embed a single ticker as their one dynamic ``:``-segment
-# (``correlation_locus_flag:{ticker}``). Every other dynamic-suffix flag carries
-# a *pair* (``correlation_breakdown_flag:{row}:{col}``,
-# ``intra_sector_correlation_divergence:{row}:{col}``) or a pair-key
-# (``lead_lag_inversion_flag:{pair_key}``, ``overdue_lag_flag:{pair_key}``) — no
-# single subject ticker — and so resolves to ``ticker=None``. Segment *count*
-# alone can't separate the locus case from the pair-key case (both have one
-# segment), so the ticker-bearing prefixes are enumerated explicitly.
-_TICKER_BEARING_FLAG_PREFIXES: frozenset[str] = frozenset({"correlation_locus_flag"})
+# (``correlation_locus_flag:{ticker}``, and the per-ticker q1 / qualitative
+# anomalies ``volume_anomaly:{ticker}`` / ``price_move_anomaly:{ticker}`` /
+# ``news_price_divergence:{ticker}`` — ALP-934). Every other dynamic-suffix flag
+# carries a *pair* (``correlation_breakdown_flag:{row}:{col}``,
+# ``intra_sector_correlation_divergence:{row}:{col}``), a pair-key
+# (``lead_lag_inversion_flag:{pair_key}``, ``overdue_lag_flag:{pair_key}``), or a
+# non-ticker subject (``prediction_market_delta:{contract_id}`` — a contract, not
+# a symbol) — none names a single subject ticker, so all resolve to
+# ``ticker=None``. Segment *count* alone can't separate the locus / per-ticker
+# case from the pair-key / contract case (both have one suffix segment), so the
+# ticker-bearing prefixes are enumerated explicitly.
+_TICKER_BEARING_FLAG_PREFIXES: frozenset[str] = frozenset(
+    {
+        "correlation_locus_flag",
+        "volume_anomaly",
+        "price_move_anomaly",
+        "news_price_divergence",
+    }
+)
 
 
 def _ticker_from_flag_name(flag_name: str) -> str | None:
@@ -180,9 +191,17 @@ def anomaly_summary_to_activity_log_entry(
     names and ``None`` for pair-key / market-wide flags.
 
     Pure: no I/O, no SQL. The orchestrator persists the returned entry on its
-    own session. ``entry_id`` is deterministic in ``(invocation_id, block_id,
-    flag.name)`` so two runs of the same invocation produce the same PK and the
-    table never accumulates duplicate rows for one logical anomaly.
+    own session. ``entry_id`` is ``(invocation_id, block_id, flag.name)`` joined
+    with ``-``: deterministic (a re-run of the same invocation reproduces the same
+    PKs, so the table never accumulates duplicate rows for one logical anomaly)
+    **and** unique within an invocation — but only because every producer that can
+    emit two flags into one block gives those flags distinct names. Block-level
+    constant names with a per-subject fan-out (the q1 / qualitative per-ticker and
+    per-contract anomalies) embed their subject as a ``:``-suffix to keep the
+    triple unique; ``resolve_flag_taxonomy`` strips that suffix so the threshold
+    taxonomy is unaffected (ALP-934). A producer that reused one bare constant
+    across two flags in a single block would collide N rows on this PK inside one
+    ``executemany`` — the regression these subject-embedded names exist to prevent.
     """
     flag = summary.flag
     taxonomy = resolve_flag_taxonomy(flag.name)

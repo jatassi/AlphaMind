@@ -361,10 +361,16 @@ def test_q1_per_ticker_severity_skipped_when_flag_exempt() -> None:
 
 
 def test_q1_per_ticker_multi_ticker_block_caps_every_row() -> None:
-    """A multi-ticker q1 block caps every per-ticker row in one pass."""
+    """A multi-ticker q1 block caps every per-ticker row in one pass.
+
+    Since ALP-934 the per-ticker flags carry distinct ``:{ticker}``-suffixed
+    names (so each gets its own ``activity_log`` entry_id); they share the block's
+    one calibration state, so they still cap to a single common severity and the
+    per-ticker payload-severity rewrite stays unambiguous.
+    """
     flags = (
-        AnomalyFlag(name="volume_anomaly", magnitude=2.64, severity="investigate_now"),
-        AnomalyFlag(name="volume_anomaly", magnitude=3.10, severity="investigate_now"),
+        AnomalyFlag(name="volume_anomaly:MSFT", magnitude=2.64, severity="investigate_now"),
+        AnomalyFlag(name="volume_anomaly:NVDA", magnitude=3.10, severity="investigate_now"),
     )
     payload = {
         "per_ticker": {
@@ -412,16 +418,20 @@ def test_cap_preserves_block_when_payload_severity_already_matches_capped_value(
     assert capped is block
 
 
-def test_cap_rejects_multi_flag_name_block_with_per_ticker_severity() -> None:
-    """Multi-distinct-flag-name + per-ticker severity is rejected, not silently passed.
+def test_cap_rejects_multi_severity_block_with_per_ticker_severity() -> None:
+    """Flags capping to >1 distinct severity + per-ticker severity is rejected.
 
-    The per-ticker row has no flag-name field, so the cap has no way to
-    pick the right post-cap severity when flags split across names. The
-    silent fall-through would silently regress to the ALP-627 bug; the
-    assertion surfaces the contract breach at first emission.
+    The per-ticker row has no flag-name field, so the cap has no way to pick the
+    right post-cap severity when the block's flags resolve to *different* capped
+    severities. (Since ALP-934 a q1 anomaly block legitimately carries multiple
+    distinct flag *names* — one per ticker — but they share one calibration state
+    and so cap to one common severity; the breach is divergent *severities*, not
+    divergent names.) The silent fall-through would regress to the ALP-627 bug;
+    the assertion surfaces the contract breach at first emission. Here the two
+    flags cap to ``investigate_if_persists`` and ``note_for_context``.
     """
     flags = (
-        AnomalyFlag(name="volume_anomaly", magnitude=2.64, severity="investigate_now"),
+        AnomalyFlag(name="volume_anomaly:MSFT", magnitude=2.64, severity="investigate_now"),
         AnomalyFlag(name="some_other_flag", magnitude=1.0, severity="note_for_context"),
     )
     payload = {
@@ -437,7 +447,7 @@ def test_cap_rejects_multi_flag_name_block_with_per_ticker_severity() -> None:
         payload=payload,
     )
 
-    with pytest.raises(AssertionError, match="single flag-name per block"):
+    with pytest.raises(AssertionError, match="single capped severity"):
         cap_block_severities(block, exempt_flag_names=frozenset())
 
 

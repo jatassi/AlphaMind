@@ -322,9 +322,21 @@ def compute_prediction_market_delta_blocks(
     # universe — independent of brief-payload curation, so anomalies in
     # non-allowlisted categories stay visible to the orchestrator's anomaly
     # consumers even if their per-contract row is excluded from the brief.
+    #
+    # The subject contract_id is embedded as a ``:``-suffix
+    # (``"prediction_market_delta:{contract_id}"``), following the existing
+    # ``correlation_locus_flag:{ticker}`` convention. A bare constant name would
+    # make every per-contract flag in this single block identical, and the 04b
+    # emission hook builds ``entry_id`` from ``(invocation_id, block_id,
+    # flag.name)`` — so N anomalous contracts would collide on the
+    # ``activity_log.entry_id`` PK (ALP-934). Prediction markets are not
+    # ticker-scoped, so ``prediction_market_delta`` is deliberately NOT registered
+    # as a ticker-bearing prefix: the emitted detail's ``ticker`` stays ``None``
+    # (the contract_id is the disambiguator, not a subject ticker), while
+    # ``resolve_flag_taxonomy`` strips the suffix to recover the canonical prefix.
     delta_flags = tuple(
         AnomalyFlag(
-            name="prediction_market_delta",
+            name=f"prediction_market_delta:{contract_id}",
             magnitude=abs(per_contract[contract_id]["delta_pp_since_prior"]),
             severity="investigate_now",
         )
