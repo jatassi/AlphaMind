@@ -166,24 +166,28 @@ def _compute_pm_rejection_accuracy(
 def _scorable_modification(observation: ReplayObservation) -> bool:
     """Whether a modification replay can be scored.
 
-    A ``modification_original_form`` replay is scorable once the *actual*
-    modified-form trade the PM approved has resolved (``actual_modified_pnl`` set);
-    until then the comparison has no realized modified-form leg and the replay is
-    loaded but excluded.
+    A ``modification_original_form`` replay is scorable once both legs of the
+    comparison exist: the *actual* modified-form trade the PM approved has resolved
+    (``actual_modified_pnl`` set), and the engine priced the counterfactual original
+    form (``counterfactual_pnl`` set). An unpriceable original form — one the engine
+    evaluated but could not realize a P/L for (e.g. an entry window that expired
+    unfilled) — has no baseline to compare the modified form against, so the replay
+    is loaded but excluded. Until both legs resolve the replay is carried on the
+    bundle but not scored.
     """
     return (
         observation.replay_kind == _KIND_MODIFICATION_ORIGINAL_FORM
         and _eligible(observation)
         and observation.actual_modified_pnl is not None
+        and observation.counterfactual_pnl is not None
     )
 
 
 def _modification_helped(observation: ReplayObservation) -> bool:
     """Whether the modified-form trade outperformed the counterfactual original form."""
-    counterfactual = observation.counterfactual_pnl
-    counterfactual = 0.0 if counterfactual is None else counterfactual
     assert observation.actual_modified_pnl is not None  # guaranteed by _scorable_modification
-    return observation.actual_modified_pnl > counterfactual
+    assert observation.counterfactual_pnl is not None  # guaranteed by _scorable_modification
+    return observation.actual_modified_pnl > observation.counterfactual_pnl
 
 
 def _compute_modification_effectiveness(

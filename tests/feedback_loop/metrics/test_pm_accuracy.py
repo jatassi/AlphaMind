@@ -148,6 +148,31 @@ def test_modification_effectiveness_excludes_unresolved_modified_form() -> None:
     assert result.sample_size == 1
 
 
+def test_modification_effectiveness_excludes_unpriceable_counterfactual() -> None:
+    # A modification replay whose original form could not be priced
+    # (counterfactual_pnl is None — the engine evaluated the replay but the entry
+    # window expired unfilled) has no baseline to compare the modified form against.
+    # It is loaded but excluded from scoring rather than scored against a fabricated
+    # 0.0 baseline. Only the priced pair counts.
+    dataset = _dataset(
+        make_replay_observation(
+            envelope_id="ENV-REC-1",
+            replay_kind=ReplayKind.MODIFICATION_ORIGINAL_FORM,
+            counterfactual_pnl=50.0,
+            actual_modified_pnl=120.0,
+        ),
+        make_replay_observation(
+            envelope_id="ENV-REC-2",
+            replay_kind=ReplayKind.MODIFICATION_ORIGINAL_FORM,
+            counterfactual_pnl=None,
+            actual_modified_pnl=80.0,
+        ),
+    )
+    result = get_metric(METRIC_MODIFICATION_EFFECTIVENESS).compute(dataset, UNCONDITIONED)  # type: ignore[union-attr]
+    assert result.value == 1.0
+    assert result.sample_size == 1
+
+
 def test_modification_effectiveness_ignores_rejection_replays() -> None:
     # A rejection replay must not enter the modification metric.
     dataset = _dataset(
