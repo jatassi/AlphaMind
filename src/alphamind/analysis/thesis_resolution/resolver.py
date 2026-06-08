@@ -76,6 +76,7 @@ from alphamind.portfolio_state.events.activity_log import (
 from alphamind.portfolio_state.events.thesis import ThesisResolvedDetail
 from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
+    OptionContractType,
     OptionsPositionDetails,
     PositionStatus,
     resolve_ticker,
@@ -671,20 +672,39 @@ def _render_market_data_slice(
     entry_reference: _EntryReference,
     underlying_prices: Mapping[str, float],
 ) -> str:
-    """Render the focused market-data slice for the LLM evaluator (pure).
+    """Render the focused market-data slice for the LLM evaluator.
 
-    Surfaces the price path — instrument, entry price, resolution-time price,
-    and the move (absolute + percent) — so an ``ENTRY_RATIONALE`` evaluation
-    reasons about whether the entry thesis *played out* rather than anchoring on
-    P/L; the realized P/L is framed as the trade's outcome, not the lead
-    (ALP-914 finding 5). When the instrument's resolution-time price is
-    unavailable (symbol absent from ``underlying_prices``, or no entry
-    reference), the slice falls back to an assumptions-only framing and never
-    raises.
+    Surfaces the price path so an ``ENTRY_RATIONALE`` evaluation reasons about
+    whether the entry thesis *played out* rather than anchoring on P/L; the
+    realized P/L is framed as the trade's outcome, not the lead (ALP-914
+    finding 5). Three instrument arms (ALP-921):
+
+    * **Equity** — instrument, entry price, resolution-time price, and the move
+      (absolute + percent) when the underlying price is present.
+    * **Option** — the underlying, the contract terms (``{CALL|PUT}`` at the
+      strike, expiry, premium paid per contract), and — when the underlying
+      resolution-time price is present — that price plus an ITM/OTM reading
+      **against the strike** (the entry premium and the underlying spot are
+      different instruments, so no premium-vs-spot delta is computed).
+    * **Degraded** — instrument-only when no entry reference resolves.
+
+    When the instrument's resolution-time price is unavailable the slice still
+    renders what it has and never raises. Emits a DEBUG diagnostic when a known
+    instrument symbol has no resolution price, so a genuinely-absent price (a
+    closed ticker dropped from the active universe) is distinguishable in logs
+    from a key mismatch.
     """
     symbol = entry_reference.symbol
     entry_price = entry_reference.entry_price
+    option_context = entry_reference.option_context
     resolution_price = underlying_prices.get(symbol) if symbol is not None else None
+
+    if symbol is not None and resolution_price is None:
+        log.debug(
+            "market-data slice: no resolution price for instrument %s "
+            "(absent from underlying_prices) — slice degrades to price-unavailable",
+            symbol,
+        )
 
     lines: list[str] = []
     if symbol is not None and entry_price is not None and resolution_price is not None:
@@ -694,6 +714,8 @@ def _render_market_data_slice(
         lines.append(f"Entry price: ${entry_price:,.2f}")
         lines.append(f"Resolution-time price: ${resolution_price:,.2f}")
         lines.append(f"Price move: ${move_abs:,.2f} ({move_pct:+.1f}%)")
+    elif symbol is not None and option_context is not None:
+        lines.extend(_render_option_arm(symbol, option_context, resolution_price))
     else:
         instrument = symbol if symbol is not None else "(instrument unknown)"
         lines.append(f"Instrument: {instrument}")
@@ -703,6 +725,53 @@ def _render_market_data_slice(
     lines.append(f"Position closed via {exit_method.value}.")
     lines.append(f"Trade outcome (not the lead): realized P/L ${realized_pnl_usd:,.2f}.")
     return "\n".join(lines)
+
+
+def _render_option_arm(
+    symbol: str,
+    option_context: _OptionEntryContext,
+    resolution_price: float | None,
+) -> list[str]:
+    """Render the option price-path lines for the market-data slice (ALP-921).
+
+    The underlying instrument, the contract terms (type / strike / expiry /
+    premium paid per contract), and — when the underlying resolution-time price
+    is present — that price plus an ITM/OTM reading against the strike. The move
+    is read against the strike, never the premium: the option entry premium and
+    the underlying spot are different instruments, so no premium-vs-spot delta
+    is computed. When the underlying price is absent the contract terms still
+    render plus an explicit unavailable line.
+    """
+    contract_type = option_context.contract_type
+    strike = option_context.strike_price
+    lines = [
+        f"Underlying instrument: {symbol}",
+        (
+            f"Option contract: {contract_type} at strike ${strike:,.2f}, "
+            f"expiring {option_context.expiration_date.isoformat()}, "
+            f"premium paid ${option_context.premium_paid_per_contract:,.2f} per contract"
+        ),
+    ]
+    if resolution_price is None:
+        lines.append("Underlying resolution-time price unavailable.")
+        return lines
+
+    lines.append(f"Underlying resolution-time price: ${resolution_price:,.2f}")
+    distance = abs(resolution_price - strike)
+    if resolution_price == strike:
+        lines.append(f"Finished at-the-money (underlying at the ${strike:,.2f} strike).")
+    else:
+        is_itm = (
+            resolution_price > strike
+            if contract_type == OptionContractType.CALL.value
+            else resolution_price < strike
+        )
+        reading = "ITM (in-the-money)" if is_itm else "OTM (out-of-the-money)"
+        lines.append(
+            f"Finished {reading}: underlying ${distance:,.2f} "
+            f"{'above' if resolution_price > strike else 'below'} the ${strike:,.2f} strike."
+        )
+    return lines
 
 
 # ---------------------------------------------------------------------------

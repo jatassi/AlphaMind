@@ -212,6 +212,52 @@ async def test_expiry_closed_option_thesis_resolves_active_to_resolved(
         )
 
 
+async def test_expiry_closed_option_slice_renders_underlying_price_path(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-921: the market-data slice for an expiry-closed option thesis renders
+    the underlying symbol, the strike, the premium paid, the underlying
+    resolution-time price, and an ITM/OTM-vs-strike moneyness line — never the
+    bare 'resolution-time price unavailable' fallback, and never a
+    premium-vs-spot delta. The seeded contract is a CALL @ 150 that expired OTM
+    (underlying at 142)."""
+    _engine, factory = db
+    await _seed_open_option(factory)
+    await _run_handler(factory, _expiry_event())
+    await _rederive_ledger(factory)
+
+    captured: dict[str, str] = {}
+
+    def _capturing_sdk(**kwargs: Any) -> Any:
+        captured["prompt"] = str(kwargs.get("prompt", ""))
+        return _make_sdk_stub("WRONG")(**kwargs)
+
+    async with factory() as session:
+        handle = InvocationHandle(session=session, invocation_id=INV_ID)
+        await resolve_closed_position_theses(
+            handle,
+            evaluator_config=make_evaluator_config(),
+            sdk_query_fn=_capturing_sdk,
+            underlying_prices={"AAPL": 142.0},
+        )
+        await session.commit()
+
+    slice_text = captured["prompt"]
+    lowered = slice_text.lower()
+    assert "AAPL" in slice_text
+    assert "150" in slice_text  # strike
+    assert "250" in slice_text  # premium paid per contract
+    assert "142" in slice_text  # underlying resolution-time price
+    assert "otm" in lowered or "out-of-the-money" in lowered  # moneyness vs strike
+    # The bare equity-style fallback must NOT appear — the underlying price IS
+    # present, the slice must render the option price path against it.
+    assert "resolution-time price unavailable" not in lowered
+    assert "underlying resolution-time price unavailable" not in lowered
+    # The move is read against the strike (150 - 142 = 8), never the premium —
+    # no premium-vs-spot delta (250 - 142 = 108) may appear.
+    assert "108" not in slice_text
+
+
 async def test_assignment_thesis_defers_to_equity_close_then_resolves(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
