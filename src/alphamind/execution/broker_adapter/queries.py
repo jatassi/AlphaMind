@@ -55,6 +55,12 @@ _NON_TRADE_ACTIVITY_ADAPTER: TypeAdapter[NonTradeActivity] = TypeAdapter(NonTrad
 
 _PAGE_SIZE = 500
 
+# Alpaca caps ``/account/activities`` ``page_size`` at 100 when ``date`` is unset
+# (alpaca-py docs, ``alpaca/broker/requests.py``); our call path never sets ``date``,
+# so the 100 cap always applies. ``/v2/orders`` accepts ``limit`` up to 500, so the two
+# endpoints cannot share ``_PAGE_SIZE`` — requesting 500 here is a hard 422 (ALP-932).
+_ACTIVITIES_PAGE_SIZE = 100
+
 # Per-page wall-clock budget (seconds) for a synchronous Alpaca REST call run on
 # a worker thread. alpaca-py's ``TradingClient`` issues blocking ``requests``
 # calls with no socket timeout, so a hung connection would otherwise block its
@@ -544,7 +550,7 @@ class AccountStateQueries:
         ``ActivityType.is_str_trade_activity`` is the same discriminator the SDK
         uses to route raw dicts into ``TradeActivity`` vs ``NonTradeActivity``.
         """
-        params: dict[str, Any] = {"page_size": _PAGE_SIZE}
+        params: dict[str, Any] = {"page_size": _ACTIVITIES_PAGE_SIZE}
         if activity_types:
             params["activity_types"] = ",".join(activity_types)
         if after:
@@ -574,7 +580,7 @@ class AccountStateQueries:
             if "id" not in last_raw:
                 break
             params["page_token"] = last_raw["id"]
-            if len(result) < _PAGE_SIZE:
+            if len(result) < _ACTIVITIES_PAGE_SIZE:
                 break
 
     def get_asset(self, symbol: str) -> AssetSnapshot | None:
