@@ -27,8 +27,9 @@ Section layout follows ``docs/design/feedback-loop.md`` § Dashboard and digest 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, get_args
 
+from alphamind.commands.pm_envelope import AntiPattern
 from alphamind.feedback_loop.digest.shifts import ShiftFinding, detect_shifts
 from alphamind.feedback_loop.metrics import get_metric
 from alphamind.feedback_loop.metrics.types import UNCONDITIONED, MetricId, MetricResult
@@ -76,16 +77,12 @@ _M_ANALYST_INACTION_RATE = MetricId("analyst_inaction_rate")  # 06b
 _M_STRATEGIST_HOLD_RATE = MetricId("strategist_hold_on_non_on_track_rate")  # 06a (registered)
 _M_GUARDRAIL_REJECTION_COUNT = MetricId("guardrail_rejection_count")  # 06f
 
-#: Canonical anti-pattern names (``commands.pm_envelope.AntiPattern``). Each is a
-#: per-pattern frequency metric the process pulse shows as a small bar group; the
-#: metric ids land with 06b and degrade gracefully until then.
-_ANTI_PATTERN_NAMES: tuple[str, ...] = (
-    "sunk_cost_persistence",
-    "rationalized_continuation",
-    "thesis_contradiction_suppression",
-    "engine_originated_closure_signal",
-    "conviction_inflation",
-)
+#: Canonical anti-pattern names, sourced from the single ``AntiPattern`` Literal so a
+#: sixth member auto-flows into the pulse's per-pattern bar group rather than being
+#: silently dropped here (``decision.py`` mints the matching frequency metrics off the
+#: same ``get_args`` source). Each is a per-pattern frequency metric the process pulse
+#: shows as a small bar group.
+_ANTI_PATTERN_NAMES: tuple[str, ...] = tuple(get_args(AntiPattern))
 _M_ANTI_PATTERN_FREQUENCY = "anti_pattern_frequency"  # 06b id prefix → "<prefix>__<name>"
 
 # Section 3 — Trajectory (six sparklines over the trailing weeks).

@@ -22,8 +22,9 @@ from __future__ import annotations
 import statistics
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, get_args
 
+from alphamind.commands.pm_envelope import AntiPattern
 from alphamind.feedback_loop.citation.chain import metric_id_for
 from alphamind.feedback_loop.citation.parser import CitationSource
 from alphamind.feedback_loop.metrics import get_metric
@@ -71,13 +72,10 @@ class ShiftFinding:
 
 #: Per-pattern anti-pattern-frequency id prefix (06b). ``<prefix>__<pattern>``.
 _ANTI_PATTERN_FREQUENCY_PREFIX = "anti_pattern_frequency"
-_ANTI_PATTERN_NAMES: tuple[str, ...] = (
-    "sunk_cost_persistence",
-    "rationalized_continuation",
-    "thesis_contradiction_suppression",
-    "engine_originated_closure_signal",
-    "conviction_inflation",
-)
+#: Sourced from the single ``AntiPattern`` Literal so a sixth member auto-flows into the
+#: anti-pattern-spike detector rather than being silently dropped at five (``decision.py``
+#: and ``generator.py`` read the same ``get_args`` source).
+_ANTI_PATTERN_NAMES: tuple[str, ...] = tuple(get_args(AntiPattern))
 
 #: Per-invocation regime classification (06b). A scalar-coded label per week.
 _M_REGIME_CLASSIFICATION = MetricId("regime_classification")

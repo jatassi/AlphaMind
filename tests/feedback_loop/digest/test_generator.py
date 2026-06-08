@@ -150,3 +150,18 @@ class TestPurity:
         # test modules, so we assert the generator does not *reference* it.)
         assert "sqlalchemy" not in dir(gen)
         assert sys.modules.get("alphamind.feedback_loop.digest.generator") is not None
+
+
+class TestAntiPatternNameParity:
+    def test_digest_anti_pattern_names_track_the_registered_set(self) -> None:
+        # Both digest copies must equal the single AntiPattern source of truth, so a
+        # sixth member auto-flows into the pulse and shift detection rather than being
+        # silently dropped at five.
+        from typing import get_args
+
+        from alphamind.commands.pm_envelope import AntiPattern
+        from alphamind.feedback_loop.digest import shifts
+
+        registered = set(get_args(AntiPattern))
+        assert set(gen._ANTI_PATTERN_NAMES) == registered
+        assert set(shifts._ANTI_PATTERN_NAMES) == registered
