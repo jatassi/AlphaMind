@@ -983,6 +983,22 @@ class TestGetAccountActivities:
         assert "FILL" in params.get("activity_types", "")
         assert params.get("page_token") == "cursor-abc"
 
+    def test_activity_page_size_capped_at_alpaca_max(self) -> None:
+        """page_size must be 100 — Alpaca rejects /account/activities requests with
+        page_size > 100 (422), unlike /v2/orders which accepts limit up to 500.
+        ALP-932: the two endpoints must not share a page-size constant."""
+        from alphamind.execution.broker_adapter.queries import AccountStateQueries
+
+        client = _fake_client()
+        client.get.return_value = []
+
+        qs = AccountStateQueries(client)
+        asyncio.run(_collect_activities(qs))
+
+        call_args = client.get.call_args
+        params = call_args[0][1] if len(call_args[0]) > 1 else call_args[1].get("data")
+        assert params.get("page_size") == 100
+
     def test_activity_snapshot_frozen(self) -> None:
         from pydantic import ValidationError
 
