@@ -19,6 +19,7 @@ themselves live only in config; the finding records the crossing, not the knob.
 
 from __future__ import annotations
 
+import statistics
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -29,7 +30,7 @@ from alphamind.feedback_loop.metrics import get_metric
 from alphamind.feedback_loop.metrics.types import UNCONDITIONED, MetricId
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
     from alphamind.config.models.digest import (
         AntiPatternSpike,
@@ -114,21 +115,22 @@ def _mean(values: Sequence[float]) -> float | None:
     return sum(values) / len(values) if values else None
 
 
-# ---------------------------------------------------------------------------
-# Detector 1 — anti-pattern spike
-# ---------------------------------------------------------------------------
+def _current_vs_baseline_mean(
+    *,
+    current: WindowDataset,
+    baseline: Sequence[WeekInput],
+    subjects: Sequence[tuple[str, MetricId]],
+) -> Iterator[tuple[str, float, float]]:
+    """Yield ``(subject, this_week, baseline_mean)`` per metric with both readings.
 
-
-def detect_anti_pattern_spike(
-    weeks: Sequence[WeekInput], config: AntiPatternSpike
-) -> tuple[ShiftFinding, ...]:
-    """Fire per pattern whose weekly count exceeds ``multiplier * baseline mean`` AND
-    meets the ``min_occurrences_this_week`` floor."""
-    current = weeks[-1][1]
-    baseline = _baseline_weeks(weeks, config.baseline_window_weeks)
-    findings: list[ShiftFinding] = []
-    for pattern in _ANTI_PATTERN_NAMES:
-        metric_id = MetricId(f"{_ANTI_PATTERN_FREQUENCY_PREFIX}__{pattern}")
+    The shared current-week-value + trailing-baseline-mean loop behind the
+    anti-pattern-spike and per-source percentage-point-shift detectors. For each
+    ``(subject, metric_id)`` pair it computes the current week's value and the mean
+    of the trailing baseline weeks' values, skipping any metric where the current
+    reading or the baseline is missing (a gated metric degrades to no finding). Each
+    detector keeps its own threshold test and :class:`ShiftFinding` construction.
+    """
+    for subject, metric_id in subjects:
         this_week = _metric_value(current, metric_id)
         if this_week is None:
             continue
@@ -140,6 +142,29 @@ def detect_anti_pattern_spike(
         baseline_mean = _mean(baseline_values)
         if baseline_mean is None:
             continue
+        yield subject, this_week, baseline_mean
+
+
+# ---------------------------------------------------------------------------
+# Detector 1 — anti-pattern spike
+# ---------------------------------------------------------------------------
+
+
+def detect_anti_pattern_spike(
+    weeks: Sequence[WeekInput], config: AntiPatternSpike
+) -> tuple[ShiftFinding, ...]:
+    """Fire per pattern whose weekly count exceeds ``multiplier * baseline mean`` AND
+    meets the ``min_occurrences_this_week`` floor."""
+    subjects = [
+        (pattern, MetricId(f"{_ANTI_PATTERN_FREQUENCY_PREFIX}__{pattern}"))
+        for pattern in _ANTI_PATTERN_NAMES
+    ]
+    findings: list[ShiftFinding] = []
+    for pattern, this_week, baseline_mean in _current_vs_baseline_mean(
+        current=weeks[-1][1],
+        baseline=_baseline_weeks(weeks, config.baseline_window_weeks),
+        subjects=subjects,
+    ):
         if (
             this_week >= config.min_occurrences_this_week
             and this_week > config.multiplier_vs_baseline * baseline_mean
@@ -196,9 +221,11 @@ _SECTORS: tuple[str, ...] = (
 )
 
 
-def _stddev(values: Sequence[float], mean: float) -> float:
+def _stddev(values: Sequence[float]) -> float:
+    """Sample standard deviation, computing its own mean (0.0 for < 2 values)."""
     if len(values) < 2:
         return 0.0
+    mean = sum(values) / len(values)
     variance = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
     return float(variance**0.5)
 
@@ -219,14 +246,8 @@ def detect_sector_underperform(
     findings: list[ShiftFinding] = []
     for sector, pl in sector_pl.items():
         others = [v for s, v in sector_pl.items() if s != sector]
-        others_sorted = sorted(others)
-        mid = len(others_sorted) // 2
-        median = (
-            others_sorted[mid]
-            if len(others_sorted) % 2 == 1
-            else (others_sorted[mid - 1] + others_sorted[mid]) / 2
-        )
-        sigma = _stddev(others, _mean(others) or 0.0)
+        median = statistics.median(others)
+        sigma = _stddev(others)
         threshold = median - config.median_offset_sigma * sigma
         if pl < threshold:
             findings.append(
@@ -264,22 +285,13 @@ def _per_source_pp_shift(
     (fire only on a decrease > threshold — signal survival). The threshold is in
     percentage points, so the 0-1 rate is scaled by 100.
     """
-    current = weeks[-1][1]
-    baseline = _baseline_weeks(weeks, baseline_window_weeks)
+    subjects = [(source.value, metric_id_for(metric_name, source)) for source in CitationSource]
     findings: list[ShiftFinding] = []
-    for source in CitationSource:
-        metric_id = metric_id_for(metric_name, source)
-        this_week = _metric_value(current, metric_id)
-        if this_week is None:
-            continue
-        baseline_values = [
-            value
-            for _, dataset in baseline
-            if (value := _metric_value(dataset, metric_id)) is not None
-        ]
-        baseline_mean = _mean(baseline_values)
-        if baseline_mean is None:
-            continue
+    for subject, this_week, baseline_mean in _current_vs_baseline_mean(
+        current=weeks[-1][1],
+        baseline=_baseline_weeks(weeks, baseline_window_weeks),
+        subjects=subjects,
+    ):
         delta_pp = (this_week - baseline_mean) * 100.0
         fired = (
             abs(delta_pp) > delta_pp_threshold
@@ -290,7 +302,7 @@ def _per_source_pp_shift(
             findings.append(
                 ShiftFinding(
                     kind=kind,
-                    subject=source.value,
+                    subject=subject,
                     detail=(
                         f"{metric_name} {this_week * 100:g}% vs baseline "
                         f"{baseline_mean * 100:g}% (Δ {delta_pp:+g}pp)"
