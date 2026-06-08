@@ -133,7 +133,8 @@ class TestPredictionMarketDeltaThreshold:
         # Exactly one anomaly flag
         assert len(block.anomaly_flags) == 1
         flag = block.anomaly_flags[0]
-        assert flag.name == "prediction_market_delta"
+        # The subject contract_id is embedded as a ``:``-suffix (ALP-934).
+        assert flag.name == "prediction_market_delta:pm-001"
         assert flag.severity == "investigate_now"
         assert flag.magnitude == pytest.approx(5.0)
 

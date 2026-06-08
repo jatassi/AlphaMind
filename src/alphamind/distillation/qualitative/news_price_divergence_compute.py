@@ -219,14 +219,24 @@ def compute_news_price_divergence_blocks(
 
 
 def _flag_tuple(magnitudes: Sequence[tuple[str, float]]) -> tuple[AnomalyFlag, ...]:
-    """Render the per-ticker magnitudes as anomaly flags in ticker-sorted order."""
+    """Render the per-ticker magnitudes as anomaly flags in ticker-sorted order.
+
+    The firing ticker is embedded as a ``:``-suffix
+    (``"news_price_divergence:{ticker}"``), following the existing
+    ``correlation_locus_flag:{ticker}`` convention. A bare constant name would
+    make every per-ticker flag in a block identical, and the 04b emission hook
+    builds ``entry_id`` from ``(invocation_id, block_id, flag.name)`` — so N
+    tickers in one block would collide on the ``activity_log.entry_id`` PK
+    (ALP-934). The suffix also restores per-ticker attribution in the emitted
+    detail (no longer ``ticker=None``).
+    """
     return tuple(
         AnomalyFlag(
-            name="news_price_divergence",
+            name=f"news_price_divergence:{ticker}",
             magnitude=magnitude,
             severity="investigate_now",
         )
-        for _ticker, magnitude in sorted(magnitudes)
+        for ticker, magnitude in sorted(magnitudes)
     )
 
 

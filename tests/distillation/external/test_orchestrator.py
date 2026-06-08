@@ -33,16 +33,19 @@ from sqlalchemy.pool import StaticPool
 # Pull in the state-persistence tables so ``Base.metadata.create_all`` materializes
 # the ``invocations`` and ``process_lifetimes`` rows the briefs FK targets.
 import alphamind.state.tables  # noqa: F401
+from alphamind._kernel.calibration import CalibrationState
 from alphamind.config.models.distillation import (
     DistillationConfig,
     PredictionMarket,
     TrackedCategoryOverride,
 )
+from alphamind.distillation.aggregation import AnomalySummary
 from alphamind.distillation.orchestrator import (
     DistillationOutputs,
+    _emit_anomaly_activity_log,
     run_external_distillation,
 )
-from alphamind.distillation.output import OutputAudience, OutputBlock
+from alphamind.distillation.output import AnomalyFlag, OutputAudience, OutputBlock
 from alphamind.persistence.models import (
     CORRELATION_REGIME_BRIEF_KIND,
     AssetUniverse,
@@ -925,3 +928,63 @@ def test_orchestrator_zero_flags_emits_zero_entries(tmp_path: Path) -> None:
     finally:
         sess.close()
         eng.dispose()
+
+
+def _per_ticker_volume_summary(*, ticker: str, magnitude: float) -> AnomalySummary:
+    """A q1 volume-anomaly summary for one firing ticker in the shared block."""
+    return AnomalySummary(
+        flag=AnomalyFlag(
+            name=f"volume_anomaly:{ticker}",
+            magnitude=magnitude,
+            severity="investigate_now",
+        ),
+        source_block_id="q1.volume_anomaly",
+        audiences=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+        flagged_at=datetime(2026, 4, 25, 12, 0, 0, tzinfo=UTC),
+        calibration_state=CalibrationState.CALIBRATED,
+    )
+
+
+def test_emit_multiple_per_ticker_flags_in_one_block_persists_distinct_rows(
+    populated_session: Session,
+) -> None:
+    """N per-ticker q1 flags sharing one block commit as N distinct rows — no PK collision.
+
+    This is the regression for the prod abort (ALP-934): the genesis canary run
+    died with ``sqlite3.IntegrityError: UNIQUE constraint failed:
+    activity_log.entry_id`` inside the emission ``executemany`` because three
+    ``q1.price_move_anomaly`` / five ``q1.volume_anomaly`` flags carried the
+    block-level *constant* name, collapsing to one shared ``entry_id`` PK. Driving
+    several same-block per-ticker summaries through the real emission path
+    (``_emit_anomaly_activity_log`` → ``session.commit()``) must now persist one
+    row per ticker. Pre-fix this raised ``IntegrityError`` on commit.
+    """
+    invocation_id = "20260425T120000Z-collide"
+    _seed_invocation_row(populated_session, invocation_id)
+    populated_session.commit()
+
+    summaries = [
+        _per_ticker_volume_summary(ticker="NVDA", magnitude=1.787),
+        _per_ticker_volume_summary(ticker="AMD", magnitude=1.693),
+        _per_ticker_volume_summary(ticker="AAPL", magnitude=1.703),
+    ]
+
+    written = _emit_anomaly_activity_log(
+        populated_session,
+        summaries=summaries,
+        invocation_id=invocation_id,
+        as_of=datetime(2026, 4, 25, 12, 0, 0, tzinfo=UTC),
+    )
+    assert written == len(summaries)
+
+    rows = _read_anomaly_entries(populated_session, invocation_id)
+    assert len(rows) == len(summaries)
+    # Every row carries a distinct PK and resolves its per-ticker subject.
+    assert len({row.entry_id for row in rows}) == len(summaries)
+    tickers = set()
+    for row in rows:
+        detail = activity_log_entry_from_row(row).detail
+        assert isinstance(detail, DistillationAnomalyFlagDetail)
+        assert detail.block_id == "q1.volume_anomaly"
+        tickers.add(detail.ticker)
+    assert tickers == {"NVDA", "AMD", "AAPL"}

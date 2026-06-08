@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import statistics
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
@@ -706,11 +706,19 @@ def _record_volume_anomaly(
 ) -> _AnomalyDetectionAccumulator:
     """Run the volume-anomaly detection and fold the result into ``acc``.
 
-    A flag emitted under an UNAVAILABLE baseline would carry no ticker
-    attribution at the rollup-renderer layer (``AnomalyFlag.name`` is the
-    block-level constant ``"volume_anomaly"``), so we suppress emission for
-    that ticker — paralleling :func:`_record_price_move_anomaly` and the
-    per-ticker gates in :func:`_compute_technicals_per_ticker` /
+    The detector returns a block-level constant flag name (``"volume_anomaly"``);
+    we embed the firing ticker as a ``:``-suffix (``"volume_anomaly:{ticker}"``)
+    before appending it, following the existing ``correlation_locus_flag:{ticker}``
+    convention. Without the subject embedded, N tickers breaching one threshold
+    inside a single block produce N identically-named flags — and the 04b
+    emission hook builds ``entry_id`` from ``(invocation_id, block_id, flag.name)``,
+    so identical names collide on the ``activity_log.entry_id`` PK (ALP-934). The
+    suffix also restores per-ticker attribution in the emitted detail, which the
+    bare constant dropped to ``ticker=None``.
+
+    A flag emitted under an UNAVAILABLE baseline is still suppressed for that
+    ticker — paralleling :func:`_record_price_move_anomaly` and the per-ticker
+    gates in :func:`_compute_technicals_per_ticker` /
     :func:`_trend_state_payload_for_ticker` (ALP-630, ALP-704).
     """
     if baseline_state is CalibrationState.UNAVAILABLE:
@@ -725,7 +733,7 @@ def _record_volume_anomaly(
     )
     if flag is None:
         return acc
-    acc.flags.append(flag)
+    acc.flags.append(replace(flag, name=f"{flag.name}:{ticker}"))
     acc.per_ticker[ticker] = {
         "today_volume": today_volume,
         "baseline_mean": float(baseline.mean),
@@ -756,18 +764,27 @@ def _record_price_move_anomaly(
 ) -> _AnomalyDetectionAccumulator:
     """Run the price-move anomaly detection and fold the result into ``acc``.
 
-    A flag emitted under an UNAVAILABLE baseline would carry no ticker
-    attribution at the rollup-renderer layer (``AnomalyFlag.name`` is the
-    block-level constant ``"price_move_anomaly"``) and the underlying ATR
-    is itself untrustworthy, so we suppress emission for that ticker —
-    mirroring the per-ticker gates in :func:`_compute_technicals_per_ticker`
-    and :func:`_trend_state_payload_for_ticker` (ALP-630, ALP-704). Note
-    that anomaly blocks are sparse-by-design (they only emit when something
-    fires), so unlike the technicals path the block-level
-    ``calibration_state`` reflects the surviving firing tickers rather than
-    the full sector roster; the operator's data-health signal for an
-    UNAVAILABLE ticker lives on the (dense) technicals / trend_state blocks
-    that always derive their header state from :func:`_block_state_from_baselines`.
+    The detector returns a block-level constant flag name
+    (``"price_move_anomaly"``); we embed the firing ticker as a ``:``-suffix
+    (``"price_move_anomaly:{ticker}"``) before appending it, following the
+    existing ``correlation_locus_flag:{ticker}`` convention. Without the subject
+    embedded, N tickers breaching one threshold inside a single block produce N
+    identically-named flags — and the 04b emission hook builds ``entry_id`` from
+    ``(invocation_id, block_id, flag.name)``, so identical names collide on the
+    ``activity_log.entry_id`` PK (ALP-934). The suffix also restores per-ticker
+    attribution in the emitted detail, which the bare constant dropped to
+    ``ticker=None``.
+
+    A flag emitted under an UNAVAILABLE baseline is still suppressed for that
+    ticker (the underlying ATR is itself untrustworthy) — mirroring the
+    per-ticker gates in :func:`_compute_technicals_per_ticker` and
+    :func:`_trend_state_payload_for_ticker` (ALP-630, ALP-704). Note that anomaly
+    blocks are sparse-by-design (they only emit when something fires), so unlike
+    the technicals path the block-level ``calibration_state`` reflects the
+    surviving firing tickers rather than the full sector roster; the operator's
+    data-health signal for an UNAVAILABLE ticker lives on the (dense) technicals /
+    trend_state blocks that always derive their header state from
+    :func:`_block_state_from_baselines`.
     """
     atr_state = _baseline_calibration_state(baseline)
     if atr_state is CalibrationState.UNAVAILABLE:
@@ -789,7 +806,7 @@ def _record_price_move_anomaly(
     )
     if flag is None:
         return acc
-    acc.flags.append(flag)
+    acc.flags.append(replace(flag, name=f"{flag.name}:{ticker}"))
     acc.per_ticker[ticker] = {
         "price_move": move,
         "atr": float(atr),

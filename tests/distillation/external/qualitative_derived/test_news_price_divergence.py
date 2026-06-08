@@ -188,7 +188,8 @@ class TestNewsPriceDivergencePricedIn:
         assert per_ticker["dominant_label"] == "negative"
         assert len(block.anomaly_flags) == 1
         flag = block.anomaly_flags[0]
-        assert flag.name == "news_price_divergence"
+        # The firing ticker is embedded as a ``:``-suffix (ALP-934).
+        assert flag.name == "news_price_divergence:AAPL"
         assert flag.severity == "investigate_now"
 
     def test_dominant_positive_news_with_falling_price_emits_hidden_problem(
