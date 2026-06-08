@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING
 import yaml
 from sqlalchemy import select
 
+from alphamind._kernel.ids import EnvelopeId
 from alphamind.config.models.agents import AgentName, AgentsConfig
 from alphamind.feedback_loop.citation.parser import (
     ComponentCitation,
@@ -46,6 +47,7 @@ from alphamind.feedback_loop.citation.parser import (
     assemble_chains,
     extract_payload_citations,
 )
+from alphamind.portfolio_state.events.pm_decision import PMDecisionDetail
 from alphamind.portfolio_state.events.types import EventType
 from alphamind.portfolio_state.records.theses import (
     ThesisComponentOutcome,
@@ -58,6 +60,9 @@ from alphamind.state.repository.activity_log_queries import (
 from alphamind.state.repository.agent_calls_queries import (
     read_agent_calls_for_agent,
     read_agent_calls_in_window,
+)
+from alphamind.state.repository.counterfactual_replays import (
+    load_counterfactual_replays_for_envelope,
 )
 from alphamind.state.repository.invocation_queries import (
     read_invocation_regimes_in_window,
@@ -90,6 +95,7 @@ if TYPE_CHECKING:
     from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
     from alphamind.portfolio_state.records.theses import ThesisResolutionCategory
     from alphamind.state.tables.agent_calls import AgentCallRecord
+    from alphamind.state.tables.counterfactual_replays import CounterfactualReplayRecord
 
 # ---------------------------------------------------------------------------
 # Loader configuration
@@ -588,18 +594,103 @@ def _read_component_citations(
     return tuple(citations)
 
 
-async def _load_replays(
-    session: AsyncSession,  # noqa: ARG001 — pre-declared seam; story 06e uses it
-    start: datetime,  # noqa: ARG001 — pre-declared seam; story 06e uses it
-    end: datetime,  # noqa: ARG001 — pre-declared seam; story 06e uses it
-) -> ReplaysBundle:
-    """Counterfactual-replay sub-bundle loader hook (story 06e fills this).
+#: The PM modification ``adjustment_category`` that marks a sizing-down — the subset
+#: the sizing-modification-effectiveness metric scores. Mirrors the
+#: ``AdjustmentCategory`` wire vocabulary on ``commands.pm_envelope.ModificationRecord``.
+_SIZING_ADJUSTMENT_CATEGORY = "risk_reduction"
 
-    Stubbed to return an empty :class:`ReplaysBundle`. Story 06e reads
-    ``counterfactual_replays`` here (gated on ALP-129); the seam is pre-declared
-    so that work edits only this function and :class:`ReplaysBundle`.
+
+async def _load_replays(
+    session: AsyncSession,
+    start: datetime,
+    end: datetime,
+) -> ReplaysBundle:
+    """Counterfactual-replay sub-bundle loader hook (story 06e / ALP-887).
+
+    The imperative shell for the PM-accuracy metrics: reads the in-window
+    ``PM_DECISION`` activity-log entries (the join anchor), loads each envelope's
+    ``counterfactual_replays`` via ALP-129's read helper
+    (:func:`~alphamind.state.repository.counterfactual_replays.\
+load_counterfactual_replays_for_envelope`), filters to the single latest
+    ``replay_engine_version`` present (aggregated metrics never mix versions —
+    ALP-129 pre-resolved (B)), and flattens each surviving replay into a
+    :class:`ReplayObservation` joined to its PM decision.
+
+    Low-confidence and unevaluable replays are loaded onto the bundle (so the count
+    of *attempted* replays stays observable) but the pure cores exclude them from
+    aggregated values, per the engine's confidence rule. ``Money`` outcome fields
+    are decoded to ``float`` here at the I/O boundary so the cores stay arithmetic.
+
+    ``actual_modified_pnl`` (the resolved modified-form trade behind a
+    ``modification_original_form`` replay) and ``anti_patterns`` are not yet
+    populated — the ``pm_decision`` detail does not persist
+    ``anti_patterns_identified``, and the modified-form resolution join is deferred
+    (see ALP-887 report / ALP-906); both remain empty until that join lands, so the
+    modification-effectiveness and anti-pattern-detector metrics degrade to
+    insufficient-sample in production while the cores are exercised by fixtures.
     """
-    return ReplaysBundle()
+    pm_entries = await read_activity_events_in_window(session, start, end, (EventType.PM_DECISION,))
+    pm_details = {
+        entry.detail.envelope_id: entry.detail
+        for entry in pm_entries
+        if isinstance(entry.detail, PMDecisionDetail)
+    }
+    if not pm_details:
+        return ReplaysBundle()
+    records = await session.run_sync(
+        lambda sync_session: _read_replays_for_envelopes(sync_session, tuple(pm_details))
+    )
+    selected = _filter_to_latest_version(records)
+    observations = tuple(
+        _to_replay_observation(record, pm_details[record.pm_decision_envelope_id])
+        for record in selected
+    )
+    return ReplaysBundle(replays=observations)
+
+
+def _read_replays_for_envelopes(
+    session: Session, envelope_ids: tuple[str, ...]
+) -> tuple[CounterfactualReplayRecord, ...]:
+    """All replay records for *envelope_ids*, via ALP-129's per-envelope read helper."""
+    records: list[CounterfactualReplayRecord] = []
+    for envelope_id in envelope_ids:
+        records.extend(load_counterfactual_replays_for_envelope(session, EnvelopeId(envelope_id)))
+    return tuple(records)
+
+
+def _filter_to_latest_version(
+    records: tuple[CounterfactualReplayRecord, ...],
+) -> tuple[CounterfactualReplayRecord, ...]:
+    """Keep only the single most-recent ``replay_engine_version`` present.
+
+    Aggregated metrics never mix engine versions (ALP-129 pre-resolved (B)). Versions
+    are string-sorted; the maximum is treated as the latest (the engine's version
+    strings are monotonic). An empty input yields an empty result.
+    """
+    if not records:
+        return ()
+    latest = max(record.replay_engine_version for record in records)
+    return tuple(record for record in records if record.replay_engine_version == latest)
+
+
+def _to_replay_observation(
+    record: CounterfactualReplayRecord, detail: PMDecisionDetail
+) -> ReplayObservation:
+    """Flatten one replay + its PM decision into a :class:`ReplayObservation`."""
+    is_sizing = any(
+        mod.get("adjustment_category") == _SIZING_ADJUSTMENT_CATEGORY
+        for mod in detail.modifications_json
+    )
+    return ReplayObservation(
+        envelope_id=record.pm_decision_envelope_id,
+        replay_kind=record.replay_kind,
+        replay_status=record.replay_status,
+        confidence=record.confidence,
+        counterfactual_pnl=None if record.realized_pl is None else float(record.realized_pl),
+        actual_modified_pnl=None,
+        is_sizing_modification=is_sizing,
+        anti_patterns=(),
+    )
 
 
 async def _load_outcomes(

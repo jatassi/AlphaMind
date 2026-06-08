@@ -39,15 +39,28 @@ from alphamind.feedback_loop.metrics.types import (
     Window,
     rate_result,
 )
-from alphamind.state.tables.counterfactual_replays import (
-    Confidence,
-    ReplayKind,
-    ReplayStatus,
-)
 
 if TYPE_CHECKING:
     from alphamind.feedback_loop.dataset import ReplayObservation, WindowDataset
     from alphamind.feedback_loop.metrics.types import Conditioning
+
+# ---------------------------------------------------------------------------
+# Replay vocabulary the cores branch on, as plain ``StrEnum`` values.
+#
+# The enum classes live in ``state.tables.counterfactual_replays`` — an ORM module
+# that imports sqlalchemy — so a pure metric core (``feedback-loop-metric-cores-no-
+# sqlalchemy`` contract) cannot import them. ``ReplayKind`` / ``ReplayStatus`` /
+# ``Confidence`` are ``StrEnum``s, so the enum-typed fields on ``ReplayObservation``
+# compare equal to these mirrored value tokens; the loader shell carries the typed
+# enums, the cores read their values.
+# ---------------------------------------------------------------------------
+
+_KIND_REJECTION = "rejection"
+_KIND_MODIFICATION_ORIGINAL_FORM = "modification_original_form"
+_STATUS_EVALUATED = "evaluated"
+_CONFIDENCE_HIGH = "high"
+_CONFIDENCE_MEDIUM = "medium"
+
 
 # ---------------------------------------------------------------------------
 # Stable metric ids — append-only persistence contract (referenced by the
@@ -72,9 +85,9 @@ def _eligible(observation: ReplayObservation) -> bool:
     ``unevaluable`` and low-confidence replays are loaded but excluded
     (``feedback-loop.md`` § Counterfactual replay).
     """
-    return (
-        observation.replay_status is ReplayStatus.EVALUATED
-        and observation.confidence in (Confidence.HIGH, Confidence.MEDIUM)
+    return observation.replay_status == _STATUS_EVALUATED and observation.confidence in (
+        _CONFIDENCE_HIGH,
+        _CONFIDENCE_MEDIUM,
     )
 
 
@@ -136,9 +149,7 @@ def _compute_pm_rejection_accuracy(
     (``counterfactual_pnl <= 0``). A high rate means PM rejects the right proposals.
     """
     observations = tuple(
-        o
-        for o in dataset.replays.replays
-        if o.replay_kind is ReplayKind.REJECTION and _eligible(o)
+        o for o in dataset.replays.replays if o.replay_kind == _KIND_REJECTION and _eligible(o)
     )
     return _rate_over(
         METRIC_PM_REJECTION_ACCURACY,
@@ -161,7 +172,7 @@ def _scorable_modification(observation: ReplayObservation) -> bool:
     loaded but excluded.
     """
     return (
-        observation.replay_kind is ReplayKind.MODIFICATION_ORIGINAL_FORM
+        observation.replay_kind == _KIND_MODIFICATION_ORIGINAL_FORM
         and _eligible(observation)
         and observation.actual_modified_pnl is not None
     )
@@ -198,13 +209,9 @@ def _compute_sizing_modification_effectiveness(
     :func:`_compute_modification_effectiveness`, filtered to the sizing subset.
     """
     observations = tuple(
-        o
-        for o in dataset.replays.replays
-        if _scorable_modification(o) and o.is_sizing_modification
+        o for o in dataset.replays.replays if _scorable_modification(o) and o.is_sizing_modification
     )
-    return _rate_over(
-        METRIC_SIZING_MODIFICATION_EFFECTIVENESS, observations, _modification_helped
-    )
+    return _rate_over(METRIC_SIZING_MODIFICATION_EFFECTIVENESS, observations, _modification_helped)
 
 
 # ---------------------------------------------------------------------------
@@ -238,9 +245,7 @@ def _compute_anti_pattern_detector_accuracy(
     observations = tuple(
         o
         for o in dataset.replays.replays
-        if o.replay_kind is ReplayKind.REJECTION
-        and _eligible(o)
-        and pattern in o.anti_patterns
+        if o.replay_kind == _KIND_REJECTION and _eligible(o) and pattern in o.anti_patterns
     )
     return _rate_over(
         METRIC_ANTI_PATTERN_DETECTOR_ACCURACY,

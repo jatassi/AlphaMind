@@ -99,16 +99,20 @@ class TestSectionAssembly:
 
 class TestGracefulDegradation:
     def test_unregistered_metric_renders_empty_not_error(self, digest_config) -> None:  # type: ignore[no-untyped-def]
-        # PM-accuracy (06e) and the 7d-headline metrics (06f) are unregistered today.
+        # The 7d-headline metrics (06f) are unregistered today. PM-accuracy (06e) is
+        # now registered (this story) and renders a present-but-empty cell.
         digest = generate_digest(fx.week_sequence(9), digest_config)
 
-        # PM rejection-accuracy sparkline: every point's cell is absent (None result).
+        # PM rejection-accuracy sparkline: 06e is registered, so every point's cell is
+        # present but carries an empty (insufficient-sample) reading over the empty
+        # replays bundle — graceful degradation without a raised error.
         for point in digest.trajectory.pm_rejection_accuracy.points:
-            assert point.cell.result is None
-            assert point.cell.present is False
+            assert point.cell.present is True
             assert point.cell.value is None
+            assert point.cell.result is not None
+            assert point.cell.result.insufficient_sample is True
 
-        # Headline 7d P/L is unregistered → absent cell, not a raised error.
+        # Headline 7d P/L is still unregistered → absent cell, not a raised error.
         assert digest.headline.pl_last_7d.result is None
 
     def test_replay_queue_empty_renders_zero(self, digest_config) -> None:  # type: ignore[no-untyped-def]

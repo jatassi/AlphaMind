@@ -11,12 +11,15 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 import alphamind.state.tables  # noqa: F401 — register all tables on Base.metadata
+from alphamind._kernel.ids import EnvelopeId, ReplayId
+from alphamind._kernel.money import Money
 from alphamind.feedback_loop.dataset import (
     RefsBundle,
     ReplaysBundle,
@@ -43,9 +46,26 @@ from alphamind.persistence.session import (
     make_engine,
     make_session_factory,
 )
+from alphamind.portfolio_state.events.pm_decision import PMDecisionDetail
+from alphamind.portfolio_state.events.types import (
+    ActivityLogEntry,
+    EventGroup,
+    EventSource,
+    EventType,
+    PMVerdict,
+)
+from alphamind.state.invocation_context.activity_log import activity_log_entry_to_row
 from alphamind.state.repository.agent_calls_queries import insert_agent_call
+from alphamind.state.repository.counterfactual_replays import insert_counterfactual_replay
 from alphamind.state.repository.validation_queries import insert_validation
 from alphamind.state.tables.agent_calls import AgentCallRecord
+from alphamind.state.tables.counterfactual_replays import (
+    Confidence,
+    CounterfactualReplayRecord,
+    ExitLeg,
+    ReplayKind,
+    ReplayStatus,
+)
 from tests.state._fk_substrate import stub_invocation_row, stub_process_lifetime_row
 
 # ---------------------------------------------------------------------------
@@ -450,3 +470,250 @@ class TestPackagedAgentLatencyBudgets:
         info = ds._load_agent_latency_budgets.cache_info()
         assert info.misses == 1
         assert info.hits == 2
+
+
+# ---------------------------------------------------------------------------
+# ALP-887 — _load_replays joins counterfactual_replays to the PM envelope
+# ---------------------------------------------------------------------------
+
+_REPLAY_WINDOW_START = datetime(2026, 6, 1, tzinfo=UTC)
+_REPLAY_WINDOW_END = datetime(2026, 7, 1, tzinfo=UTC)
+_PM_DECISION_TS = datetime(2026, 6, 10, 14, 30, tzinfo=UTC)
+_REPLAY_TS = datetime(2026, 6, 11, 9, 0, tzinfo=UTC)
+
+
+def _pm_decision_entry(
+    entry_id: str,
+    envelope_id: str,
+    *,
+    verdict: PMVerdict = PMVerdict.REJECT,
+    modifications_json: list[dict[str, object]] | None = None,
+) -> ActivityLogEntry:
+    detail = PMDecisionDetail(
+        envelope_id=envelope_id,
+        source_provenance_json={"position_id": None},
+        evaluation_json={},
+        modifications_json=list(modifications_json or []),
+        resulting_command_ids=(),
+        verdict=verdict,
+        originating_proposal_json={},
+    )
+    return ActivityLogEntry(
+        entry_id=entry_id,
+        invocation_id=_INV_IN,
+        timestamp=_PM_DECISION_TS,
+        event_type=EventType.PM_DECISION,
+        event_group=EventGroup.PM_DECISION,
+        position_id=None,
+        order_id=None,
+        thesis_id=None,
+        source=EventSource.COMMAND_EXECUTOR,
+        detail=detail,
+    )
+
+
+def _replay_record(
+    replay_id: str,
+    envelope_id: str,
+    *,
+    kind: ReplayKind,
+    realized_pl: Money,
+    confidence: Confidence,
+    version: str = "v2.0.0",
+) -> CounterfactualReplayRecord:
+    return CounterfactualReplayRecord(
+        replay_id=ReplayId(replay_id),
+        pm_decision_envelope_id=EnvelopeId(envelope_id),
+        replay_kind=kind,
+        replay_status=ReplayStatus.EVALUATED,
+        unevaluable_reason=None,
+        entered=True,
+        entry_price=Money(Decimal("100.00")),
+        entry_timestamp=_PM_DECISION_TS,
+        entry_slippage=Money(Decimal("0.05")),
+        entry_fees=Money(Decimal("0.10")),
+        exit_leg=ExitLeg.TARGET_HIT,
+        exit_price=Money(Decimal("110.00")),
+        exit_timestamp=_REPLAY_TS,
+        exit_slippage=Money(Decimal("0.08")),
+        exit_fees=Money(Decimal("0.12")),
+        realized_pl=realized_pl,
+        confidence=confidence,
+        replay_timestamp=_REPLAY_TS,
+        replay_data_window_start=_PM_DECISION_TS,
+        replay_data_window_end=_REPLAY_TS,
+        replay_engine_version=version,
+    )
+
+
+async def _seed_replays_db(
+    tmp_path: Path,
+    *,
+    pm_entries: tuple[ActivityLogEntry, ...],
+    replays: tuple[CounterfactualReplayRecord, ...],
+) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
+    db_path = tmp_path / "replays_loader.db"
+    sync_engine = make_engine(str(db_path))
+    Base.metadata.create_all(sync_engine)
+    with make_session_factory(sync_engine)() as sess:
+        sess.add(stub_process_lifetime_row(_PLT))
+        sess.flush()
+        inv = stub_invocation_row(_INV_IN, process_lifetime_id=_PLT)
+        inv.start_at = "2026-06-10T14:00:00+00:00"
+        sess.add(inv)
+        sess.flush()
+        for entry in pm_entries:
+            sess.add(activity_log_entry_to_row(entry))
+        for record in replays:
+            insert_counterfactual_replay(sess, record)
+        sess.commit()
+    sync_engine.dispose()
+
+    async_engine = make_async_engine(str(db_path))
+    factory = make_async_session_factory(async_engine)
+    return async_engine, factory
+
+
+class TestLoadReplays:
+    """_load_replays joins counterfactual_replays to the in-window PM decisions."""
+
+    async def test_rejection_replay_joined_to_envelope(self, tmp_path: Path) -> None:
+        from alphamind.feedback_loop.dataset import _load_replays
+
+        pm = _pm_decision_entry("alog-1", "ENV-REC-1")
+        replay = _replay_record(
+            "rpl-1",
+            "ENV-REC-1",
+            kind=ReplayKind.REJECTION,
+            realized_pl=Money(Decimal("-25.50")),
+            confidence=Confidence.HIGH,
+        )
+        async_engine, factory = await _seed_replays_db(
+            tmp_path, pm_entries=(pm,), replays=(replay,)
+        )
+        try:
+            async with factory() as session:
+                bundle = await _load_replays(session, _REPLAY_WINDOW_START, _REPLAY_WINDOW_END)
+        finally:
+            await async_engine.dispose()
+
+        assert len(bundle.replays) == 1
+        obs = bundle.replays[0]
+        assert obs.envelope_id == "ENV-REC-1"
+        assert obs.replay_kind is ReplayKind.REJECTION
+        assert obs.counterfactual_pnl == -25.5
+        assert obs.is_sizing_modification is False
+
+    async def test_filters_to_single_latest_engine_version(self, tmp_path: Path) -> None:
+        from alphamind.feedback_loop.dataset import _load_replays
+
+        pm1 = _pm_decision_entry("alog-1", "ENV-REC-1")
+        pm2 = _pm_decision_entry("alog-2", "ENV-REC-2")
+        old = _replay_record(
+            "rpl-old",
+            "ENV-REC-1",
+            kind=ReplayKind.REJECTION,
+            realized_pl=Money(Decimal("-10.00")),
+            confidence=Confidence.HIGH,
+            version="v1.0.0",
+        )
+        new = _replay_record(
+            "rpl-new",
+            "ENV-REC-2",
+            kind=ReplayKind.REJECTION,
+            realized_pl=Money(Decimal("-20.00")),
+            confidence=Confidence.HIGH,
+            version="v2.0.0",
+        )
+        async_engine, factory = await _seed_replays_db(
+            tmp_path, pm_entries=(pm1, pm2), replays=(old, new)
+        )
+        try:
+            async with factory() as session:
+                bundle = await _load_replays(session, _REPLAY_WINDOW_START, _REPLAY_WINDOW_END)
+        finally:
+            await async_engine.dispose()
+
+        # Only the latest version's replay survives; versions never mix.
+        assert len(bundle.replays) == 1
+        assert bundle.replays[0].counterfactual_pnl == -20.0
+
+    async def test_sizing_modification_flag_from_modifications_json(self, tmp_path: Path) -> None:
+        from alphamind.feedback_loop.dataset import _load_replays
+
+        pm = _pm_decision_entry(
+            "alog-1",
+            "ENV-REC-1",
+            verdict=PMVerdict.APPROVE_WITH_MODIFICATION,
+            modifications_json=[{"adjustment_category": "risk_reduction"}],
+        )
+        replay = _replay_record(
+            "rpl-1",
+            "ENV-REC-1",
+            kind=ReplayKind.MODIFICATION_ORIGINAL_FORM,
+            realized_pl=Money(Decimal("15.00")),
+            confidence=Confidence.HIGH,
+        )
+        async_engine, factory = await _seed_replays_db(
+            tmp_path, pm_entries=(pm,), replays=(replay,)
+        )
+        try:
+            async with factory() as session:
+                bundle = await _load_replays(session, _REPLAY_WINDOW_START, _REPLAY_WINDOW_END)
+        finally:
+            await async_engine.dispose()
+
+        assert len(bundle.replays) == 1
+        assert bundle.replays[0].is_sizing_modification is True
+
+    async def test_low_confidence_replay_loaded_but_excluded_by_metric(
+        self, tmp_path: Path
+    ) -> None:
+        from alphamind.feedback_loop.dataset import _load_replays
+        from alphamind.feedback_loop.metrics.pm_accuracy import _compute_pm_rejection_accuracy
+
+        pm = _pm_decision_entry("alog-1", "ENV-REC-1")
+        replay = _replay_record(
+            "rpl-low",
+            "ENV-REC-1",
+            kind=ReplayKind.REJECTION,
+            realized_pl=Money(Decimal("-5.00")),
+            confidence=Confidence.LOW,
+        )
+        async_engine, factory = await _seed_replays_db(
+            tmp_path, pm_entries=(pm,), replays=(replay,)
+        )
+        try:
+            async with factory() as session:
+                bundle = await _load_replays(session, _REPLAY_WINDOW_START, _REPLAY_WINDOW_END)
+        finally:
+            await async_engine.dispose()
+
+        # The low-confidence replay is loaded onto the bundle ...
+        assert len(bundle.replays) == 1
+        assert bundle.replays[0].confidence is Confidence.LOW
+        # ... but excluded from the aggregated metric value.
+        dataset = WindowDataset(
+            start=_REPLAY_WINDOW_START,
+            end=_REPLAY_WINDOW_END,
+            agent_calls=(),
+            pm_decision_log=(),
+            validations=(),
+            replays=bundle,
+        )
+        result = _compute_pm_rejection_accuracy(dataset, UNCONDITIONED)
+        assert result.value is None
+        assert result.sample_size == 0
+
+    async def test_empty_when_no_replays_seeded(self, tmp_path: Path) -> None:
+        from alphamind.feedback_loop.dataset import _load_replays
+
+        pm = _pm_decision_entry("alog-1", "ENV-REC-1")
+        async_engine, factory = await _seed_replays_db(tmp_path, pm_entries=(pm,), replays=())
+        try:
+            async with factory() as session:
+                bundle = await _load_replays(session, _REPLAY_WINDOW_START, _REPLAY_WINDOW_END)
+        finally:
+            await async_engine.dispose()
+
+        assert bundle == ReplaysBundle()
