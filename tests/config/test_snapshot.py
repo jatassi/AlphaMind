@@ -27,7 +27,6 @@ from alphamind.config.models import (
     ContinuousMonitorConfig,
     DigestConfig,
     ExecutionConfig,
-    FeedbackLoopConfig,
     GuardrailsConfig,
     LLMFailureConfig,
     LoadedConfig,
@@ -70,7 +69,6 @@ _EXECUTION = ExecutionConfig.model_validate(_read("execution.yaml"))
 _GUARDRAILS = GuardrailsConfig.model_validate(_read("guardrails.yaml"))
 _LLM_FAILURE = LLMFailureConfig.model_validate(_read("llm_failure.yaml"))
 _DIGEST = DigestConfig.model_validate(_read("digest.yaml"))
-_FEEDBACK = FeedbackLoopConfig.model_validate(_read("feedback.yaml"))
 _ASSETS = AssetsConfig.model_validate(_read("assets.yaml"))
 _AGENTS = AgentsConfig.model_validate(_read("agents.yaml"))
 _CONTINUOUS_MONITOR = ContinuousMonitorConfig.model_validate(_read("continuous_monitor.yaml"))
@@ -111,7 +109,6 @@ def _fixture_resolved() -> ResolvedConfig:
         guardrails=_GUARDRAILS,
         llm_failure=_LLM_FAILURE,
         digest=_DIGEST,
-        feedback=_FEEDBACK,
         assets=_ASSETS,
         agents=_AGENTS,
         continuous_monitor=_CONTINUOUS_MONITOR,
@@ -266,10 +263,7 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # domain researcher's latency_budget_seconds was raised in config/agents.yaml
     # (paired with the distillation non-calibrated-block compression), shifting the
     # resolved-config canonical bytes. financials/energy budgets are unchanged.
-    # Pin updated 2026-06-07 (FeedbackLoopConfig added, ALP-872): config/feedback.yaml
-    # was registered in the config models and threaded into ResolvedConfig.feedback,
-    # adding a new canonical-bytes block (the feedback-loop sample-size thresholds).
-    expected = "f17df9fc7e70d1f1ab937bc7ff9a273110b9ef754ab7c252836e721b7467b3ea"
+    expected = "a6f79927605f3b47fe2ff09ea9c23c7c52255d8790aab67abb65e8bda009f7b0"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

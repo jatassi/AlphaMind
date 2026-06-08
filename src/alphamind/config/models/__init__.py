@@ -52,7 +52,6 @@ from alphamind.config.models.execution import (
     OrderType,
     PaperHarness,
 )
-from alphamind.config.models.feedback import FeedbackLoopConfig
 from alphamind.config.models.guardrails import (
     BreachResponse,
     EmergencyInvocation,
@@ -205,7 +204,6 @@ __all__ = [
     "ExecutionMode",
     "FailureMode",
     "FeatureFlags",
-    "FeedbackLoopConfig",
     "FinalInvocationBeforeEvent",
     "GreeksRefresh",
     "GuardrailsConfig",

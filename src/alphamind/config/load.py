@@ -41,7 +41,6 @@ from alphamind.config.models.assets import AssetsConfig
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.digest import DigestConfig
 from alphamind.config.models.execution import ExecutionConfig
-from alphamind.config.models.feedback import FeedbackLoopConfig
 from alphamind.config.models.guardrails import GuardrailsConfig
 from alphamind.config.models.llm_failure import LLMFailureConfig
 from alphamind.config.models.main import MainConfig
@@ -73,7 +72,7 @@ class PipelineConfig:
 
     ``loaded`` retains the parsed input bundle so downstream consumers (e.g.
     the regime-adaptation resolver wiring) can read it without re-running the
-    per-file YAML parse pass.
+    14-file YAML parse pass.
     """
 
     resolved: ResolvedConfig
@@ -102,7 +101,6 @@ def parse_loaded_config(config_dir: Path) -> LoadedConfig:
             read_yaml_file(config_dir / "llm_failure.yaml")
         ),
         digest=DigestConfig.model_validate(read_yaml_file(config_dir / "digest.yaml")),
-        feedback=FeedbackLoopConfig.model_validate(read_yaml_file(config_dir / "feedback.yaml")),
         assets=AssetsConfig.model_validate(read_yaml_file(config_dir / "assets.yaml")),
         agents=AgentsConfig.model_validate(read_yaml_file(config_dir / "agents.yaml")),
         continuous_monitor=ContinuousMonitorConfig.model_validate(

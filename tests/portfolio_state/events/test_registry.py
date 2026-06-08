@@ -161,20 +161,6 @@ class TestConfigurationRegistry:
         assert keys == {EventType.DISTILLATION_CONFIG_CHANGE, EventType.PROFILE_SWITCHED}
 
 
-class TestDistillationAnomalyRegistry:
-    def test_registry_covers_distillation_anomaly_event_types(self) -> None:
-        from alphamind.portfolio_state.events import distillation_anomaly
-
-        keys = {entry[0] for entry in distillation_anomaly._REGISTRY}
-        assert keys == {EventType.DISTILLATION_ANOMALY_FLAG}
-
-    def test_registry_group_is_distillation_anomaly(self) -> None:
-        from alphamind.portfolio_state.events import distillation_anomaly
-
-        for _, _, group in distillation_anomaly._REGISTRY:
-            assert group is EventGroup.DISTILLATION_ANOMALY
-
-
 class TestAggregatedDispatch:
     """The dicts re-exported by ``events/__init__`` cover every EventType."""
 
@@ -191,7 +177,6 @@ class TestAggregatedDispatch:
             cash_margin,
             configuration,
             corporate_action,
-            distillation_anomaly,
             order_lifecycle,
             pm_decision,
             position_lifecycle,
@@ -211,7 +196,6 @@ class TestAggregatedDispatch:
             *corporate_action._REGISTRY,
             *reconciliation._REGISTRY,
             *configuration._REGISTRY,
-            *distillation_anomaly._REGISTRY,
         ]
         expected_detail = {et: cls for et, cls, _ in all_registries}
         expected_group = {et: grp for et, _, grp in all_registries}
