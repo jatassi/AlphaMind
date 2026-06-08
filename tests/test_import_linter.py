@@ -538,10 +538,11 @@ def test_distillation_no_sqlalchemy_ignore_imports_unchanged() -> None:
         f"direct sqlalchemy ignore_imports count drifted: expected 32, got {len(direct)}.\n"
         f"entries:\n  " + "\n  ".join(direct)
     )
-    assert len(indirect) == 19, (
-        f"indirect ignore_imports count drifted: expected 19 "
-        f"(post-ALP-533 18 plus the ALP-709 orchestrator -> "
-        f"analysis.qualitative_research.loaders entry), "
+    assert len(indirect) == 20, (
+        f"indirect ignore_imports count drifted: expected 20 "
+        f"(post-ALP-533 18, plus the ALP-709 orchestrator -> "
+        f"analysis.qualitative_research.loaders entry, plus the ALP-881 orchestrator -> "
+        f"state.invocation_context.activity_log anomaly-flag IO-shell carve-out), "
         f"got {len(indirect)}.\n"
         f"entries:\n  " + "\n  ".join(indirect)
     )

@@ -139,18 +139,34 @@ def _rate_over(
 # ---------------------------------------------------------------------------
 
 
+def _scorable_rejection(observation: ReplayObservation) -> bool:
+    """Whether a rejection replay can be scored.
+
+    An evaluated, medium/high-confidence ``rejection`` replay is scorable only once
+    the engine priced the un-rejected trade (``counterfactual_pnl`` set): without a
+    priced original form there is no baseline to judge the rejection, so it is
+    excluded from the rate's denominator — mirroring :func:`_scorable_modification`.
+    An evaluated-but-unpriceable replay is no evidence either way, not a wrong
+    rejection; counting it in the denominator would bias the rate downward.
+    """
+    return (
+        observation.replay_kind == _KIND_REJECTION
+        and _eligible(observation)
+        and observation.counterfactual_pnl is not None
+    )
+
+
 def _compute_pm_rejection_accuracy(
     dataset: WindowDataset, _conditioning: Conditioning
 ) -> MetricResult:
     """Fraction of PM rejections the counterfactual confirms were correct.
 
-    Over evaluated, medium/high-confidence ``rejection`` replays: a rejection is
-    *correct* when the un-rejected trade would not have been profitable
-    (``counterfactual_pnl <= 0``). A high rate means PM rejects the right proposals.
+    Over scorable ``rejection`` replays (evaluated, medium/high-confidence, with a
+    priced counterfactual): a rejection is *correct* when the un-rejected trade would
+    not have been profitable (``counterfactual_pnl <= 0``). A high rate means PM
+    rejects the right proposals.
     """
-    observations = tuple(
-        o for o in dataset.replays.replays if o.replay_kind == _KIND_REJECTION and _eligible(o)
-    )
+    observations = tuple(o for o in dataset.replays.replays if _scorable_rejection(o))
     return _rate_over(
         METRIC_PM_REJECTION_ACCURACY,
         observations,
@@ -248,7 +264,7 @@ def _compute_anti_pattern_detector_accuracy(
     observations = tuple(
         o
         for o in dataset.replays.replays
-        if o.replay_kind == _KIND_REJECTION and _eligible(o) and pattern in o.anti_patterns
+        if _scorable_rejection(o) and pattern in o.anti_patterns
     )
     return _rate_over(
         METRIC_ANTI_PATTERN_DETECTOR_ACCURACY,

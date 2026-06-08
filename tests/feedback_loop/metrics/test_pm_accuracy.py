@@ -95,6 +95,22 @@ def test_pm_rejection_accuracy_excludes_low_confidence_and_unevaluable() -> None
     assert result.sample_size == 1
 
 
+def test_pm_rejection_accuracy_excludes_unpriceable_counterfactual() -> None:
+    # An evaluated, medium/high-confidence rejection whose un-rejected trade the
+    # engine could not price (counterfactual_pnl is None) has no baseline to judge
+    # the rejection — it is excluded from the denominator, not counted as a wrong
+    # rejection. Only the one priced correct rejection counts: accuracy = 1/1,
+    # sample_size = 1. Pre-fix this read 1/2 (the None replay was a denominator-only
+    # "wrong" rejection, biasing the rate downward).
+    dataset = _dataset(
+        make_replay_observation(envelope_id="ENV-REC-1", counterfactual_pnl=-50.0),
+        make_replay_observation(envelope_id="ENV-REC-2", counterfactual_pnl=None),
+    )
+    result = get_metric(METRIC_PM_REJECTION_ACCURACY).compute(dataset, UNCONDITIONED)  # type: ignore[union-attr]
+    assert result.value == 1.0
+    assert result.sample_size == 1
+
+
 def test_modification_effectiveness_compares_modified_to_counterfactual() -> None:
     # Three PM-modified proposals. The modified-form trade outperforms the
     # counterfactual original-form when actual beats counterfactual. m1 actual 120
@@ -265,6 +281,27 @@ def test_anti_pattern_detector_accuracy_conditioned_on_pattern() -> None:
     result = metric.compute(dataset, Conditioning(ConditioningDimension.ANTI_PATTERN, tag))  # type: ignore[union-attr]
     assert result.value == 2 / 3
     assert result.sample_size == 3
+
+
+def test_anti_pattern_detector_accuracy_excludes_unpriceable_counterfactual() -> None:
+    # An evaluated, eligible rejection tagged with the pattern but whose
+    # counterfactual the engine could not price has no baseline to confirm the tag —
+    # it is excluded from the per-pattern denominator, not counted as a missed
+    # detection. Only the one priced correct tag counts: accuracy = 1/1,
+    # sample_size = 1. Pre-fix this read 1/2.
+    tag = "sunk_cost_persistence"
+    dataset = _dataset(
+        make_replay_observation(
+            envelope_id="ENV-REC-1", counterfactual_pnl=-50.0, anti_patterns=(tag,)
+        ),
+        make_replay_observation(
+            envelope_id="ENV-REC-2", counterfactual_pnl=None, anti_patterns=(tag,)
+        ),
+    )
+    metric = get_metric(METRIC_ANTI_PATTERN_DETECTOR_ACCURACY)
+    result = metric.compute(dataset, Conditioning(ConditioningDimension.ANTI_PATTERN, tag))  # type: ignore[union-attr]
+    assert result.value == 1.0
+    assert result.sample_size == 1
 
 
 def test_anti_pattern_detector_accuracy_unconditioned_is_empty() -> None:
