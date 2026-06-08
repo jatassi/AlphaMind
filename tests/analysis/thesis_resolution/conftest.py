@@ -35,6 +35,7 @@ from alphamind.portfolio_state.events.activity_log import (
     PositionClosedDetail,
     PositionExitMethod,
 )
+from alphamind.portfolio_state.records.positions import OptionsPositionDetails
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
     ThesisComponent,
@@ -164,7 +165,7 @@ def make_option_details(
     contract_type: str = "CALL",
     premium_paid_per_contract: float = 250.0,
     expiration_date: date | None = None,
-) -> object:
+) -> OptionsPositionDetails:
     """A real ``OptionsPositionDetails`` for an option entry reference (ALP-921).
 
     Mirrors the equity helper but for the option arm: the resolver's
@@ -175,7 +176,6 @@ def make_option_details(
     from alphamind.portfolio_state.records.positions import (
         OptionContractType,
         OptionGreeks,
-        OptionsPositionDetails,
     )
 
     return OptionsPositionDetails(
@@ -190,7 +190,7 @@ def make_option_details(
     )
 
 
-def _options_details_json(details: object) -> str:
+def _options_details_json(details: OptionsPositionDetails) -> str:
     """Serialize an ``OptionsPositionDetails`` to a position-row ``details_json``.
 
     Uses the real positions codec so the blob is authoritative — the resolver
@@ -201,7 +201,7 @@ def _options_details_json(details: object) -> str:
     from alphamind._kernel.money import decimal_json_default
     from alphamind.state.tables.positions_codec import _details_to_dict
 
-    return json.dumps(_details_to_dict(details), default=decimal_json_default)  # type: ignore[arg-type]
+    return json.dumps(_details_to_dict(details), default=decimal_json_default)
 
 
 async def seed_closed_position_thesis(
@@ -217,7 +217,7 @@ async def seed_closed_position_thesis(
     malformed_position_closed_detail: bool = False,
     entry_ticker: str | None = None,
     entry_cost_basis_per_share: float | None = None,
-    entry_option: object | None = None,
+    entry_option: OptionsPositionDetails | None = None,
 ) -> None:
     """Seed the CLOSED position + ACTIVE thesis + ledger row + POSITION_CLOSED entry.
 

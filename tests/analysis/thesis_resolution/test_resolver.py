@@ -12,7 +12,9 @@ SQLite session).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
+from datetime import date
 from typing import Any
 
 import pytest
@@ -20,7 +22,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind.analysis.thesis_resolution.resolver import (
+    _EntryReference,
+    _OptionEntryContext,
     _read_entry_references,
+    _render_market_data_slice,
     resolve_closed_position_theses,
 )
 from alphamind.portfolio_state.events.activity_log import (
@@ -615,3 +620,51 @@ async def test_read_entry_references_dispatches_on_instrument(
     assert option_ref.option_context.contract_type == "CALL"
     assert option_ref.option_context.strike_price == 150.0
     assert option_ref.option_context.premium_paid_per_contract == 250.0
+
+
+def _option_entry_reference(*, symbol: str = "AAPL") -> _EntryReference:
+    return _EntryReference(
+        symbol=symbol,
+        entry_price=None,
+        option_context=_OptionEntryContext(
+            contract_type="CALL",
+            strike_price=150.0,
+            premium_paid_per_contract=250.0,
+            expiration_date=date(2026, 9, 18),
+        ),
+    )
+
+
+async def test_option_slice_missing_underlying_price_renders_contract_terms() -> None:
+    """ALP-921: an option-expiry slice whose underlying is absent from
+    ``underlying_prices`` still renders the contract terms (strike / premium)
+    plus 'Underlying resolution-time price unavailable.' and does not raise."""
+    slice_text = _render_market_data_slice(
+        exit_method=PositionExitMethod.OPTION_EXPIRY,
+        realized_pnl_usd=-1250.0,
+        entry_reference=_option_entry_reference(),
+        underlying_prices={},  # AAPL absent
+    )
+
+    assert "AAPL" in slice_text
+    assert "150" in slice_text  # strike still rendered
+    assert "250" in slice_text  # premium still rendered
+    assert "underlying resolution-time price unavailable" in slice_text.lower()
+
+
+async def test_market_data_slice_logs_debug_when_resolution_price_absent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """ALP-921: when the instrument symbol is known but its resolution price is
+    absent, the slice emits a DEBUG diagnostic so a genuinely-absent price is
+    distinguishable in logs from a key mismatch."""
+    with caplog.at_level(logging.DEBUG, logger="alphamind.analysis.thesis_resolution.resolver"):
+        _render_market_data_slice(
+            exit_method=PositionExitMethod.OPTION_EXPIRY,
+            realized_pnl_usd=-1250.0,
+            entry_reference=_option_entry_reference(symbol="AAPL"),
+            underlying_prices={},  # AAPL absent → DEBUG diagnostic
+        )
+
+    debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert any("AAPL" in r.getMessage() for r in debug_records)
