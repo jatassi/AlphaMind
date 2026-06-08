@@ -65,10 +65,14 @@ __all__ = [
 # agent roster. The ``agent_name`` column is free text — see module docstring.
 _EVALUATOR_AGENT_NAME = "thesis_component_evaluator"
 
-# Solo, single-turn structured call: no MCP tool loop, so no init-stall watchdog
-# is needed and ``max_turns`` is small. The component + market data arrive in the
-# user message; nothing is fetched via tools.
-_MAX_TURNS = 1
+# Solo structured call: no MCP tool loop, so no init-stall watchdog is needed
+# and ``max_turns`` stays small. The component + market data arrive in the user
+# message; nothing is fetched via user tools. The cap must allow at least 2
+# turns: ``output_format=json_schema`` spends turn 1 on the structured-output
+# tool call (``stop_reason=tool_use``) and emits the validated result on turn 2,
+# so a cap of 1 truncates before the result and the CLI returns ``is_error``
+# (ALP-936). Headroom above 2 absorbs any extra model turn without re-breaking.
+_MAX_TURNS = 5
 
 
 # ---------------------------------------------------------------------------

@@ -19,7 +19,8 @@ from typing import Any
 import pytest
 
 from alphamind._kernel.ids import ThesisId
-from alphamind.analysis._harness_core import MalformedOutputFailure
+from alphamind.analysis._harness_core import MalformedOutputFailure, SDKFailure
+from alphamind.analysis.thesis_resolution import llm_evaluator
 from alphamind.analysis.thesis_resolution.llm_evaluator import (
     ComponentLLMOutcome,
     evaluate_component_llm,
@@ -308,6 +309,137 @@ async def test_invalid_outcome_value_raises_malformed(
             invocation_id="inv-006",
             sdk_query_fn=stub,
         )
+
+
+# ---------------------------------------------------------------------------
+# 4b. The real 2-turn json_schema flow — ALP-936 regression.
+#
+# In output_format=json_schema mode the CLI spends turn 1 on the structured-
+# output tool call (stop_reason=tool_use) and emits the structured result on
+# turn 2. A max_turns=1 cap truncates after turn 1, so the CLI returns
+# is_error (subtype=error_max_turns) with no structured_output — the exact
+# signature that aborted the first-ever prod invocation of this evaluator.
+# ---------------------------------------------------------------------------
+
+
+def _make_json_schema_stub(
+    payload: dict[str, Any] | None,
+) -> Callable[..., AsyncGenerator[Any]]:
+    """A ``max_turns``-aware fake mirroring the real CLI's json_schema flow.
+
+    Reads ``options.max_turns`` and reproduces the production CLI behaviour the
+    earlier single-message ``_make_sdk_response`` helper cannot model: turn 1 is
+    the structured-output tool call (``stop_reason=tool_use``); the structured
+    result is emitted on turn 2. With ``max_turns < 2`` the run is truncated
+    after turn 1 and the CLI returns ``is_error=True`` with no
+    ``structured_output`` (``invoke_sdk`` surfaces this as ``SDKFailure``);
+    ``max_turns >= 2`` completes both turns and the payload rides the final
+    ResultMessage.
+    """
+    from claude_agent_sdk import (
+        AssistantMessage,
+        ResultMessage,
+        TextBlock,
+        ToolUseBlock,
+    )
+
+    usage = {
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+
+    async def _stub(**kwargs: Any) -> AsyncGenerator[Any]:
+        options = kwargs.get("options")
+        max_turns = getattr(options, "max_turns", 1)
+        # Turn 1: the structured-output mechanism's internal tool call.
+        yield AssistantMessage(
+            content=[ToolUseBlock(id="t1", name="json_schema_output", input={})],
+            model="claude-sonnet-4-6",
+            stop_reason="tool_use",
+            usage=usage,
+        )
+        if max_turns < 2:
+            # Cap hit before turn 2 — CLI aborts with is_error, no result text.
+            yield ResultMessage(
+                subtype="error_max_turns",
+                duration_ms=500,
+                duration_api_ms=450,
+                is_error=True,
+                num_turns=2,
+                session_id="sess-1",
+                stop_reason="tool_use",
+                usage=usage,
+                structured_output=None,
+            )
+            return
+        # Turn 2: the structured result is emitted.
+        yield AssistantMessage(
+            content=[TextBlock(text="")],
+            model="claude-sonnet-4-6",
+            stop_reason="end_turn",
+            usage=usage,
+        )
+        yield ResultMessage(
+            subtype="result",
+            duration_ms=600,
+            duration_api_ms=550,
+            is_error=False,
+            num_turns=2,
+            session_id="sess-1",
+            stop_reason="end_turn",
+            usage=usage,
+            structured_output=payload,
+        )
+
+    return _stub
+
+
+async def test_two_turn_json_schema_flow_resolves_at_production_cap(
+    agent_config: BaseAgentConfig,
+) -> None:
+    """ALP-936 regression: under the production ``_MAX_TURNS`` cap and a fake
+    mirroring the real CLI's turn-1 tool-call → turn-2 structured-result
+    sequence, the evaluator returns a ``ComponentLLMOutcome`` rather than
+    aborting with ``SDKFailure``. This test fails if the cap is ever set below
+    the 2 turns json_schema mode requires (the original bug)."""
+    stub = _make_json_schema_stub(_eval_payload("VALIDATED", "Held up across two turns."))
+
+    result = await evaluate_component_llm(
+        _make_component(),
+        _MARKET_DATA,
+        agent_config=agent_config,
+        invocation_id="inv-936-ok",
+        sdk_query_fn=stub,
+    )
+
+    assert isinstance(result, ComponentLLMOutcome)
+    assert result.outcome == ThesisComponentOutcome.VALIDATED
+    assert result.notes == "Held up across two turns."
+
+
+async def test_json_schema_flow_aborts_when_capped_at_one_turn(
+    agent_config: BaseAgentConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The original failure: a 1-turn cap truncates after the structured-output
+    tool call (turn 1), so the CLI returns ``is_error`` and the evaluator
+    surfaces ``SDKFailure``. Proves the fake genuinely models the turn cap —
+    so the production-cap test above is not green for a trivial reason."""
+    monkeypatch.setattr(llm_evaluator, "_MAX_TURNS", 1)
+    stub = _make_json_schema_stub(_eval_payload("VALIDATED", "never emitted"))
+
+    with pytest.raises(SDKFailure) as exc_info:
+        await evaluate_component_llm(
+            _make_component(),
+            _MARKET_DATA,
+            agent_config=agent_config,
+            invocation_id="inv-936-truncated",
+            sdk_query_fn=stub,
+        )
+
+    assert exc_info.value.agent_name == "thesis_component_evaluator"
 
 
 # ---------------------------------------------------------------------------
