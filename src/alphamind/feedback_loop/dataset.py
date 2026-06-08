@@ -701,18 +701,33 @@ def _read_replays_for_envelopes(
     return tuple(records)
 
 
+def _replay_version_ordinal(version: str) -> tuple[int, ...]:
+    """Comparable ordinal of a ``v``-prefixed replay-engine version.
+
+    The engine stamps monotonically-increasing ``v``-prefixed versions (``"v2"``
+    today; dot-separated ``"vN.N.N"`` is also tolerated). Parsing the digits to an
+    int tuple compares them numerically rather than lexically — where ``"v10" <
+    "v9"`` would wrongly hold — so ``v10`` correctly sorts after ``v9``.
+    """
+    return tuple(int(part) for part in version.removeprefix("v").split("."))
+
+
 def _filter_to_latest_version(
     records: tuple[CounterfactualReplayRecord, ...],
 ) -> tuple[CounterfactualReplayRecord, ...]:
     """Keep only the single most-recent ``replay_engine_version`` present.
 
-    Aggregated metrics never mix engine versions (ALP-129 pre-resolved (B)). Versions
-    are string-sorted; the maximum is treated as the latest (the engine's version
-    strings are monotonic). An empty input yields an empty result.
+    Aggregated metrics never mix engine versions (ALP-129 pre-resolved (B)). The
+    latest version is the numerically-highest ``v``-prefixed version — compared via
+    :func:`_replay_version_ordinal` (an int tuple, not a lexical string sort), so
+    ``v10`` beats ``v9``. An empty input yields an empty result.
     """
     if not records:
         return ()
-    latest = max(record.replay_engine_version for record in records)
+    latest = max(
+        (record.replay_engine_version for record in records),
+        key=_replay_version_ordinal,
+    )
     return tuple(record for record in records if record.replay_engine_version == latest)
 
 

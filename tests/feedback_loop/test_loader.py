@@ -673,6 +673,46 @@ class TestLoadReplays:
         assert len(bundle.replays) == 1
         assert bundle.replays[0].counterfactual_pnl == -20.0
 
+    async def test_latest_version_compares_numerically_not_lexically(
+        self, tmp_path: Path
+    ) -> None:
+        # The engine stamps vN versions ("v2" today). A lexical max picks "v2" over
+        # "v10" (since '2' > '1'); the numeric ordinal must pick v10 as the latest so
+        # the newest-engine replays are not silently dropped once the engine reaches
+        # double digits. Pre-fix this kept the v2 replay (-20.0); post-fix it keeps v10.
+        from alphamind.feedback_loop.dataset import _load_replays
+
+        pm1 = _pm_decision_entry("alog-1", "ENV-REC-1")
+        pm2 = _pm_decision_entry("alog-2", "ENV-REC-2")
+        v2 = _replay_record(
+            "rpl-v2",
+            "ENV-REC-1",
+            kind=ReplayKind.REJECTION,
+            realized_pl=Money(Decimal("-20.00")),
+            confidence=Confidence.HIGH,
+            version="v2",
+        )
+        v10 = _replay_record(
+            "rpl-v10",
+            "ENV-REC-2",
+            kind=ReplayKind.REJECTION,
+            realized_pl=Money(Decimal("-30.00")),
+            confidence=Confidence.HIGH,
+            version="v10",
+        )
+        async_engine, factory = await _seed_replays_db(
+            tmp_path, pm_entries=(pm1, pm2), replays=(v2, v10)
+        )
+        try:
+            async with factory() as session:
+                bundle = await _load_replays(session, _REPLAY_WINDOW_START, _REPLAY_WINDOW_END)
+        finally:
+            await async_engine.dispose()
+
+        # v10 is the numerically-latest version, so only its replay survives.
+        assert len(bundle.replays) == 1
+        assert bundle.replays[0].counterfactual_pnl == -30.0
+
     async def test_sizing_modification_flag_from_modifications_json(self, tmp_path: Path) -> None:
         from alphamind.feedback_loop.dataset import _load_replays
 
