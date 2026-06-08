@@ -76,6 +76,7 @@ from alphamind.state.invocation_context import (
 )
 from alphamind.state.invocation_context.activity_log import (
     append_activity_log_entry,
+    emit_activity_log_entry,
 )
 from alphamind.state.repository.activity_log_queries import (
     read_intra_invocation_changelog,
@@ -763,6 +764,84 @@ class TestAppendActivityLogEntry:
                 select(ActivityLogRow).where(ActivityLogRow.entry_id == "entry-rolled-back")
             )
             assert result.scalar_one_or_none() is None
+
+
+# ---------------------------------------------------------------------------
+# emit_activity_log_entry behavior
+# ---------------------------------------------------------------------------
+
+
+class TestEmitActivityLogEntry:
+    async def test_builds_appends_and_returns_the_entry(
+        self,
+        async_engine_and_factory: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    ) -> None:
+        """The wrapper binds the handle's invocation_id, persists, and returns the entry."""
+        _, factory = async_engine_and_factory
+        record = _make_invocation_record(invocation_id="inv-emit")
+
+        async with InvocationContext(session_factory=factory, record=record) as handle:
+            returned = emit_activity_log_entry(
+                handle,
+                event_type=EventType.POSITION_OPENED,
+                position_id="pos-1",
+                order_id=None,
+                thesis_id="thesis-1",
+                timestamp=_T0,
+                detail=PositionOpenedDetail(
+                    ticker=Symbol("AAPL"),
+                    direction="long",
+                    fill_price=price("150.0"),
+                    quantity=10.0,
+                    thesis_id="thesis-1",
+                    bracket_id=None,
+                    mechanism=PositionOpenMechanism.ORDER_FILL,
+                    parent_position_id=None,
+                ),
+                source=EventSource.FILL_PROCESSOR,
+            )
+
+        assert returned.invocation_id == "inv-emit"
+        assert returned.event_group == EventGroup.POSITION_LIFECYCLE
+        assert returned.entry_id.startswith(f"inv-emit-{EventType.POSITION_OPENED.value}-")
+
+        # The returned entry was persisted under the open transaction.
+        async with factory() as sess:
+            rehydrated = await read_intra_invocation_changelog(sess, "inv-emit")
+        assert [e.entry_id for e in rehydrated] == [returned.entry_id]
+        assert rehydrated[0] == returned
+
+    async def test_entry_id_override_is_honored(
+        self,
+        async_engine_and_factory: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    ) -> None:
+        """A caller-supplied entry_id (custom-token / deterministic path) is used verbatim."""
+        _, factory = async_engine_and_factory
+        record = _make_invocation_record(invocation_id="inv-emit-id")
+
+        async with InvocationContext(session_factory=factory, record=record) as handle:
+            returned = emit_activity_log_entry(
+                handle,
+                event_type=EventType.POSITION_OPENED,
+                position_id="pos-1",
+                order_id=None,
+                thesis_id="thesis-1",
+                timestamp=_T0,
+                detail=PositionOpenedDetail(
+                    ticker=Symbol("AAPL"),
+                    direction="long",
+                    fill_price=price("150.0"),
+                    quantity=10.0,
+                    thesis_id="thesis-1",
+                    bracket_id=None,
+                    mechanism=PositionOpenMechanism.ORDER_FILL,
+                    parent_position_id=None,
+                ),
+                source=EventSource.FILL_PROCESSOR,
+                entry_id="inv-emit-id-CUSTOM",
+            )
+
+        assert returned.entry_id == "inv-emit-id-CUSTOM"
 
 
 # ---------------------------------------------------------------------------
