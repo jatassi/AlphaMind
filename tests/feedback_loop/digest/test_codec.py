@@ -128,9 +128,7 @@ class TestNonFiniteValue:
         assert rehydrated.headline.pl_last_7d.result.value == math.inf
         assert rehydrated == digest
 
-    def test_non_finite_in_non_value_field_raises_rather_than_sentinel(
-        self, monkeypatch, digest_config  # type: ignore[no-untyped-def]
-    ) -> None:
+    def test_non_finite_in_non_value_field_raises(self, monkeypatch, digest_config) -> None:  # type: ignore[no-untyped-def]
         # The string sentinel has exactly one inverse — _metric_value at
         # MetricResult.value. A non-finite float reaching any other float field
         # (PulseMetric.delta here) would have no inverse, so it must NOT be
