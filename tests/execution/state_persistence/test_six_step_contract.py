@@ -613,7 +613,6 @@ def _build_repo(
         active_risk_parameters_provider=_provider,
         prior_active_risk_parameters_provider=_prior_provider,
         config=_config(),
-        thesis_quality_aggregates_trailing_windows_days=(5, 20),
     )
 
 

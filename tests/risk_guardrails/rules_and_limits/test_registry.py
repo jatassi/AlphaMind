@@ -29,7 +29,6 @@ from alphamind.config.models import (
     DigestConfig,
     EnforcementTier,
     ExecutionConfig,
-    FeedbackLoopConfig,
     GuardrailsConfig,
     LLMFailureConfig,
     LoadedConfig,
@@ -82,7 +81,6 @@ def _resolved_for_profile(profile: Profile) -> ResolvedConfig:
         guardrails=_GUARDRAILS,
         llm_failure=LLMFailureConfig.model_validate(_read_yaml("llm_failure.yaml")),
         digest=DigestConfig.model_validate(_read_yaml("digest.yaml")),
-        feedback=FeedbackLoopConfig.model_validate(_read_yaml("feedback.yaml")),
         assets=AssetsConfig.model_validate(_read_yaml("assets.yaml")),
         agents=AgentsConfig.model_validate(_read_yaml("agents.yaml")),
         continuous_monitor=ContinuousMonitorConfig.model_validate(

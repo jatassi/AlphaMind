@@ -31,7 +31,6 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import Session
 
-from alphamind._kernel.calibration import CalibrationState
 from alphamind._kernel.ids import BracketId, OrderId, PositionId, Symbol, ThesisId
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.persistence.models import Base
@@ -49,7 +48,6 @@ from alphamind.portfolio_state.events import (
     CommandAbandonedDetail,
     CorporateActionAppliedDetail,
     CorporateActionType,
-    DistillationAnomalyFlagDetail,
     DistillationConfigChange,
     DistillationConfigChangeDetail,
     EmergencyInvocationRequestedDetail,
@@ -573,24 +571,6 @@ def _all_event_group_entries(invocation_id: str) -> list[ActivityLogEntry]:
             ),
             position_id=PositionId("pos-1"),
             source=EventSource.CORPORATE_ACTION_PROCESSOR,
-        ),
-        # DISTILLATION_ANOMALY
-        _entry(
-            entry_id="entry-anomaly",
-            invocation_id=invocation_id,
-            timestamp=_T0,
-            event_type=EventType.DISTILLATION_ANOMALY_FLAG,
-            event_group=EventGroup.DISTILLATION_ANOMALY,
-            detail=DistillationAnomalyFlagDetail(
-                threshold_class="volume",
-                threshold_key="volume_anomaly_sigma",
-                magnitude=3.2,
-                severity="investigate_now",
-                ticker="AAPL",
-                calibration_state=CalibrationState.CALIBRATED,
-                block_id="block-1",
-            ),
-            source=EventSource.DISTILLATION_ORCHESTRATOR,
         ),
     ]
 

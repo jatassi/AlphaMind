@@ -16,7 +16,6 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
-import yaml
 from pydantic import ValidationError
 
 from alphamind.config import (
@@ -29,7 +28,6 @@ from alphamind.config.loaders import (
     load_run_types,
 )
 from alphamind.config.models import (
-    FeedbackLoopConfig,
     Mode,
     Profile,
     Regime,
@@ -160,27 +158,6 @@ def test_load_full_config_resolves_to_expected_identity_dimensions(
     assert loaded.resolved.run_type == run_types[RunType.market_open]
     assert loaded.resolved.active_overlays == ()
     assert loaded.resolved.execution_mode.value == "paper"
-
-
-def test_load_full_config_threads_shipped_feedback_config(
-    env_path: Path,
-    archive_root: Path,
-    shipped_runtime: RuntimeDimensions,
-) -> None:
-    """The composition root loads config/feedback.yaml into ResolvedConfig.feedback."""
-    loaded = load_full_config(
-        config_dir=SHIPPED_CONFIG_DIR,
-        env_path=env_path,
-        archive_root=archive_root,
-        invocation_id="inv-08-feedback-001",
-        runtime=shipped_runtime,
-        today=TODAY,
-        as_of=_AS_OF,
-    )
-    expected = FeedbackLoopConfig.model_validate(
-        yaml.safe_load((SHIPPED_CONFIG_DIR / "feedback.yaml").read_text())
-    )
-    assert loaded.resolved.feedback == expected
 
 
 def test_load_full_config_enabled_agents_count_is_nine(

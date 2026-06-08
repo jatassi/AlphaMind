@@ -42,7 +42,6 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )
-from alphamind.portfolio_state.aggregates.thesis_quality import TrailingWindow
 from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventGroup,
@@ -869,7 +868,6 @@ def _build_repo(
     invocation_id: str = _INV_ID,
     active_risk_parameters: ActiveRiskParameterSet | None = None,
     prior_active_risk_parameters_for_path: dict[str, ActiveRiskParameterSet] | None = None,
-    thesis_quality_aggregates_trailing_windows_days: tuple[int, ...] = (5, 20),
 ) -> PortfolioStateRepository:
     """Build a SQL-backed PortfolioStateRepository for the given invocation."""
     arp = (
@@ -892,9 +890,6 @@ def _build_repo(
         active_risk_parameters_provider=_provider,
         prior_active_risk_parameters_provider=_prior_provider,
         config=_make_state_persistence_config(),
-        thesis_quality_aggregates_trailing_windows_days=(
-            thesis_quality_aggregates_trailing_windows_days
-        ),
     )
 
 
@@ -1597,7 +1592,7 @@ async def test_get_portfolio_pnl_inputs_aggregates_realized_over_closed(
     assert set(result.rolling_realized_pnl.keys()) == {"1d", "3d", "5d", "20d"}
 
 
-async def test_get_thesis_quality_aggregates_zero_theses_returns_zeroed_shape(
+async def test_get_thesis_quality_aggregates_returns_empty_default(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     _, factory = db
@@ -1606,58 +1601,9 @@ async def test_get_thesis_quality_aggregates_zero_theses_returns_zeroed_shape(
     repo = _build_repo(factory)
     result = repo.get_thesis_quality_aggregates()
 
-    # Compute-on-read returns one zeroed ResolutionWindowCounts per configured
-    # window (5, 20) plus INCEPTION — not an empty tuple — when no theses exist.
-    windows = {e.window for e in result.resolution_counts_by_window}
-    assert windows == {
-        TrailingWindow.FIVE_DAYS,
-        TrailingWindow.TWENTY_DAYS,
-        TrailingWindow.INCEPTION,
-    }
-    for entry in result.resolution_counts_by_window:
-        assert entry.total_resolutions == 0
+    assert result.resolution_counts_by_window == ()
     assert result.signal_hit_rates == ()
-    # The 5 deferred cross-layer fields stay empty (ALP-906).
     assert result.performance_attribution == ()
-    assert result.alpha_beta_decomposition_by_window == ()
-    assert result.conviction_calibration == ()
-    assert result.conviction_sizing_deviation_by_window == ()
-    assert result.signal_to_thesis_conversions == ()
-
-
-async def test_get_thesis_quality_aggregates_populates_from_resolved_theses(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
-) -> None:
-    _, factory = db
-    await _seed_minimal_invocation(factory)
-    # Resolve recently (relative to the read-time ``now`` the repo uses as
-    # ``as_of``) so the thesis falls inside every trailing window.
-    recent = datetime.now(UTC) - timedelta(hours=1)
-    resolved = _make_thesis_record(
-        thesis_id=ThesisId("thesis-resolved"),
-        position_id=PositionId("pos-1"),
-        status=ThesisRecordStatus.RESOLVED,
-        resolution_timestamp=recent,
-        resolution_category=ThesisResolutionCategory.VALIDATED,
-        resolution_pnl_usd=250.0,
-    )
-    await _seed_thesis_with_stub_position(factory, resolved)
-
-    repo = _build_repo(factory)
-    result = repo.get_thesis_quality_aggregates()
-
-    inception = result.counts_for(TrailingWindow.INCEPTION)
-    assert inception is not None
-    assert inception.total_resolutions == 1
-    assert inception.validated == 1
-    five = result.counts_for(TrailingWindow.FIVE_DAYS)
-    assert five is not None and five.total_resolutions == 1
-    # Signal hit rate derives from the entry component's key assumption
-    # ("Earnings beat") — cited but unscored (outcome None) at write time.
-    cited = result.signal_hit_rate("Earnings beat", TrailingWindow.INCEPTION)
-    assert cited is not None
-    assert cited.cited_count == 1
-    assert cited.validated_count == 0
 
 
 async def test_get_active_risk_parameters_invokes_provider_once(
@@ -1682,7 +1628,6 @@ async def test_get_active_risk_parameters_invokes_provider_once(
         active_risk_parameters_provider=_provider,
         prior_active_risk_parameters_provider=_prior_provider,
         config=_make_state_persistence_config(),
-        thesis_quality_aggregates_trailing_windows_days=(5, 20),
     )
     result = repo.get_active_risk_parameters()
 
@@ -1981,11 +1926,7 @@ async def test_assemble_snapshot_against_sql_repo_produces_populated_snapshot(
     assert {o.order_id for o in snap.pending_orders} == {"ord-1"}
     assert snap.cash_ledger.current_cash_usd == 10000.0
     assert snap.drawdown.equity_high_water_mark_usd == 100000.0
-    # Only an ACTIVE thesis is seeded, so every trailing window's resolution
-    # counts are zero (compute-on-read still emits one zeroed entry per window).
-    assert all(
-        e.total_resolutions == 0 for e in snap.thesis_quality_aggregates.resolution_counts_by_window
-    )
+    assert snap.thesis_quality_aggregates.resolution_counts_by_window == ()
     # Open position market value should be enriched (10 shares at $160).
     assert snap.open_positions[0].current_market_value_usd == 1600.0
 
