@@ -858,6 +858,11 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         # analysis-layer resolver must not import a risk_guardrails type) feed
         # the LLM evaluator's entry-vs-resolution market-data slice.
         underlying_prices=fill_collection_inputs.market_inputs.underlying_prices,
+        # ALP-922 — the agent_calls telemetry-capture provenance root, threaded
+        # like the roster-agent steps (``_run_analysis`` / ``_build_decision_kwargs``)
+        # so each closed-thesis component LLM evaluation captures its row +
+        # provenance artifacts.
+        provenance_root=provenance_root,
     )
 
     # Step 4 — Between-phase snapshot read.
@@ -1048,6 +1053,7 @@ async def _run_thesis_resolution_step(
     progress: ProgressEmitter,
     now: datetime,
     underlying_prices: Mapping[str, float],
+    provenance_root: Path | None = None,
 ) -> None:
     """Resolve closed-position theses in two phases (ALP-899 / ALP-914 finding 2).
 
@@ -1076,6 +1082,15 @@ async def _run_thesis_resolution_step(
             underlying_prices=underlying_prices,
             archive_root=archive_root,
             progress=progress,
+            # ALP-922 — the in-process per-component LLM evaluations capture
+            # their agent_calls row + provenance artifacts via a fresh
+            # best-effort session opened per call from this same in-process
+            # factory (the read phase uses ``read_session``; telemetry is a
+            # separate session). ``provenance_root=None`` (in-process / test, or
+            # a non-telemetry-wired invocation) keeps ``capture_agent_call`` a
+            # clean no-op — mirroring the roster agents under ALP-907.
+            telemetry_session_factory=session_factory,
+            provenance_root=provenance_root,
         )
 
     if not prepared:

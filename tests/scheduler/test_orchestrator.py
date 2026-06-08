@@ -2297,3 +2297,68 @@ class TestRunInvocationThesisResolution:
         )
 
         assert "175.0" in captured["prompt"]
+
+    async def test_component_evaluation_emits_agent_calls_row_and_provenance(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        archive_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """ALP-922 — the in-process resolver step threads a per-call telemetry
+        session + ``provenance_root`` to ``evaluate_component_llm``, so each
+        closed-thesis component the programmatic assessor leaves INCONCLUSIVE
+        leaves exactly one ``agent_calls`` row (named for the non-roster
+        evaluator) plus the four provenance artifacts, exactly as 04f does for
+        the roster agents.
+
+        ``STOP_TRIGGERED`` resolves TARGET_RATIONALE → WRONG and
+        INVALIDATION_RATIONALE → VALIDATED programmatically (zero tokens),
+        leaving only the ENTRY_RATIONALE component on the LLM path → one row.
+        """
+        import claude_agent_sdk
+
+        from alphamind.analysis.thesis_resolution.llm_evaluator import _EVALUATOR_AGENT_NAME
+        from alphamind.portfolio_state.events.activity_log import PositionExitMethod
+        from alphamind.scheduler import orchestrator as module
+        from alphamind.state.repository.agent_calls_queries import (
+            read_agent_calls_for_invocation,
+        )
+
+        await _seed_closed_position_active_thesis(
+            async_factory, exit_method=PositionExitMethod.STOP_TRIGGERED
+        )
+        monkeypatch.setattr(claude_agent_sdk, "query", _thesis_resolved_sdk_stub("WRONG"))
+        provenance_root = tmp_path / "provenance"
+
+        await module._run_thesis_resolution_step(
+            session_factory=async_factory,
+            invocation_id=_CLOSER_INV_ID,
+            archive_root=archive_root,
+            progress=NOOP_PROGRESS_EMITTER,
+            now=_NOW,
+            underlying_prices={},
+            provenance_root=provenance_root,
+        )
+
+        async with async_factory() as session:
+            rows = await read_agent_calls_for_invocation(session, _CLOSER_INV_ID)
+
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.agent_name == _EVALUATOR_AGENT_NAME
+        # The four provenance artifacts land under the per-call directory.
+        assert row.output_artifact_ref is not None
+        call_dir = Path(row.output_artifact_ref)
+        expected_dir = (
+            provenance_root
+            / "invocations"
+            / _CLOSER_INV_ID
+            / "agent_calls"
+            / row.agent_call_id
+        )
+        assert call_dir == expected_dir
+        assert (call_dir / "system_prompt.md").exists()
+        assert (call_dir / "output_schema.json").exists()
+        assert (call_dir / "tools_definition.json").exists()
+        assert (call_dir / "output.json").exists()

@@ -46,6 +46,7 @@ This is the one analysis-layer module sanctioned to mutate trading state (see
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import logging
 import uuid
@@ -56,7 +57,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
 from alphamind.analysis.thesis_resolution.llm_evaluator import evaluate_component_llm
@@ -183,6 +184,8 @@ class _LLMEvalContext:
     archive_root: Path | None
     now: datetime
     progress: ProgressEmitter
+    telemetry_session_factory: async_sessionmaker[AsyncSession] | None
+    provenance_root: Path | None
 
 
 async def prepare_closed_position_resolutions(
@@ -195,6 +198,8 @@ async def prepare_closed_position_resolutions(
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     archive_root: Path | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
+    telemetry_session_factory: async_sessionmaker[AsyncSession] | None = None,
+    provenance_root: Path | None = None,
 ) -> tuple[PreparedResolution, ...]:
     """Read + assess every closed-position ``ACTIVE`` thesis (no write lock).
 
@@ -207,6 +212,14 @@ async def prepare_closed_position_resolutions(
 
     No write to the session occurs here; the caller persists in a separate
     short IMMEDIATE write transaction.
+
+    When both ``telemetry_session_factory`` and ``provenance_root`` are wired
+    (the telemetry-active production path), each LLM-fallback component
+    evaluation opens a fresh best-effort session from the factory so its
+    ``agent_calls`` row + provenance artifacts are captured (ALP-922), exactly
+    as the roster agents under ALP-907. That telemetry session is independent
+    of ``read_session``, preserving the read phase's no-write invariant. When
+    either is absent, ``capture_agent_call`` stays a clean no-op.
     """
     prices: Mapping[str, float] = underlying_prices if underlying_prices is not None else {}
     llm_context = _LLMEvalContext(
@@ -216,6 +229,8 @@ async def prepare_closed_position_resolutions(
         archive_root=archive_root,
         now=now,
         progress=progress,
+        telemetry_session_factory=telemetry_session_factory,
+        provenance_root=provenance_root,
     )
 
     active_thesis_rows = await _read_active_theses_with_closed_positions(read_session)
@@ -511,6 +526,46 @@ async def _read_entry_references(
 # ---------------------------------------------------------------------------
 
 
+@contextlib.asynccontextmanager
+async def _telemetry_session(
+    factory: async_sessionmaker[AsyncSession] | None,
+    provenance_root: Path | None,
+) -> AsyncIterator[AsyncSession | None]:
+    """Open one per-call best-effort telemetry session for agent_calls capture (ALP-922).
+
+    Yields a fresh :class:`AsyncSession` from the orchestrator's in-process
+    *factory* when both *factory* and *provenance_root* are wired, else ``None``
+    so the harness's ``capture_agent_call`` stays a no-op. The ``agent_calls``
+    row ``persist_agent_call`` queues during the harness's capture drain is
+    committed here, then the session is closed — on both the success and the
+    failure path.
+
+    A telemetry commit/close error is logged and swallowed: capture is a
+    best-effort append and must never break the evaluation it observes,
+    extending ``_drain_capture``'s "capture never breaks the call it observes"
+    contract to the commit. This mirrors the subprocess worker's per-call
+    ``_telemetry_session`` (ALP-907) but sources the session from the
+    orchestrator's canonical ``session_factory`` rather than a dedicated engine
+    — the resolver runs in-process. A plain per-call session, NOT
+    ``begin_write_immediate`` / ``run_with_sqlite_busy_retry``: the row is a
+    best-effort append, exactly as ALP-907.
+    """
+    if factory is None or provenance_root is None:
+        yield None
+        return
+    session = factory()
+    try:
+        yield session
+    finally:
+        try:
+            await session.commit()
+        except Exception:
+            log.exception("agent_calls telemetry commit failed in thesis resolver")
+        finally:
+            with contextlib.suppress(Exception):
+                await session.close()
+
+
 async def _assess_components(
     record: ThesisRecord,
     *,
@@ -526,6 +581,12 @@ async def _assess_components(
     ``INCONCLUSIVE`` is qualitative/ambiguous → the targeted LLM evaluator
     (04d) refines it over a focused market-data slice the resolver renders. The
     evaluator config is built lazily, only when the first such component appears.
+
+    Each LLM-fallback evaluation opens a fresh per-call telemetry session
+    (ALP-922) so its ``agent_calls`` row + provenance artifacts are captured
+    when telemetry is wired; capture is best-effort and never aborts the
+    evaluation. When telemetry is unwired the session is ``None`` and
+    ``capture_agent_call`` stays a no-op.
     """
     market_data = _render_market_data_slice(
         exit_method=exit_method,
@@ -539,17 +600,21 @@ async def _assess_components(
         if programmatic is not ThesisComponentOutcome.INCONCLUSIVE:
             outcomes[component.component_id] = programmatic
             continue
-        llm_outcome = await evaluate_component_llm(
-            component,
-            market_data,
-            agent_config=llm_context.evaluator_config.get(),
-            invocation_id=llm_context.invocation_id,
-            as_of=llm_context.now,
-            archive_root=llm_context.archive_root,
-            sdk_query_fn=llm_context.sdk_query_fn,
-            progress=llm_context.progress,
-            telemetry_session=None,
-        )
+        async with _telemetry_session(
+            llm_context.telemetry_session_factory, llm_context.provenance_root
+        ) as telemetry_session:
+            llm_outcome = await evaluate_component_llm(
+                component,
+                market_data,
+                agent_config=llm_context.evaluator_config.get(),
+                invocation_id=llm_context.invocation_id,
+                as_of=llm_context.now,
+                archive_root=llm_context.archive_root,
+                sdk_query_fn=llm_context.sdk_query_fn,
+                progress=llm_context.progress,
+                telemetry_session=telemetry_session,
+                provenance_root=llm_context.provenance_root,
+            )
         outcomes[component.component_id] = llm_outcome.outcome
     return outcomes
 
