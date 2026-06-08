@@ -128,6 +128,24 @@ class TestNonFiniteValue:
         assert rehydrated.headline.pl_last_7d.result.value == math.inf
         assert rehydrated == digest
 
+    def test_non_finite_in_non_value_field_raises_rather_than_sentinel(
+        self, monkeypatch, digest_config  # type: ignore[no-untyped-def]
+    ) -> None:
+        # The string sentinel has exactly one inverse — _metric_value at
+        # MetricResult.value. A non-finite float reaching any other float field
+        # (PulseMetric.delta here) would have no inverse, so it must NOT be
+        # sentinel-encoded; allow_nan=False raises loudly instead of emitting a bare,
+        # un-rehydratable token.
+        weeks = fx.week_sequence(2)
+        digest = generate_digest(weeks, digest_config)
+        pulse = dataclasses.replace(digest.pulse.pm_rejection_rate, delta=math.inf)
+        digest = dataclasses.replace(
+            digest, pulse=dataclasses.replace(digest.pulse, pm_rejection_rate=pulse)
+        )
+
+        with pytest.raises(ValueError, match="not JSON compliant"):
+            codec.serialize_digest(digest)
+
 
 class _PlainEnum(Enum):
     """A non-``StrEnum`` enum — ``json.dumps`` cannot encode it without the guard."""

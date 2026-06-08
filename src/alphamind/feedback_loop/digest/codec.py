@@ -53,19 +53,18 @@ DIGEST_SCHEMA_VERSION: Final[int] = 1
 
 #: A non-finite ``MetricResult.value`` (an all-wins ``outcome_profit_factor`` yields
 #: ``math.inf`` to distinguish it from ``None``/no-data) is RFC-8259-invalid as a bare
-#: ``Infinity``/``NaN`` JSON token. The codec persists it as one of these JSON-valid
-#: string sentinels instead and maps it back on rehydration, so the snapshot
-#: ``digest_json`` stays standard JSON for any strict reader (the ALP-686 frontend,
-#: SQLite ``json()``, ``jq``) while round-trip equality holds.
+#: ``Infinity`` JSON token. The codec persists it as one of these JSON-valid string
+#: sentinels instead and maps it back on rehydration, so the snapshot ``digest_json``
+#: stays standard JSON for any strict reader (the ALP-686 frontend, SQLite ``json()``,
+#: ``jq``) while round-trip equality holds. No metric emits ``NaN`` (it would break the
+#: round-trip's equality, ``nan != nan``), so only ``±Infinity`` is mapped.
 _NON_FINITE_SENTINELS: Final[dict[float, str]] = {
     math.inf: "Infinity",
     -math.inf: "-Infinity",
 }
-_NAN_SENTINEL: Final[str] = "NaN"
 _SENTINEL_TO_FLOAT: Final[dict[str, float]] = {
     "Infinity": math.inf,
     "-Infinity": -math.inf,
-    "NaN": math.nan,
 }
 
 __all__ = [
@@ -79,13 +78,15 @@ __all__ = [
 def metric_value_to_jsonable(value: float | None) -> float | str | None:
     """Render a ``MetricResult.value`` as a JSON-native value.
 
-    A non-finite float (``math.inf`` / ``-math.inf`` / ``nan``) becomes its JSON-valid
-    string sentinel (:data:`_NON_FINITE_SENTINELS`); a finite number or ``None`` passes
-    through. Shared with the read CLI (``cli._metric_result_json``) so both persistence
-    paths render a non-finite reading identically and standard-JSON-safely.
+    A non-finite float (``±math.inf``) becomes its JSON-valid string sentinel
+    (:data:`_NON_FINITE_SENTINELS`); a finite number or ``None`` passes through. This is
+    the only field the codec sentinel-encodes — it is the sole field :func:`_metric_value`
+    maps back, so the encoding stays symmetric with its single inverse. Shared with the
+    read CLI (``cli._metric_result_json``) so both persistence paths render a non-finite
+    reading identically and standard-JSON-safely.
     """
     if isinstance(value, float) and not math.isfinite(value):
-        return _NAN_SENTINEL if math.isnan(value) else _NON_FINITE_SENTINELS[value]
+        return _NON_FINITE_SENTINELS[value]
     return value
 
 
@@ -99,16 +100,16 @@ def _leaf_jsonable(obj: Any) -> Any:
 
     A ``datetime`` becomes its ISO string; a plain ``Enum`` becomes its ``.value``
     (mirroring ``portfolio_state.events.codec._try_encode_leaf`` — a forward guard so a
-    non-``StrEnum`` field never ``TypeError``s at ``json.dumps``); a non-finite float
-    becomes a JSON-valid string sentinel (:data:`_NON_FINITE_SENTINELS`); everything else
-    passes through unchanged.
+    non-``StrEnum`` field never ``TypeError``s at ``json.dumps``); everything else passes
+    through unchanged. A non-finite float is *not* string-sentineled here: that encoding
+    is scoped to ``MetricResult.value`` (the only field :func:`_metric_value` maps back),
+    so a non-finite value in any other float field reaches ``json.dumps``'s
+    ``allow_nan=False`` and raises loudly rather than emitting an un-rehydratable token.
     """
     if isinstance(obj, datetime):
         return obj.isoformat()
     if isinstance(obj, Enum):
         return obj.value
-    if isinstance(obj, float):
-        return metric_value_to_jsonable(obj)
     return obj
 
 
@@ -118,7 +119,19 @@ def _to_jsonable(obj: Any) -> Any:
     Dataclasses become dicts (slots-friendly via :func:`dataclasses.fields`); tuples
     and lists become lists; the recursion bottoms out at :func:`_leaf_jsonable` for the
     scalar leaves. ``property`` attributes are not serialised — only declared fields.
+    The ``MetricResult.value`` field is the one place a non-finite float is string-
+    sentineled (:func:`metric_value_to_jsonable`), keeping the encoding symmetric with
+    :func:`_metric_value`'s single inverse.
     """
+    if isinstance(obj, MetricResult):
+        return {
+            f.name: (
+                metric_value_to_jsonable(obj.value)
+                if f.name == "value"
+                else _to_jsonable(getattr(obj, f.name))
+            )
+            for f in dataclasses.fields(obj)
+        }
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         return {f.name: _to_jsonable(getattr(obj, f.name)) for f in dataclasses.fields(obj)}
     if isinstance(obj, dict):
