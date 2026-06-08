@@ -44,8 +44,6 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
-    from alphamind.feedback_loop.dataset import WindowDataset
-
 #: Filesystem subtree (under the data root) for persisted report markdown. The
 #: canonical ``report_file_ref`` stored on the record is always rooted at ``data/``
 #: per ``state-persistence.md § Retrospective reports``; the on-disk *data_root* is
@@ -61,7 +59,8 @@ def _utc_now() -> datetime:
 
 def save_report(
     session: Session,
-    window: WindowDataset,
+    start: datetime,
+    end: datetime,
     markdown: str,
     *,
     session_id: str | None = None,
@@ -72,10 +71,10 @@ def save_report(
 
     Mints a fresh ``report_id``, writes *markdown* to
     ``{data_root}/retrospective_reports/{report_id}/report.md`` (creating parents),
-    and queues a :class:`RetrospectiveReportRecord` for insert. The window bounds
-    come from *window* (the Phase-1 :class:`WindowDataset`); *session_id* is the
-    optional review-session under which Phase 3 rendered (nullable — the session
-    surface is deferred, ALP-686). The caller owns the commit boundary.
+    and queues a :class:`RetrospectiveReportRecord` for insert. *start* / *end* are
+    the Phase-1 window bounds (stamped on the record); *session_id* is the optional
+    review-session under which Phase 3 rendered (nullable — the session surface is
+    deferred, ALP-686). The caller owns the commit boundary.
 
     *data_root* defaults to the repo-relative ``data/`` directory so the on-disk
     location matches the canonical ``report_file_ref`` stored on the record; tests
@@ -90,8 +89,8 @@ def save_report(
 
     record = RetrospectiveReportRecord(
         report_id=report_id,
-        window_start=window.start,
-        window_end=window.end,
+        window_start=start,
+        window_end=end,
         generated_at=now(),
         generated_by_session_id=session_id,
         report_file_ref=(

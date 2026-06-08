@@ -16,7 +16,6 @@ import pytest
 from sqlalchemy.orm import Session
 
 import alphamind.state.tables  # noqa: F401 — register all tables on Base.metadata
-from alphamind.feedback_loop.dataset import WindowDataset
 from alphamind.feedback_loop.retrospective.records import (
     DecisionType,
     ReportId,
@@ -47,16 +46,6 @@ _WINDOW_END = datetime(2026, 4, 1, tzinfo=UTC)
 _NOW = datetime(2026, 4, 2, 12, 0, tzinfo=UTC)
 
 
-def _window() -> WindowDataset:
-    return WindowDataset(
-        start=_WINDOW_START,
-        end=_WINDOW_END,
-        agent_calls=(),
-        pm_decision_log=(),
-        validations=(),
-    )
-
-
 @pytest.fixture()
 def session(tmp_path: Path) -> Iterator[Session]:
     db_path = tmp_path / "report.db"
@@ -72,7 +61,8 @@ class TestSaveReport:
         markdown = "# Quarterly retrospective\n\nsome findings\n"
         record = save_report(
             session,
-            _window(),
+            _WINDOW_START,
+            _WINDOW_END,
             markdown,
             data_root=tmp_path,
             now=lambda: _NOW,
@@ -91,17 +81,22 @@ class TestSaveReport:
     def test_report_file_ref_is_canonical_relative_path(
         self, session: Session, tmp_path: Path
     ) -> None:
-        record = save_report(session, _window(), "# r\n", data_root=tmp_path, now=lambda: _NOW)
+        record = save_report(
+            session, _WINDOW_START, _WINDOW_END, "# r\n", data_root=tmp_path, now=lambda: _NOW
+        )
         assert record.report_file_ref == f"data/retrospective_reports/{record.report_id}/report.md"
 
     def test_session_id_is_nullable(self, session: Session, tmp_path: Path) -> None:
-        record = save_report(session, _window(), "# r\n", data_root=tmp_path, now=lambda: _NOW)
+        record = save_report(
+            session, _WINDOW_START, _WINDOW_END, "# r\n", data_root=tmp_path, now=lambda: _NOW
+        )
         assert record.generated_by_session_id is None
 
     def test_session_id_persists_when_supplied(self, session: Session, tmp_path: Path) -> None:
         record = save_report(
             session,
-            _window(),
+            _WINDOW_START,
+            _WINDOW_END,
             "# r\n",
             session_id="review-session-7",
             data_root=tmp_path,
@@ -113,18 +108,26 @@ class TestSaveReport:
         assert stored.generated_by_session_id == "review-session-7"
 
     def test_report_ids_are_unique(self, session: Session, tmp_path: Path) -> None:
-        r1 = save_report(session, _window(), "# a\n", data_root=tmp_path, now=lambda: _NOW)
-        r2 = save_report(session, _window(), "# b\n", data_root=tmp_path, now=lambda: _NOW)
+        r1 = save_report(
+            session, _WINDOW_START, _WINDOW_END, "# a\n", data_root=tmp_path, now=lambda: _NOW
+        )
+        r2 = save_report(
+            session, _WINDOW_START, _WINDOW_END, "# b\n", data_root=tmp_path, now=lambda: _NOW
+        )
         assert r1.report_id != r2.report_id
 
     def test_returns_record_type(self, session: Session, tmp_path: Path) -> None:
-        record = save_report(session, _window(), "# r\n", data_root=tmp_path, now=lambda: _NOW)
+        record = save_report(
+            session, _WINDOW_START, _WINDOW_END, "# r\n", data_root=tmp_path, now=lambda: _NOW
+        )
         assert isinstance(record, RetrospectiveReportRecord)
 
 
 class TestCaptureDecision:
     def _saved_report(self, session: Session, tmp_path: Path) -> ReportId:
-        record = save_report(session, _window(), "# r\n", data_root=tmp_path, now=lambda: _NOW)
+        record = save_report(
+            session, _WINDOW_START, _WINDOW_END, "# r\n", data_root=tmp_path, now=lambda: _NOW
+        )
         session.flush()
         return record.report_id
 

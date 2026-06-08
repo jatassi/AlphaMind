@@ -37,7 +37,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from alphamind.feedback_loop.dataset import WindowDataset
 from alphamind.feedback_loop.retrospective.ingestion import ingest_window
 from alphamind.feedback_loop.retrospective.records import (
     DecisionType,
@@ -178,14 +177,14 @@ def _run_save_report(args: argparse.Namespace) -> int:
 
     _warn_default_db_path(args.db_path)
     data_root = Path(args.data_root) if args.data_root is not None else None
-    window = WindowDataset(start=start, end=end, agent_calls=(), pm_decision_log=(), validations=())
 
     engine = make_engine(args.db_path)
     try:
         with make_session_factory(engine)() as session:
             record = save_report(
                 session,
-                window,
+                start,
+                end,
                 markdown,
                 session_id=args.session_id,
                 data_root=data_root,
