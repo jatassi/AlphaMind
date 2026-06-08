@@ -141,14 +141,19 @@ def collect_anomalies(blocks: Iterable[OutputBlock]) -> list[AnomalySummary]:
 # of the resulting row.
 
 # Flag prefixes that embed a single ticker as their one dynamic ``:``-segment
-# (``correlation_locus_flag:{ticker}``). Every other dynamic-suffix flag carries
-# a *pair* (``correlation_breakdown_flag:{row}:{col}``,
-# ``intra_sector_correlation_divergence:{row}:{col}``) or a pair-key
-# (``lead_lag_inversion_flag:{pair_key}``, ``overdue_lag_flag:{pair_key}``) — no
-# single subject ticker — and so resolves to ``ticker=None``. Segment *count*
-# alone can't separate the locus case from the pair-key case (both have one
-# segment), so the ticker-bearing prefixes are enumerated explicitly.
-_TICKER_BEARING_FLAG_PREFIXES: frozenset[str] = frozenset({"correlation_locus_flag"})
+# (``correlation_locus_flag:{ticker}``, ``etf_vs_single_name_divergence:{etf}`` —
+# a sector ETF is a symbol). Every other dynamic-suffix flag carries a *pair*
+# (``correlation_breakdown_flag:{row}:{col}``,
+# ``intra_sector_correlation_divergence:{row}:{col}``), a pair-key
+# (``lead_lag_inversion_flag:{pair_key}``, ``overdue_lag_flag:{pair_key}``), or a
+# non-symbol subject (``q12_event_novelty:{sector_audience}``,
+# ``prediction_market_delta:{contract_id}``) — no single subject ticker — and so
+# resolves to ``ticker=None``. Segment *count* alone can't separate the locus
+# case from the pair-key case (both have one segment), so the ticker-bearing
+# prefixes are enumerated explicitly.
+_TICKER_BEARING_FLAG_PREFIXES: frozenset[str] = frozenset(
+    {"correlation_locus_flag", "etf_vs_single_name_divergence"}
+)
 
 
 def _ticker_from_flag_name(flag_name: str) -> str | None:

@@ -40,6 +40,8 @@ from alphamind.distillation.q12_corporate_actions import (
     ETF_FLOW_WINDOW_DAYS,
     RECENT_ACTIONS_WINDOW_TRADING_DAYS,
     UNUSUAL_EVENT_CADENCE_LOOKBACK_DAYS,
+    _emit_divergence_blocks,
+    _emit_event_novelty_blocks,
     detect_q12_signals,
 )
 from alphamind.persistence.models import (
@@ -706,3 +708,70 @@ class TestRecentCorporateActions:
             volume_baseline_days=TEST_VOLUME_BASELINE_DAYS,
         )
         assert not [b for b in blocks if b.block_id == "q12.recent_corporate_actions"]
+
+
+# ---------------------------------------------------------------------------
+# Per-subject flag-name embedding (ALP-934)
+# ---------------------------------------------------------------------------
+#
+# Both producers fan a block out per subject (per ETF / per sector audience)
+# while keeping a single constant ``block_id``. The activity-log entry_id is
+# ``(invocation_id, block_id, flag.name)``, so a constant flag name across two
+# subjects mints two identical PKs and the emit ``executemany`` aborts the
+# whole pipeline. Embedding the subject in the flag name keeps the entry_id
+# unique. ``resolve_flag_taxonomy`` strips the ``:``-suffix before the registry
+# lookup, so the taxonomy is unaffected (see test_flag_event_types).
+
+_NOVELTY_FRESHNESS = datetime(2026, 6, 8, tzinfo=UTC)
+
+
+def _divergence_payload(*, constituents: dict[str, float]) -> dict[str, Any]:
+    return {
+        "etf_volume_z": -2.0,
+        "firing_constituents": sorted(constituents),
+        "constituent_bto_z": dict(constituents),
+        "attribution_method": "weight_volume_proxy",
+    }
+
+
+def test_divergence_flag_name_embeds_etf_ticker_per_block() -> None:
+    """Two ETFs firing the divergence yield two distinct ``:{etf}``-suffixed names.
+
+    The bare constant name collided on ``activity_log.entry_id`` once ≥ 2 ETFs
+    fired in one run (ALP-934); the per-ETF suffix restores uniqueness.
+    """
+    blocks = _emit_divergence_blocks(
+        detections=[
+            ("XLK", _divergence_payload(constituents={"AAPL": 2.5, "MSFT": 2.1})),
+            ("XLF", _divergence_payload(constituents={"JPM": 2.4, "BAC": 2.0})),
+        ],
+        freshness_ts=_NOVELTY_FRESHNESS,
+    )
+
+    flag_names = sorted(flag.name for block in blocks for flag in block.anomaly_flags)
+    assert flag_names == [
+        "etf_vs_single_name_divergence:XLF",
+        "etf_vs_single_name_divergence:XLK",
+    ]
+    # block_id stays the per-producer constant — only the flag name carries the subject.
+    assert {block.block_id for block in blocks} == {"q12.etf_vs_single_name_divergence"}
+
+
+def test_event_novelty_flag_name_embeds_audience_per_block() -> None:
+    """Two sector audiences firing event-novelty yield two distinct ``:{audience}`` names."""
+    blocks = _emit_event_novelty_blocks(
+        cadence_per_ticker={
+            "AAPL": [{"flag": "unusual_event_cadence"}],
+            "JPM": [{"flag": "unusual_event_cadence"}],
+        },
+        cluster_per_ticker={},
+        sector_lookup={"AAPL": "tech", "JPM": "financials"},
+        freshness_ts=_NOVELTY_FRESHNESS,
+    )
+
+    flag_names = sorted(flag.name for block in blocks for flag in block.anomaly_flags)
+    assert flag_names == [
+        "q12_event_novelty:sector_financials",
+        "q12_event_novelty:sector_tech_semis",
+    ]
+    assert {block.block_id for block in blocks} == {"q12.event_novelty"}

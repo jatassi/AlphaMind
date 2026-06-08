@@ -1039,16 +1039,41 @@ def _emit_anomaly_activity_log(
     async OMS helper ``append_activity_log_entry`` (which requires an
     ``AsyncSession``-backed ``InvocationHandle``) is not applicable here; the
     row is added directly on the sync session via the shared codec.
+
+    Summaries are de-duplicated by their ``(source_block_id, flag.name)``
+    entry_id key before the single ``executemany``: two summaries sharing that
+    key mint the same ``activity_log.entry_id`` PK, which would otherwise abort
+    the whole distillation transaction with an ``IntegrityError`` (the q12
+    corporate-action collision, ALP-934). The first occurrence in iteration
+    order is kept; each dropped duplicate emits one ``WARNING`` naming its
+    ``block_id`` + ``flag.name`` so the lost signal is observable rather than
+    fatal. This is the emission-boundary safety net for *any* producer;
+    per-producer subject embedding (suffixing ``flag.name`` with the subject) is
+    what keeps distinct logical anomalies from colliding in the first place.
     """
-    if not summaries:
+    seen: set[tuple[str, str]] = set()
+    deduped: list[AnomalySummary] = []
+    for summary in summaries:
+        key = (summary.source_block_id, summary.flag.name)
+        if key in seen:
+            logger.warning(
+                "dropping duplicate distillation anomaly flag (entry_id collision): "
+                "block_id=%s flag_name=%s — first occurrence kept",
+                summary.source_block_id,
+                summary.flag.name,
+            )
+            continue
+        seen.add(key)
+        deduped.append(summary)
+    if not deduped:
         return 0
     with _refresh_transaction(session):
-        for summary in summaries:
+        for summary in deduped:
             entry = anomaly_summary_to_activity_log_entry(
                 summary, invocation_id=invocation_id, timestamp=as_of
             )
             session.add(activity_log_entry_to_row(entry))
-    return len(summaries)
+    return len(deduped)
 
 
 # ---------------------------------------------------------------------------
