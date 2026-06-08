@@ -1,10 +1,9 @@
 """Tests for the pure thesis-quality aggregation helper (ALP-878).
 
-The helper computes the 4 in-scope ``ThesisQualityAggregate`` fields
+The helper computes the three §6a ``ThesisQualityAggregate`` fields
 (``resolution_counts_by_window``, ``duration_stats_by_window``,
-``invalidation_timing_stats_by_window``, ``signal_hit_rates``) from a
-sequence of RESOLVED ``ThesisRecord`` objects + config-sourced trailing
-windows. The 5 deferred fields stay empty (ALP-906).
+``invalidation_timing_stats_by_window``) from a sequence of RESOLVED
+``ThesisRecord`` objects + config-sourced trailing windows.
 """
 
 from __future__ import annotations
@@ -24,7 +23,6 @@ from alphamind.portfolio_state.aggregates.thesis_quality_compute import (
     compute_thesis_quality_aggregate,
 )
 from alphamind.portfolio_state.records.theses import (
-    KeyAssumption,
     ThesisComponent,
     ThesisComponentOutcome,
     ThesisComponentType,
@@ -42,8 +40,6 @@ def _component(
     cid: str,
     thesis_id: str,
     ctype: ThesisComponentType,
-    assumptions: tuple[KeyAssumption, ...],
-    outcome: ThesisComponentOutcome | None,
 ) -> ThesisComponent:
     return ThesisComponent(
         component_id=cid,
@@ -52,9 +48,12 @@ def _component(
         linked_bracket_leg_type=None,
         instrument_reference="AAPL",
         narrative="Narrative.",
-        key_assumptions=assumptions,
+        key_assumptions=(),
         generation_timestamp=_AS_OF - timedelta(hours=48),
-        resolution_outcome=outcome,
+        # RESOLVED theses require every component to carry a scored outcome
+        # (ThesisRecord validator); the specific value is not read by the §6a
+        # compute, which no longer inspects components.
+        resolution_outcome=ThesisComponentOutcome.VALIDATED,
         resolution_notes=None,
     )
 
@@ -67,31 +66,16 @@ def _resolved_thesis(
     generated_at: datetime | None = None,
     resolved_at: datetime | None = None,
     time_expectation_hours: float = 24.0,
-    assumptions_by_component: tuple[tuple[KeyAssumption, ...], ...] | None = None,
-    component_outcome: ThesisComponentOutcome = ThesisComponentOutcome.VALIDATED,
 ) -> ThesisRecord:
     gen = generated_at if generated_at is not None else _AS_OF - timedelta(hours=24)
     res = resolved_at if resolved_at is not None else _AS_OF - timedelta(hours=1)
-    if assumptions_by_component is None:
-        assumptions_by_component = (
-            (KeyAssumption(text="a", outcome=component_outcome),),
-            (KeyAssumption(text="b", outcome=component_outcome),),
-            (KeyAssumption(text="c", outcome=component_outcome),),
-        )
     types = (
         ThesisComponentType.ENTRY_RATIONALE,
         ThesisComponentType.TARGET_RATIONALE,
         ThesisComponentType.INVALIDATION_RATIONALE,
     )
     components = tuple(
-        _component(
-            cid=f"{thesis_id}-c{i}",
-            thesis_id=thesis_id,
-            ctype=types[i],
-            assumptions=assumptions_by_component[i],
-            outcome=component_outcome,
-        )
-        for i in range(3)
+        _component(cid=f"{thesis_id}-c{i}", thesis_id=thesis_id, ctype=types[i]) for i in range(3)
     )
     return ThesisRecord(
         thesis_id=ThesisId(thesis_id),
@@ -130,19 +114,6 @@ class TestEmptyInput:
         for entry in agg.resolution_counts_by_window:
             assert entry.total_resolutions == 0
             assert entry.validation_rate is None
-        assert agg.signal_hit_rates == ()
-
-    def test_deferred_fields_empty(self) -> None:
-        agg = compute_thesis_quality_aggregate(
-            resolved_theses=(_resolved_thesis(),),
-            trailing_windows_days=_WINDOWS,
-            as_of=_AS_OF,
-        )
-        assert agg.performance_attribution == ()
-        assert agg.alpha_beta_decomposition_by_window == ()
-        assert agg.conviction_calibration == ()
-        assert agg.conviction_sizing_deviation_by_window == ()
-        assert agg.signal_to_thesis_conversions == ()
 
 
 class TestResolutionCounts:
@@ -307,80 +278,6 @@ class TestInvalidationTiming:
         )
         assert sum(inception.class_distribution.values()) == 0
         assert inception.mean_position_age_at_invalidation_hours is None
-
-
-class TestSignalHitRates:
-    def test_derived_from_key_assumption_outcomes(self) -> None:
-        # signal "alpha" cited in two theses, validated once, wrong once => 1/2.
-        # signal "beta" cited once, validated => 1/1. INCONCLUSIVE and None outcomes
-        # are cited but not validated.
-        t1 = _resolved_thesis(
-            thesis_id="T-1",
-            assumptions_by_component=(
-                (KeyAssumption(text="alpha", outcome=ThesisComponentOutcome.VALIDATED),),
-                (KeyAssumption(text="beta", outcome=ThesisComponentOutcome.VALIDATED),),
-                (KeyAssumption(text="gamma", outcome=ThesisComponentOutcome.INCONCLUSIVE),),
-            ),
-        )
-        t2 = _resolved_thesis(
-            thesis_id="T-2",
-            assumptions_by_component=(
-                (KeyAssumption(text="alpha", outcome=ThesisComponentOutcome.WRONG),),
-                (KeyAssumption(text="delta", outcome=None),),
-                (KeyAssumption(text="gamma", outcome=ThesisComponentOutcome.VALIDATED),),
-            ),
-        )
-        agg = compute_thesis_quality_aggregate(
-            resolved_theses=(t1, t2),
-            trailing_windows_days=_WINDOWS,
-            as_of=_AS_OF,
-        )
-        alpha = agg.signal_hit_rate("alpha", TrailingWindow.INCEPTION)
-        beta = agg.signal_hit_rate("beta", TrailingWindow.INCEPTION)
-        gamma = agg.signal_hit_rate("gamma", TrailingWindow.INCEPTION)
-        delta = agg.signal_hit_rate("delta", TrailingWindow.INCEPTION)
-        assert alpha is not None
-        assert alpha.cited_count == 2
-        assert alpha.validated_count == 1
-        assert alpha.hit_rate == pytest.approx(0.5)
-        assert beta is not None and beta.cited_count == 1 and beta.validated_count == 1
-        assert gamma is not None
-        assert gamma.cited_count == 2
-        assert gamma.validated_count == 1
-        assert delta is not None
-        assert delta.cited_count == 1
-        assert delta.validated_count == 0
-
-    def test_signal_hit_rates_respect_windows(self) -> None:
-        recent = _resolved_thesis(
-            thesis_id="T-recent",
-            resolved_at=_AS_OF - timedelta(days=1),
-            generated_at=_AS_OF - timedelta(days=2),
-            assumptions_by_component=(
-                (KeyAssumption(text="sig", outcome=ThesisComponentOutcome.VALIDATED),),
-                (KeyAssumption(text="x", outcome=ThesisComponentOutcome.VALIDATED),),
-                (KeyAssumption(text="y", outcome=ThesisComponentOutcome.VALIDATED),),
-            ),
-        )
-        older = _resolved_thesis(
-            thesis_id="T-older",
-            resolved_at=_AS_OF - timedelta(days=10),
-            generated_at=_AS_OF - timedelta(days=11),
-            assumptions_by_component=(
-                (KeyAssumption(text="sig", outcome=ThesisComponentOutcome.WRONG),),
-                (KeyAssumption(text="x", outcome=ThesisComponentOutcome.VALIDATED),),
-                (KeyAssumption(text="y", outcome=ThesisComponentOutcome.VALIDATED),),
-            ),
-        )
-        agg = compute_thesis_quality_aggregate(
-            resolved_theses=(recent, older),
-            trailing_windows_days=_WINDOWS,
-            as_of=_AS_OF,
-        )
-        five = agg.signal_hit_rate("sig", TrailingWindow.FIVE_DAYS)
-        twenty = agg.signal_hit_rate("sig", TrailingWindow.TWENTY_DAYS)
-        assert five is not None and five.cited_count == 1 and five.validated_count == 1
-        assert twenty is not None and twenty.cited_count == 2 and twenty.validated_count == 1
 
 
 class TestWindowMapping:

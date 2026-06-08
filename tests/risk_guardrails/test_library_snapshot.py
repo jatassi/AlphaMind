@@ -216,12 +216,6 @@ def _make_pydantic_snapshot(
         resolution_counts_by_window=(),
         duration_stats_by_window=(),
         invalidation_timing_stats_by_window=(),
-        signal_hit_rates=(),
-        signal_to_thesis_conversions=(),
-        conviction_calibration=(),
-        conviction_sizing_deviation_by_window=(),
-        performance_attribution=(),
-        alpha_beta_decomposition_by_window=(),
     )
     return PortfolioStateSnapshot(
         invocation_id=_INV_ID,

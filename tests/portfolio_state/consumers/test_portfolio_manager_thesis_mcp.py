@@ -15,16 +15,9 @@ from alphamind._kernel.ids import (
 from alphamind._kernel.money import signed_money
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.thesis_quality import (
-    AlphaBetaDecomposition,
-    AttributionDimension,
-    ConvictionCalibrationEntry,
-    ConvictionSizingDeviation,
     InvalidationTimingClass,
     InvalidationTimingStat,
-    PerformanceAttributionEntry,
     ResolutionWindowCounts,
-    SignalHitRate,
-    SignalToThesisConversion,
     ThesisDurationStat,
     ThesisQualityAggregate,
     TrailingWindow,
@@ -251,57 +244,11 @@ def _make_thesis_quality() -> ThesisQualityAggregate:
         },
         mean_position_age_at_invalidation_hours=0.0,
     )
-    shr = SignalHitRate(
-        signal_type="volume", window=TrailingWindow.FIVE_DAYS, cited_count=0, validated_count=0
-    )
-    stc = SignalToThesisConversion(
-        signal_type="volume",
-        window=TrailingWindow.FIVE_DAYS,
-        signal_observed_count=0,
-        pm_approved_count=0,
-    )
-    cc = ConvictionCalibrationEntry(
-        conviction_level=1,
-        window=TrailingWindow.FIVE_DAYS,
-        count=0,
-        validation_rate=0.0,
-        mean_realized_pnl_pct=0.0,
-    )
-    csd = ConvictionSizingDeviation(
-        window=TrailingWindow.FIVE_DAYS,
-        total_proposals=0,
-        pm_sized_above_advisory_count=0,
-        pm_sized_below_advisory_count=0,
-        pm_sized_within_advisory_count=0,
-        outcome_correlation_above=None,
-        outcome_correlation_below=None,
-    )
-    pa = PerformanceAttributionEntry(
-        dimension=AttributionDimension.SECTOR,
-        key="Technology",
-        window=TrailingWindow.FIVE_DAYS,
-        cumulative_realized_pnl_usd=0.0,
-        realized_pnl_pct_of_window_capital=0.0,
-        count=0,
-    )
-    ab = AlphaBetaDecomposition(
-        window=TrailingWindow.FIVE_DAYS,
-        total_realized_pnl_usd=0.0,
-        market_component_usd=0.0,
-        sector_component_usd=0.0,
-        alpha_component_usd=0.0,
-    )
     return ThesisQualityAggregate(
         as_of_timestamp=_T0,
         resolution_counts_by_window=(rwc,),
         duration_stats_by_window=(dur,),
         invalidation_timing_stats_by_window=(inv_timing,),
-        signal_hit_rates=(shr,),
-        signal_to_thesis_conversions=(stc,),
-        conviction_calibration=(cc,),
-        conviction_sizing_deviation_by_window=(csd,),
-        performance_attribution=(pa,),
-        alpha_beta_decomposition_by_window=(ab,),
     )
 
 

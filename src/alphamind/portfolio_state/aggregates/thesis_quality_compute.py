@@ -1,31 +1,25 @@
 """Pure compute-on-read aggregation for ``ThesisQualityAggregate`` (ALP-878).
 
 Functional core (P1): the SQL repository (imperative shell) queries resolved
-theses + their components and decodes them into ``ThesisRecord`` objects, then
-hands the decoded records + the config-sourced trailing windows + an ``as_of``
-timestamp to :func:`compute_thesis_quality_aggregate`. This module performs no
-I/O, holds no clock, and never touches SQLAlchemy — it is unit-testable against
-hand-built in-memory fixtures.
+theses and decodes them into ``ThesisRecord`` objects, then hands the decoded
+records + the config-sourced trailing windows + an ``as_of`` timestamp to
+:func:`compute_thesis_quality_aggregate`. This module performs no I/O, holds no
+clock, and never touches SQLAlchemy — it is unit-testable against hand-built
+in-memory fixtures.
 
-Per parent decision (C) — compute-on-read, no materialized table — and the
-ALP-131 orchestration scope decision (2026-06-07), only the **4 fields
-computable from ``theses`` + ``thesis_components``** are populated:
+Per parent decision (C) — compute-on-read, no materialized table — the three
+§6a thesis-accuracy fields are computed entirely from parent ``theses`` rows:
 
 * ``resolution_counts_by_window`` — trailing resolution counts by
   ``resolution_category`` per window, plus validation rate (derived).
 * ``duration_stats_by_window`` — actual/expected duration ratio statistics.
 * ``invalidation_timing_stats_by_window`` — EARLY/ON_TIME/LATE classification
   of invalidated theses plus mean position age at invalidation.
-* ``signal_hit_rates`` — per-assumption hit rates derived from
-  ``thesis_components.key_assumptions`` outcomes (NOT ``supporting_signals``,
-  which is hardcoded empty at write time).
 
-The remaining 5 fields (``performance_attribution``,
-``alpha_beta_decomposition_by_window``, ``conviction_calibration``,
-``conviction_sizing_deviation_by_window``, ``signal_to_thesis_conversions``)
-need sector/regime/thesis-type persistence, market data, or typed
-conviction/sizing contracts that do not exist in the three permitted tables;
-they are left at their documented-empty value and tracked by ALP-906.
+The §6b/§6c signal-reliability, conviction-calibration, and
+performance-attribution analytics are owned offline by the feedback_loop weekly
+digest (``alphamind.feedback_loop.digest``), which computes them with richer
+conditioning and does not read this aggregate.
 """
 
 from __future__ import annotations
@@ -38,13 +32,11 @@ from alphamind.portfolio_state.aggregates.thesis_quality import (
     InvalidationTimingClass,
     InvalidationTimingStat,
     ResolutionWindowCounts,
-    SignalHitRate,
     ThesisDurationStat,
     ThesisQualityAggregate,
     TrailingWindow,
 )
 from alphamind.portfolio_state.records.theses import (
-    ThesisComponentOutcome,
     ThesisRecord,
     ThesisRecordStatus,
     ThesisResolutionCategory,
@@ -85,15 +77,13 @@ def compute_thesis_quality_aggregate(
     trailing_windows_days: tuple[int, ...],
     as_of: datetime,
 ) -> ThesisQualityAggregate:
-    """Compute the 4 in-scope ``ThesisQualityAggregate`` fields from resolved theses.
+    """Compute the three §6a ``ThesisQualityAggregate`` fields from resolved theses.
 
     ``resolved_theses`` must all carry ``status == RESOLVED`` (the shell filters
     by status before calling). ``trailing_windows_days`` comes from
     ``PortfolioStateConfig.thesis_quality_aggregates_trailing_windows_days``;
     each day value maps to a finite ``TrailingWindow``. The inception window is
     always computed in addition to the configured finite windows.
-
-    The 5 deferred fields are returned empty (ALP-906).
     """
     if as_of.tzinfo is None or as_of.utcoffset() is None:
         msg = "as_of must be timezone-aware UTC"
@@ -105,29 +95,18 @@ def compute_thesis_quality_aggregate(
     resolution_counts: list[ResolutionWindowCounts] = []
     duration_stats: list[ThesisDurationStat] = []
     invalidation_stats: list[InvalidationTimingStat] = []
-    signal_hit_rates: list[SignalHitRate] = []
 
     for window, cutoff in windows:
         in_window = _theses_in_window(only_resolved, cutoff)
         resolution_counts.append(_resolution_counts_for(window, in_window))
         duration_stats.append(_duration_stat_for(window, in_window))
         invalidation_stats.append(_invalidation_timing_for(window, in_window))
-        signal_hit_rates.extend(_signal_hit_rates_for(window, in_window))
 
     return ThesisQualityAggregate(
         as_of_timestamp=as_of,
         resolution_counts_by_window=tuple(resolution_counts),
         duration_stats_by_window=tuple(duration_stats),
         invalidation_timing_stats_by_window=tuple(invalidation_stats),
-        signal_hit_rates=tuple(signal_hit_rates),
-        # The 5 fields below need data absent from theses + thesis_components
-        # (sector/regime/thesis_type persistence, market data, typed
-        # conviction/sizing contracts) and are deferred to ALP-906.
-        signal_to_thesis_conversions=(),
-        conviction_calibration=(),
-        conviction_sizing_deviation_by_window=(),
-        performance_attribution=(),
-        alpha_beta_decomposition_by_window=(),
     )
 
 
@@ -252,36 +231,4 @@ def _invalidation_timing_for(
         window=window,
         class_distribution=distribution,
         mean_position_age_at_invalidation_hours=mean_age,
-    )
-
-
-def _signal_hit_rates_for(
-    window: TrailingWindow, theses: Sequence[ThesisRecord]
-) -> tuple[SignalHitRate, ...]:
-    """Aggregate per-assumption hit rates over resolved component assumptions.
-
-    An assumption is *cited* once per occurrence across the window's resolved
-    theses (keyed by assumption text — the signal identity available in the
-    persisted ``key_assumptions``) and *validated* when its outcome is
-    ``VALIDATED``. ``WRONG`` / ``INCONCLUSIVE`` / unscored (``None``) outcomes
-    count toward citations but not validations. ``supporting_signals_json`` is
-    deliberately not used: it is hardcoded empty at write time (theses_codec).
-    """
-    cited: dict[str, int] = {}
-    validated: dict[str, int] = {}
-    for thesis in theses:
-        for component in thesis.components:
-            for assumption in component.key_assumptions:
-                signal = assumption.text
-                cited[signal] = cited.get(signal, 0) + 1
-                if assumption.outcome == ThesisComponentOutcome.VALIDATED:
-                    validated[signal] = validated.get(signal, 0) + 1
-    return tuple(
-        SignalHitRate(
-            signal_type=signal,
-            window=window,
-            cited_count=count,
-            validated_count=validated.get(signal, 0),
-        )
-        for signal, count in sorted(cited.items())
     )

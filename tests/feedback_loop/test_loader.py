@@ -673,9 +673,7 @@ class TestLoadReplays:
         assert len(bundle.replays) == 1
         assert bundle.replays[0].counterfactual_pnl == -20.0
 
-    async def test_latest_version_compares_numerically_not_lexically(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_latest_version_compares_numerically_not_lexically(self, tmp_path: Path) -> None:
         # The engine stamps vN versions ("v2" today). A lexical max picks "v2" over
         # "v10" (since '2' > '1'); the numeric ordinal must pick v10 as the latest so
         # the newest-engine replays are not silently dropped once the engine reaches
