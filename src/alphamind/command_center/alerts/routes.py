@@ -46,17 +46,15 @@ from alphamind.command_center.auth.dependencies import (
     current_session,
 )
 from alphamind.command_center.persistence.codecs import AlertRecord, AlertStatus
-from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
 from alphamind.portfolio_state.events.risk_guardrail import (
     RiskParameterChangedDetail,
 )
 from alphamind.portfolio_state.events.types import (
-    EventGroup,
     EventSource,
     EventType,
 )
 from alphamind.state.invocation_context.activity_log import (
-    append_activity_log_entry,
+    emit_activity_log_entry,
 )
 from alphamind.state.invocation_context.context import InvocationHandle
 
@@ -183,19 +181,17 @@ def _write_audit_entry(
         regime_label=regime_label,
     )
     entry_id = f"{handle.invocation_id}-{verb.value}-{uuid.uuid4().hex}"
-    entry = ActivityLogEntry(
-        entry_id=entry_id,
-        invocation_id=handle.invocation_id,
-        timestamp=now,
+    emit_activity_log_entry(
+        handle,
         event_type=EventType.RISK_PARAMETER_CHANGED,
-        event_group=EventGroup.RISK_AND_GUARDRAIL,
         position_id=None,
         order_id=None,
         thesis_id=None,
-        source=EventSource.OPERATOR_CONSOLE,
+        timestamp=now,
         detail=detail,
+        source=EventSource.OPERATOR_CONSOLE,
+        entry_id=entry_id,
     )
-    append_activity_log_entry(handle, entry)
 
 
 # ---------------------------------------------------------------------------

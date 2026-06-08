@@ -38,7 +38,7 @@ follows the design doc's § Operator actions:
   ``result.ok=True`` raises :class:`ValueError` so a future
   maintainer doesn't accidentally double-write.
 
-The helper is synchronous because :func:`append_activity_log_entry`
+The helper is synchronous because :func:`emit_activity_log_entry`
 itself is synchronous (it ``session.add()``-s; the surrounding context
 commits on clean exit).
 """
@@ -46,7 +46,6 @@ commits on clean exit).
 from __future__ import annotations
 
 import logging
-import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -62,12 +61,11 @@ from alphamind.portfolio_state.events.risk_guardrail import (
     RiskParameterChangedDetail,
 )
 from alphamind.portfolio_state.events.types import (
-    EventGroup,
     EventSource,
     EventType,
 )
 from alphamind.state.invocation_context.activity_log import (
-    append_activity_log_entry,
+    emit_activity_log_entry,
 )
 from alphamind.state.invocation_context.context import InvocationHandle
 
@@ -170,24 +168,19 @@ def write_operator_action_entry(
         msg = "now must be tz-aware UTC"
         raise ValueError(msg)
 
-    detail, event_type, event_group, position_id, order_id = _build_detail(
+    detail, event_type, position_id, order_id = _build_detail(
         verb=verb, parameters=parameters, result=result
     )
-    entry_id = f"{handle.invocation_id}-{event_type.value}-{uuid.uuid4().hex}"
-    entry = ActivityLogEntry(
-        entry_id=entry_id,
-        invocation_id=handle.invocation_id,
-        timestamp=timestamp,
+    return emit_activity_log_entry(
+        handle,
         event_type=event_type,
-        event_group=event_group,
         position_id=position_id,
         order_id=order_id,
         thesis_id=None,
-        source=EventSource.OPERATOR_CONSOLE,
+        timestamp=timestamp,
         detail=detail,
+        source=EventSource.OPERATOR_CONSOLE,
     )
-    append_activity_log_entry(handle, entry)
-    return entry
 
 
 def _build_detail(  # noqa: PLR0911 — one return per ControlVerb branch
@@ -195,12 +188,14 @@ def _build_detail(  # noqa: PLR0911 — one return per ControlVerb branch
     verb: ControlVerb,
     parameters: Mapping[str, Any],
     result: ControlResult,
-) -> tuple[Any, EventType, EventGroup, str | None, str | None]:
+) -> tuple[Any, EventType, str | None, str | None]:
     """Dispatch by verb to the matching detail dataclass + event type.
 
-    Returns ``(detail, event_type, event_group, position_id, order_id)``
-    so the caller can populate the :class:`ActivityLogEntry` columns
-    consistently.
+    Returns ``(detail, event_type, position_id, order_id)`` so the caller can
+    populate the :class:`ActivityLogEntry` columns consistently. The
+    ``event_group`` is no longer returned — :func:`build_activity_log_entry`
+    derives it from the registry (every branch's group already equals the
+    registry value, and the read path re-derives it regardless).
     """
     if verb == ControlVerb.PAUSE:
         detail = RiskParameterChangedDetail(
@@ -215,7 +210,7 @@ def _build_detail(  # noqa: PLR0911 — one return per ControlVerb branch
             },
             regime_label="operator_console_pause",
         )
-        return detail, EventType.RISK_PARAMETER_CHANGED, EventGroup.RISK_AND_GUARDRAIL, None, None
+        return detail, EventType.RISK_PARAMETER_CHANGED, None, None
 
     if verb == ControlVerb.RESUME:
         detail = RiskParameterChangedDetail(
@@ -229,7 +224,7 @@ def _build_detail(  # noqa: PLR0911 — one return per ControlVerb branch
             },
             regime_label="operator_console_resume",
         )
-        return detail, EventType.RISK_PARAMETER_CHANGED, EventGroup.RISK_AND_GUARDRAIL, None, None
+        return detail, EventType.RISK_PARAMETER_CHANGED, None, None
 
     if verb == ControlVerb.SET_HALT_MODE:
         enabled = bool(parameters.get("enabled"))
@@ -245,7 +240,7 @@ def _build_detail(  # noqa: PLR0911 — one return per ControlVerb branch
             },
             regime_label="operator_console_set_halt_mode",
         )
-        return detail, EventType.RISK_PARAMETER_CHANGED, EventGroup.RISK_AND_GUARDRAIL, None, None
+        return detail, EventType.RISK_PARAMETER_CHANGED, None, None
 
     if verb == ControlVerb.TRIGGER_EMERGENCY_INVOCATION:
         reason = parameters.get("reason")
@@ -263,7 +258,6 @@ def _build_detail(  # noqa: PLR0911 — one return per ControlVerb branch
         return (
             emergency_detail,
             EventType.EMERGENCY_INVOCATION_REQUESTED,
-            EventGroup.RISK_AND_GUARDRAIL,
             None,
             None,
         )
@@ -277,7 +271,6 @@ def _build_detail(  # noqa: PLR0911 — one return per ControlVerb branch
         return (
             cancel_detail,
             EventType.ORDER_CANCELLED,
-            EventGroup.ORDER_LIFECYCLE,
             None,
             str(order_id) if order_id is not None else None,
         )
@@ -304,7 +297,6 @@ def _build_detail(  # noqa: PLR0911 — one return per ControlVerb branch
         return (
             switch_detail,
             EventType.RISK_PARAMETER_CHANGED,
-            EventGroup.RISK_AND_GUARDRAIL,
             None,
             None,
         )
@@ -332,7 +324,6 @@ def _build_detail(  # noqa: PLR0911 — one return per ControlVerb branch
         return (
             detail,
             EventType.RISK_PARAMETER_CHANGED,
-            EventGroup.RISK_AND_GUARDRAIL,
             str(position_id) if position_id is not None else None,
             None,
         )
