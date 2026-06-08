@@ -999,6 +999,33 @@ class TestGetAccountActivities:
         params = call_args[0][1] if len(call_args[0]) > 1 else call_args[1].get("data")
         assert params.get("page_size") == 100
 
+    def test_paginates_until_exhaustion_at_activities_page_size(self) -> None:
+        """A full page (== _ACTIVITIES_PAGE_SIZE) continues pagination; a short page
+        stops it. ALP-932: the exhaustion break must compare against the SAME constant
+        as the outgoing page_size — if it compared against _PAGE_SIZE=500, a full
+        100-item page would satisfy ``len < 500`` and stop after page 1, silently
+        dropping every later page. We patch _ACTIVITIES_PAGE_SIZE to 2 to use small
+        fixtures (mirrors TestGetOrders.test_paginates_until_exhaustion)."""
+        import alphamind.execution.broker_adapter.queries as q_mod
+        from alphamind.execution.broker_adapter.queries import AccountStateQueries
+
+        page1 = [_make_trade_activity_raw(), _make_trade_activity_raw()]
+        page2 = [_make_trade_activity_raw()]
+
+        client = _fake_client()
+        client.get.side_effect = [page1, page2]
+
+        original = q_mod._ACTIVITIES_PAGE_SIZE
+        try:
+            q_mod._ACTIVITIES_PAGE_SIZE = 2
+            qs = AccountStateQueries(client)
+            results = asyncio.run(_collect_activities(qs))
+        finally:
+            q_mod._ACTIVITIES_PAGE_SIZE = original
+
+        assert len(results) == 3
+        assert client.get.call_count == 2
+
     def test_activity_snapshot_frozen(self) -> None:
         from pydantic import ValidationError
 
