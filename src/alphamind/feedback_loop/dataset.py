@@ -61,7 +61,11 @@ from alphamind.state.repository.agent_calls_queries import (
 from alphamind.state.repository.invocation_queries import (
     read_invocation_regimes_in_window,
 )
-from alphamind.state.repository.outcome_queries import read_resolved_theses_in_window
+from alphamind.state.repository.outcome_queries import (
+    InvocationConditioning,
+    read_invocation_conditioning,
+    read_resolved_theses_in_window,
+)
 from alphamind.state.repository.validation_queries import (
     read_pending_validations,
     read_validations_superseded_in_window,
@@ -512,17 +516,27 @@ async def _load_outcomes(
     end: datetime,
     config: FeedbackLoopConfig | None,
 ) -> OutcomesBundle:
-    """Resolved-thesis outcome sub-bundle loader hook (story 06c).
+    """Resolved-thesis outcome sub-bundle loader hook (story 06c / ALP-919).
 
-    Reads the RESOLVED theses resolved in ``[start, end)`` and projects each into a
-    :class:`ThesisOutcome`. Conditioning attributes are left empty here — the join
-    from a resolved thesis back to its analyst conviction / strategist status /
-    invocation provenance lands with story 04e; until then the conditioning surface
-    is exercised by fixtures. When *config* is supplied its sample-size thresholds
-    are stamped onto the bundle; otherwise the packaged defaults stand.
+    Reads the RESOLVED theses resolved in ``[start, end)`` and projects each
+    into a :class:`ThesisOutcome`. Conditioning attributes for ``regime`` and
+    ``time_of_day`` are populated from the thesis's generating invocation
+    (ALP-919 / story 02i): the non-NULL ``invocation_id``s are collected,
+    the ``invocations`` table is queried once for their ``active_regime`` and
+    ``trigger_source``, and the map is threaded into each :class:`ThesisOutcome`.
+    Theses whose ``invocation_id`` is NULL (pre-migration rows) receive
+    ``regime=None`` / ``time_of_day=None``. The other six conditioning dimensions
+    remain empty until ALP-906 lands them. When *config* is supplied its
+    sample-size thresholds are stamped onto the bundle; otherwise the packaged
+    defaults stand.
     """
     resolved = await read_resolved_theses_in_window(session, start, end)
-    theses = tuple(_thesis_to_outcome(record) for record in resolved)
+    # Collect non-NULL generating invocation IDs for the batch conditioning read.
+    inv_ids = [str(r.invocation_id) for r in resolved if r.invocation_id is not None]
+    conditioning_map = await read_invocation_conditioning(session, inv_ids)
+    theses = tuple(
+        _thesis_to_outcome(record, conditioning_map) for record in resolved
+    )
     if config is None:
         return OutcomesBundle(theses=theses)
     return OutcomesBundle(
@@ -532,12 +546,18 @@ async def _load_outcomes(
     )
 
 
-def _thesis_to_outcome(record: ThesisRecord) -> ThesisOutcome:
+def _thesis_to_outcome(
+    record: ThesisRecord,
+    conditioning_map: Mapping[str, InvocationConditioning] | None = None,
+) -> ThesisOutcome:
     """Project a resolved ``ThesisRecord`` into a flat :class:`ThesisOutcome`.
 
     The realized resolution facts are guaranteed non-``None`` for a RESOLVED record
-    by ``ThesisRecord``'s own validators. Conditioning attributes are empty until
-    story 04e wires the provenance join.
+    by ``ThesisRecord``'s own validators. ``regime`` and ``time_of_day`` are
+    populated from the thesis's generating invocation via *conditioning_map*
+    (ALP-919 / story 02i); a thesis with no ``invocation_id`` or with an id absent
+    from the map yields ``None`` for both. The other six conditioning dimensions
+    remain empty until ALP-906 lands them.
     """
     if record.resolution_category is None or record.resolution_pnl_usd is None:
         msg = f"resolved thesis {record.thesis_id!r} missing realized resolution facts"
@@ -548,6 +568,9 @@ def _thesis_to_outcome(record: ThesisRecord) -> ThesisOutcome:
     active_duration_hours = (
         record.resolution_timestamp - record.generation_timestamp
     ).total_seconds() / _SECONDS_PER_HOUR
+    inv_cond: InvocationConditioning | None = None
+    if conditioning_map is not None and record.invocation_id is not None:
+        inv_cond = conditioning_map.get(str(record.invocation_id))
     return ThesisOutcome(
         thesis_id=record.thesis_id,
         position_id=record.position_id,
@@ -555,7 +578,10 @@ def _thesis_to_outcome(record: ThesisRecord) -> ThesisOutcome:
         resolution_pnl_usd=record.resolution_pnl_usd,
         active_duration_hours=active_duration_hours,
         expected_duration_hours=record.time_expectation_hours,
-        conditioning=ConditioningAttributes(),
+        conditioning=ConditioningAttributes(
+            regime=inv_cond.regime if inv_cond is not None else None,
+            time_of_day=inv_cond.time_of_day if inv_cond is not None else None,
+        ),
     )
 
 

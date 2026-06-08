@@ -262,6 +262,169 @@ class TestPureCoreSeam:
         assert result.posterior_band is None
 
 
+# ---------------------------------------------------------------------------
+# ALP-919 — _load_outcomes populates regime / time_of_day conditioning
+# ---------------------------------------------------------------------------
+
+_OUTCOMES_WINDOW_START = datetime(2026, 6, 1, tzinfo=UTC)
+_OUTCOMES_WINDOW_END = datetime(2026, 7, 1, tzinfo=UTC)
+_THESIS_RES_TS = datetime(2026, 6, 15, 12, 0, tzinfo=UTC)
+
+_INV_FOR_THESIS = "inv-thesis-gen-1"
+_INV_FOR_THESIS_REGIME = "elevated"
+_INV_FOR_THESIS_TRIGGER = "continuous_monitor"
+
+
+async def _make_outcomes_db(tmp_path: Path) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
+    """On-disk SQLite with an invocation + resolved thesis wired to it."""
+    import dataclasses
+
+    from alphamind._kernel.ids import InvocationId
+    from alphamind.persistence.session import make_session_factory
+    from alphamind.state.tables.theses_codec import record_to_rows
+    from tests.feedback_loop.metrics._outcome_fixtures import make_resolved_thesis_record
+    from tests.state._fk_substrate import stub_position_row
+
+    db_path = tmp_path / "outcomes_cond.db"
+    sync_engine = make_engine(str(db_path))
+    Base.metadata.create_all(sync_engine)
+
+    plt = stub_process_lifetime_row()
+    inv = stub_invocation_row(_INV_FOR_THESIS)
+    inv.active_regime = _INV_FOR_THESIS_REGIME
+    inv.trigger_source = _INV_FOR_THESIS_TRIGGER
+
+    thesis_record = make_resolved_thesis_record(
+        "thes-cond-1",
+        "pos-cond-1",
+        resolution_timestamp=_THESIS_RES_TS,
+    )
+    thesis_record = dataclasses.replace(
+        thesis_record, invocation_id=InvocationId(_INV_FOR_THESIS)
+    )
+
+    with make_session_factory(sync_engine)() as sess:
+        sess.add(plt)
+        sess.flush()
+        sess.add(inv)
+        sess.flush()
+        sess.add(stub_position_row("pos-cond-1"))
+        sess.flush()
+        thesis_row, comp_rows = record_to_rows(thesis_record)
+        sess.add(thesis_row)
+        for crow in comp_rows:
+            sess.add(crow)
+        sess.commit()
+    sync_engine.dispose()
+
+    async_engine = make_async_engine(str(db_path))
+    factory = make_async_session_factory(async_engine)
+    return async_engine, factory
+
+
+class TestLoadOutcomesConditioning:
+    """_load_outcomes populates regime/time_of_day from the generating invocation."""
+
+    async def test_thesis_with_invocation_id_populates_regime_and_time_of_day(
+        self, tmp_path: Path
+    ) -> None:
+        """A resolved thesis with a non-NULL invocation_id gets regime + time_of_day."""
+        from alphamind.feedback_loop.dataset import _load_outcomes
+
+        async_engine, factory = await _make_outcomes_db(tmp_path)
+        try:
+            async with factory() as session:
+                bundle = await _load_outcomes(
+                    session, _OUTCOMES_WINDOW_START, _OUTCOMES_WINDOW_END, None
+                )
+        finally:
+            await async_engine.dispose()
+
+        assert len(bundle.theses) == 1
+        outcome = bundle.theses[0]
+        assert outcome.conditioning.regime == _INV_FOR_THESIS_REGIME
+        assert outcome.conditioning.time_of_day == _INV_FOR_THESIS_TRIGGER
+
+    async def test_thesis_without_invocation_id_has_none_regime_and_time_of_day(
+        self, tmp_path: Path
+    ) -> None:
+        """A resolved thesis with invocation_id=None yields regime=None, time_of_day=None."""
+        import dataclasses
+
+        from alphamind.feedback_loop.dataset import _load_outcomes
+        from alphamind.persistence.session import make_session_factory
+        from alphamind.state.tables.theses_codec import record_to_rows
+        from tests.feedback_loop.metrics._outcome_fixtures import make_resolved_thesis_record
+        from tests.state._fk_substrate import stub_position_row
+
+        db_path = tmp_path / "outcomes_null_inv.db"
+        sync_engine = make_engine(str(db_path))
+        Base.metadata.create_all(sync_engine)
+
+        # Seed with no invocation_id on the thesis.
+        thesis_record = make_resolved_thesis_record(
+            "thes-null-1",
+            "pos-null-1",
+            resolution_timestamp=_THESIS_RES_TS,
+        )
+        assert thesis_record.invocation_id is None
+
+        plt = stub_process_lifetime_row()
+        inv = stub_invocation_row("inv-null-ctx-1")
+        with make_session_factory(sync_engine)() as sess:
+            sess.add(plt)
+            sess.flush()
+            sess.add(inv)
+            sess.flush()
+            sess.add(stub_position_row("pos-null-1"))
+            sess.flush()
+            thesis_row, comp_rows = record_to_rows(thesis_record)
+            sess.add(thesis_row)
+            for crow in comp_rows:
+                sess.add(crow)
+            sess.commit()
+        sync_engine.dispose()
+
+        async_engine = make_async_engine(str(db_path))
+        factory = make_async_session_factory(async_engine)
+        try:
+            async with factory() as session:
+                bundle = await _load_outcomes(
+                    session, _OUTCOMES_WINDOW_START, _OUTCOMES_WINDOW_END, None
+                )
+        finally:
+            await async_engine.dispose()
+
+        assert len(bundle.theses) == 1
+        outcome = bundle.theses[0]
+        assert outcome.conditioning.regime is None
+        assert outcome.conditioning.time_of_day is None
+
+    async def test_other_six_dimensions_stay_empty_regardless(
+        self, tmp_path: Path
+    ) -> None:
+        """The six non-invocation conditioning dimensions remain None/empty."""
+        from alphamind.feedback_loop.dataset import _load_outcomes
+
+        async_engine, factory = await _make_outcomes_db(tmp_path)
+        try:
+            async with factory() as session:
+                bundle = await _load_outcomes(
+                    session, _OUTCOMES_WINDOW_START, _OUTCOMES_WINDOW_END, None
+                )
+        finally:
+            await async_engine.dispose()
+
+        assert len(bundle.theses) == 1
+        cond = bundle.theses[0].conditioning
+        assert cond.sector is None
+        assert cond.conviction is None
+        assert cond.strategist_status is None
+        assert cond.anti_patterns == ()
+        assert cond.prompt_version is None
+        assert cond.model_version is None
+
+
 class TestPackagedAgentLatencyBudgets:
     """The packaged agents.yaml latency-budget read is the ``CostBudgetsBundle``
     default factory, invoked once per ``load_window`` (12x per default digest run). It
