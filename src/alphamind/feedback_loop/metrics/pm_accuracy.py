@@ -262,9 +262,7 @@ def _compute_anti_pattern_detector_accuracy(
         return rate_result(METRIC_ANTI_PATTERN_DETECTOR_ACCURACY, 0, 0)
     pattern = conditioning.value
     observations = tuple(
-        o
-        for o in dataset.replays.replays
-        if _scorable_rejection(o) and pattern in o.anti_patterns
+        o for o in dataset.replays.replays if _scorable_rejection(o) and pattern in o.anti_patterns
     )
     return _rate_over(
         METRIC_ANTI_PATTERN_DETECTOR_ACCURACY,
