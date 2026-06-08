@@ -59,14 +59,6 @@ section Update process, step 1)."""
 ALL_CLASSES_CHOICE = "all"
 """``--threshold-class`` sentinel selecting every registered class."""
 
-_CONFIG_GATED_CLASSES: frozenset[str] = frozenset(
-    {"anomaly_detection", "narrative_lag", "lead_lag", "prediction_market"}
-)
-"""The four classes whose threshold keys map to a ``distillation.yaml`` leaf
-(displayed via ``getattr``). The remaining three (``options_flow`` /
-``intermarket_regime`` / ``corporate_actions``) fire on hardcoded module
-constants — no tunable knob."""
-
 _STRUCTURAL_CONFIG_LABEL = "structural (no config knob)"
 """Shown in place of a configured value for the structural classes."""
 
@@ -196,11 +188,23 @@ def _calibration_split(details: Sequence[DistillationAnomalyFlagDetail]) -> Cali
     )
 
 
+def _is_config_gated(config: DistillationConfig, threshold_class: str) -> bool:
+    """A class is config-gated iff it names a section on the distillation config.
+
+    Derived from the config object itself rather than a hand-maintained set, so a
+    class reclassified config<->structural (or a new registry class) can't drift a
+    second source of truth. The four gated classes (``anomaly_detection`` /
+    ``narrative_lag`` / ``lead_lag`` / ``prediction_market``) are sections on
+    :class:`DistillationConfig`; the three structural classes are not.
+    """
+    return hasattr(config, threshold_class)
+
+
 def _configured_value(
     config: DistillationConfig, threshold_class: str, threshold_key: str
 ) -> float | int | None:
     """Resolve ``config.<class>.<key>`` for config-gated classes; ``None`` otherwise."""
-    if threshold_class not in _CONFIG_GATED_CLASSES:
+    if not _is_config_gated(config, threshold_class):
         return None
     value: float | int = getattr(getattr(config, threshold_class), threshold_key)
     return value
@@ -247,6 +251,10 @@ def _metrics_for_key(
         coverage: int | None = None
         rate = universe_count / ctx.invocation_count if ctx.invocation_count else 0.0
     else:
+        # If a key ever emits both ticker-bearing and ticker-None flags it is
+        # ticker-bearing here (not every ticker is None). The None flags count
+        # toward flag_count/rate (spec D: flag_count is the total) but not
+        # coverage, which is distinct observed tickers by definition.
         coverage = len({d.ticker for d in scoped if d.ticker is not None})
         denominator = ctx.universe_size * ctx.window_days
         rate = universe_count / denominator if denominator else 0.0
@@ -313,7 +321,7 @@ def compute_flag_rate_report(
         class_reports.append(
             ThresholdClassReport(
                 threshold_class=cls,
-                is_config_gated=cls in _CONFIG_GATED_CLASSES,
+                is_config_gated=_is_config_gated(config, cls),
                 keys=key_metrics,
             )
         )
