@@ -534,9 +534,7 @@ async def _load_outcomes(
     # Collect non-NULL generating invocation IDs for the batch conditioning read.
     inv_ids = [str(r.invocation_id) for r in resolved if r.invocation_id is not None]
     conditioning_map = await read_invocation_conditioning(session, inv_ids)
-    theses = tuple(
-        _thesis_to_outcome(record, conditioning_map) for record in resolved
-    )
+    theses = tuple(_thesis_to_outcome(record, conditioning_map) for record in resolved)
     if config is None:
         return OutcomesBundle(theses=theses)
     return OutcomesBundle(

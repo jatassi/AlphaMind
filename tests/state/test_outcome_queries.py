@@ -165,8 +165,6 @@ class TestReadInvocationConditioning:
         assert "inv-does-not-exist" not in result
         assert _INV_NORMAL in result
 
-    async def test_empty_ids_returns_empty_dict(
-        self, conditioning_session: AsyncSession
-    ) -> None:
+    async def test_empty_ids_returns_empty_dict(self, conditioning_session: AsyncSession) -> None:
         result = await read_invocation_conditioning(conditioning_session, [])
         assert result == {}

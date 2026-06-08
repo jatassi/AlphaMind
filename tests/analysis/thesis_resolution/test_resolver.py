@@ -685,15 +685,15 @@ async def test_resolution_preserves_invocation_id(
 
     from alphamind._kernel.ids import InvocationId
 
-    _GENERATING_INV = "inv-2026-06-07T08:00:00Z-genr"
-    _RESOLVING_INV = "inv-2026-06-07T10:00:00Z-rslv"
+    generating_inv = "inv-2026-06-07T08:00:00Z-genr"
+    resolving_inv = "inv-2026-06-07T10:00:00Z-rslv"
 
     _, factory = db
     # Seed a thesis that already carries a generating invocation_id — mimicking
     # what _writeback_open now stamps at creation time (ALP-919).
     thesis = dataclasses.replace(
         make_active_thesis(),
-        invocation_id=InvocationId(_GENERATING_INV),
+        invocation_id=InvocationId(generating_inv),
     )
     # The DB needs the generating invocation row for the FK to satisfy.
     await seed_closed_position_thesis(
@@ -701,15 +701,15 @@ async def test_resolution_preserves_invocation_id(
         thesis=thesis,
         realized_pnl_usd=-200.0,
         exit_method=PositionExitMethod.STOP_TRIGGERED,
-        invocation_id=_GENERATING_INV,
+        invocation_id=generating_inv,
     )
     # Also seed the resolving invocation row so the handle FK is satisfied.
     async with factory() as sess:
-        await sess.merge(stub_invocation_row(_RESOLVING_INV))
+        await sess.merge(stub_invocation_row(resolving_inv))
         await sess.commit()
 
     async with factory() as session:
-        handle = InvocationHandle(session=session, invocation_id=_RESOLVING_INV)
+        handle = InvocationHandle(session=session, invocation_id=resolving_inv)
         resolved = await resolve_closed_position_theses(
             handle,
             evaluator_config=make_evaluator_config(),
@@ -719,14 +719,12 @@ async def test_resolution_preserves_invocation_id(
 
     assert len(resolved) == 1
     # The generating invocation_id must survive resolution unchanged.
-    assert resolved[0].record.invocation_id == InvocationId(_GENERATING_INV)
+    assert resolved[0].record.invocation_id == InvocationId(generating_inv)
 
     # Verify the row in the DB too (full round-trip through the codec).
     async with factory() as session:
         thesis_row = (
-            await session.execute(
-                select(ThesisRow).where(ThesisRow.thesis_id == "thesis-1")
-            )
+            await session.execute(select(ThesisRow).where(ThesisRow.thesis_id == "thesis-1"))
         ).scalar_one()
-        assert thesis_row.invocation_id == _GENERATING_INV
+        assert thesis_row.invocation_id == generating_inv
         assert thesis_row.status == ThesisRecordStatus.RESOLVED.value

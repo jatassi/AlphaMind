@@ -169,9 +169,7 @@ def rows_to_record(
         resolution_pnl_usd=payload["resolution_pnl_usd"],
         entry_fill_gap_usd=payload["entry_fill_gap_usd"],
         invocation_id=(
-            None
-            if thesis_row.invocation_id is None
-            else InvocationId(thesis_row.invocation_id)
+            None if thesis_row.invocation_id is None else InvocationId(thesis_row.invocation_id)
         ),
     )
 

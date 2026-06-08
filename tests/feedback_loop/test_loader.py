@@ -299,9 +299,7 @@ async def _make_outcomes_db(tmp_path: Path) -> tuple[AsyncEngine, async_sessionm
         "pos-cond-1",
         resolution_timestamp=_THESIS_RES_TS,
     )
-    thesis_record = dataclasses.replace(
-        thesis_record, invocation_id=InvocationId(_INV_FOR_THESIS)
-    )
+    thesis_record = dataclasses.replace(thesis_record, invocation_id=InvocationId(_INV_FOR_THESIS))
 
     with make_session_factory(sync_engine)() as sess:
         sess.add(plt)
@@ -349,8 +347,6 @@ class TestLoadOutcomesConditioning:
         self, tmp_path: Path
     ) -> None:
         """A resolved thesis with invocation_id=None yields regime=None, time_of_day=None."""
-        import dataclasses
-
         from alphamind.feedback_loop.dataset import _load_outcomes
         from alphamind.persistence.session import make_session_factory
         from alphamind.state.tables.theses_codec import record_to_rows
@@ -400,9 +396,7 @@ class TestLoadOutcomesConditioning:
         assert outcome.conditioning.regime is None
         assert outcome.conditioning.time_of_day is None
 
-    async def test_other_six_dimensions_stay_empty_regardless(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_other_six_dimensions_stay_empty_regardless(self, tmp_path: Path) -> None:
         """The six non-invocation conditioning dimensions remain None/empty."""
         from alphamind.feedback_loop.dataset import _load_outcomes
 

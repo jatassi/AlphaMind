@@ -47,7 +47,7 @@ def _column_names(db_path: Path) -> set[str]:
 def _index_names(db_path: Path) -> set[str]:
     eng = make_engine(str(db_path))
     try:
-        return {idx["name"] for idx in inspect(eng).get_indexes("theses")}
+        return {str(idx["name"]) for idx in inspect(eng).get_indexes("theses")}
     finally:
         eng.dispose()
 
