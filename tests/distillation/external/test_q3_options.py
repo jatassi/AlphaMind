@@ -1146,7 +1146,6 @@ class TestBlockAssembly:
             "pair_trade_signature:NVDA:JPM",
             "pair_trade_signature:AMD:BAC",
         ]
-        assert len(set(names)) == 2
 
     def test_index_vs_sector_block_carries_universal_audience(self) -> None:
         """Index-vs-sector spans every sector audience (universal cross-sector)."""
@@ -1250,7 +1249,6 @@ class TestBlockAssembly:
             "sector_wide_sweep:tech_semis:call",
             "sector_wide_sweep:tech_semis:put",
         ]
-        assert len(set(names)) == 2
 
     def test_etf_iv_divergence_block_per_sector(self) -> None:
         """One ``q3.etf_iv_divergence`` block per detected divergence."""
