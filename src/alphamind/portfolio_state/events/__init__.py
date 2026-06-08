@@ -22,6 +22,9 @@ precision (see story 05b's ``DecimalText`` pattern).
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime
+
 from alphamind.portfolio_state.events import (
     bracket,
     cash_margin,
@@ -150,6 +153,49 @@ EVENT_TYPE_TO_DETAIL_CLASS: dict[EventType, type] = {
 EVENT_TYPE_TO_GROUP: dict[EventType, EventGroup] = {
     event_type: group for event_type, _, group in _ALL_REGISTRIES
 }
+
+
+def build_activity_log_entry(  # noqa: PLR0913 — pure-core signature dictated by ALP-923 (the shared builder the OMS/analysis/operator-console emitters delegate to)
+    *,
+    invocation_id: str,
+    event_type: EventType,
+    position_id: str | None,
+    order_id: str | None,
+    thesis_id: str | None,
+    timestamp: datetime,
+    detail: object,
+    source: EventSource,
+    entry_id: str | None = None,
+) -> ActivityLogEntry:
+    """Build a typed ``ActivityLogEntry`` — the pure functional core.
+
+    ``event_group`` is derived from the ``EVENT_TYPE_TO_GROUP`` registry so no
+    caller has to hand-pass (and risk drifting) the group. ``entry_id`` defaults
+    to the ``{invocation_id}-{event_type.value}-{uuid4.hex}`` token shared by the
+    OMS / analysis / operator-console emitters; deterministic-idempotent and
+    custom-token callers override it via the ``entry_id`` argument.
+
+    Pure: no I/O, no SQL, no clock read (the caller supplies ``timestamp``). The
+    sqlalchemy-free home (``portfolio_state/events``) lets every layer —
+    distillation included — reach the builder on a legal downward import edge.
+    """
+    resolved_entry_id = (
+        entry_id
+        if entry_id is not None
+        else f"{invocation_id}-{event_type.value}-{uuid.uuid4().hex}"
+    )
+    return ActivityLogEntry(
+        entry_id=resolved_entry_id,
+        invocation_id=invocation_id,
+        timestamp=timestamp,
+        event_type=event_type,
+        event_group=EVENT_TYPE_TO_GROUP[event_type],
+        position_id=position_id,
+        order_id=order_id,
+        thesis_id=thesis_id,
+        source=source,
+        detail=detail,
+    )
 
 
 # Exhaustiveness check at import time — the catalog must cover every
@@ -292,6 +338,7 @@ __all__ = [
     "ThesisCreatedDetail",
     "ThesisResolvedDetail",
     "ThesisStatusChangedDetail",
+    "build_activity_log_entry",
     "decode_detail",
     "encode_detail",
 ]

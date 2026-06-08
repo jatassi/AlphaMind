@@ -71,6 +71,7 @@ from alphamind.portfolio_state.events import (
     ThesisCreatedDetail,
     ThesisResolvedDetail,
     ThesisStatusChangedDetail,
+    build_activity_log_entry,
     decode_detail,
     encode_detail,
 )
@@ -139,6 +140,7 @@ __all__ = [
     "ThesisCreatedDetail",
     "ThesisResolvedDetail",
     "ThesisStatusChangedDetail",
+    "build_activity_log_entry",
     "decode_detail",
     "encode_detail",
 ]
