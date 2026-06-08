@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 
     from alphamind.config.models.feedback import FeedbackLoopConfig
     from alphamind.feedback_loop.dataset import WindowDataset
-    from alphamind.feedback_loop.validation.records import ValidationOutcomeRecord
+    from alphamind.feedback_loop.validation.records import PendingRollback
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,12 +54,13 @@ class RetrospectiveIngestion:
     operating record (invocations + provenance, thesis resolutions, PM envelopes,
     validation contracts, citation refs, counterfactual replays). ``pending_rollbacks``
     is the retrospective-only addition: the unresolved
-    ``optional_pending_retrospective`` validation outcomes awaiting a
-    ``decision_type='follow_up'`` decision.
+    ``optional_pending_retrospective`` rollback obligations awaiting a
+    ``decision_type='follow_up'`` decision, each carrying its canonical
+    ``item_identifier``.
     """
 
     window: WindowDataset
-    pending_rollbacks: tuple[ValidationOutcomeRecord, ...]
+    pending_rollbacks: tuple[PendingRollback, ...]
 
 
 async def ingest_window(

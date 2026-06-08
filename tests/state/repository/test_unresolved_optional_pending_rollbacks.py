@@ -137,13 +137,19 @@ def session(tmp_path: Path) -> Iterator[Session]:
 
 
 class TestRollbackFollowupIdentifier:
-    def test_identifier_is_prefixed_and_slugged(self) -> None:
+    def test_identifier_is_prefixed_and_lossless(self) -> None:
         ident = rollback_followup_identifier("prompts/decision/strategist.md")
-        assert ident == "follow_up.rollback_prompts_decision_strategist_md"
+        assert ident == "follow_up.rollback_prompts/decision/strategist.md"
 
     def test_identifier_is_deterministic(self) -> None:
         artifact = "config/distillation/q1.yaml"
         assert rollback_followup_identifier(artifact) == rollback_followup_identifier(artifact)
+
+    def test_artifacts_differing_only_in_separator_are_distinct(self) -> None:
+        """The lossy slug collapsed ``-`` and ``_`` runs to one ``_`` — these collided."""
+        dash = rollback_followup_identifier("config/foo-bar.yaml")
+        underscore = rollback_followup_identifier("config/foo_bar.yaml")
+        assert dash != underscore
 
 
 class TestReadUnresolvedOptionalPendingRollbacks:
@@ -163,7 +169,57 @@ class TestReadUnresolvedOptionalPendingRollbacks:
 
         pending = read_unresolved_optional_pending_rollbacks(session)
 
-        assert {o.outcome_id for o in pending} == {OutcomeId("o-opt")}
+        assert {p.outcome.outcome_id for p in pending} == {OutcomeId("o-opt")}
+
+    def test_pending_rollback_carries_artifact_and_canonical_identifier(
+        self, session: Session
+    ) -> None:
+        artifact = "config/foo-bar.yaml"
+        insert_validation(session, _validation("v-opt", artifact))
+        session.flush()
+        insert_validation_outcome(
+            session,
+            _outcome("o-opt", "v-opt", RollbackStatus.OPTIONAL_PENDING_RETROSPECTIVE),
+        )
+        session.commit()
+
+        (pending,) = read_unresolved_optional_pending_rollbacks(session)
+
+        assert pending.edited_artifact == artifact
+        assert pending.item_identifier == rollback_followup_identifier(artifact)
+
+    def test_followup_on_one_artifact_leaves_separator_twin_unresolved(
+        self, session: Session
+    ) -> None:
+        """The collision fix: ``foo-bar.yaml`` and ``foo_bar.yaml`` no longer share a
+        key, so resolving one leaves the other pending."""
+        insert_validation(session, _validation("v-dash", "config/foo-bar.yaml"))
+        insert_validation(session, _validation("v-under", "config/foo_bar.yaml"))
+        insert_retrospective_report(session, _report("r-1"))
+        session.flush()
+        insert_validation_outcome(
+            session,
+            _outcome("o-dash", "v-dash", RollbackStatus.OPTIONAL_PENDING_RETROSPECTIVE),
+        )
+        insert_validation_outcome(
+            session,
+            _outcome("o-under", "v-under", RollbackStatus.OPTIONAL_PENDING_RETROSPECTIVE),
+        )
+        insert_retrospective_decision(
+            session,
+            _followup_decision(
+                "d-1",
+                "r-1",
+                rollback_followup_identifier("config/foo-bar.yaml"),
+                DecisionVerdict.ACCEPTED,
+                linked_validation_id=None,
+            ),
+        )
+        session.commit()
+
+        pending = read_unresolved_optional_pending_rollbacks(session)
+
+        assert {p.outcome.outcome_id for p in pending} == {OutcomeId("o-under")}
 
     def test_excludes_outcome_resolved_by_accepted_followup(self, session: Session) -> None:
         artifact = "prompts/decision/strategist.md"
@@ -240,7 +296,7 @@ class TestReadUnresolvedOptionalPendingRollbacks:
 
         pending = read_unresolved_optional_pending_rollbacks(session)
 
-        assert {o.outcome_id for o in pending} == {OutcomeId("o-opt")}
+        assert {p.outcome.outcome_id for p in pending} == {OutcomeId("o-opt")}
 
     def test_empty_when_no_outcomes(self, session: Session) -> None:
         assert read_unresolved_optional_pending_rollbacks(session) == ()

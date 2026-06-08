@@ -110,10 +110,28 @@ class ValidationOutcomeRecord:
     rollback_status: RollbackStatus
 
 
+@dataclass(frozen=True)
+class PendingRollback:
+    """One unresolved ``optional_pending_retrospective`` rollback obligation.
+
+    The retrospective follow-up surface (``feedback-loop.md § Rollback evidence
+    protocol``): a validation outcome awaiting a ``decision_type='follow_up'``
+    decision, paired with the artifact it concerns and the canonical
+    ``item_identifier`` the operator copies verbatim into ``capture-decision``. The
+    read path is the single source of truth for the identifier so the surfacing side
+    never re-derives it.
+    """
+
+    outcome: ValidationOutcomeRecord
+    edited_artifact: str
+    item_identifier: str
+
+
 __all__ = [
     "ExpectedDirection",
     "MetricId",
     "OutcomeId",
+    "PendingRollback",
     "RollbackStatus",
     "SupersededReason",
     "ValidationId",

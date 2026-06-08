@@ -117,6 +117,27 @@ class TestIngest:
         out = capsys.readouterr().out
         assert "pending_rollbacks: 1" in out
 
+    def test_ingest_emits_canonical_identifier_per_pending_rollback(
+        self, db_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _seed_optional_pending(db_path)
+        exit_code = main(
+            [
+                "ingest",
+                "--db-path",
+                str(db_path),
+                "--start",
+                "2026-01-01T00:00:00+00:00",
+                "--end",
+                "2026-04-01T00:00:00+00:00",
+            ]
+        )
+        assert exit_code == 0
+        out = capsys.readouterr().out
+        # The skill copies this identifier verbatim into capture-decision.
+        assert "follow_up.rollback_prompts/decision/strategist.md" in out
+        assert "prompts/decision/strategist.md" in out
+
     def test_ingest_rejects_naive_datetime(
         self, db_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

@@ -66,6 +66,9 @@ in-window counts you read in this phase: `agent_calls`, `thesis_resolutions`, `p
 `rollback_status = optional_pending_retrospective` outcomes not yet resolved by a prior
 `decision_type: follow_up`, per
 [`feedback-loop-skills.md` § Rollback evidence protocol](../../../docs/agents/feedback-loop-skills.md#rollback-evidence-protocol).
+Under the `pending_rollbacks` count it then prints one line per pending rollback —
+`<item_identifier>\t<edited_artifact>`. The `item_identifier` is canonical: copy it verbatim
+into Phase 4's `capture-decision --item-identifier`. Do not reconstruct it.
 
 This is heavy and will consume substantial tokens. Confirm at the start that the operator is
 OK with a several-minute pause, then proceed without further interaction until Phase 2
@@ -137,8 +140,8 @@ Structure the report with these sections:
 ## Suggested follow-ups
 - Pending rollback decisions: one bullet per `pending_rollbacks` entry from Phase 1 — the
   failed validation's edited artifact, watched metric, verdict, the rule that produced the
-  deferred status, and a recommended accept/reject framing. Prefix each item identifier
-  `follow_up.rollback_<artifact_slug>` so Phase 4's capture routes through the
+  deferred status, and a recommended accept/reject framing. Carry each entry's
+  `item_identifier` (printed by `ingest`) verbatim so Phase 4's capture routes through the
   `decision_type: follow_up` mechanism.
 - Validations to register (for changes the operator might consider)
 - Investigations to schedule
@@ -172,9 +175,10 @@ report sections onto its arguments:
 - **Suggested follow-ups** → `--decision-type follow_up`. When an accepted follow-up converts
   to a validation registration, hand off to [`/feedback-validate`](../feedback-validate/SKILL.md)
   REGISTER and pass the resulting validation id back as `--linked-validation-id`.
-- **Pending rollback decisions** (the `follow_up.rollback_<artifact_slug>` items) →
-  `--decision-type follow_up`. An `accepted` verdict means the operator will execute the
-  rollback; route the paired post-rollback registration through
+- **Pending rollback decisions** (the `pending_rollbacks` items, each passed with its
+  verbatim `item_identifier` from Phase 1) → `--decision-type follow_up`. An `accepted`
+  verdict means the operator will execute the rollback; route the paired post-rollback
+  registration through
   [`/feedback-validate`](../feedback-validate/SKILL.md) and pass its validation id back as
   `--linked-validation-id`. The rule that produced each deferred status is fixed by the
   [rollback evidence protocol](../../../docs/agents/feedback-loop-skills.md#rollback-evidence-protocol)

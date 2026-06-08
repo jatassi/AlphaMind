@@ -126,7 +126,15 @@ class TestIngestWindow:
 
     async def test_pending_rollbacks_only_optional_pending(self, session: AsyncSession) -> None:
         ingestion = await ingest_window(session, _WINDOW_START, _WINDOW_END)
-        assert {o.outcome_id for o in ingestion.pending_rollbacks} == {OutcomeId("o-opt")}
+        assert {p.outcome.outcome_id for p in ingestion.pending_rollbacks} == {OutcomeId("o-opt")}
+
+    async def test_pending_rollback_carries_canonical_identifier(
+        self, session: AsyncSession
+    ) -> None:
+        ingestion = await ingest_window(session, _WINDOW_START, _WINDOW_END)
+        (pending,) = ingestion.pending_rollbacks
+        assert pending.edited_artifact == "prompts/decision/strategist.md"
+        assert pending.item_identifier == "follow_up.rollback_prompts/decision/strategist.md"
 
     async def test_replays_ingest_gracefully_empty(self, session: AsyncSession) -> None:
         """Replays sub-bundle is empty until ALP-129 lands — no error."""

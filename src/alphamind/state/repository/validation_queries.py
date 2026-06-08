@@ -28,13 +28,13 @@ Helpers:
 
 from __future__ import annotations
 
-import re
 from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from alphamind.feedback_loop.validation.records import (
+    PendingRollback,
     RollbackStatus,
     SupersededReason,
     ValidationId,
@@ -243,44 +243,44 @@ def read_outcomes_by_artifact(
 # Retrospective follow-up pull
 # ---------------------------------------------------------------------------
 
-#: Matches any run of characters that are not lowercase-able to an ASCII
-#: word character, so an ``edited_artifact`` path collapses to a stable slug.
-_NON_SLUG_CHARS = re.compile(r"[^0-9a-z]+")
-
 
 def rollback_followup_identifier(edited_artifact: str) -> str:
     """Return the ``item_identifier`` a rollback follow-up decision carries.
 
     Per the ``feedback-retrospective`` SKILL (Phase 3 Suggested follow-ups), each
     ``optional_pending_retrospective`` validation outcome surfaces with item
-    identifier ``follow_up.rollback_<artifact_slug>`` so the operator's accept/
+    identifier ``follow_up.rollback_<edited_artifact>`` so the operator's accept/
     reject decision routes through the existing ``decision_type='follow_up'``
-    mechanism. The slug lower-cases *edited_artifact* and replaces every run of
-    non-``[0-9a-z]`` characters with a single underscore (path separators, dots,
-    and dashes all collapse), so the same artifact always yields the same
-    identifier on both the surfacing and the resolving side.
+    mechanism. The identifier is *lossless* — the exact artifact string is appended
+    under the ``follow_up.rollback_`` prefix — so two distinct artifacts (e.g.
+    ``config/foo-bar.yaml`` vs ``config/foo_bar.yaml``) never collide onto one key
+    and resolve each other's obligation. The decision is per artifact, matching
+    ``feedback-loop.md § Rollback evidence protocol``, where a rollback decision is
+    about reverting one edited artifact.
     """
-    slug = _NON_SLUG_CHARS.sub("_", edited_artifact.lower()).strip("_")
-    return f"follow_up.rollback_{slug}"
+    return f"follow_up.rollback_{edited_artifact}"
 
 
 def read_unresolved_optional_pending_rollbacks(
     session: Session,
-) -> tuple[ValidationOutcomeRecord, ...]:
+) -> tuple[PendingRollback, ...]:
     """Return ``optional_pending_retrospective`` outcomes awaiting a follow-up.
 
     The retrospective follow-up pull (``feedback-loop.md § Rollback evidence
     protocol``): every validation outcome whose ``rollback_status`` is
     ``optional_pending_retrospective`` and which the operator has not yet
-    resolved with a ``decision_type='follow_up'`` retrospective decision.
+    resolved with a ``decision_type='follow_up'`` retrospective decision. Each
+    surviving row is returned as a :class:`PendingRollback` carrying the outcome,
+    its validation's ``edited_artifact``, and the canonical ``item_identifier``
+    (:func:`rollback_followup_identifier`) — this read path is the single source of
+    truth for the identifier, so the surfacing side copies it verbatim rather than
+    re-deriving it.
 
-    Resolution is keyed on the follow-up decision's ``item_identifier``
-    (:func:`rollback_followup_identifier` of the outcome's validation's
-    ``edited_artifact``), **not** on ``linked_validation_id`` — a *rejected*
-    follow-up resolves the outcome yet spawns no validation and so carries a
-    null ``linked_validation_id``. An ``accepted`` follow-up that converts to a
-    paired post-rollback validation also resolves it; both verdicts share the
-    same identifier key.
+    Resolution is keyed on the follow-up decision's ``item_identifier``, **not** on
+    ``linked_validation_id`` — a *rejected* follow-up resolves the outcome yet spawns
+    no validation and so carries a null ``linked_validation_id``. An ``accepted``
+    follow-up that converts to a paired post-rollback validation also resolves it;
+    both verdicts share the same identifier key.
 
     Results are ordered by ``evaluated_at`` ascending (oldest unresolved first).
     """
@@ -307,11 +307,19 @@ def read_unresolved_optional_pending_rollbacks(
             ValidationOutcomesRow.outcome_id.asc(),
         )
     )
-    return tuple(
-        outcome_row_to_record(row)
-        for row, edited_artifact in session.execute(stmt).all()
-        if rollback_followup_identifier(edited_artifact) not in resolved_identifiers
-    )
+    pending: list[PendingRollback] = []
+    for row, edited_artifact in session.execute(stmt).all():
+        item_identifier = rollback_followup_identifier(edited_artifact)
+        if item_identifier in resolved_identifiers:
+            continue
+        pending.append(
+            PendingRollback(
+                outcome=outcome_row_to_record(row),
+                edited_artifact=edited_artifact,
+                item_identifier=item_identifier,
+            )
+        )
+    return tuple(pending)
 
 
 __all__ = [

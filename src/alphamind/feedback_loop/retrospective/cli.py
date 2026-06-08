@@ -152,6 +152,11 @@ def _run_ingest(args: argparse.Namespace) -> int:
         print(f"validations: {len(window.validations)}")
         print(f"replays: {len(window.replays.replays)}")
         print(f"pending_rollbacks: {len(ingestion.pending_rollbacks)}")
+        # Emit the canonical identifier + artifact per pending rollback so the
+        # skill copies the identifier verbatim into capture-decision (no slug
+        # re-derivation on the surfacing side).
+        for pending in ingestion.pending_rollbacks:
+            print(f"  {pending.item_identifier}\t{pending.edited_artifact}")
         return 0
 
     try:
