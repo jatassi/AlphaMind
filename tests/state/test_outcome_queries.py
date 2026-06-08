@@ -23,11 +23,16 @@ from alphamind.persistence.session import (
     make_session_factory,
 )
 from alphamind.portfolio_state.records.theses import ThesisRecordStatus
-from alphamind.state.repository.outcome_queries import read_resolved_theses_in_window
+from alphamind.state.repository.outcome_queries import (
+    read_invocation_conditioning,
+    read_resolved_theses_in_window,
+)
 from alphamind.state.tables.theses_codec import record_to_rows
 from tests.feedback_loop.metrics._outcome_fixtures import make_resolved_thesis_record
 from tests.state._fk_substrate import (
+    stub_invocation_row,
     stub_position_row,
+    stub_process_lifetime_row,
     stub_thesis_row,
 )
 
@@ -99,3 +104,69 @@ class TestReadResolvedThesesInWindow:
             datetime(2030, 2, 1, tzinfo=UTC),
         )
         assert theses == ()
+
+
+# ---------------------------------------------------------------------------
+# ALP-919 — read_invocation_conditioning helper
+# ---------------------------------------------------------------------------
+
+_INV_NORMAL = "inv-norm-1"
+_INV_ELEVATED = "inv-elev-1"
+
+
+@pytest.fixture()
+async def conditioning_session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
+    """On-disk SQLite seeded with two invocation rows (different regime/trigger_source)."""
+    from alphamind.persistence.session import make_session_factory
+
+    db_path = tmp_path / "inv_cond_test.db"
+    sync_engine = make_engine(str(db_path))
+    Base.metadata.create_all(sync_engine)
+    plt = stub_process_lifetime_row()
+    with make_session_factory(sync_engine)() as sess:
+        sess.add(plt)
+        sess.flush()
+        inv_normal = stub_invocation_row(_INV_NORMAL)
+        inv_normal.active_regime = "normal"
+        inv_normal.trigger_source = "market_open"
+        sess.add(inv_normal)
+        inv_elevated = stub_invocation_row(_INV_ELEVATED)
+        inv_elevated.active_regime = "elevated"
+        inv_elevated.trigger_source = "continuous_monitor"
+        sess.add(inv_elevated)
+        sess.commit()
+    sync_engine.dispose()
+
+    async_engine = make_async_engine(str(db_path))
+    factory = make_async_session_factory(async_engine)
+    async with factory() as sess_async:
+        yield sess_async
+    await async_engine.dispose()
+
+
+class TestReadInvocationConditioning:
+    async def test_returns_regime_and_trigger_source(
+        self, conditioning_session: AsyncSession
+    ) -> None:
+        result = await read_invocation_conditioning(
+            conditioning_session, [_INV_NORMAL, _INV_ELEVATED]
+        )
+        assert result[_INV_NORMAL].regime == "normal"
+        assert result[_INV_NORMAL].time_of_day == "market_open"
+        assert result[_INV_ELEVATED].regime == "elevated"
+        assert result[_INV_ELEVATED].time_of_day == "continuous_monitor"
+
+    async def test_unknown_invocation_id_absent_from_result(
+        self, conditioning_session: AsyncSession
+    ) -> None:
+        result = await read_invocation_conditioning(
+            conditioning_session, [_INV_NORMAL, "inv-does-not-exist"]
+        )
+        assert "inv-does-not-exist" not in result
+        assert _INV_NORMAL in result
+
+    async def test_empty_ids_returns_empty_dict(
+        self, conditioning_session: AsyncSession
+    ) -> None:
+        result = await read_invocation_conditioning(conditioning_session, [])
+        assert result == {}

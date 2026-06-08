@@ -1,12 +1,16 @@
 """Window-scoped read helpers for resolved theses (ALP-885 / story 06c).
 
 The feedback-loop outcome-tier metrics calibrate the system's predictors against
-the *realized* outcomes recorded on RESOLVED theses. This module exposes the one
-window-scoped read the analytics loader composes for that surface:
+the *realized* outcomes recorded on RESOLVED theses. This module exposes the
+window-scoped reads the analytics loader composes for that surface:
 
 * :func:`read_resolved_theses_in_window` — every RESOLVED thesis whose
   ``resolution_timestamp`` falls in ``[start, end)``, decoded (with its component
   rows) into the typed :class:`~alphamind.portfolio_state.records.theses.ThesisRecord`.
+* :func:`read_invocation_conditioning` — the ``invocation_id → InvocationConditioning``
+  map for a requested set of invocation IDs (ALP-919 / story 02i), carrying the two
+  invocation-level conditioning dimensions: ``regime`` (from ``active_regime``) and
+  ``time_of_day`` (from ``trigger_source``).
 
 Kept out of ``sql_repository.py`` so the concurrent feedback-loop wave does not
 collide on that god-module, mirroring ``validation_queries`` / ``agent_calls_queries``.
@@ -20,6 +24,7 @@ differing sub-second precision.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import func, select
@@ -27,9 +32,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from alphamind.portfolio_state.records.theses import ThesisRecord, ThesisRecordStatus
 from alphamind.state.repository._window_prefix import SECOND_PREFIX_LEN, second_prefix
+from alphamind.state.tables.invocations import InvocationRow
 from alphamind.state.tables.theses import ThesisRow
 from alphamind.state.tables.theses_codec import rows_to_record
 from alphamind.state.tables.thesis_components import ThesisComponentRow
+
+
+@dataclass(frozen=True, slots=True)
+class InvocationConditioning:
+    """The invocation-level conditioning dimensions for one resolved thesis.
+
+    Both fields are sourced from the ``invocations`` row that generated the
+    thesis (ALP-919 / story 02i):
+
+    * ``regime`` — from ``invocations.active_regime`` (the most important
+      confounder in the outcomes conditioning surface).
+    * ``time_of_day`` — from ``invocations.trigger_source`` (a proxy for
+      trading-session slot: market-open scheduled trigger vs. continuous-monitor
+      alert vs. manual console trigger).
+    """
+
+    regime: str
+    time_of_day: str
 
 
 async def read_resolved_theses_in_window(
@@ -75,4 +99,30 @@ async def read_resolved_theses_in_window(
     )
 
 
-__all__ = ["read_resolved_theses_in_window"]
+async def read_invocation_conditioning(
+    session: AsyncSession,
+    invocation_ids: list[str],
+) -> dict[str, InvocationConditioning]:
+    """``invocation_id → InvocationConditioning`` for the requested IDs.
+
+    Returns only the IDs present in the ``invocations`` table — unknown IDs
+    are silently absent. An empty input list returns an empty dict (no query).
+
+    ``active_regime`` and ``trigger_source`` are both NOT NULL columns on
+    ``InvocationRow``, so every matched row contributes a complete mapping.
+    """
+    if not invocation_ids:
+        return {}
+    stmt = select(
+        InvocationRow.invocation_id,
+        InvocationRow.active_regime,
+        InvocationRow.trigger_source,
+    ).where(InvocationRow.invocation_id.in_(invocation_ids))
+    result = await session.execute(stmt)
+    return {
+        inv_id: InvocationConditioning(regime=regime, time_of_day=trigger_source)
+        for inv_id, regime, trigger_source in result.all()
+    }
+
+
+__all__ = ["InvocationConditioning", "read_invocation_conditioning", "read_resolved_theses_in_window"]
