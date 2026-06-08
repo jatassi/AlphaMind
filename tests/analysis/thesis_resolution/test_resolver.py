@@ -46,6 +46,7 @@ from tests.analysis.thesis_resolution.conftest import (
     make_option_details,
     seed_closed_position_thesis,
 )
+from tests.state._fk_substrate import stub_invocation_row
 
 pytestmark = pytest.mark.asyncio
 
@@ -668,3 +669,64 @@ async def test_market_data_slice_logs_debug_when_resolution_price_absent(
 
     debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
     assert any("AAPL" in r.getMessage() for r in debug_records)
+
+
+# ---------------------------------------------------------------------------
+# ALP-919 — resolution preserves generating invocation_id
+# ---------------------------------------------------------------------------
+
+
+async def test_resolution_preserves_invocation_id(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-919 — resolving ACTIVE→RESOLVED leaves invocation_id equal to the
+    *generating* invocation, not overwritten by the resolving invocation."""
+    import dataclasses
+
+    from alphamind._kernel.ids import InvocationId
+
+    _GENERATING_INV = "inv-2026-06-07T08:00:00Z-genr"
+    _RESOLVING_INV = "inv-2026-06-07T10:00:00Z-rslv"
+
+    _, factory = db
+    # Seed a thesis that already carries a generating invocation_id — mimicking
+    # what _writeback_open now stamps at creation time (ALP-919).
+    thesis = dataclasses.replace(
+        make_active_thesis(),
+        invocation_id=InvocationId(_GENERATING_INV),
+    )
+    # The DB needs the generating invocation row for the FK to satisfy.
+    await seed_closed_position_thesis(
+        factory,
+        thesis=thesis,
+        realized_pnl_usd=-200.0,
+        exit_method=PositionExitMethod.STOP_TRIGGERED,
+        invocation_id=_GENERATING_INV,
+    )
+    # Also seed the resolving invocation row so the handle FK is satisfied.
+    async with factory() as sess:
+        await sess.merge(stub_invocation_row(_RESOLVING_INV))
+        await sess.commit()
+
+    async with factory() as session:
+        handle = InvocationHandle(session=session, invocation_id=_RESOLVING_INV)
+        resolved = await resolve_closed_position_theses(
+            handle,
+            evaluator_config=make_evaluator_config(),
+            sdk_query_fn=_make_sdk_stub("WRONG"),
+        )
+        await session.commit()
+
+    assert len(resolved) == 1
+    # The generating invocation_id must survive resolution unchanged.
+    assert resolved[0].record.invocation_id == InvocationId(_GENERATING_INV)
+
+    # Verify the row in the DB too (full round-trip through the codec).
+    async with factory() as session:
+        thesis_row = (
+            await session.execute(
+                select(ThesisRow).where(ThesisRow.thesis_id == "thesis-1")
+            )
+        ).scalar_one()
+        assert thesis_row.invocation_id == _GENERATING_INV
+        assert thesis_row.status == ThesisRecordStatus.RESOLVED.value
