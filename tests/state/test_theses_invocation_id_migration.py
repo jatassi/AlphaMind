@@ -87,9 +87,7 @@ def _build_legacy_theses_and_run_migration(db_path: Path) -> None:
         with eng.begin() as conn:
             conn.execute(text("PRAGMA foreign_keys=OFF"))
             # FK target for the new column (minimal — only what the FK references).
-            conn.execute(
-                text("CREATE TABLE invocations (invocation_id TEXT PRIMARY KEY)")
-            )
+            conn.execute(text("CREATE TABLE invocations (invocation_id TEXT PRIMARY KEY)"))
             # Back-population source.
             conn.execute(
                 text(
@@ -120,9 +118,7 @@ def _build_legacy_theses_and_run_migration(db_path: Path) -> None:
             )
             # Alembic version table stamped at the parent revision, so ``upgrade head``
             # runs only ``d001th0000aa`` against this legacy-shape DB.
-            conn.execute(
-                text("CREATE TABLE alembic_version (version_num TEXT NOT NULL)")
-            )
+            conn.execute(text("CREATE TABLE alembic_version (version_num TEXT NOT NULL)"))
             conn.execute(
                 text("INSERT INTO alembic_version (version_num) VALUES (:rev)"),
                 {"rev": _PARENT_REVISION},
@@ -225,9 +221,7 @@ class TestThesesInvocationIdMigration:
         assert "invocation_id" in _column_names(db_path)
         assert ("invocations", "RESTRICT") in _theses_fk_targets(db_path)
 
-    def test_incremental_path_downgrade_drops_fk_and_round_trips(
-        self, tmp_path: Path
-    ) -> None:
+    def test_incremental_path_downgrade_drops_fk_and_round_trips(self, tmp_path: Path) -> None:
         """On the incremental path, ``downgrade`` removes the column and its FK, and a
         re-``upgrade`` re-attaches ``fk_theses_invocation_id`` (the rebuild round-trips).
         """
