@@ -84,11 +84,27 @@ def upgrade() -> None:
     """Add theses.invocation_id (nullable), FK, index, back-populate from activity_log."""
     bind = op.get_bind()
 
-    # --- 1. Add column (idempotent: skip if already present) ---
+    # --- 1. Add column + FK (idempotent: skip if already present) ---
+    # SQLite ``ALTER TABLE ADD COLUMN`` cannot attach a FOREIGN KEY, so on the
+    # incremental path the column must be added via a full table rebuild
+    # (``recreate="always"``) with the FK carried on the column. On a fresh DB the
+    # genesis baseline already built the column + FK from the model, so this branch
+    # is skipped entirely. Migrations run with ``PRAGMA foreign_keys=OFF`` (see the
+    # alembic env), so the rebuild's intermediate ``DROP TABLE`` does not trip the
+    # incoming ``ON DELETE RESTRICT`` foreign keys.
     if not _column_exists(bind):
-        with op.batch_alter_table(_TABLE, recreate="never") as batch_op:
+        with op.batch_alter_table(_TABLE, recreate="always") as batch_op:
             batch_op.add_column(
-                sa.Column(_COLUMN, sa.Text(), nullable=True),
+                sa.Column(
+                    _COLUMN,
+                    sa.Text(),
+                    sa.ForeignKey(
+                        "invocations.invocation_id",
+                        name=_FK_NAME,
+                        ondelete="RESTRICT",
+                    ),
+                    nullable=True,
+                ),
             )
 
     # --- 2. Back-populate from activity_log THESIS_CREATED entries ---
