@@ -488,15 +488,18 @@ def _pm_decision_entry(
     *,
     verdict: PMVerdict = PMVerdict.REJECT,
     modifications_json: list[dict[str, object]] | None = None,
+    anti_patterns_json: list[str] | None = None,
+    position_id: str | None = None,
 ) -> ActivityLogEntry:
     detail = PMDecisionDetail(
         envelope_id=envelope_id,
-        source_provenance_json={"position_id": None},
+        source_provenance_json={"position_id": position_id},
         evaluation_json={},
         modifications_json=list(modifications_json or []),
         resulting_command_ids=(),
         verdict=verdict,
         originating_proposal_json={},
+        anti_patterns_json=list(anti_patterns_json or []),
     )
     return ActivityLogEntry(
         entry_id=entry_id,
@@ -504,7 +507,7 @@ def _pm_decision_entry(
         timestamp=_PM_DECISION_TS,
         event_type=EventType.PM_DECISION,
         event_group=EventGroup.PM_DECISION,
-        position_id=None,
+        position_id=position_id,
         order_id=None,
         thesis_id=None,
         source=EventSource.COMMAND_EXECUTOR,
@@ -717,3 +720,48 @@ class TestLoadReplays:
             await async_engine.dispose()
 
         assert bundle == ReplaysBundle()
+
+    async def test_anti_patterns_populated_from_pm_decision_detail(self, tmp_path: Path) -> None:
+        """A rejection replay carries the originating PM decision's anti-pattern tags,
+        and the anti-pattern-detector-accuracy metric computes a real value over them."""
+        from alphamind.feedback_loop.dataset import _load_replays
+        from alphamind.feedback_loop.metrics.pm_accuracy import (
+            _compute_anti_pattern_detector_accuracy,
+        )
+        from alphamind.feedback_loop.metrics.types import ConditioningDimension
+
+        tag = "sunk_cost_persistence"
+        pm = _pm_decision_entry("alog-1", "ENV-REC-1", anti_patterns_json=[tag])
+        replay = _replay_record(
+            "rpl-1",
+            "ENV-REC-1",
+            kind=ReplayKind.REJECTION,
+            realized_pl=Money(Decimal("-25.50")),  # rejection correct: would have lost
+            confidence=Confidence.HIGH,
+        )
+        async_engine, factory = await _seed_replays_db(
+            tmp_path, pm_entries=(pm,), replays=(replay,)
+        )
+        try:
+            async with factory() as session:
+                bundle = await _load_replays(session, _REPLAY_WINDOW_START, _REPLAY_WINDOW_END)
+        finally:
+            await async_engine.dispose()
+
+        assert len(bundle.replays) == 1
+        assert bundle.replays[0].anti_patterns == (tag,)
+        # The detector-accuracy core reads a real value (not insufficient-sample).
+        dataset = WindowDataset(
+            start=_REPLAY_WINDOW_START,
+            end=_REPLAY_WINDOW_END,
+            agent_calls=(),
+            pm_decision_log=(),
+            validations=(),
+            replays=bundle,
+        )
+        result = _compute_anti_pattern_detector_accuracy(
+            dataset, Conditioning(ConditioningDimension.ANTI_PATTERN, tag)
+        )
+        assert result.value == 1.0
+        assert result.sample_size == 1
+        assert result.insufficient_sample is False

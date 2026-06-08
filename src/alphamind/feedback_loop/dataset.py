@@ -689,7 +689,7 @@ def _to_replay_observation(
         counterfactual_pnl=None if record.realized_pl is None else float(record.realized_pl),
         actual_modified_pnl=None,
         is_sizing_modification=is_sizing,
-        anti_patterns=(),
+        anti_patterns=tuple(detail.anti_patterns_json),
     )
 
 
