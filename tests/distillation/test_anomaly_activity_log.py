@@ -226,3 +226,42 @@ def test_mapper_per_contract_prediction_market_deltas_get_distinct_entry_ids() -
         assert detail.ticker is None
         assert detail.threshold_class == "prediction_market"
         assert detail.threshold_key == "prediction_market_delta_pp_threshold"
+
+
+def test_mapper_q3_pair_and_sweep_flags_get_distinct_entry_ids_no_ticker() -> None:
+    """q3 pair / sweep flags embed their subject → distinct entry_ids, ticker ``None``.
+
+    ALP-935: ``assemble_q3_pair_trade_blocks`` and
+    ``assemble_q3_sector_wide_sweep_blocks`` each fan a constant ``block_id``
+    block out per subject (an ordered leg pair / a ``(sector, direction)``), while
+    the flag name was a bare constant — so two same-subject flags in one run
+    collapsed to one shared ``(invocation_id, block_id, flag.name)`` PK. The
+    per-subject ``:``-suffix restores PK uniqueness; neither a leg pair nor a
+    ``(sector, direction)`` is a single symbol, so ``ticker`` stays ``None`` and
+    the taxonomy still resolves off the stripped ``options_flow`` prefix.
+    """
+    pair_block = "q3.pair_trade_signature"
+    sweep_block = "q3.sector_wide_sweep"
+    summaries = (
+        _summary(name="pair_trade_signature:NVDA:JPM", block_id=pair_block),
+        _summary(name="pair_trade_signature:AMD:BAC", block_id=pair_block),
+        _summary(name="sector_wide_sweep:tech_semis:call", block_id=sweep_block),
+        _summary(name="sector_wide_sweep:tech_semis:put", block_id=sweep_block),
+    )
+    entries = [
+        anomaly_summary_to_activity_log_entry(s, invocation_id="inv-1", timestamp=_AS_OF)
+        for s in summaries
+    ]
+
+    # Every entry_id is distinct — the collision the per-subject suffix prevents.
+    assert len({e.entry_id for e in entries}) == 4
+
+    expected_taxonomy = {
+        pair_block: ("options_flow", "pair_trade_signature"),
+        sweep_block: ("options_flow", "sector_wide_sweep"),
+    }
+    for entry in entries:
+        detail = entry.detail
+        assert isinstance(detail, DistillationAnomalyFlagDetail)
+        assert detail.ticker is None
+        assert (detail.threshold_class, detail.threshold_key) == expected_taxonomy[detail.block_id]
