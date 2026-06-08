@@ -28,6 +28,7 @@ import dataclasses
 import json
 import math
 from datetime import datetime
+from enum import Enum
 from typing import Any, Final
 
 from alphamind.feedback_loop.digest.generator import (
@@ -97,9 +98,12 @@ def _to_jsonable(obj: Any) -> Any:
     """Recursively convert a frozen-dataclass digest tree into JSON-native values.
 
     Dataclasses become dicts (slots-friendly via :func:`dataclasses.fields`); tuples
-    and lists become lists; datetimes become ISO strings; non-finite floats become a
-    JSON-valid string sentinel (:data:`_NON_FINITE_SENTINELS`); everything else is
-    passed through. ``property`` attributes are not serialised — only declared fields.
+    and lists become lists; datetimes become ISO strings; a plain ``Enum`` becomes its
+    ``.value`` (mirroring ``portfolio_state.events.codec._try_encode_leaf`` — a forward
+    guard so a non-``StrEnum`` field never ``TypeError``s at ``json.dumps``); non-finite
+    floats become a JSON-valid string sentinel (:data:`_NON_FINITE_SENTINELS`); everything
+    else is passed through. ``property`` attributes are not serialised — only declared
+    fields.
     """
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         return {f.name: _to_jsonable(getattr(obj, f.name)) for f in dataclasses.fields(obj)}
@@ -109,6 +113,8 @@ def _to_jsonable(obj: Any) -> Any:
         return [_to_jsonable(v) for v in obj]
     if isinstance(obj, datetime):
         return obj.isoformat()
+    if isinstance(obj, Enum):
+        return obj.value
     if isinstance(obj, float):
         return metric_value_to_jsonable(obj)
     return obj

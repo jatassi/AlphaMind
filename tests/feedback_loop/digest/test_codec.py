@@ -11,8 +11,10 @@ sparklines — and assert ``deserialize_digest(serialize_digest(d)) == d``.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
+from enum import Enum
 from pathlib import Path
 
 import pytest
@@ -125,6 +127,29 @@ class TestNonFiniteValue:
         assert rehydrated.headline.pl_last_7d.result is not None
         assert rehydrated.headline.pl_last_7d.result.value == math.inf
         assert rehydrated == digest
+
+
+class _PlainEnum(Enum):
+    """A non-``StrEnum`` enum — ``json.dumps`` cannot encode it without the guard."""
+
+    ALPHA = "alpha"
+
+
+@dataclasses.dataclass(frozen=True)
+class _EnumHolder:
+    label: _PlainEnum
+
+
+class TestPlainEnumGuard:
+    """``_to_jsonable`` is a generic recursive serializer; a plain (non-``StrEnum``)
+    ``Enum`` field must render as its ``.value`` rather than ``TypeError``-ing at
+    ``json.dumps`` (forward guard — no current ``WeeklyDigest`` field is a plain Enum)."""
+
+    def test_plain_enum_field_renders_as_value(self) -> None:
+        payload = codec._to_jsonable(_EnumHolder(label=_PlainEnum.ALPHA))
+        assert payload == {"label": "alpha"}
+        # And it is now json-encodable (a bare plain Enum is not).
+        assert json.loads(json.dumps(payload)) == {"label": "alpha"}
 
 
 class TestSchemaVersion:
