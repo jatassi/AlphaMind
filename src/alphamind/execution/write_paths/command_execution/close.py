@@ -8,8 +8,12 @@ from typing import Any
 from alphamind.commands.command_models import CloseCommand
 from alphamind.commands.submission_results import SubmissionResult
 from alphamind.execution.write_paths.command_execution._shared import (
+    _assert_bracket_readable,
     _build_pending_order,
+    _cancel_all_bracket_legs,
+    _cancel_pending_protective_orders,
     _close_order_direction_for_position,
+    _emit_order_cancelled,
     _emit_order_submitted,
     _id_suffix,
     _instrument_spec_for_position,
@@ -149,6 +153,58 @@ async def _writeback_close(
         extra_parameters=rationale_metadata,
         source=source,
     )
+
+    await _cancel_equity_protective_legs(
+        handle, position=position, command=command, timestamp=timestamp
+    )
+
+
+async def _cancel_equity_protective_legs(
+    handle: InvocationHandle,
+    *,
+    position: Any,
+    command: CloseCommand,
+    timestamp: datetime,
+) -> None:
+    """Mark an equity bracket's PENDING protective legs CANCELLED on a CLOSE (ALP-937).
+
+    The broker dispatcher cancels the native bracket's broker-enforced legs at the
+    broker *before* the SIMPLE close sell (freeing the ``held_for_orders`` shares);
+    this writeback reflects that in OMS state so the protective ``orders`` rows do
+    not drift ``PENDING`` for orders that no longer rest at the broker. Both
+    broker- and monitor-enforced legs (e.g. TIME_STOP) are marked CANCELLED — the
+    monitor leg never went to the broker, but the protection it armed is gone too.
+
+    The bracket *status* is deliberately left unchanged: a full close dissolves it
+    on the close fill (fill collection, OPEN→CLOSED); a partial reduce leaves it
+    ACTIVE with cancelled legs — the remainder is backstopped by the continuous-
+    monitor max-loss guardrail until the PM re-evaluates, and re-protected by a
+    fresh OCO in a separate follow-up (ALP-938, ALP-937 deliverable D — deferred).
+    An ACTIVE bracket whose legs are all CANCELLED is readable (the read invariant
+    only forces all-CANCELLED on a DISSOLVED bracket), so ``_assert_bracket_readable``
+    is the write-time guard against an unreadable row (ALP-731). No-op for an
+    options / strategy CLOSE (the native-bracket share-reservation is equity-only)
+    or a position with no bracket.
+    """
+    if not isinstance(position.details, EquityPositionDetails) or not position.bracket_id:
+        return
+    cancelled_legs = await _cancel_pending_protective_orders(
+        handle, bracket_id=position.bracket_id, timestamp=timestamp
+    )
+    # Transition the parallel ``bracket_legs`` representation too (including any
+    # order-less event/advisory leg the order sweep cannot reach), keeping it in
+    # lockstep with the cancelled protective orders.
+    await _cancel_all_bracket_legs(handle, bracket_id=position.bracket_id)
+    for leg in cancelled_legs:
+        _emit_order_cancelled(
+            handle,
+            order=leg,
+            position_id=command.position_id,
+            thesis_id=position.thesis_id,
+            cancel_reason="protective leg cancelled ahead of equity CLOSE sell (ALP-937)",
+            timestamp=timestamp,
+        )
+    await _assert_bracket_readable(handle, bracket_id=position.bracket_id)
 
 
 def _close_order_id(position_id: str, command_id: str) -> str:

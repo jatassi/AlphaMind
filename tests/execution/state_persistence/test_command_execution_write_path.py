@@ -4747,3 +4747,171 @@ def _minimal_pm_view() -> Any:
         thesis_quality_aggregates=None,
         position_modification_trail={},
     )
+
+
+# ===========================================================================
+# Tests — ALP-937: equity CLOSE cancels the native bracket's protective legs
+# ===========================================================================
+
+
+def _native_bracket(
+    bracket_id: str = "BRK-NVDA-1",
+    position_id: str = "POS-NVDA-001",
+    underlying: str = "NVDA",
+) -> BracketRecord:
+    """An ACTIVE native equity bracket: TAKE_PROFIT + PRICE_STOP broker-enforced
+    (the OCO pair that reserves shares) plus a monitor-enforced TIME_EXPIRATION
+    leg. The ALP-937 shape — the two MRVL/GS production positions."""
+    from alphamind.portfolio_state.records.orders import EnforcementBinding
+
+    take_profit = BracketLeg(
+        leg_id=f"{bracket_id}-leg-target",
+        leg_type=BracketLegType.TAKE_PROFIT,
+        order_id=OrderId(f"{bracket_id}-ord-target"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol(underlying), threshold_usd=950.0, direction="GTE"
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.ACTIVE,
+        enforcement_binding=EnforcementBinding.BROKER_ENFORCED,
+    )
+    price_stop = BracketLeg(
+        leg_id=f"{bracket_id}-leg-stop",
+        leg_type=BracketLegType.PRICE_STOP,
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol(underlying), threshold_usd=140.0, direction="LTE"
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.ACTIVE,
+        enforcement_binding=EnforcementBinding.BROKER_ENFORCED,
+    )
+    time_leg = BracketLeg(
+        leg_id=f"{bracket_id}-leg-time",
+        leg_type=BracketLegType.TIME_EXPIRATION,
+        order_id=OrderId(f"{bracket_id}-ord-time"),
+        trigger=TimeTrigger(deadline=_NOW + timedelta(hours=24)),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.ACTIVE,
+        enforcement_binding=EnforcementBinding.MONITOR_ENFORCED,
+    )
+    return BracketRecord(
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
+        status=BracketStatus.ACTIVE,
+        entry_order_id=OrderId("ord-entry-1"),
+        protective_legs=(take_profit, price_stop, time_leg),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
+        entry_window_deadline=None,
+    )
+
+
+async def _seed_native_bracket_position(factory: async_sessionmaker[AsyncSession]) -> None:
+    """Seed an OPEN equity position carrying a native bracket with three PENDING
+    protective leg orders: two broker-enforced (real alpaca ids) + one
+    monitor-enforced TIME_STOP."""
+    from alphamind.portfolio_state.records.orders import OrderDirection, OrderRole, OrderStatus
+    from tests.state._fk_substrate import stub_order_row
+
+    position = _open_position()
+    thesis = _active_thesis()
+    bracket = _native_bracket()
+    thesis_row, component_rows = thesis_record_to_rows(thesis)
+    bracket_parent, leg_rows = bracket_record_to_rows(bracket)
+
+    def _protective(order_id: str, role: str, alpaca: str) -> OrderRow:
+        return stub_order_row(
+            order_id,
+            "BRK-NVDA-1",
+            position_id="POS-NVDA-001",
+            role=role,
+            direction=OrderDirection.SELL.value,
+            status=OrderStatus.PENDING.value,
+            alpaca_order_id=alpaca,
+        )
+
+    async with factory() as sess:
+        sess.add(position_record_to_row(position))
+        sess.add(thesis_row)
+        for crow in component_rows:
+            sess.add(crow)
+        sess.add(stub_order_row("ord-entry-1", "BRK-NVDA-1"))
+        sess.add(_protective("BRK-NVDA-1-ord-target", OrderRole.TAKE_PROFIT.value, "alp-tp-real"))
+        sess.add(_protective("BRK-NVDA-1-ord-stop", OrderRole.PRICE_STOP.value, "alp-stop-real"))
+        sess.add(_protective("BRK-NVDA-1-ord-time", OrderRole.TIME_STOP.value, "alp-time-real"))
+        sess.add(bracket_parent)
+        await sess.flush()
+        for lrow in leg_rows:
+            sess.add(lrow)
+        await sess.commit()
+
+
+async def test_close_command_context_resolves_broker_enforced_protective_legs(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-937 (A) — the equity CLOSE context surfaces the native bracket's
+    BROKER_ENFORCED protective-leg broker ids; the monitor-enforced TIME_STOP is
+    excluded by its typed binding (not by id-nullity) so it never reaches
+    ``submit_cancel``."""
+    from alphamind.decision.portfolio_manager.submit_envelope.dispatch import (
+        _close_command_context,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_native_bracket_position(factory)
+
+    async with factory() as sess:
+        handle = InvocationHandle(session=sess, invocation_id=_INV_ID)
+        ctx = await _close_command_context(_close_command("POS-NVDA-001"), invocation_handle=handle)
+
+    assert ctx["position_asset_type"] == "equity"
+    ids = set(ctx["close_protective_leg_alpaca_order_ids"])
+    assert ids == {"alp-tp-real", "alp-stop-real"}
+    assert "alp-time-real" not in ids
+
+
+async def test_writeback_close_cancels_protective_legs_and_keeps_bracket_readable(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-937 (C) — the CLOSE writeback marks the native bracket's PENDING
+    protective leg orders (broker- AND monitor-enforced) CANCELLED and leaves the
+    bracket readable through the codec, so the broker-side leg cancel (dispatch)
+    is reflected in OMS state rather than drifting PENDING forever."""
+    from alphamind.execution.write_paths.command_execution.close import _writeback_close
+    from alphamind.portfolio_state.records.orders import OrderStatus
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_native_bracket_position(factory)
+
+    async with factory() as sess:
+        handle = InvocationHandle(session=sess, invocation_id=_INV_ID)
+        await _writeback_close(
+            handle,
+            command=_close_command("POS-NVDA-001"),
+            result=_accepted_result(0, "ENV-REC-close.1.0.0"),
+        )
+        await sess.commit()
+
+    async with factory() as sess:
+        for oid in (
+            "BRK-NVDA-1-ord-target",
+            "BRK-NVDA-1-ord-stop",
+            "BRK-NVDA-1-ord-time",
+        ):
+            row = await sess.get(OrderRow, oid)
+            assert row is not None
+            assert row.status == OrderStatus.CANCELLED.value, f"{oid} not CANCELLED"
+        legs = (
+            (
+                await sess.execute(
+                    select(BracketLegRow).where(BracketLegRow.bracket_id == "BRK-NVDA-1")
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert legs
+        assert all(leg.leg_status == BracketLegStatus.CANCELLED.value for leg in legs)

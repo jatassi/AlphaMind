@@ -1262,6 +1262,34 @@ it has no SSE / `/events` channel (§ 5.2) and writes nothing to the DB. Watch
   price feed. The position's broker-side bracket legs still protect it meanwhile;
   it clears at the next Phase-1.
 
+### 8.10 PM equity CLOSE / reduce — protective legs cancelled before the sell (ALP-937)
+
+A native equity bracket's take-profit + stop legs reserve 100% of the position's
+shares at the broker (`held_for_orders`). So a PM-directed equity CLOSE (full **or**
+partial) first cancels the broker-enforced protective legs via `submit_cancel`,
+**then** submits the SIMPLE close sell. This is expected and visible in the
+submission log as leg cancels immediately preceding the close order — not a bug.
+
+Two operational consequences to know:
+
+- **Partial-reduce re-bracket window.** A *partial* close cancels **all** protective
+  legs (you cannot partially cancel an OCO leg), so once the reduce fills the
+  remaining shares are **broker-unprotected** until the PM re-brackets them on its
+  next invocation. The continuous-monitor position-level max-loss guardrail is the
+  active backstop during that window (the same cancel-and-review model used for
+  corporate actions). Automatic re-protection of the remainder with a fresh OCO is a
+  deferred follow-up (ALP-938, ALP-937 deliverable D); until it ships, expect a
+  partially-reduced equity position to read with an ACTIVE bracket whose legs are all
+  CANCELLED until the next PM pass re-protects or closes it.
+
+- **"NAKED POSITION" CRITICAL alert in `pipeline.log`.** If the close sell is rejected
+  *after* the protective legs were already cancelled, the dispatcher logs
+  `ALP-937 NAKED POSITION: equity CLOSE of <SYMBOL> ...` at CRITICAL. The position is
+  broker-unprotected and the monitor max-loss guardrail is the only backstop until
+  the PM re-evaluates next invocation. **Operator action:** confirm the monitor is
+  live (§ 8.9), watch the named position's P/L, and — if the next scheduled PM pass
+  is far off — consider a manual invocation (§ 3) so the PM re-brackets or closes it.
+
 ---
 
 ## 9. Feedback loop — analytics CLIs, cadences, and review skills

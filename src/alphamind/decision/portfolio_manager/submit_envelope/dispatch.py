@@ -37,7 +37,11 @@ from alphamind.decision.portfolio_manager.submit_envelope.types import (
     _BreachedRule,
 )
 from alphamind.persistence.retry import run_with_sqlite_busy_retry
-from alphamind.portfolio_state.records.orders import EnforcementBinding
+from alphamind.portfolio_state.records.orders import (
+    EnforcementBinding,
+    OrderRole,
+    OrderStatus,
+)
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -96,6 +100,12 @@ _COMMAND_TYPE_TO_LABEL: dict[str, Literal["OPEN", "CLOSE", "ADD", "ADJUST", "CAN
 # materially incoherent vs the live touch at dispatch (a stale-anchor mispricing
 # that straddled its own stale reference and so cleared the analyst-side guard).
 _STALE_ANCHOR_REJECTION_CODE = "stale_anchor_vs_live_quote"
+
+# ALP-937 — the protective-leg roles an equity bracket reserves shares against.
+# A PM equity CLOSE must cancel the broker-enforced ones before its SIMPLE sell.
+_PROTECTIVE_LEG_ROLES: frozenset[str] = frozenset(
+    {OrderRole.PRICE_STOP.value, OrderRole.TAKE_PROFIT.value, OrderRole.TIME_STOP.value}
+)
 
 logger = logging.getLogger(__name__)
 
@@ -636,6 +646,15 @@ async def _close_command_context(
             "position_symbol": position.details.ticker,
             "position_qty": position.details.share_count,
             "position_side": "long" if direction is Direction.LONG else "short",
+            # ALP-937 — the native bracket's broker-enforced protective legs the
+            # execution dispatcher cancels (freeing the held_for_orders shares)
+            # before the SIMPLE close sell. Empty for a position with no
+            # broker-enforced legs.
+            "close_protective_leg_alpaca_order_ids": (
+                await _equity_broker_enforced_protective_legs(
+                    invocation_handle, bracket_id=position.bracket_id
+                )
+            ),
         }
     if isinstance(position.details, OptionsPositionDetails):
         # OptionsPositionDetails stores contract fields, not the OCC symbol;
@@ -814,6 +833,38 @@ def _adjust_target_roles(command: AdjustCommand) -> frozenset[str]:
     if command.new_time_expiration is not None:
         roles.add("TIME_STOP")
     return frozenset(roles)
+
+
+async def _equity_broker_enforced_protective_legs(
+    invocation_handle: Any, *, bracket_id: str | None
+) -> tuple[AlpacaOrderId, ...]:
+    """Resolve a bracket's PENDING broker-enforced protective legs' broker ids (ALP-937).
+
+    These are the native-bracket OCO legs that reserve 100% of the position's
+    shares (``held_for_orders``); an equity CLOSE must cancel them at the broker
+    before its SIMPLE sell or the sell sees ``available: 0``. Mirrors
+    :func:`_adjust_command_context`'s leg resolution — read each PENDING protective
+    ``orders`` row for the bracket, then its typed ``enforcement_binding`` from
+    ``bracket_legs`` (ALP-847). Only ``BROKER_ENFORCED`` legs carrying a real
+    broker id are returned: a monitor-enforced leg (e.g. TIME_STOP) has no broker
+    order, so it is never sent to ``submit_cancel`` — its state-side cancellation
+    rides the CLOSE writeback instead.
+    """
+    if bracket_id is None:
+        return ()
+    stmt = _select(OrderRow).where(
+        OrderRow.bracket_id == bracket_id,
+        OrderRow.status == OrderStatus.PENDING.value,
+    )
+    rows = (await invocation_handle.session.execute(stmt)).scalars().all()
+    leg_ids: list[AlpacaOrderId] = []
+    for row in rows:
+        if row.order_role not in _PROTECTIVE_LEG_ROLES or row.alpaca_order_id is None:
+            continue
+        binding = await _leg_enforcement_binding(invocation_handle, row.order_id)
+        if binding is EnforcementBinding.BROKER_ENFORCED:
+            leg_ids.append(AlpacaOrderId(row.alpaca_order_id))
+    return tuple(leg_ids)
 
 
 async def _leg_enforcement_binding(invocation_handle: Any, order_id: str) -> EnforcementBinding:
