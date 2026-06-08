@@ -210,6 +210,34 @@ def test_sizing_modification_effectiveness_filters_to_sizing_subset() -> None:
     assert result.sample_size == 1
 
 
+def test_sizing_modification_effectiveness_excludes_unpriceable_counterfactual() -> None:
+    # The sizing subset shares the _scorable_modification gate: a sizing-down
+    # modification whose original form could not be priced (counterfactual_pnl is
+    # None) has no baseline and is excluded from pm_sizing_modification_effectiveness
+    # rather than scored against a fabricated 0.0. Only the priced sizing pair counts.
+    dataset = _dataset(
+        make_replay_observation(
+            envelope_id="ENV-REC-1",
+            replay_kind=ReplayKind.MODIFICATION_ORIGINAL_FORM,
+            counterfactual_pnl=50.0,
+            actual_modified_pnl=120.0,
+            is_sizing_modification=True,
+        ),
+        make_replay_observation(
+            envelope_id="ENV-REC-2",
+            replay_kind=ReplayKind.MODIFICATION_ORIGINAL_FORM,
+            counterfactual_pnl=None,
+            actual_modified_pnl=80.0,
+            is_sizing_modification=True,
+        ),
+    )
+    result = get_metric(METRIC_SIZING_MODIFICATION_EFFECTIVENESS).compute(  # type: ignore[union-attr]
+        dataset, UNCONDITIONED
+    )
+    assert result.value == 1.0
+    assert result.sample_size == 1
+
+
 def test_anti_pattern_detector_accuracy_conditioned_on_pattern() -> None:
     # Three rejection replays tagged with sunk_cost_persistence; the metric asks,
     # per pattern, whether the counterfactual confirms the tag was right (the
