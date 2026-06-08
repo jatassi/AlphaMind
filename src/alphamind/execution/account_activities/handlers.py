@@ -31,7 +31,6 @@ pipeline, ADR-0005).
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -52,8 +51,6 @@ from alphamind.execution.account_activities.records import (
 from alphamind.execution.corporate_actions.handlers._shared import _persist_position_update
 from alphamind.execution.write_paths.broker_event_persistence import append_broker_event
 from alphamind.portfolio_state.events.activity_log import (
-    EVENT_TYPE_TO_GROUP,
-    ActivityLogEntry,
     EventSource,
     EventType,
     PositionClosedDetail,
@@ -67,7 +64,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
     alpaca_occ_symbol,
 )
-from alphamind.state.invocation_context.activity_log import append_activity_log_entry
+from alphamind.state.invocation_context.activity_log import emit_activity_log_entry
 from alphamind.state.invocation_context.context import InvocationHandle
 from alphamind.state.records_broker_event_log import (
     BrokerEventRecord,
@@ -188,24 +185,21 @@ def _emit_position_closed(
     resolver computes the real category) — both matching the equity
     ``fill_collection`` close convention.
     """
-    entry = ActivityLogEntry(
-        entry_id=f"{handle.invocation_id}-{EventType.POSITION_CLOSED.value}-{uuid.uuid4().hex}",
-        invocation_id=handle.invocation_id,
-        timestamp=timestamp,
+    emit_activity_log_entry(
+        handle,
         event_type=EventType.POSITION_CLOSED,
-        event_group=EVENT_TYPE_TO_GROUP[EventType.POSITION_CLOSED],
         position_id=str(option_record.position_id),
         order_id=None,
         thesis_id=str(option_record.thesis_id) if option_record.thesis_id is not None else None,
-        source=EventSource.ACCOUNT_ACTIVITIES_PROCESSOR,
+        timestamp=timestamp,
         detail=PositionClosedDetail(
             exit_method=exit_method,
             exit_price=Money(Decimal(0)),
             realized_pnl_usd=realized_pnl_usd,
             thesis_resolution_category="",
         ),
+        source=EventSource.ACCOUNT_ACTIVITIES_PROCESSOR,
     )
-    append_activity_log_entry(handle, entry)
 
 
 async def _already_booked(handle: InvocationHandle, event_key: str) -> bool:

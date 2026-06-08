@@ -49,7 +49,6 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import logging
-import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -66,8 +65,6 @@ from alphamind.analysis.thesis_resolution.programmatic import (
 )
 from alphamind.config.models.agents import BaseAgentConfig
 from alphamind.portfolio_state.events.activity_log import (
-    EVENT_TYPE_TO_GROUP,
-    ActivityLogEntry,
     EventSource,
     EventType,
     PositionClosedDetail,
@@ -91,7 +88,7 @@ from alphamind.portfolio_state.records.thesis_resolution import (
 )
 from alphamind.state.invocation_context.activity_log import (
     activity_log_entry_from_row,
-    append_activity_log_entry,
+    emit_activity_log_entry,
 )
 from alphamind.state.invocation_context.context import InvocationHandle
 from alphamind.state.tables.activity_log import ActivityLogRow
@@ -828,16 +825,13 @@ def _emit_thesis_resolved(
     now: datetime,
 ) -> None:
     """Append one real THESIS_RESOLVED entry for the resolved thesis."""
-    entry = ActivityLogEntry(
-        entry_id=f"{handle.invocation_id}-{EventType.THESIS_RESOLVED.value}-{uuid.uuid4().hex}",
-        invocation_id=handle.invocation_id,
-        timestamp=now,
+    emit_activity_log_entry(
+        handle,
         event_type=EventType.THESIS_RESOLVED,
-        event_group=EVENT_TYPE_TO_GROUP[EventType.THESIS_RESOLVED],
         position_id=str(record.position_id),
         order_id=None,
         thesis_id=str(record.thesis_id),
-        source=EventSource.ANALYSIS_PIPELINE,
+        timestamp=now,
         detail=detail,
+        source=EventSource.ANALYSIS_PIPELINE,
     )
-    append_activity_log_entry(handle, entry)
