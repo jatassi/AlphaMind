@@ -43,6 +43,7 @@ from alphamind.scripts.verify_feedback_loop import (
     assert_digest_generated,
     assert_outcome_metric_nonempty,
     assert_recent_resolutions_regression,
+    assert_replay_join_computes,
     assert_retrospective_saved,
     assert_snapshot_written,
     assert_supersession_detected,
@@ -165,6 +166,14 @@ class TestAssertionHelpersOnRealStageResults:
             ThesisResolutionCategory.VALIDATED
         )
 
+    async def test_replay_join_computes_passes(
+        self, driven: tuple[StageResults, FeedbackLoopSeed]
+    ) -> None:
+        """The seeded MODIFICATION_ORIGINAL_FORM replay flows through the join: the
+        window's replays are non-empty and pm_modification_effectiveness computes."""
+        results, _ = driven
+        assert assert_replay_join_computes(results.window) is None
+
 
 class TestAssertionHelpersRejectMismatches:
     """Each pure helper names the rule it enforces on a perturbed input."""
@@ -207,3 +216,16 @@ class TestAssertionHelpersRejectMismatches:
         message = assert_supersession_detected(1)
         assert message is not None
         assert "0 supersessions" in message
+
+    async def test_replay_join_rejects_empty_replays(
+        self, driven: tuple[StageResults, FeedbackLoopSeed]
+    ) -> None:
+        """A window with no loaded replays fails the join assertion — the seed did
+        not flow through, so the modification metric has nothing to compute over."""
+        from alphamind.feedback_loop.dataset import ReplaysBundle
+
+        results, _ = driven
+        empty = dataclasses.replace(results.window, replays=ReplaysBundle())
+        message = assert_replay_join_computes(empty)
+        assert message is not None
+        assert "replays" in message

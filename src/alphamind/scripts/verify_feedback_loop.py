@@ -55,7 +55,6 @@ import asyncio
 import sys
 import tempfile
 import uuid
-from argparse import Namespace
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -64,14 +63,12 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from alembic import command
-from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 # Side-effect import: register the state-persistence tables on ``Base.metadata``
 # so the codecs + reads resolve the mappers.
 import alphamind.state.tables  # noqa: F401
-from alphamind._kernel.ids import PositionId, ThesisId
+from alphamind._kernel.ids import EnvelopeId, PositionId, ReplayId, ThesisId
 from alphamind._kernel.money import money, signed_money
 from alphamind.analysis.thesis_resolution.resolver import (
     ResolvedThesis,
@@ -87,6 +84,7 @@ from alphamind.feedback_loop.digest.snapshot import SnapshotOutcome, snapshot_we
 from alphamind.feedback_loop.digest.windows import load_week_inputs, trailing_weeks
 from alphamind.feedback_loop.metrics import get_metric
 from alphamind.feedback_loop.metrics.outcomes import METRIC_WIN_RATE
+from alphamind.feedback_loop.metrics.pm_accuracy import METRIC_MODIFICATION_EFFECTIVENESS
 from alphamind.feedback_loop.metrics.types import UNCONDITIONED, MetricResult
 from alphamind.feedback_loop.retrospective.ingestion import RetrospectiveIngestion, ingest_window
 from alphamind.feedback_loop.retrospective.report import save_report
@@ -103,6 +101,7 @@ from alphamind.feedback_loop.validation.records import (
 )
 from alphamind.feedback_loop.validation.register import RegistrationRequest, register_validation
 from alphamind.feedback_loop.validation.supersession import detect_supersessions
+from alphamind.persistence.alembic_upgrade import upgrade_to_head
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
 from alphamind.portfolio_state.events.activity_log import (
     EVENT_TYPE_TO_GROUP,
@@ -135,7 +134,15 @@ from alphamind.state.config import StatePersistenceConfig
 from alphamind.state.invocation_context.activity_log import activity_log_entry_to_row
 from alphamind.state.invocation_context.context import InvocationHandle
 from alphamind.state.repository import build_sql_portfolio_state_repository
+from alphamind.state.repository.counterfactual_replays import insert_counterfactual_replay
 from alphamind.state.tables.agent_calls import AgentCallsRow
+from alphamind.state.tables.counterfactual_replays import (
+    Confidence,
+    CounterfactualReplayRecord,
+    ExitLeg,
+    ReplayKind,
+    ReplayStatus,
+)
 from alphamind.state.tables.invocations import InvocationRow
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
@@ -148,6 +155,7 @@ __all__ = [
     "assert_digest_generated",
     "assert_outcome_metric_nonempty",
     "assert_recent_resolutions_regression",
+    "assert_replay_join_computes",
     "assert_retrospective_saved",
     "assert_snapshot_written",
     "assert_supersession_detected",
@@ -191,6 +199,22 @@ _ENTRY_COST_BASIS = 150.0
 # Positive realized P/L so the win-rate predicate yields value=1.0 (an unambiguous
 # non-empty outcome reading); the exit method partitions the resolution category.
 _REALIZED_PNL_USD = 500.0
+
+#: The PM-decision envelope id — the join anchor between the PM_DECISION activity-log
+#: entry and the counterfactual replay that descends from it.
+_ENVELOPE_ID = "env-fbl-verify"
+#: One canonical anti-pattern tag (``commands.pm_envelope.AntiPattern``) the PM
+#: flagged on the verdict — the ``anti_patterns_json`` the detector metrics read.
+_ANTI_PATTERN = "conviction_inflation"
+#: The counterfactual original-form P/L for the modification replay. Strictly below
+#: ``_REALIZED_PNL_USD`` so ``_modification_helped`` reads True (the actual modified
+#: form beat the simulated original form) and the modification metric computes a value.
+_COUNTERFACTUAL_PNL_USD = 100.0
+#: The replay's engine version — the loader filters to the single latest version
+#: present, so one fresh constant suffices for this single-replay scenario.
+_REPLAY_ENGINE_VERSION = "fbl-verify-v1"
+#: The counterfactual replay id.
+_REPLAY_ID = "replay-fbl-verify"
 
 #: Trailing weeks the digest + snapshot load. One suffices for this single-week
 #: scenario (the trajectory degrades to one point); the read CLI default is 12.
@@ -415,15 +439,26 @@ def _position_closed_entry() -> ActivityLogEntry:
 
 
 def _pm_decision_entry() -> ActivityLogEntry:
-    """One PM_DECISION envelope — the ``pm_decision_log`` + retrospective surface."""
+    """One PM_DECISION envelope — the ``pm_decision_log`` + retrospective surface.
+
+    Carries the ``position_id`` (under ``source_provenance_json``, mirroring
+    production ``_emit_pm_decision``) so the PM-accuracy replay join keys the
+    ``modification_original_form`` replay to the resolved thesis on this position,
+    and one canonical anti-pattern tag (the ``anti_patterns_json`` the detector
+    metrics read).
+    """
     detail = PMDecisionDetail(
-        envelope_id="env-fbl-verify",
-        source_provenance_json={"source_provenance": "pm_analyst"},
+        envelope_id=_ENVELOPE_ID,
+        source_provenance_json={
+            "source_provenance": "pm_analyst",
+            "position_id": _POSITION_ID,
+        },
         evaluation_json={"thesis_quality": "strong"},
         modifications_json=[],
         resulting_command_ids=("cmd-fbl-1",),
         verdict=PMVerdict.APPROVE,
         originating_proposal_json={"recommendation_id": "REC-FBL"},
+        anti_patterns_json=[_ANTI_PATTERN],
     )
     return ActivityLogEntry(
         entry_id="e-fbl-pm-decision",
@@ -439,14 +474,53 @@ def _pm_decision_entry() -> ActivityLogEntry:
     )
 
 
+def _modification_replay_record() -> CounterfactualReplayRecord:
+    """One EVALUATED ``MODIFICATION_ORIGINAL_FORM`` counterfactual replay.
+
+    Joined to the seeded PM envelope (``_ENVELOPE_ID``) so the PM-accuracy loader
+    flows it through ``_load_replays``: its ``realized_pl`` is the counterfactual
+    *original-form* P/L the engine simulated, set strictly below the resolved
+    thesis's ``_REALIZED_PNL_USD`` (the actual modified-form leg the join reads via
+    ``read_resolved_thesis_pnl_by_position``) so the modified form is scored as
+    having helped and ``pm_modification_effectiveness`` computes a real value.
+    Medium confidence so it clears the aggregation eligibility rule.
+    """
+    return CounterfactualReplayRecord(
+        replay_id=ReplayId(_REPLAY_ID),
+        pm_decision_envelope_id=EnvelopeId(_ENVELOPE_ID),
+        replay_kind=ReplayKind.MODIFICATION_ORIGINAL_FORM,
+        replay_status=ReplayStatus.EVALUATED,
+        unevaluable_reason=None,
+        entered=True,
+        entry_price=money(Decimal(str(_ENTRY_COST_BASIS))),
+        entry_timestamp=_GENERATION,
+        entry_slippage=money("0.0"),
+        entry_fees=money("0.0"),
+        exit_leg=ExitLeg.TARGET_HIT,
+        exit_price=money("160.0"),
+        exit_timestamp=_RESOLVE_NOW,
+        exit_slippage=money("0.0"),
+        exit_fees=money("0.0"),
+        realized_pl=signed_money(_COUNTERFACTUAL_PNL_USD),
+        confidence=Confidence.MEDIUM,
+        replay_timestamp=_RESOLVE_NOW,
+        replay_data_window_start=_GENERATION,
+        replay_data_window_end=_RESOLVE_NOW,
+        replay_engine_version=_REPLAY_ENGINE_VERSION,
+    )
+
+
 async def build_test_seed(factory: async_sessionmaker[AsyncSession]) -> FeedbackLoopSeed:
     """Insert the documented scenario and return the :class:`FeedbackLoopSeed`.
 
     One transaction seeds the FK substrate (process-lifetime + invocation), the
     ``agent_calls`` telemetry row, the CLOSED position + ACTIVE thesis + its
     components, the ``thesis_pnl_ledger`` row, the ``POSITION_CLOSED`` exit entry,
-    and the PM-decision envelope. The validation is registered in its own stage so
-    the script exercises ``register_validation`` rather than seeding the row.
+    the PM-decision envelope, and one EVALUATED ``MODIFICATION_ORIGINAL_FORM``
+    counterfactual replay joined to that envelope (so the PM-accuracy modification
+    metric computes a real value end-to-end). The validation is registered in its
+    own stage so the script exercises ``register_validation`` rather than seeding
+    the row.
     """
     thesis = _active_thesis()
     thesis_row, component_rows = record_to_rows(thesis)
@@ -464,6 +538,11 @@ async def build_test_seed(factory: async_sessionmaker[AsyncSession]) -> Feedback
         session.add(_ledger_row())
         session.add(activity_log_entry_to_row(_position_closed_entry()))
         session.add(activity_log_entry_to_row(_pm_decision_entry()))
+        await session.run_sync(
+            lambda sync_session: insert_counterfactual_replay(
+                sync_session, _modification_replay_record()
+            )
+        )
         await session.commit()
 
     return FeedbackLoopSeed(
@@ -619,6 +698,26 @@ def assert_window_loaded(window: WindowDataset, seed: FeedbackLoopSeed) -> str |
     return None
 
 
+def assert_replay_join_computes(window: WindowDataset) -> str | None:
+    """The PM-accuracy replay join is live end-to-end (ALP-930 (C)).
+
+    The seeded ``MODIFICATION_ORIGINAL_FORM`` replay must flow through
+    ``_load_replays`` into ``window.replays.replays`` (non-empty), and the
+    ``pm_modification_effectiveness`` metric must compute a real (non-``None``)
+    value over it — proving the loader joins the replay to the resolved thesis's
+    realized P/L on the originating position and the metric scores it.
+    """
+    if not window.replays.replays:
+        return "window.replays.replays is empty — the seeded replay did not flow through the join"
+    metric = get_metric(METRIC_MODIFICATION_EFFECTIVENESS)
+    if metric is None:
+        return "pm_modification_effectiveness metric is not registered"
+    result = metric.compute(window, UNCONDITIONED)
+    if result.value is None:
+        return "pm_modification_effectiveness value is None — the join computed no reading"
+    return None
+
+
 def assert_outcome_metric_nonempty(
     metric_result: MetricResult, seed: FeedbackLoopSeed
 ) -> str | None:
@@ -703,17 +802,6 @@ def assert_retrospective_saved(
 # ---------------------------------------------------------------------------
 
 
-def _alembic_upgrade_head(db_path: str) -> None:
-    """Run ``alembic upgrade head`` against *db_path* to land the full schema.
-
-    Uses the packaged ``alembic.ini`` and the ``db=`` x-arg the migration ``env.py``
-    reads — the same programmatic upgrade the replay harness + migration tests use.
-    Catches metadata-vs-migration drift (a model added without a migration).
-    """
-    cfg = Config(_REPO_ROOT / "alembic.ini", cmd_opts=Namespace(x=[f"db={db_path}"]))
-    command.upgrade(cfg, "head")
-
-
 def _feedback_config() -> FeedbackLoopConfig:
     return FeedbackLoopConfig(min_resolved_theses_monthly=30, min_resolved_theses_quarterly=60)
 
@@ -752,7 +840,7 @@ async def _open_after_upgrade(
     GC and, on Windows, the open connection's file lock can fail the enclosing
     ``TemporaryDirectory`` cleanup and shadow the original error.
     """
-    _alembic_upgrade_head(scratch)
+    upgrade_to_head(scratch, repo_root=_REPO_ROOT)
     engine = make_async_engine(scratch)
     try:
         yield make_async_session_factory(engine)
@@ -962,6 +1050,10 @@ def _evaluate_assertions(results: StageResults, seed: FeedbackLoopSeed) -> list[
             ),
         ),
         _check("window load (outcomes + agent_calls)", assert_window_loaded(results.window, seed)),
+        _check(
+            "PM-accuracy replay join (modification effectiveness computes)",
+            assert_replay_join_computes(results.window),
+        ),
         _check(
             "outcome metric (win-rate over resolved thesis)",
             assert_outcome_metric_nonempty(results.metric_result, seed),
