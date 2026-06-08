@@ -637,7 +637,11 @@ def _emit_event_novelty_blocks(
         anomaly_flags = (
             (
                 AnomalyFlag(
-                    name="q12_event_novelty",
+                    # Subject = sector audience (not a symbol): keeps the entry_id
+                    # unique when ≥ 2 audiences fire one run (ALP-934). The audience
+                    # is not a ticker, so the flag is *not* registered ticker-bearing
+                    # and its emitted ``ticker`` stays None.
+                    name=f"q12_event_novelty:{audience.value}",
                     magnitude=float(flag_count),
                     severity="investigate_if_persists",
                 ),
@@ -733,7 +737,11 @@ def _emit_divergence_blocks(
                 payload=block_payload,
                 anomaly_flags=(
                     AnomalyFlag(
-                        name="etf_vs_single_name_divergence",
+                        # Subject = the sector ETF (a symbol): keeps the entry_id
+                        # unique when ≥ 2 ETFs fire one run (ALP-934). The ETF is a
+                        # symbol, so the flag is registered ticker-bearing and the
+                        # emitted ``ticker`` is the ETF (see aggregation.py).
+                        name=f"etf_vs_single_name_divergence:{etf_ticker}",
                         magnitude=float(len(payload["firing_constituents"])),
                         severity="investigate_now",
                     ),

@@ -141,23 +141,26 @@ def collect_anomalies(blocks: Iterable[OutputBlock]) -> list[AnomalySummary]:
 # of the resulting row.
 
 # Flag prefixes that embed a single ticker as their one dynamic ``:``-segment
-# (``correlation_locus_flag:{ticker}``, and the per-ticker q1 / qualitative
-# anomalies ``volume_anomaly:{ticker}`` / ``price_move_anomaly:{ticker}`` /
-# ``news_price_divergence:{ticker}`` — ALP-934). Every other dynamic-suffix flag
-# carries a *pair* (``correlation_breakdown_flag:{row}:{col}``,
+# (``correlation_locus_flag:{ticker}``; the per-ticker q1 / qualitative anomalies
+# ``volume_anomaly:{ticker}`` / ``price_move_anomaly:{ticker}`` /
+# ``news_price_divergence:{ticker}``; and q12's ``etf_vs_single_name_divergence:{etf}``
+# — a sector ETF is a symbol — ALP-934). Every other dynamic-suffix flag carries a
+# *pair* (``correlation_breakdown_flag:{row}:{col}``,
 # ``intra_sector_correlation_divergence:{row}:{col}``), a pair-key
 # (``lead_lag_inversion_flag:{pair_key}``, ``overdue_lag_flag:{pair_key}``), or a
-# non-ticker subject (``prediction_market_delta:{contract_id}`` — a contract, not
-# a symbol) — none names a single subject ticker, so all resolve to
-# ``ticker=None``. Segment *count* alone can't separate the locus / per-ticker
-# case from the pair-key / contract case (both have one suffix segment), so the
-# ticker-bearing prefixes are enumerated explicitly.
+# non-symbol subject (``q12_event_novelty:{sector_audience}``,
+# ``prediction_market_delta:{contract_id}`` — a contract, not a symbol) — none
+# names a single subject ticker, so all resolve to ``ticker=None``. Segment
+# *count* alone can't separate the locus / per-ticker case from the pair-key /
+# contract case (both have one suffix segment), so the ticker-bearing prefixes
+# are enumerated explicitly.
 _TICKER_BEARING_FLAG_PREFIXES: frozenset[str] = frozenset(
     {
         "correlation_locus_flag",
         "volume_anomaly",
         "price_move_anomaly",
         "news_price_divergence",
+        "etf_vs_single_name_divergence",
     }
 )
 

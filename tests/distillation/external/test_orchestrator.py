@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -39,13 +40,17 @@ from alphamind.config.models.distillation import (
     PredictionMarket,
     TrackedCategoryOverride,
 )
-from alphamind.distillation.aggregation import AnomalySummary
+from alphamind.distillation.aggregation import AnomalySummary, collect_anomalies
 from alphamind.distillation.orchestrator import (
     DistillationOutputs,
     _emit_anomaly_activity_log,
     run_external_distillation,
 )
 from alphamind.distillation.output import AnomalyFlag, OutputAudience, OutputBlock
+from alphamind.distillation.q12_corporate_actions import (
+    _emit_divergence_blocks,
+    _emit_event_novelty_blocks,
+)
 from alphamind.persistence.models import (
     CORRELATION_REGIME_BRIEF_KIND,
     AssetUniverse,
@@ -67,7 +72,7 @@ from alphamind.state.invocation_context.activity_log import activity_log_entry_f
 from alphamind.state.tables.activity_log import ActivityLogRow
 from alphamind.state.tables.invocations import InvocationRow
 
-from .conftest import _build_distillation_config
+from .conftest import _build_distillation_config, divergence_detection
 
 # ---------------------------------------------------------------------------
 # Fixture seeding helpers
@@ -930,6 +935,11 @@ def test_orchestrator_zero_flags_emits_zero_entries(tmp_path: Path) -> None:
         eng.dispose()
 
 
+# ---------------------------------------------------------------------------
+# Entry-id collision handling (ALP-934)
+# ---------------------------------------------------------------------------
+
+
 def _per_ticker_volume_summary(*, ticker: str, magnitude: float) -> AnomalySummary:
     """A q1 volume-anomaly summary for one firing ticker in the shared block."""
     return AnomalySummary(
@@ -988,3 +998,93 @@ def test_emit_multiple_per_ticker_flags_in_one_block_persists_distinct_rows(
         assert detail.block_id == "q1.volume_anomaly"
         tickers.add(detail.ticker)
     assert tickers == {"NVDA", "AMD", "AAPL"}
+
+
+def test_emit_anomaly_activity_log_dedupes_colliding_entry_id(
+    session: Session, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Two summaries sharing ``(source_block_id, flag.name)`` persist one row + one WARNING.
+
+    The ALP-934 safety net: identical entry_id keys would violate the
+    ``activity_log`` PK and abort the whole distillation transaction. Dedup keeps
+    the first occurrence in iteration order and downgrades the loss to one
+    observable warning naming the dropped ``block_id`` + ``flag.name``.
+    """
+    invocation_id = "20260608T133500Z-dedup"
+    _seed_invocation_row(session, invocation_id)
+    as_of = datetime(2026, 6, 8, 13, 35, tzinfo=UTC)
+
+    def _colliding_summary() -> AnomalySummary:
+        return AnomalySummary(
+            flag=AnomalyFlag(
+                name="q12_event_novelty:sector_financials",
+                magnitude=2.0,
+                severity="investigate_if_persists",
+            ),
+            source_block_id="q12.event_novelty",
+            audiences=frozenset({OutputAudience.SECTOR_FINANCIALS}),
+            flagged_at=as_of,
+            calibration_state=CalibrationState.CALIBRATED,
+        )
+
+    with caplog.at_level(logging.WARNING, logger="alphamind.distillation.orchestrator"):
+        written = _emit_anomaly_activity_log(
+            session,
+            summaries=[_colliding_summary(), _colliding_summary()],
+            invocation_id=invocation_id,
+            as_of=as_of,
+        )
+
+    assert written == 1
+    assert len(_read_anomaly_entries(session, invocation_id)) == 1
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "q12.event_novelty" in message
+    assert "q12_event_novelty:sector_financials" in message
+
+
+def test_emit_anomaly_activity_log_persists_all_distinct_q12_subjects(session: Session) -> None:
+    """≥2 ETFs + ≥2 audiences firing q12 persist one row per ``(block_id, flag.name)``.
+
+    Regression for the 2026-06-08 abort (ALP-934): driving the real q12 producers
+    (each fans a constant-``block_id`` block out per subject) through
+    ``collect_anomalies`` and the emit boundary, the per-subject flag-name suffix
+    makes every entry_id distinct, so the single ``executemany`` no longer
+    violates the ``activity_log`` PK and every flag persists.
+    """
+    invocation_id = "20260608T133500Z-q12"
+    _seed_invocation_row(session, invocation_id)
+    as_of = datetime(2026, 6, 8, 13, 35, tzinfo=UTC)
+
+    blocks = [
+        *_emit_divergence_blocks(
+            detections=[
+                divergence_detection("XLK", {"AAPL": 2.5, "MSFT": 2.1}),
+                divergence_detection("XLF", {"JPM": 2.4, "BAC": 2.0}),
+            ],
+            freshness_ts=as_of,
+        ),
+        *_emit_event_novelty_blocks(
+            cadence_per_ticker={
+                "AAPL": [{"flag": "unusual_event_cadence"}],
+                "JPM": [{"flag": "unusual_event_cadence"}],
+            },
+            cluster_per_ticker={},
+            sector_lookup={"AAPL": "tech", "JPM": "financials"},
+            freshness_ts=as_of,
+        ),
+    ]
+    summaries = collect_anomalies(blocks)
+    distinct_keys = {(s.source_block_id, s.flag.name) for s in summaries}
+    assert len(distinct_keys) == len(summaries) == 4, (
+        "fixture must fan out 2 ETFs + 2 audiences with distinct entry_id keys"
+    )
+
+    written = _emit_anomaly_activity_log(
+        session, summaries=summaries, invocation_id=invocation_id, as_of=as_of
+    )
+
+    assert written == 4
+    rows = _read_anomaly_entries(session, invocation_id)
+    assert len(rows) == 4

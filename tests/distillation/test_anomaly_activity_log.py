@@ -109,6 +109,47 @@ def test_mapper_extracts_ticker_from_ticker_bearing_flag() -> None:
     assert detail.threshold_key == "correlation_locus_pair_count_threshold"
 
 
+def test_mapper_extracts_etf_ticker_from_divergence_flag() -> None:
+    """``etf_vs_single_name_divergence:{etf}`` carries the ETF into the detail (ALP-934).
+
+    The ETF *is* a symbol, so the per-subject suffix doubles as ticker attribution —
+    unlike the sector-audience suffix on ``q12_event_novelty`` below.
+    """
+    summary = _summary(
+        name="etf_vs_single_name_divergence:SPY",
+        block_id="q12.etf_vs_single_name_divergence",
+    )
+
+    detail = anomaly_summary_to_activity_log_entry(
+        summary, invocation_id="inv-1", timestamp=_AS_OF
+    ).detail
+    assert isinstance(detail, DistillationAnomalyFlagDetail)
+    assert detail.ticker == "SPY"
+    # Suffix stripped before taxonomy resolution.
+    assert detail.threshold_class == "corporate_actions"
+    assert detail.threshold_key == "etf_vs_single_name_divergence"
+
+
+def test_mapper_event_novelty_flag_has_no_ticker() -> None:
+    """``q12_event_novelty:{audience}`` embeds a sector audience, not a symbol → ticker ``None``.
+
+    Mirrors ``prediction_market_delta:{contract_id}``: the suffix disambiguates the
+    entry_id without claiming a single subject ticker (ALP-934).
+    """
+    summary = _summary(
+        name="q12_event_novelty:sector_financials",
+        block_id="q12.event_novelty",
+    )
+
+    detail = anomaly_summary_to_activity_log_entry(
+        summary, invocation_id="inv-1", timestamp=_AS_OF
+    ).detail
+    assert isinstance(detail, DistillationAnomalyFlagDetail)
+    assert detail.ticker is None
+    assert detail.threshold_class == "corporate_actions"
+    assert detail.threshold_key == "q12_event_novelty"
+
+
 def test_mapper_pair_key_flag_has_no_ticker() -> None:
     """A pair / pair-key flag (two-segment or pair-key suffix) resolves ticker to ``None``.
 

@@ -102,6 +102,9 @@ def test_resolve_flag_taxonomy_canonical(
         ("correlation_locus_flag:NVDA", "correlation_locus_flag"),
         ("intra_sector_correlation_divergence:SPY:QQQ", "intra_sector_correlation_divergence"),
         ("lead_lag_inversion_flag:credit_to_equity", "lead_lag_inversion_flag"),
+        # ALP-934 q12 per-subject suffixes: ETF symbol and sector audience.
+        ("etf_vs_single_name_divergence:SPY", "etf_vs_single_name_divergence"),
+        ("q12_event_novelty:sector_financials", "q12_event_novelty"),
     ],
 )
 def test_resolve_strips_colon_suffix(full_name: str, expected_prefix: str) -> None:

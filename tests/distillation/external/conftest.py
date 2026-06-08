@@ -175,3 +175,27 @@ def _build_distillation_config(
             tracked_categories={},
         ),
     ).to_domain()
+
+
+# ---------------------------------------------------------------------------
+# Q12 ETF-vs-single-name divergence detection payload (ALP-934)
+# ---------------------------------------------------------------------------
+
+
+def divergence_detection(etf: str, constituents: dict[str, float]) -> tuple[str, dict[str, Any]]:
+    """Build one ``_emit_divergence_blocks`` detection tuple ``(etf, payload)``.
+
+    Both legs (ETF weakness + single-name BTO surge) are assumed already
+    detected; this only assembles the per-ETF payload the emit step consumes.
+    Shared by the q12 emit-name unit tests and the orchestrator emit-boundary
+    regression so the detection schema lives in one place.
+    """
+    return (
+        etf,
+        {
+            "etf_volume_z": -2.0,
+            "firing_constituents": sorted(constituents),
+            "constituent_bto_z": dict(constituents),
+            "attribution_method": "weight_volume_proxy",
+        },
+    )
