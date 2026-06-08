@@ -30,15 +30,12 @@ import shutil
 import sqlite3
 import tempfile
 import time
-from argparse import Namespace
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -53,6 +50,7 @@ from alphamind.distillation.replay_harness.fixtures import (
     RAW_INPUTS_FILENAME,
     FixtureSlice,
 )
+from alphamind.persistence.alembic_upgrade import upgrade_to_head
 from alphamind.persistence.models import (
     AssetUniverse,
     DistillationContractHistory,
@@ -171,9 +169,7 @@ def _apply_replay_pragmas(dbapi_connection: Any, _record: Any) -> None:
 
 def _migrate_isolated_db(db_path: Path) -> None:
     """Run alembic upgrade head against ``db_path`` to land the full schema."""
-    repo_root = Path(__file__).resolve().parents[4]
-    cfg = Config(repo_root / "alembic.ini", cmd_opts=Namespace(x=[f"db={db_path}"]))
-    command.upgrade(cfg, "head")
+    upgrade_to_head(db_path, repo_root=Path(__file__).resolve().parents[4])
 
 
 # Worst-case wait under exponential backoff is ~1.3s (10ms+20+40+80+160+200*5);

@@ -55,7 +55,6 @@ import asyncio
 import sys
 import tempfile
 import uuid
-from argparse import Namespace
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -64,8 +63,6 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from alembic import command
-from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 # Side-effect import: register the state-persistence tables on ``Base.metadata``
@@ -103,6 +100,7 @@ from alphamind.feedback_loop.validation.records import (
 )
 from alphamind.feedback_loop.validation.register import RegistrationRequest, register_validation
 from alphamind.feedback_loop.validation.supersession import detect_supersessions
+from alphamind.persistence.alembic_upgrade import upgrade_to_head
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
 from alphamind.portfolio_state.events.activity_log import (
     EVENT_TYPE_TO_GROUP,
@@ -703,17 +701,6 @@ def assert_retrospective_saved(
 # ---------------------------------------------------------------------------
 
 
-def _alembic_upgrade_head(db_path: str) -> None:
-    """Run ``alembic upgrade head`` against *db_path* to land the full schema.
-
-    Uses the packaged ``alembic.ini`` and the ``db=`` x-arg the migration ``env.py``
-    reads — the same programmatic upgrade the replay harness + migration tests use.
-    Catches metadata-vs-migration drift (a model added without a migration).
-    """
-    cfg = Config(_REPO_ROOT / "alembic.ini", cmd_opts=Namespace(x=[f"db={db_path}"]))
-    command.upgrade(cfg, "head")
-
-
 def _feedback_config() -> FeedbackLoopConfig:
     return FeedbackLoopConfig(min_resolved_theses_monthly=30, min_resolved_theses_quarterly=60)
 
@@ -752,7 +739,7 @@ async def _open_after_upgrade(
     GC and, on Windows, the open connection's file lock can fail the enclosing
     ``TemporaryDirectory`` cleanup and shadow the original error.
     """
-    _alembic_upgrade_head(scratch)
+    upgrade_to_head(scratch, repo_root=_REPO_ROOT)
     engine = make_async_engine(scratch)
     try:
         yield make_async_session_factory(engine)
