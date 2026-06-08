@@ -99,6 +99,46 @@ async def read_resolved_theses_in_window(
     )
 
 
+async def read_resolved_thesis_pnl_by_position(
+    session: AsyncSession,
+    position_ids: list[str],
+) -> dict[str, float]:
+    """``position_id → resolution_pnl_usd`` for RESOLVED theses on *position_ids*.
+
+    The realized P/L of the resolved thesis on each requested position — the
+    "actual approved/modified-form trade" leg of the counterfactual-replay join
+    (ALP-928). A thesis is one-to-one with a position, so the map carries at most
+    one entry per position. Unlike :func:`read_resolved_theses_in_window`, this is
+    **not** clipped to a window: the modified-form trade behind a
+    ``modification_original_form`` replay may resolve outside the replay's analytics
+    window, so the join keys on position and reads the thesis's own resolution
+    whenever it lands. Positions with no RESOLVED thesis (still ACTIVE, never
+    opened, or unknown) are silently absent. An empty *position_ids* returns an
+    empty dict without a query.
+    """
+    if not position_ids:
+        return {}
+    thesis_stmt = select(ThesisRow).where(
+        ThesisRow.status == ThesisRecordStatus.RESOLVED.value,
+        ThesisRow.position_id.in_(position_ids),
+    )
+    thesis_rows = tuple((await session.execute(thesis_stmt)).scalars())
+    if not thesis_rows:
+        return {}
+    thesis_ids = [row.thesis_id for row in thesis_rows]
+    comp_stmt = select(ThesisComponentRow).where(ThesisComponentRow.thesis_id.in_(thesis_ids))
+    components_by_thesis: dict[str, list[ThesisComponentRow]] = {tid: [] for tid in thesis_ids}
+    for comp in (await session.execute(comp_stmt)).scalars():
+        components_by_thesis[comp.thesis_id].append(comp)
+    pnl_by_position: dict[str, float] = {}
+    for row in thesis_rows:
+        record = rows_to_record(row, tuple(components_by_thesis[row.thesis_id]))
+        # A RESOLVED record's resolution_pnl_usd is non-None by ThesisRecord's validators.
+        assert record.resolution_pnl_usd is not None
+        pnl_by_position[str(record.position_id)] = record.resolution_pnl_usd
+    return pnl_by_position
+
+
 async def read_invocation_conditioning(
     session: AsyncSession,
     invocation_ids: list[str],
@@ -128,5 +168,6 @@ async def read_invocation_conditioning(
 __all__ = [
     "InvocationConditioning",
     "read_invocation_conditioning",
+    "read_resolved_thesis_pnl_by_position",
     "read_resolved_theses_in_window",
 ]

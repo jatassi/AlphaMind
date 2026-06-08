@@ -25,6 +25,7 @@ from alphamind.persistence.session import (
 from alphamind.portfolio_state.records.theses import ThesisRecordStatus
 from alphamind.state.repository.outcome_queries import (
     read_invocation_conditioning,
+    read_resolved_thesis_pnl_by_position,
     read_resolved_theses_in_window,
 )
 from alphamind.state.tables.theses_codec import record_to_rows
@@ -104,6 +105,95 @@ class TestReadResolvedThesesInWindow:
             datetime(2030, 2, 1, tzinfo=UTC),
         )
         assert theses == ()
+
+
+# ---------------------------------------------------------------------------
+# ALP-928 — read_resolved_thesis_pnl_by_position helper
+# ---------------------------------------------------------------------------
+
+
+def _seed_resolved_pnl(
+    sess: object,
+    thesis_id: str,
+    position_id: str,
+    resolved_at: datetime,
+    resolution_pnl_usd: float,
+) -> None:
+    sess.add(stub_position_row(position_id))  # type: ignore[attr-defined]
+    sess.flush()  # type: ignore[attr-defined]
+    record = make_resolved_thesis_record(
+        thesis_id,
+        position_id,
+        resolution_timestamp=resolved_at,
+        resolution_pnl_usd=resolution_pnl_usd,
+    )
+    thesis_row, comp_rows = record_to_rows(record)
+    sess.add(thesis_row)  # type: ignore[attr-defined]
+    for crow in comp_rows:
+        sess.add(crow)  # type: ignore[attr-defined]
+
+
+@pytest.fixture()
+async def pnl_by_position_session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
+    """SQLite seeded with resolved theses on distinct positions (one out-of-window)
+    plus an ACTIVE thesis whose position must never resolve a P/L."""
+    db_path = tmp_path / "pnl_by_position_test.db"
+    sync_engine = make_engine(str(db_path))
+    Base.metadata.create_all(sync_engine)
+    with make_session_factory(sync_engine)() as sess:
+        _seed_resolved_pnl(sess, "thes-a", "pos-a", _RES_IN, 42.0)
+        # Resolved well outside the analytics window — still keyed by position.
+        _seed_resolved_pnl(sess, "thes-b", "pos-b", _RES_OUT, -17.0)
+        sess.add(stub_position_row("pos-active"))
+        sess.flush()
+        sess.add(
+            stub_thesis_row("thes-active", "pos-active", status=ThesisRecordStatus.ACTIVE.value)
+        )
+        sess.commit()
+    sync_engine.dispose()
+
+    async_engine: AsyncEngine = make_async_engine(str(db_path))
+    factory: async_sessionmaker[AsyncSession] = make_async_session_factory(async_engine)
+    async with factory() as sess_async:
+        yield sess_async
+    await async_engine.dispose()
+
+
+class TestReadResolvedThesisPnlByPosition:
+    async def test_maps_position_to_resolution_pnl_regardless_of_window(
+        self, pnl_by_position_session: AsyncSession
+    ) -> None:
+        # Both positions resolve a P/L even though pos-b resolved outside any
+        # analytics window — the modified-form thesis's own resolution is keyed
+        # by position, not clipped to a window.
+        result = await read_resolved_thesis_pnl_by_position(
+            pnl_by_position_session, ["pos-a", "pos-b"]
+        )
+        assert result == {"pos-a": 42.0, "pos-b": -17.0}
+
+    async def test_active_thesis_position_absent(
+        self, pnl_by_position_session: AsyncSession
+    ) -> None:
+        result = await read_resolved_thesis_pnl_by_position(
+            pnl_by_position_session, ["pos-a", "pos-active"]
+        )
+        assert "pos-active" not in result
+        assert result == {"pos-a": 42.0}
+
+    async def test_unknown_position_absent(
+        self, pnl_by_position_session: AsyncSession
+    ) -> None:
+        result = await read_resolved_thesis_pnl_by_position(
+            pnl_by_position_session, ["pos-a", "pos-missing"]
+        )
+        assert "pos-missing" not in result
+        assert result == {"pos-a": 42.0}
+
+    async def test_empty_positions_returns_empty_dict(
+        self, pnl_by_position_session: AsyncSession
+    ) -> None:
+        result = await read_resolved_thesis_pnl_by_position(pnl_by_position_session, [])
+        assert result == {}
 
 
 # ---------------------------------------------------------------------------
