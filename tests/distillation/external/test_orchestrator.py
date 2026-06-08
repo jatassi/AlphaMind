@@ -72,7 +72,7 @@ from alphamind.state.invocation_context.activity_log import activity_log_entry_f
 from alphamind.state.tables.activity_log import ActivityLogRow
 from alphamind.state.tables.invocations import InvocationRow
 
-from .conftest import _build_distillation_config
+from .conftest import _build_distillation_config, divergence_detection
 
 # ---------------------------------------------------------------------------
 # Fixture seeding helpers
@@ -940,20 +940,6 @@ def test_orchestrator_zero_flags_emits_zero_entries(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _divergence_detection(
-    etf: str, constituents: dict[str, float]
-) -> tuple[str, dict[str, object]]:
-    return (
-        etf,
-        {
-            "etf_volume_z": -2.0,
-            "firing_constituents": sorted(constituents),
-            "constituent_bto_z": dict(constituents),
-            "attribution_method": "weight_volume_proxy",
-        },
-    )
-
-
 def test_emit_anomaly_activity_log_dedupes_colliding_entry_id(
     session: Session, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -1014,8 +1000,8 @@ def test_emit_anomaly_activity_log_persists_all_distinct_q12_subjects(session: S
     blocks = [
         *_emit_divergence_blocks(
             detections=[
-                _divergence_detection("XLK", {"AAPL": 2.5, "MSFT": 2.1}),
-                _divergence_detection("XLF", {"JPM": 2.4, "BAC": 2.0}),
+                divergence_detection("XLK", {"AAPL": 2.5, "MSFT": 2.1}),
+                divergence_detection("XLF", {"JPM": 2.4, "BAC": 2.0}),
             ],
             freshness_ts=as_of,
         ),

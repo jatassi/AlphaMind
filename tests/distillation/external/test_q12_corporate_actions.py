@@ -53,6 +53,8 @@ from alphamind.persistence.models import (
     SectorClassification,
 )
 
+from .conftest import divergence_detection
+
 # ---------------------------------------------------------------------------
 # Fixture helpers — kept minimal; each test composes only what it needs.
 # ---------------------------------------------------------------------------
@@ -725,15 +727,6 @@ class TestRecentCorporateActions:
 _NOVELTY_FRESHNESS = datetime(2026, 6, 8, tzinfo=UTC)
 
 
-def _divergence_payload(*, constituents: dict[str, float]) -> dict[str, Any]:
-    return {
-        "etf_volume_z": -2.0,
-        "firing_constituents": sorted(constituents),
-        "constituent_bto_z": dict(constituents),
-        "attribution_method": "weight_volume_proxy",
-    }
-
-
 def test_divergence_flag_name_embeds_etf_ticker_per_block() -> None:
     """Two ETFs firing the divergence yield two distinct ``:{etf}``-suffixed names.
 
@@ -742,8 +735,8 @@ def test_divergence_flag_name_embeds_etf_ticker_per_block() -> None:
     """
     blocks = _emit_divergence_blocks(
         detections=[
-            ("XLK", _divergence_payload(constituents={"AAPL": 2.5, "MSFT": 2.1})),
-            ("XLF", _divergence_payload(constituents={"JPM": 2.4, "BAC": 2.0})),
+            divergence_detection("XLK", {"AAPL": 2.5, "MSFT": 2.1}),
+            divergence_detection("XLF", {"JPM": 2.4, "BAC": 2.0}),
         ],
         freshness_ts=_NOVELTY_FRESHNESS,
     )
