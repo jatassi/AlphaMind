@@ -28,6 +28,7 @@ imports ``execution`` (enforced by ``.importlinter``).
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -701,15 +702,21 @@ def _read_replays_for_envelopes(
     return tuple(records)
 
 
-def _replay_version_ordinal(version: str) -> tuple[int, ...]:
-    """Comparable ordinal of a ``v``-prefixed replay-engine version.
+def _replay_version_ordinal(version: str) -> tuple[tuple[int, int | str], ...]:
+    """Natural-sort key for a replay-engine version so ``"v10"`` sorts after ``"v9"``.
 
-    The engine stamps monotonically-increasing ``v``-prefixed versions (``"v2"``
-    today; dot-separated ``"vN.N.N"`` is also tolerated). Parsing the digits to an
-    int tuple compares them numerically rather than lexically — where ``"v10" <
-    "v9"`` would wrongly hold — so ``v10`` correctly sorts after ``v9``.
+    Splits the version into digit and non-digit runs; digit runs compare numerically
+    — fixing the lexical ``"v10" < "v9"`` bug for the engine's ``vN`` versions — and
+    non-digit runs lexically. Each run is type-tagged (``0`` digit / ``1`` text) so
+    int and str runs never compare across types, keeping the key total-ordered for
+    any version string (``"v2"``, ``"v1.0.0"``, a custom seed tag like
+    ``"fbl-verify-v1"``), not just clean ``vN``.
     """
-    return tuple(int(part) for part in version.removeprefix("v").split("."))
+    return tuple(
+        (0, int(run)) if run.isdigit() else (1, run)
+        for run in re.split(r"(\d+)", version)
+        if run
+    )
 
 
 def _filter_to_latest_version(
