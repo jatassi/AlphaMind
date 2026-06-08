@@ -78,6 +78,23 @@ def test_mapper_builds_distillation_anomaly_flag_entry() -> None:
     assert detail.ticker is None
 
 
+def test_mapper_entry_id_is_deterministic_for_idempotency() -> None:
+    """Two builds for one ``(invocation_id, source_block_id, flag.name)`` share an entry_id.
+
+    The orchestrator persists the returned entry on its own session; a stable PK
+    keeps a re-run of the same invocation from accumulating duplicate anomaly rows.
+    """
+    summary = _summary(name="volume_anomaly", block_id="q1.volume.NVDA")
+
+    first = anomaly_summary_to_activity_log_entry(summary, invocation_id="inv-1", timestamp=_AS_OF)
+    second = anomaly_summary_to_activity_log_entry(summary, invocation_id="inv-1", timestamp=_AS_OF)
+
+    assert first.entry_id == second.entry_id
+    assert first.entry_id == (
+        f"inv-1-{EventType.DISTILLATION_ANOMALY_FLAG.value}-q1.volume.NVDA-volume_anomaly"
+    )
+
+
 def test_mapper_extracts_ticker_from_ticker_bearing_flag() -> None:
     """``correlation_locus_flag:{ticker}`` carries the ticker into the detail."""
     summary = _summary(name="correlation_locus_flag:NVDA", block_id="q7.correlation_locus.NVDA")

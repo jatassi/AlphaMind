@@ -51,9 +51,9 @@ from alphamind.distillation.output import (
 from alphamind.portfolio_state.events import (
     ActivityLogEntry,
     DistillationAnomalyFlagDetail,
-    EventGroup,
     EventSource,
     EventType,
+    build_activity_log_entry,
 )
 
 # ---------------------------------------------------------------------------
@@ -199,17 +199,16 @@ def anomaly_summary_to_activity_log_entry(
         f"{invocation_id}-{EventType.DISTILLATION_ANOMALY_FLAG.value}-"
         f"{summary.source_block_id}-{flag.name}"
     )
-    return ActivityLogEntry(
-        entry_id=entry_id,
+    return build_activity_log_entry(
         invocation_id=invocation_id,
-        timestamp=timestamp,
         event_type=EventType.DISTILLATION_ANOMALY_FLAG,
-        event_group=EventGroup.DISTILLATION_ANOMALY,
         position_id=None,
         order_id=None,
         thesis_id=None,
-        source=EventSource.DISTILLATION_ORCHESTRATOR,
+        timestamp=timestamp,
         detail=detail,
+        source=EventSource.DISTILLATION_ORCHESTRATOR,
+        entry_id=entry_id,
     )
 
 

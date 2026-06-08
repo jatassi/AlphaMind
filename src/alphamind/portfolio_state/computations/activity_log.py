@@ -16,6 +16,7 @@ from alphamind.portfolio_state.events.activity_log import (
     EventGroup,
     EventSource,
     EventType,
+    build_activity_log_entry,
 )
 
 # ---------------------------------------------------------------------------
@@ -285,15 +286,14 @@ def build_distillation_config_change_entry(
         changes=compute_distillation_config_diff(prior, new),
         git_sha=git_sha,
     )
-    return ActivityLogEntry(
-        entry_id=entry_id,
+    return build_activity_log_entry(
         invocation_id=invocation_id,
-        timestamp=timestamp,
         event_type=EventType.DISTILLATION_CONFIG_CHANGE,
-        event_group=EventGroup.CONFIGURATION,
         position_id=None,
         order_id=None,
         thesis_id=None,
-        source=EventSource.CONFIG_RELOAD,
+        timestamp=timestamp,
         detail=detail,
+        source=EventSource.CONFIG_RELOAD,
+        entry_id=entry_id,
     )
