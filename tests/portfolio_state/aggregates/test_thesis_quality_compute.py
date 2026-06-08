@@ -23,7 +23,6 @@ from alphamind.portfolio_state.aggregates.thesis_quality_compute import (
     compute_thesis_quality_aggregate,
 )
 from alphamind.portfolio_state.records.theses import (
-    KeyAssumption,
     ThesisComponent,
     ThesisComponentOutcome,
     ThesisComponentType,
@@ -41,8 +40,6 @@ def _component(
     cid: str,
     thesis_id: str,
     ctype: ThesisComponentType,
-    assumptions: tuple[KeyAssumption, ...],
-    outcome: ThesisComponentOutcome | None,
 ) -> ThesisComponent:
     return ThesisComponent(
         component_id=cid,
@@ -51,9 +48,12 @@ def _component(
         linked_bracket_leg_type=None,
         instrument_reference="AAPL",
         narrative="Narrative.",
-        key_assumptions=assumptions,
+        key_assumptions=(),
         generation_timestamp=_AS_OF - timedelta(hours=48),
-        resolution_outcome=outcome,
+        # RESOLVED theses require every component to carry a scored outcome
+        # (ThesisRecord validator); the specific value is not read by the §6a
+        # compute, which no longer inspects components.
+        resolution_outcome=ThesisComponentOutcome.VALIDATED,
         resolution_notes=None,
     )
 
@@ -66,31 +66,16 @@ def _resolved_thesis(
     generated_at: datetime | None = None,
     resolved_at: datetime | None = None,
     time_expectation_hours: float = 24.0,
-    assumptions_by_component: tuple[tuple[KeyAssumption, ...], ...] | None = None,
-    component_outcome: ThesisComponentOutcome = ThesisComponentOutcome.VALIDATED,
 ) -> ThesisRecord:
     gen = generated_at if generated_at is not None else _AS_OF - timedelta(hours=24)
     res = resolved_at if resolved_at is not None else _AS_OF - timedelta(hours=1)
-    if assumptions_by_component is None:
-        assumptions_by_component = (
-            (KeyAssumption(text="a", outcome=component_outcome),),
-            (KeyAssumption(text="b", outcome=component_outcome),),
-            (KeyAssumption(text="c", outcome=component_outcome),),
-        )
     types = (
         ThesisComponentType.ENTRY_RATIONALE,
         ThesisComponentType.TARGET_RATIONALE,
         ThesisComponentType.INVALIDATION_RATIONALE,
     )
     components = tuple(
-        _component(
-            cid=f"{thesis_id}-c{i}",
-            thesis_id=thesis_id,
-            ctype=types[i],
-            assumptions=assumptions_by_component[i],
-            outcome=component_outcome,
-        )
-        for i in range(3)
+        _component(cid=f"{thesis_id}-c{i}", thesis_id=thesis_id, ctype=types[i]) for i in range(3)
     )
     return ThesisRecord(
         thesis_id=ThesisId(thesis_id),
