@@ -30,9 +30,7 @@ from alphamind.execution.counterfactual_replay_engine.engine import (
     ReplayBatchResult,
     replay_pending_proposals,
 )
-from alphamind.execution.counterfactual_replay_engine.enums import UnevaluableReason
 from alphamind.execution.counterfactual_replay_engine.queue import iter_pending_replay_proposals
-from alphamind.execution.counterfactual_replay_engine.records import CounterfactualReplayRecord
 from alphamind.scripts import verify_counterfactual_replay_engine as verify
 from alphamind.scripts.verify_counterfactual_replay_engine import (
     ReplaySeed,
@@ -50,6 +48,10 @@ from alphamind.scripts.verify_counterfactual_replay_engine import (
 )
 from alphamind.state.repository.counterfactual_replays import (
     load_counterfactual_replays_for_envelope,
+)
+from alphamind.state.tables.counterfactual_replays import (
+    CounterfactualReplayRecord,
+    UnevaluableReason,
 )
 
 

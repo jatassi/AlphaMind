@@ -488,6 +488,8 @@ def _invoke_kwargs(
     as_of: datetime | None = None,
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
+    telemetry_session: Any | None = None,
+    provenance_root: Path | None = None,
 ) -> dict[str, Any]:
     return {
         "agent_config": agent_config,
@@ -508,6 +510,8 @@ def _invoke_kwargs(
         "state_persistence_config": _state_persistence_config(),
         "archive_root": archive_root,
         "sdk_query_fn": sdk_query_fn,
+        "telemetry_session": telemetry_session,
+        "provenance_root": provenance_root,
     }
 
 
@@ -1406,3 +1410,105 @@ async def test_sdk_query_fn_is_used_real_query_never_called(
             )
         )
         mock_real.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# agent_calls telemetry capture (ALP-880) — PM uses a private _DiagState
+# ---------------------------------------------------------------------------
+
+_INV_TELEM_PM = "inv-telem-pm"
+_PLT_TELEM_PM = "plt-telem-pm"
+
+
+@pytest.fixture()
+async def telemetry_factory(tmp_path: Path):  # type: ignore[no-untyped-def]
+    """On-disk SQLite with the invocation FK target for the capture row seeded."""
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    import alphamind.state.tables  # noqa: F401 — register all tables on Base.metadata
+    from alphamind.persistence.models import Base
+    from alphamind.persistence.session import (
+        make_async_engine,
+        make_async_session_factory,
+        make_engine,
+        make_session_factory,
+    )
+    from tests.state._fk_substrate import stub_invocation_row, stub_process_lifetime_row
+
+    db_path = tmp_path / "telem.db"
+    sync_engine = make_engine(str(db_path))
+    Base.metadata.create_all(sync_engine)
+    with make_session_factory(sync_engine)() as sess:
+        sess.add(stub_process_lifetime_row(_PLT_TELEM_PM))
+        sess.flush()
+        sess.add(stub_invocation_row(_INV_TELEM_PM, process_lifetime_id=_PLT_TELEM_PM))
+        sess.commit()
+    sync_engine.dispose()
+
+    async_engine = make_async_engine(str(db_path))
+    factory: async_sessionmaker[AsyncSession] = make_async_session_factory(async_engine)
+    yield factory
+    await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_pm_capture_writes_row_and_artifacts(
+    agent_config: BaseAgentConfig,
+    archive_root: Path,
+    validation_state: ValidationToolState,
+    submit_envelope_state: SubmitEnvelopeState,
+    retrieval_store: RetrievalStore,
+    thesis_component_reader: PortfolioManagerThesisComponentReader,
+    pre_processor_bundle: ProposalPreProcessorBundle,
+    pm_view: PortfolioManagerView,
+    active_sectors: frozenset[str],
+    library_config: LibraryConfig,
+    library_market: MarketInputs,
+    tmp_path: Path,
+    telemetry_factory: Any,
+) -> None:
+    """A PM call (whose harness carries a private _DiagState) persists one
+    agent_calls row + the four provenance files via the shared capture seam."""
+    from alphamind.state.repository.agent_calls_queries import read_agent_calls_for_invocation
+
+    stub = _make_stub_query([_make_sdk_response(_MINIMAL_PAYLOAD)])
+    provenance_root = tmp_path / "provenance"
+
+    async with telemetry_factory() as session:
+        await invoke_pm(
+            **_invoke_kwargs(
+                agent_config=agent_config,
+                user_message="Produce PM output.",
+                invocation_id=InvocationId(_INV_TELEM_PM),
+                validation_state=validation_state,
+                submit_envelope_state=submit_envelope_state,
+                retrieval_store=retrieval_store,
+                thesis_component_reader=thesis_component_reader,
+                pre_processor_bundle=pre_processor_bundle,
+                pm_view=pm_view,
+                active_sectors=active_sectors,
+                library_config=library_config,
+                library_market=library_market,
+                archive_root=archive_root,
+                as_of=_AS_OF,
+                sdk_query_fn=stub,
+                telemetry_session=session,
+                provenance_root=provenance_root,
+            )
+        )
+        await session.commit()
+
+    async with telemetry_factory() as session:
+        rows = await read_agent_calls_for_invocation(session, _INV_TELEM_PM)
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.agent_name == "portfolio_manager"
+    assert row.success is True
+    assert row.model_id == str(agent_config.model)
+    assert row.output_schema_ref is not None  # PM has a structured-output schema
+    assert row.output_artifact_ref is not None
+    pdir = Path(row.output_artifact_ref)
+    for name in ("system_prompt.md", "output_schema.json", "tools_definition.json", "output.json"):
+        assert (pdir / name).exists()

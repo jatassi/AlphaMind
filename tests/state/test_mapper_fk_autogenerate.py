@@ -34,7 +34,11 @@ _EXPECTED_FKS: dict[str, dict[str, str]] = {
         "bracket_id": "brackets.bracket_id",
         "parent_position_id": "positions.position_id",
     },
-    "theses": {"position_id": "positions.position_id"},
+    "theses": {
+        "position_id": "positions.position_id",
+        # ALP-919 — non-deferrable FK to generating invocation.
+        "invocation_id": "invocations.invocation_id",
+    },
     "orders": {
         "position_id": "positions.position_id",
         "bracket_id": "brackets.bracket_id",

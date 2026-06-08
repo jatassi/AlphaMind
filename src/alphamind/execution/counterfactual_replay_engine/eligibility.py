@@ -27,14 +27,14 @@ from alphamind.decision.strategist.models import (
     PendingOrderAssessment,
     PositionAssessment,
 )
-from alphamind.execution.counterfactual_replay_engine.enums import (
-    ReplayStatus,
-    UnevaluableReason,
-)
 from alphamind.execution.counterfactual_replay_engine.repos import (
     BarRepository,
     CorporateActionRepository,
     OptionsSnapshotRepository,
+)
+from alphamind.state.tables.counterfactual_replays import (
+    ReplayStatus,
+    UnevaluableReason,
 )
 
 __all__ = [

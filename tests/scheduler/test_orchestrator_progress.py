@@ -424,6 +424,7 @@ async def test_run_invocation_records_every_phase_boundary(
 
     expected_phases = {
         "fill_collection",
+        "thesis_resolution",
         "snapshot_assembly",
         "distillation",
         "domain_researchers",

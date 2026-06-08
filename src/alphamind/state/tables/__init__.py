@@ -7,6 +7,7 @@ them without having to remember each module name.
 """
 
 from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.agent_calls import AgentCallsRow
 from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.brackets import BracketRow
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
@@ -25,13 +26,19 @@ from alphamind.state.tables.position_greeks import PositionGreeksRow
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
 from alphamind.state.tables.projection_rebuild_watermark import ProjectionRebuildWatermarkRow
+from alphamind.state.tables.retrospective_decisions import RetrospectiveDecisionsRow
+from alphamind.state.tables.retrospective_reports import RetrospectiveReportsRow
 from alphamind.state.tables.theses import ThesisRow
 from alphamind.state.tables.thesis_components import ThesisComponentRow
 from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
 from alphamind.state.tables.unattributed_fills import UnattributedFillRow
+from alphamind.state.tables.validation_outcomes import ValidationOutcomesRow
+from alphamind.state.tables.validations import ValidationsRow
+from alphamind.state.tables.weekly_digest_snapshots import WeeklyDigestSnapshotsRow
 
 __all__ = [
     "ActivityLogRow",
+    "AgentCallsRow",
     "BracketLegRow",
     "BracketRow",
     "BrokerEventLogRow",
@@ -48,8 +55,13 @@ __all__ = [
     "PositionRow",
     "ProcessLifetimeRow",
     "ProjectionRebuildWatermarkRow",
+    "RetrospectiveDecisionsRow",
+    "RetrospectiveReportsRow",
     "ThesisComponentRow",
     "ThesisPnlLedgerRow",
     "ThesisRow",
     "UnattributedFillRow",
+    "ValidationOutcomesRow",
+    "ValidationsRow",
+    "WeeklyDigestSnapshotsRow",
 ]

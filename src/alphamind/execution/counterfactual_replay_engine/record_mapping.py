@@ -40,14 +40,12 @@ from alphamind.execution.counterfactual_replay_engine.confidence import (
     classify_confidence,
     replay_engine_version,
 )
-from alphamind.execution.counterfactual_replay_engine.enums import (
+from alphamind.state.tables.counterfactual_replays import (
+    CounterfactualReplayRecord,
     ExitLeg,
     ReplayKind,
     ReplayStatus,
     UnevaluableReason,
-)
-from alphamind.execution.counterfactual_replay_engine.records import (
-    CounterfactualReplayRecord,
 )
 
 if TYPE_CHECKING:

@@ -128,17 +128,19 @@ class TestEnumMembers:
             "CORPORATE_ACTION",
             "CONFIGURATION",
             "RECONCILIATION",
+            "DISTILLATION_ANOMALY",
         }
         assert {m.name for m in EventGroup} == expected
 
     def test_event_type_is_str_enum(self) -> None:
         assert issubclass(EventType, StrEnum)
 
-    def test_event_type_has_exactly_46_members(self) -> None:
-        # 46 = 44 baseline + 1 (PROFILE_SWITCHED, ALP-663) + 1
+    def test_event_type_has_exactly_47_members(self) -> None:
+        # 47 = 44 baseline + 1 (PROFILE_SWITCHED, ALP-663) + 1
         # (BORROW_COST_ACCRUED, ALP-718, emitted by the continuous monitor's
-        # daily borrow-accrual tick — architecture.md § 4f).
-        assert len(EventType) == 46
+        # daily borrow-accrual tick — architecture.md § 4f) + 1
+        # (the distillation-anomaly event, ALP-877/02e — distillation anomaly emission).
+        assert len(EventType) == 47
 
     def test_event_type_position_lifecycle_members(self) -> None:
         for name in ("POSITION_OPENED", "POSITION_CLOSED", "POSITION_ADDED", "POSITION_REDUCED"):
@@ -222,6 +224,13 @@ class TestEnumMembers:
             "CORPORATE_ACTION_PROCESSOR",
             "CONFIG_RELOAD",
             "OPERATOR_CONSOLE",
+            "DISTILLATION_ORCHESTRATOR",
+            # ALP-899 — the analysis pipeline's thesis-resolution step emits
+            # THESIS_RESOLVED under this source.
+            "ANALYSIS_PIPELINE",
+            # ALP-918 — the option-lifecycle poll emits POSITION_CLOSED on
+            # expiry / assignment / exercise under this source.
+            "ACCOUNT_ACTIVITIES_PROCESSOR",
         }
         assert {m.name for m in EventSource} == expected
 
@@ -234,6 +243,10 @@ class TestEnumMembers:
             "MARGIN_LIQUIDATION",
             "FORCED_BUY_IN",
             "CORPORATE_ACTION_CASH_MERGER",
+            # ALP-918 — the three option-lifecycle close exit methods.
+            "OPTION_EXPIRY",
+            "OPTION_ASSIGNMENT",
+            "OPTION_EXERCISE",
         }
         assert {m.name for m in PositionExitMethod} == expected
 
@@ -332,11 +345,11 @@ class TestMappingExhaustiveness:
 class TestAnyDetailTypeAlias:
     """AnyDetailType is exported and covers all detail-payload classes."""
 
-    def test_any_detail_type_has_46_members(self) -> None:
-        # See test_event_type_has_exactly_46_members — BorrowCostAccruedDetail
-        # added by ALP-718 alongside PROFILE_SWITCHED (ALP-663).
+    def test_any_detail_type_has_47_members(self) -> None:
+        # See test_event_type_has_exactly_47_members — DistillationAnomalyFlagDetail
+        # added by ALP-877/02e alongside the earlier BorrowCostAccruedDetail (ALP-718).
         members = get_args(AnyDetailType)
-        assert len(members) == 46
+        assert len(members) == 47
 
     def test_any_detail_type_covers_all_detail_classes(self) -> None:
         members = set(get_args(AnyDetailType))
@@ -2001,6 +2014,58 @@ class TestEnvelopeRejectionDetail:
             detail=detail,
         )
         assert entry.event_type == EventType.ENVELOPE_REJECTED
+
+
+class TestPMDecisionAntiPatternsJson:
+    """ALP-911: ``PMDecisionDetail`` carries the PM's identified anti-patterns.
+
+    The tags are persisted so the feedback-loop ``anti_pattern_frequency`` metrics
+    can compute off the ``pm_decision_log`` bundle. No migration is needed — the
+    field is JSON in the existing ``detail_json`` column, the codec auto-encodes it,
+    and ``decode_detail`` decodes an absent key to the ``[]`` default (back-compat).
+    """
+
+    def _detail(self, anti_patterns_json: list[str]) -> PMDecisionDetail:
+        return PMDecisionDetail(
+            envelope_id="env-001",
+            source_provenance_json={"source_provenance": "pm_analyst"},
+            evaluation_json={"verdict": "APPROVE"},
+            modifications_json=[],
+            resulting_command_ids=("cmd-001",),
+            verdict=PMVerdict.APPROVE,
+            originating_proposal_json={},
+            anti_patterns_json=anti_patterns_json,
+        )
+
+    def test_defaults_to_empty_list(self) -> None:
+        detail = PMDecisionDetail(
+            envelope_id="env-001",
+            source_provenance_json={},
+            evaluation_json={},
+            modifications_json=[],
+            resulting_command_ids=(),
+            verdict=PMVerdict.APPROVE,
+            originating_proposal_json={},
+        )
+        assert detail.anti_patterns_json == []
+
+    def test_tags_round_trip_through_codec(self) -> None:
+        tags = ["sunk_cost_persistence", "conviction_inflation"]
+        detail = self._detail(tags)
+        rebuilt = decode_detail(encode_detail(detail), PMDecisionDetail)
+        assert rebuilt.anti_patterns_json == tags
+
+    def test_absent_key_decodes_to_empty_default(self) -> None:
+        # A row persisted before this field existed has no ``anti_patterns_json``
+        # key; the codec must decode it to the ``[]`` default rather than raising.
+        legacy_payload = (
+            '{"envelope_id":"env-001","source_provenance_json":{},'
+            '"evaluation_json":{},"modifications_json":[],'
+            '"resulting_command_ids":["cmd-001"],"verdict":"APPROVE",'
+            '"originating_proposal_json":{},"reprice_markers_json":[]}'
+        )
+        rebuilt = decode_detail(legacy_payload, PMDecisionDetail)
+        assert rebuilt.anti_patterns_json == []
 
 
 # ---------------------------------------------------------------------------

@@ -21,13 +21,6 @@ from datetime import UTC, datetime
 from alphamind._kernel.ids import EnvelopeId
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.counterfactual_replay_engine.confidence import replay_engine_version
-from alphamind.execution.counterfactual_replay_engine.enums import (
-    Confidence,
-    ExitLeg,
-    ReplayKind,
-    ReplayStatus,
-    UnevaluableReason,
-)
 from alphamind.execution.counterfactual_replay_engine.equity_replay import EquityReplayResult
 from alphamind.execution.counterfactual_replay_engine.option_replay import OptionReplayResult
 from alphamind.execution.counterfactual_replay_engine.record_mapping import (
@@ -38,6 +31,13 @@ from alphamind.execution.counterfactual_replay_engine.record_mapping import (
 )
 from alphamind.execution.counterfactual_replay_engine.strategist_replay import (
     StrategistActionResult,
+)
+from alphamind.state.tables.counterfactual_replays import (
+    Confidence,
+    ExitLeg,
+    ReplayKind,
+    ReplayStatus,
+    UnevaluableReason,
 )
 
 _ENVELOPE = EnvelopeId("env-1")

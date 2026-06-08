@@ -29,10 +29,10 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from alphamind.execution.counterfactual_replay_engine.enums import ReplayKind
 from alphamind.portfolio_state.events.types import EventType, PMVerdict
 from alphamind.state.invocation_context.activity_log import activity_log_entry_from_row
 from alphamind.state.tables.activity_log import ActivityLogRow
+from alphamind.state.tables.counterfactual_replays import ReplayKind
 
 if TYPE_CHECKING:
     from alphamind.portfolio_state.events.activity_log import ActivityLogEntry

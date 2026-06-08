@@ -235,6 +235,16 @@ ignore_imports =
     # for the upsert + read paths. Retires under the same punch-list #9
     # split alongside the q*/loaders entries above.
     alphamind.distillation.realized_vol -> alphamind.persistence.models
+    # ALP-881 (story 04b) — the orchestrator is the distillation layer's
+    # imperative shell and persists each produced anomaly flag as a
+    # ``DISTILLATION_ANOMALY_FLAG`` activity-log row on its sync session, the
+    # same way it already persists the correlation-regime brief via
+    # ``persistence.models.Brief``. The shared activity-log codec
+    # (``activity_log_entry_to_row``) lives in ``state.invocation_context`` and
+    # reaches sqlalchemy only through ``state.tables.activity_log`` (the ORM
+    # row). This is an IO-shell carve-out mirroring the
+    # ``orchestrator -> persistence.models`` exception above.
+    alphamind.distillation.orchestrator -> alphamind.state.invocation_context.activity_log
 
 # Forbidden contract (ALP-467 pilot): pure-compute cores split out by the
 # distillation compute/load boundary pilot must never import sqlalchemy.
@@ -339,6 +349,40 @@ forbidden_modules =
     alphamind.scheduler
     alphamind.scripts
     alphamind.state
+
+# Forbidden contract: ``alphamind.feedback_loop`` is read-only over trading
+# state — it measures and proposes, never mutating live trading-state records.
+# The clearest enforceable proxy is that it must not import the execution layer
+# (the writer of trading state). The one thesis-resolution authoring exception
+# (ALP-834 handoff) deliberately lives in ``analysis/thesis_resolution/`` + a
+# ``run_invocation`` step, NOT in ``feedback_loop``, so this stays a clean ban.
+[importlinter:contract:feedback_loop-no-execution]
+name = feedback_loop is read-only over trading state — never imports execution
+type = forbidden
+source_modules =
+    alphamind.feedback_loop
+forbidden_modules =
+    alphamind.execution
+
+# Forbidden contract: ``alphamind.feedback_loop.metrics`` holds the pure metric
+# cores (ALP-882). Functional core / imperative shell: a metric's ``compute`` is
+# a pure function over a ``WindowDataset``; all DB I/O lives in the loader shell
+# (``feedback_loop.dataset.load_window``). The cores therefore never reach the
+# session / persistence / repository layer. The registry's dynamic discovery
+# (``importlib.import_module``) is not a static import, so it is invisible here —
+# only a metric module that *statically* imports sqlalchemy trips this.
+[importlinter:contract:feedback-loop-metric-cores-no-sqlalchemy]
+name = feedback_loop metric cores are pure — no sqlalchemy / session / repository imports
+type = forbidden
+source_modules =
+    alphamind.feedback_loop.metrics
+    alphamind.feedback_loop.citation.parser
+    alphamind.feedback_loop.citation.chain
+forbidden_modules =
+    sqlalchemy
+    alphamind.persistence.models
+    alphamind.persistence.session
+    alphamind.state.repository
 
 # Layered contract: ``alphamind.distillation`` sits above
 # ``alphamind.persistence.models``. The forbidden shape that would

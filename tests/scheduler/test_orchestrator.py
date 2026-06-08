@@ -52,6 +52,7 @@ from alphamind.persistence.session import (
     make_engine,
     make_session_factory,
 )
+from alphamind.portfolio_state.records.theses import RecentThesisResolution
 from alphamind.state.invocation_context.records import (
     process_lifetime_record_to_row,
 )
@@ -1852,3 +1853,611 @@ class TestSchemaRunTypeMapping:
 
         for run_type, schema_str in _SCHEMA_RUN_TYPE_BY_FIRING_RUN_TYPE.items():
             assert schema_str == run_type.value
+
+
+# ---------------------------------------------------------------------------
+# Thesis resolution step (ALP-899 / ALP-834) — runs after fill collection and
+# before snapshot assembly, in its own transaction. Mocks only the SDK (the LLM
+# fallback for the qualitative ENTRY component) and the database.
+# ---------------------------------------------------------------------------
+
+_CLOSER_INV_ID = "inv-2026-05-06T14:30:00Z-prev"
+
+
+async def _async_iter(items: list[Any]) -> AsyncIterator[Any]:
+    for item in items:
+        yield item
+
+
+def _thesis_resolved_sdk_stub(outcome: str = "WRONG") -> Any:
+    """A ``claude_agent_sdk.query`` stand-in returning a structured component verdict."""
+
+    async def _stub(**_kwargs: Any) -> AsyncIterator[Any]:
+        from claude_agent_sdk import AssistantMessage, ResultMessage
+
+        usage = {
+            "input_tokens": 80,
+            "output_tokens": 30,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+        }
+        msgs = [
+            AssistantMessage(
+                content=[], model="claude-sonnet-4-6", stop_reason="end_turn", usage=usage
+            ),
+            ResultMessage(
+                subtype="result",
+                duration_ms=400,
+                duration_api_ms=350,
+                is_error=False,
+                num_turns=1,
+                session_id="sess-thesis",
+                stop_reason="end_turn",
+                usage=usage,
+                structured_output={"outcome": outcome, "notes": "Qualitative verdict."},
+            ),
+        ]
+        async for m in _async_iter(msgs):
+            yield m
+
+    return _stub
+
+
+async def _seed_closed_position_active_thesis(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    exit_method: Any,
+    thesis_id: str = "thesis-res-1",
+    position_id: str = "pos-res-1",
+) -> None:
+    """Seed a CLOSED position + ACTIVE thesis + ledger + POSITION_CLOSED entry.
+
+    The POSITION_CLOSED entry is tagged with a prior (closer) invocation, so the
+    resolver resolves it at THIS invocation regardless of which subsystem closed
+    the position — covering both fill-collection and continuous-monitor closes.
+    """
+    from datetime import timedelta
+
+    from alphamind._kernel.ids import PositionId, ThesisId
+    from alphamind._kernel.money import money, signed_money
+    from alphamind.portfolio_state.events.activity_log import (
+        EVENT_TYPE_TO_GROUP,
+        ActivityLogEntry,
+        EventSource,
+        EventType,
+        PositionClosedDetail,
+    )
+    from alphamind.portfolio_state.records.theses import (
+        KeyAssumption,
+        ThesisComponent,
+        ThesisComponentType,
+        ThesisRecord,
+        ThesisRecordStatus,
+    )
+    from alphamind.state.invocation_context.activity_log import activity_log_entry_to_row
+    from alphamind.state.tables.theses_codec import record_to_rows
+    from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
+    from tests.state._fk_substrate import stub_invocation_row, stub_position_row
+
+    generation = _NOW - timedelta(hours=24)
+    components = tuple(
+        ThesisComponent(
+            component_id=f"{thesis_id}-{ct.value}",
+            thesis_id=ThesisId(thesis_id),
+            component_type=ct,
+            linked_bracket_leg_type=None,
+            instrument_reference="NVDA",
+            narrative=f"{ct.value} narrative.",
+            key_assumptions=(KeyAssumption(text="A claim.", outcome=None),),
+            generation_timestamp=generation,
+            resolution_outcome=None,
+            resolution_notes=None,
+        )
+        for ct in (
+            ThesisComponentType.ENTRY_RATIONALE,
+            ThesisComponentType.TARGET_RATIONALE,
+            ThesisComponentType.INVALIDATION_RATIONALE,
+        )
+    )
+    thesis = ThesisRecord(
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
+        summary="Resolver thesis.",
+        key_catalyst="Catalyst.",
+        components=components,
+        status=ThesisRecordStatus.ACTIVE,
+        generation_timestamp=generation,
+        time_expectation_hours=24.0,
+        age_hours=24.0,
+        expected_resolution_at=generation + timedelta(hours=24.0),
+        resolution_timestamp=None,
+        resolution_category=None,
+        resolution_pnl_usd=None,
+        entry_fill_gap_usd=None,
+    )
+    thesis_row, component_rows = record_to_rows(thesis)
+    from decimal import Decimal
+
+    async with factory() as sess:
+        # process_lifetimes (proc-driver-1) is already seeded by async_factory.
+        sess.add(stub_invocation_row(_CLOSER_INV_ID, process_lifetime_id="proc-driver-1"))
+        await sess.flush()
+        closed_position = stub_position_row(position_id, thesis_id=thesis_id, status="CLOSED")
+        # A CLOSED position record requires non-None realized P/L + entry timestamp
+        # + non-empty execution history (PositionRecord invariants the snapshot read
+        # rehydrates against; one entry fill matching the positions codec shape).
+        closed_position.realized_pnl_to_date_usd = -300.0
+        closed_position.entry_timestamp = generation.isoformat()
+        closed_position.execution_history_json = json.dumps(
+            [
+                {
+                    "fill_timestamp": generation.isoformat(),
+                    "fill_price": 150.0,
+                    "fill_quantity": 10.0,
+                    "slippage": 0.0,
+                    "fees": 0.0,
+                    "live_execution_estimate": None,
+                }
+            ]
+        )
+        sess.add(closed_position)
+        sess.add(thesis_row)
+        for crow in component_rows:
+            sess.add(crow)
+        await sess.flush()
+        sess.add(
+            ThesisPnlLedgerRow(
+                thesis_id=thesis_id,
+                realized_pnl_usd=Decimal("-300.0"),
+                cost_basis_usd=Decimal("1000.0"),
+                provenance_json="{}",
+                derived_from_invocation_id=_CLOSER_INV_ID,
+                updated_at=_NOW.isoformat().replace("+00:00", "Z"),
+                last_derived_event_seq=None,
+            )
+        )
+        entry = ActivityLogEntry(
+            entry_id=f"{_CLOSER_INV_ID}-POSITION_CLOSED-1",
+            invocation_id=_CLOSER_INV_ID,
+            timestamp=_NOW,
+            event_type=EventType.POSITION_CLOSED,
+            event_group=EVENT_TYPE_TO_GROUP[EventType.POSITION_CLOSED],
+            position_id=position_id,
+            order_id=None,
+            thesis_id=thesis_id,
+            source=EventSource.FILL_PROCESSOR,
+            detail=PositionClosedDetail(
+                exit_method=exit_method,
+                exit_price=money(150.0),
+                realized_pnl_usd=signed_money(-300.0),
+                thesis_resolution_category="",
+            ),
+        )
+        sess.add(activity_log_entry_to_row(entry))
+        await sess.commit()
+
+
+def _read_recent_thesis_resolutions(
+    db_path: Path,
+) -> tuple[RecentThesisResolution, ...]:
+    """Call the production ``get_recent_thesis_resolutions`` against the run's DB.
+
+    Builds the real SQL repository (the same path ``assemble_snapshot`` uses) so
+    the read exercises the codec round-trip whose ``_check_resolved_fields``
+    invariant the ALP-834 half-written RESOLVED row violated.
+    """
+    from alphamind.risk_guardrails.regime_adaptation.repository_providers import (
+        make_repository_providers,
+    )
+    from alphamind.state.config import StatePersistenceConfig
+    from alphamind.state.repository import build_sql_portfolio_state_repository
+
+    active_provider, prior_provider = make_repository_providers(_make_active_risk_parameters())
+    config = StatePersistenceConfig.model_validate(
+        {
+            "pm_decision_log_sliding_window_invocations": 3,
+            "snapshot_read_timeout_seconds": 5.0,
+            "pip_freeze_snapshot_root": "/tmp/pip-freeze",
+            "invocation_provenance_root": "/tmp/provenance",
+        }
+    )
+    async_engine = make_async_engine(str(db_path))
+    try:
+        repository = build_sql_portfolio_state_repository(
+            session_factory=make_async_session_factory(async_engine),
+            invocation_id=_CLOSER_INV_ID,
+            active_risk_parameters_provider=active_provider,
+            prior_active_risk_parameters_provider=prior_provider,
+            config=config,
+            thesis_quality_aggregates_trailing_windows_days=(5, 20),
+        )
+        resolutions: tuple[RecentThesisResolution, ...] = repository.get_recent_thesis_resolutions(
+            lookback_trading_days=20
+        )
+        return resolutions
+    finally:
+        async_engine.sync_engine.dispose()
+
+
+def _make_active_risk_parameters() -> Any:
+    from alphamind.config.models.regimes import Regime
+    from alphamind.risk_guardrails.regime_adaptation.active_parameters import (
+        build_active_risk_parameters,
+    )
+    from alphamind.scheduler.orchestrator import _load_base_profile_rule_values
+
+    return build_active_risk_parameters(
+        rule_values=_load_base_profile_rule_values(SHIPPED_CONFIG_DIR),
+        regime=Regime.normal,
+    )
+
+
+class TestRunInvocationThesisResolution:
+    """The resolver step runs in ``run_invocation`` after fill collection and
+    before snapshot assembly, in its own transaction (ALP-899 / ALP-834)."""
+
+    async def test_closed_position_thesis_resolved_and_in_recent_resolutions(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        db_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A thesis whose position closed this invocation is RESOLVED before
+        snapshot assembly runs (assembly invokes ``get_recent_thesis_resolutions``
+        and would raise on a half-written RESOLVED row — the ALP-834 regression);
+        a post-run ``get_recent_thesis_resolutions`` returns it without raising."""
+        import claude_agent_sdk
+
+        from alphamind.portfolio_state.events.activity_log import PositionExitMethod
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        await _seed_closed_position_active_thesis(
+            async_factory, exit_method=PositionExitMethod.STOP_TRIGGERED
+        )
+        monkeypatch.setattr(claude_agent_sdk, "query", _thesis_resolved_sdk_stub("WRONG"))
+        _patch_no_op_pipeline(monkeypatch, captured={})
+
+        # run_invocation assembles the snapshot between fill collection and the
+        # analysis pipeline; if the resolver had left a half-written RESOLVED
+        # thesis, assembly's get_recent_thesis_resolutions would raise here.
+        await run_invocation(
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+                db_path=db_path,
+            ),
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        # The ALP-834 regression: get_recent_thesis_resolutions returns the
+        # newly-resolved thesis without raising.
+        resolutions = _read_recent_thesis_resolutions(db_path)
+        assert "thesis-res-1" in {r.thesis_id for r in resolutions}
+        # The category + P/L + every component outcome are populated (the
+        # half-written-RESOLVED row that wedged ALP-834 had them NULL).
+        resolution = next(r for r in resolutions if r.thesis_id == "thesis-res-1")
+        assert resolution.resolution_category is not None
+        assert resolution.component_outcomes
+
+    async def test_monitor_closed_position_resolved_at_next_invocation(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        db_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A position closed by the continuous monitor (engine TARGET_REACHED) is
+        resolved at the next invocation — the resolver reads the exit method from
+        the POSITION_CLOSED entry regardless of which subsystem closed it."""
+        import claude_agent_sdk
+        from sqlalchemy import select
+
+        from alphamind.portfolio_state.events.activity_log import PositionExitMethod
+        from alphamind.scheduler.orchestrator import run_invocation
+        from alphamind.state.tables.theses import ThesisRow
+
+        await _seed_closed_position_active_thesis(
+            async_factory, exit_method=PositionExitMethod.TARGET_REACHED
+        )
+        monkeypatch.setattr(claude_agent_sdk, "query", _thesis_resolved_sdk_stub("VALIDATED"))
+        _patch_no_op_pipeline(monkeypatch, captured={})
+
+        await run_invocation(
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+                db_path=db_path,
+            ),
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        async with async_factory() as session:
+            row = (
+                await session.execute(
+                    select(ThesisRow).where(ThesisRow.thesis_id == "thesis-res-1")
+                )
+            ).scalar_one()
+            assert row.status == "RESOLVED"
+            assert row.resolution_category is not None
+
+    async def test_busy_retry_on_write_does_not_re_invoke_the_llm(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The slow LLM component assessment and the exit-method/ledger reads
+        happen OUTSIDE the IMMEDIATE write transaction (ALP-914 finding 2). A
+        transient SQLITE_BUSY on the FIRST write attempt re-runs only the write
+        unit — so the SDK is invoked exactly once across the retry: proof the
+        LLM is not inside the retried write transaction."""
+        import claude_agent_sdk
+
+        from alphamind.portfolio_state.events.activity_log import PositionExitMethod
+        from alphamind.scheduler import orchestrator as module
+        from alphamind.state.tables.theses import ThesisRow
+
+        await _seed_closed_position_active_thesis(
+            async_factory, exit_method=PositionExitMethod.STOP_TRIGGERED
+        )
+
+        sdk_calls = {"n": 0}
+        base_stub = _thesis_resolved_sdk_stub("WRONG")
+
+        def _counting_sdk(**kwargs: Any) -> Any:
+            sdk_calls["n"] += 1
+            return base_stub(**kwargs)
+
+        monkeypatch.setattr(claude_agent_sdk, "query", _counting_sdk)
+
+        # Inject one transient SQLITE_BUSY on the resolution write unit's first
+        # ``begin_write_immediate`` (a sanctioned DB-boundary primitive), forcing
+        # ``run_with_sqlite_busy_retry`` to re-run the write unit once.
+        from alphamind.persistence.session import begin_write_immediate as real_begin
+
+        begin_calls = {"n": 0}
+
+        async def _flaky_begin(session: Any) -> None:
+            begin_calls["n"] += 1
+            if begin_calls["n"] == 1:
+                raise OperationalError("BEGIN IMMEDIATE", {}, Exception("database is locked"))
+            await real_begin(session)
+
+        monkeypatch.setattr("alphamind.scheduler.orchestrator.begin_write_immediate", _flaky_begin)
+
+        await module._run_thesis_resolution_step(
+            session_factory=async_factory,
+            invocation_id=_CLOSER_INV_ID,
+            archive_root=archive_root,
+            progress=NOOP_PROGRESS_EMITTER,
+            now=_NOW,
+            underlying_prices={},
+        )
+
+        # The write unit ran twice (one transient + one success) but the SDK —
+        # outside the write transaction — fired exactly once.
+        assert begin_calls["n"] == 2
+        assert sdk_calls["n"] == 1
+        async with async_factory() as session:
+            row = (
+                await session.execute(
+                    select(ThesisRow).where(ThesisRow.thesis_id == "thesis-res-1")
+                )
+            ).scalar_one()
+            assert row.status == "RESOLVED"
+
+    async def test_underlying_prices_threaded_into_resolution_slice(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The invocation's ``underlying_prices`` reach the LLM evaluator's
+        market-data slice (ALP-914 finding 5) — the step threads the primitive
+        price map through to the read/assess phase."""
+        import claude_agent_sdk
+
+        from alphamind.portfolio_state.events.activity_log import PositionExitMethod
+        from alphamind.scheduler import orchestrator as module
+
+        await _seed_closed_position_active_thesis(
+            async_factory, exit_method=PositionExitMethod.STOP_TRIGGERED
+        )
+
+        captured: dict[str, str] = {}
+        base_stub = _thesis_resolved_sdk_stub("WRONG")
+
+        def _capturing_sdk(**kwargs: Any) -> Any:
+            captured["prompt"] = str(kwargs.get("prompt", ""))
+            return base_stub(**kwargs)
+
+        monkeypatch.setattr(claude_agent_sdk, "query", _capturing_sdk)
+
+        # The seeded position's underlying is "STUB" (stub_position_row default).
+        await module._run_thesis_resolution_step(
+            session_factory=async_factory,
+            invocation_id=_CLOSER_INV_ID,
+            archive_root=archive_root,
+            progress=NOOP_PROGRESS_EMITTER,
+            now=_NOW,
+            underlying_prices={"STUB": 175.0},
+        )
+
+        assert "175.0" in captured["prompt"]
+
+    async def test_component_evaluation_emits_agent_calls_row_and_provenance(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        archive_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """ALP-922 — the in-process resolver step threads a per-call telemetry
+        session + ``provenance_root`` to ``evaluate_component_llm``, so each
+        closed-thesis component the programmatic assessor leaves INCONCLUSIVE
+        leaves exactly one ``agent_calls`` row (named for the non-roster
+        evaluator) plus the four provenance artifacts, exactly as 04f does for
+        the roster agents.
+
+        ``STOP_TRIGGERED`` resolves TARGET_RATIONALE → WRONG and
+        INVALIDATION_RATIONALE → VALIDATED programmatically (zero tokens),
+        leaving only the ENTRY_RATIONALE component on the LLM path → one row.
+        """
+        import claude_agent_sdk
+
+        from alphamind.analysis.thesis_resolution.llm_evaluator import _EVALUATOR_AGENT_NAME
+        from alphamind.portfolio_state.events.activity_log import PositionExitMethod
+        from alphamind.scheduler import orchestrator as module
+        from alphamind.state.repository.agent_calls_queries import (
+            read_agent_calls_for_invocation,
+        )
+
+        await _seed_closed_position_active_thesis(
+            async_factory, exit_method=PositionExitMethod.STOP_TRIGGERED
+        )
+        monkeypatch.setattr(claude_agent_sdk, "query", _thesis_resolved_sdk_stub("WRONG"))
+        provenance_root = tmp_path / "provenance"
+
+        await module._run_thesis_resolution_step(
+            session_factory=async_factory,
+            invocation_id=_CLOSER_INV_ID,
+            archive_root=archive_root,
+            progress=NOOP_PROGRESS_EMITTER,
+            now=_NOW,
+            underlying_prices={},
+            provenance_root=provenance_root,
+        )
+
+        async with async_factory() as session:
+            rows = await read_agent_calls_for_invocation(session, _CLOSER_INV_ID)
+
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.agent_name == _EVALUATOR_AGENT_NAME
+        # The four provenance artifacts land under the per-call directory.
+        assert row.output_artifact_ref is not None
+        call_dir = Path(row.output_artifact_ref)
+        expected_dir = (
+            provenance_root / "invocations" / _CLOSER_INV_ID / "agent_calls" / row.agent_call_id
+        )
+        assert call_dir == expected_dir
+        assert (call_dir / "system_prompt.md").exists()
+        assert (call_dir / "output_schema.json").exists()
+        assert (call_dir / "tools_definition.json").exists()
+        assert (call_dir / "output.json").exists()
+
+    async def test_no_provenance_root_writes_no_agent_calls_and_still_resolves(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """ALP-922 — with ``provenance_root=None`` (the in-process / test default
+        and a non-telemetry-wired invocation) the ``capture_agent_call`` no-op is
+        preserved: zero ``agent_calls`` rows, and the resolution still completes
+        (the thesis is RESOLVED). The evaluator path runs identically — only
+        capture is inert."""
+        import claude_agent_sdk
+
+        from alphamind.portfolio_state.events.activity_log import PositionExitMethod
+        from alphamind.scheduler import orchestrator as module
+        from alphamind.state.repository.agent_calls_queries import (
+            read_agent_calls_for_invocation,
+        )
+        from alphamind.state.tables.theses import ThesisRow
+
+        await _seed_closed_position_active_thesis(
+            async_factory, exit_method=PositionExitMethod.STOP_TRIGGERED
+        )
+        monkeypatch.setattr(claude_agent_sdk, "query", _thesis_resolved_sdk_stub("WRONG"))
+
+        await module._run_thesis_resolution_step(
+            session_factory=async_factory,
+            invocation_id=_CLOSER_INV_ID,
+            archive_root=archive_root,
+            progress=NOOP_PROGRESS_EMITTER,
+            now=_NOW,
+            underlying_prices={},
+            provenance_root=None,
+        )
+
+        async with async_factory() as session:
+            rows = await read_agent_calls_for_invocation(session, _CLOSER_INV_ID)
+            thesis_row = (
+                await session.execute(
+                    select(ThesisRow).where(ThesisRow.thesis_id == "thesis-res-1")
+                )
+            ).scalar_one()
+
+        assert rows == ()
+        assert thesis_row.status == "RESOLVED"
+
+    async def test_failing_telemetry_commit_does_not_abort_resolution(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        archive_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """ALP-922 — capture is best-effort: a failing telemetry-session commit
+        (injected at the DB boundary) is swallowed, so it neither aborts the
+        resolution nor changes the resolved outcome. The thesis still resolves
+        RESOLVED; only the agent_calls row is lost."""
+        import claude_agent_sdk
+        from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
+
+        from alphamind.portfolio_state.events.activity_log import PositionExitMethod
+        from alphamind.scheduler import orchestrator as module
+        from alphamind.state.tables.theses import ThesisRow
+
+        await _seed_closed_position_active_thesis(
+            async_factory, exit_method=PositionExitMethod.STOP_TRIGGERED
+        )
+        monkeypatch.setattr(claude_agent_sdk, "query", _thesis_resolved_sdk_stub("WRONG"))
+        provenance_root = tmp_path / "provenance"
+
+        # The telemetry session is the only one committed during phase 1 (the
+        # read session is read-only); fail its commit at the DB boundary.
+        real_commit = _AsyncSession.commit
+        commit_calls = {"n": 0}
+
+        async def _flaky_commit(self: _AsyncSession) -> None:
+            commit_calls["n"] += 1
+            if commit_calls["n"] == 1:
+                raise OperationalError("COMMIT", {}, Exception("telemetry commit boom"))
+            await real_commit(self)
+
+        monkeypatch.setattr(_AsyncSession, "commit", _flaky_commit)
+
+        # Must not raise — capture never breaks the call it observes.
+        await module._run_thesis_resolution_step(
+            session_factory=async_factory,
+            invocation_id=_CLOSER_INV_ID,
+            archive_root=archive_root,
+            progress=NOOP_PROGRESS_EMITTER,
+            now=_NOW,
+            underlying_prices={},
+            provenance_root=provenance_root,
+        )
+
+        assert commit_calls["n"] >= 1  # the telemetry commit was attempted
+        async with async_factory() as session:
+            thesis_row = (
+                await session.execute(
+                    select(ThesisRow).where(ThesisRow.thesis_id == "thesis-res-1")
+                )
+            ).scalar_one()
+        assert thesis_row.status == "RESOLVED"

@@ -23,6 +23,7 @@ calibration → `calibration.py` · offline replay → `replay_harness/`
 | `contract_freshness.py` | Shared past-date detection helpers for prediction-market questions. |
 | `contract_scope.py` | Resolve the in-scope prediction-market contract list for a distillation run. |
 | `correlation_brief.py` | Correlation/regime brief assembler. |
+| `flag_event_types.py` | Distillation anomaly-flag threshold-taxonomy registry (ALP-908). |
 | `normalization.py` | Deterministic normalization primitives. |
 | `orchestrator.py` | Distillation orchestrator entry point. |
 | `output.py` | Per-block output envelope and structured-text formatter. |

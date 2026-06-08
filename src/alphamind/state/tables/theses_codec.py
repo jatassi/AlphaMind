@@ -18,7 +18,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from alphamind._kernel.ids import PositionId, ThesisId
+from alphamind._kernel.ids import InvocationId, PositionId, ThesisId
 from alphamind.portfolio_state.records.orders import BracketLegType
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
@@ -30,16 +30,13 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecordStatus,
     ThesisResolutionCategory,
 )
+from alphamind.state.tables._singleton_codec import iso_z_to_datetime
 from alphamind.state.tables.theses import ThesisRow
 from alphamind.state.tables.thesis_components import ThesisComponentRow
 
 
 def _isoformat(timestamp: datetime) -> str:
     return timestamp.isoformat().replace("+00:00", "Z")
-
-
-def _parse_isoformat(text: str) -> datetime:
-    return datetime.fromisoformat(text)
 
 
 def _key_assumption_to_dict(ka: KeyAssumption) -> dict[str, Any]:
@@ -116,8 +113,26 @@ def record_to_rows(
         position_size_rationale=record.position_size_rationale,
         generation_timestamp=_isoformat(record.generation_timestamp),
         narrative_json=json.dumps(narrative_payload),
+        invocation_id=record.invocation_id,
     )
     return thesis_row, tuple(component_rows)
+
+
+def project_resolution_pnl_usd(thesis_row: ThesisRow) -> float | None:
+    """Read ``resolution_pnl_usd`` from the parent ``narrative_json`` without
+    decoding the full ThesisRecord or fetching component rows.
+
+    The realized-P/L projection the PM-accuracy replay join needs cheaply: it
+    parses only the parent row's NOT-NULL ``narrative_json`` and returns the
+    ``resolution_pnl_usd`` key (the same key :func:`record_to_rows` writes and
+    :func:`rows_to_record` reads). Keeping the JSON access here preserves the
+    codec's single-source-of-truth ownership of the parent JSON layout. Returns
+    ``None`` when the field is null — the caller owns the loud-on-None check that
+    a RESOLVED thesis with a null P/L is inconsistent persisted state.
+    """
+    payload = json.loads(thesis_row.narrative_json)
+    value = payload["resolution_pnl_usd"]
+    return None if value is None else float(value)
 
 
 def rows_to_record(
@@ -154,14 +169,14 @@ def rows_to_record(
         position_size_rationale=thesis_row.position_size_rationale,
         components=components,
         status=ThesisRecordStatus(thesis_row.status),
-        generation_timestamp=_parse_isoformat(thesis_row.generation_timestamp),
+        generation_timestamp=iso_z_to_datetime(thesis_row.generation_timestamp),
         time_expectation_hours=thesis_row.time_expectation_hours,
         age_hours=payload["age_hours"],
-        expected_resolution_at=_parse_isoformat(payload["expected_resolution_at"]),
+        expected_resolution_at=iso_z_to_datetime(payload["expected_resolution_at"]),
         resolution_timestamp=(
             None
             if thesis_row.resolution_timestamp is None
-            else _parse_isoformat(thesis_row.resolution_timestamp)
+            else iso_z_to_datetime(thesis_row.resolution_timestamp)
         ),
         resolution_category=(
             None
@@ -170,6 +185,9 @@ def rows_to_record(
         ),
         resolution_pnl_usd=payload["resolution_pnl_usd"],
         entry_fill_gap_usd=payload["entry_fill_gap_usd"],
+        invocation_id=(
+            None if thesis_row.invocation_id is None else InvocationId(thesis_row.invocation_id)
+        ),
     )
 
 
@@ -206,7 +224,7 @@ def _component_from_row(
         instrument_reference=row.instrument_reference,
         narrative=row.narrative,
         key_assumptions=key_assumptions,
-        generation_timestamp=_parse_isoformat(generation_raw),
+        generation_timestamp=iso_z_to_datetime(generation_raw),
         resolution_outcome=(
             None
             if row.resolution_outcome is None

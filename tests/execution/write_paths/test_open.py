@@ -729,6 +729,19 @@ def test_build_active_thesis_backfill_yields_unique_component_ids() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _simple_thesis() -> Thesis:
+    """A minimal valid Thesis with all three required component types."""
+    return Thesis(
+        summary="AAPL simple thesis",
+        nature="directional",
+        components=(
+            _wire_component("entry_rationale", narrative="setup"),
+            _wire_component("target_rationale", narrative="resistance"),
+            _wire_component("invalidation_rationale", narrative="support break"),
+        ),
+    )
+
+
 def _thesis_with_nature(nature: str) -> Thesis:
     return Thesis(
         summary="NVDA thesis",
@@ -841,6 +854,31 @@ def test_non_directional_invalidation_leg_carries_option_price_trigger_signal() 
         leg for leg in bracket.protective_legs if leg.leg_type is BracketLegType.PRICE_STOP
     )
     assert price_stop.trigger_signal is TriggerSignal.OPTION_PRICE
+
+
+def test_build_active_thesis_stamps_invocation_id() -> None:
+    """ALP-919 — _build_active_thesis stamps the supplied invocation_id on the record."""
+    from alphamind._kernel.ids import InvocationId
+
+    record = _build_active_thesis(
+        thesis_id="THE-AAPL-invtest",
+        position_id="POS-AAPL-invtest",
+        thesis=_simple_thesis(),
+        timestamp=datetime(2026, 6, 7, 10, 0, 0, tzinfo=UTC),
+        invocation_id="inv-2026-06-07T10:00:00Z-aaaa",
+    )
+    assert record.invocation_id == InvocationId("inv-2026-06-07T10:00:00Z-aaaa")
+
+
+def test_build_active_thesis_invocation_id_defaults_none() -> None:
+    """ALP-919 — _build_active_thesis produces invocation_id=None when not supplied."""
+    record = _build_active_thesis(
+        thesis_id="THE-AAPL-noinv",
+        position_id="POS-AAPL-noinv",
+        thesis=_simple_thesis(),
+        timestamp=datetime(2026, 6, 7, 10, 0, 0, tzinfo=UTC),
+    )
+    assert record.invocation_id is None
 
 
 def test_time_and_event_legs_carry_no_trigger_signal() -> None:

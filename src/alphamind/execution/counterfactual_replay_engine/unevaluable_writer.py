@@ -19,16 +19,14 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import EnvelopeId, ReplayId
-from alphamind.execution.counterfactual_replay_engine.enums import (
+from alphamind.state.repository.counterfactual_replays import (
+    insert_counterfactual_replay,
+)
+from alphamind.state.tables.counterfactual_replays import (
+    CounterfactualReplayRecord,
     ReplayKind,
     ReplayStatus,
     UnevaluableReason,
-)
-from alphamind.execution.counterfactual_replay_engine.records import (
-    CounterfactualReplayRecord,
-)
-from alphamind.state.repository.counterfactual_replays import (
-    insert_counterfactual_replay,
 )
 
 __all__ = ["write_unevaluable_record"]

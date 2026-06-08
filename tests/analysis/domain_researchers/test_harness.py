@@ -17,7 +17,9 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import alphamind.state.tables  # noqa: F401 — register all tables on Base.metadata
 from alphamind.analysis._shared import Sector, TokensUsed
 from alphamind.analysis.domain_researchers.harness import (
     ContextOverflowFailure,
@@ -30,6 +32,16 @@ from alphamind.analysis.domain_researchers.harness import (
 )
 from alphamind.analysis.domain_researchers.models import SectorBrief, SignalQuality
 from alphamind.config.models.agents import AllowedModel, BaseAgentConfig
+from alphamind.persistence.models import Base
+from alphamind.persistence.session import (
+    make_async_engine,
+    make_async_session_factory,
+    make_engine,
+    make_session_factory,
+)
+from alphamind.state.repository.agent_calls_queries import read_agent_calls_for_invocation
+from alphamind.state.tables.agent_calls import AgentCallErrorClass
+from tests.state._fk_substrate import stub_invocation_row, stub_process_lifetime_row
 
 # Canonical test invocation timestamp; date partition is "2026-05-01".
 _AS_OF = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
@@ -785,3 +797,140 @@ async def test_harness_claude_agent_options_structure(
     # Output-token budget propagates via the env-var path (the CLI exposes no
     # ``--max-tokens`` flag).
     assert options.env.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS") == str(agent_config.output_token_budget)
+
+
+# ---------------------------------------------------------------------------
+# 16. agent_calls telemetry capture (ALP-880)
+# ---------------------------------------------------------------------------
+
+_INV_TELEM = "inv-telem-dr"
+_PLT_TELEM = "plt-telem-dr"
+
+
+@pytest.fixture()
+async def telemetry_factory(
+    tmp_path: Path,
+) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """On-disk SQLite with the invocation FK target for the capture row seeded."""
+    db_path = tmp_path / "telem.db"
+    sync_engine = make_engine(str(db_path))
+    Base.metadata.create_all(sync_engine)
+    with make_session_factory(sync_engine)() as sess:
+        sess.add(stub_process_lifetime_row(_PLT_TELEM))
+        sess.flush()
+        sess.add(stub_invocation_row(_INV_TELEM, process_lifetime_id=_PLT_TELEM))
+        sess.commit()
+    sync_engine.dispose()
+
+    async_engine = make_async_engine(str(db_path))
+    yield make_async_session_factory(async_engine)
+    await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_completed_call_writes_one_agent_call_row_and_artifacts(
+    agent_config: BaseAgentConfig,
+    archive_root: Path,
+    tmp_path: Path,
+    telemetry_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A successful domain-researcher call persists one agent_calls row plus the
+    four provenance files at the documented path, with success=true and the
+    captured metrics + provenance fields."""
+    stub = _make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)])
+    provenance_root = tmp_path / "provenance"
+
+    async with telemetry_factory() as session:
+        await invoke_domain_researcher(
+            agent_config=agent_config,
+            sector=Sector.TECH_SEMIS,
+            user_message="Analyse tech sector.",
+            invocation_id=_INV_TELEM,
+            archive_root=archive_root,
+            as_of=_AS_OF,
+            sdk_query_fn=stub,
+            telemetry_session=session,
+            provenance_root=provenance_root,
+        )
+        await session.commit()
+
+    async with telemetry_factory() as session:
+        rows = await read_agent_calls_for_invocation(session, _INV_TELEM)
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.agent_name == "tech_semis_researcher"
+    assert row.success is True
+    assert row.error_class is None
+    assert row.model_id == str(agent_config.model)
+    assert row.prompt_path == agent_config.prompt
+    assert row.prompt_git_sha  # non-empty
+    assert row.prompt_content_hash  # non-empty
+    assert row.input_tokens == 100
+    assert row.output_tokens == 200
+    assert row.stop_reason == "end_turn"
+    assert json.loads(row.sampling_params_json)["max_tokens"] == agent_config.output_token_budget
+
+    assert row.output_artifact_ref is not None
+    pdir = Path(row.output_artifact_ref)
+    assert pdir == provenance_root / "invocations" / _INV_TELEM / "agent_calls" / row.agent_call_id
+    for name in ("system_prompt.md", "output_schema.json", "tools_definition.json", "output.json"):
+        assert (pdir / name).exists()
+
+
+@pytest.mark.asyncio
+async def test_failed_call_writes_row_with_mapped_error_class(
+    agent_config: BaseAgentConfig,
+    archive_root: Path,
+    tmp_path: Path,
+    telemetry_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A failed call (two parse failures → MalformedOutputFailure) persists one
+    row with success=false and error_class mapped from the raised subclass."""
+    bad_payload = {"shape": "wrong"}
+    stub = _make_stub_query([_make_sdk_response(bad_payload), _make_sdk_response(bad_payload)])
+    provenance_root = tmp_path / "provenance"
+
+    async with telemetry_factory() as session:
+        with pytest.raises(MalformedOutputFailure):
+            await invoke_domain_researcher(
+                agent_config=agent_config,
+                sector=Sector.TECH_SEMIS,
+                user_message="Analyse.",
+                invocation_id=_INV_TELEM,
+                archive_root=archive_root,
+                as_of=_AS_OF,
+                sdk_query_fn=stub,
+                telemetry_session=session,
+                provenance_root=provenance_root,
+            )
+        await session.commit()
+
+    async with telemetry_factory() as session:
+        rows = await read_agent_calls_for_invocation(session, _INV_TELEM)
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.success is False
+    assert row.error_class is AgentCallErrorClass.malformed_output
+    # Single aggregated record across both API calls, not one per attempt.
+    assert row.attempt_number == 2
+
+
+@pytest.mark.asyncio
+async def test_no_telemetry_session_skips_capture(
+    agent_config: BaseAgentConfig, archive_root: Path
+) -> None:
+    """Omitting the telemetry session leaves the call behaviourally unchanged —
+    no row, no provenance — so the unarchived / test path is untouched."""
+    stub = _make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)])
+    result = await invoke_domain_researcher(
+        agent_config=agent_config,
+        sector=Sector.TECH_SEMIS,
+        user_message="Analyse.",
+        invocation_id="inv-no-telem",
+        archive_root=archive_root,
+        as_of=_AS_OF,
+        sdk_query_fn=stub,
+    )
+    assert isinstance(result, HarnessSuccess)

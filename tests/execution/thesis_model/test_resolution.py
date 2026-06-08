@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from alphamind.execution.thesis_model import classify_thesis_resolution
 from alphamind.portfolio_state.events.activity_log import PositionExitMethod
 from alphamind.portfolio_state.records.theses import (
     ThesisComponentOutcome,
     ThesisResolutionCategory,
 )
+from alphamind.portfolio_state.records.thesis_resolution import classify_thesis_resolution
 
 # ---------------------------------------------------------------------------
 # Convenience aliases
@@ -32,8 +32,21 @@ TIME = PositionExitMethod.TIME_EXPIRED
 MARGIN = PositionExitMethod.MARGIN_LIQUIDATION
 FORCED = PositionExitMethod.FORCED_BUY_IN
 CASH_MERGER = PositionExitMethod.CORPORATE_ACTION_CASH_MERGER
+OPTION_EXPIRY = PositionExitMethod.OPTION_EXPIRY
+OPTION_ASSIGNMENT = PositionExitMethod.OPTION_ASSIGNMENT
+OPTION_EXERCISE = PositionExitMethod.OPTION_EXERCISE
 
-MECHANICAL_EXITS = [STOP, TARGET, TIME, MARGIN, FORCED, CASH_MERGER]
+MECHANICAL_EXITS = [
+    STOP,
+    TARGET,
+    TIME,
+    MARGIN,
+    FORCED,
+    CASH_MERGER,
+    OPTION_EXPIRY,
+    OPTION_ASSIGNMENT,
+    OPTION_EXERCISE,
+]
 
 # ---------------------------------------------------------------------------
 # Tracer bullet: empty tuple raises ValueError
@@ -46,26 +59,56 @@ def test_empty_outcomes_raises_value_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# VALIDATED path: most components VALIDATED and P/L > 0
+# VALIDATED path: most components VALIDATED AND P/L > 0 AND exit via TARGET_REACHED
 # ---------------------------------------------------------------------------
 
 
-def test_all_validated_positive_pnl_returns_validated() -> None:
-    result = classify_thesis_resolution((VALIDATED, VALIDATED, VALIDATED), 500.0, STOP)
+def test_all_validated_positive_pnl_target_reached_returns_validated() -> None:
+    result = classify_thesis_resolution((VALIDATED, VALIDATED, VALIDATED), 500.0, TARGET)
     assert result == V
 
 
-@pytest.mark.parametrize("exit_method", list(PositionExitMethod))
-def test_all_validated_positive_pnl_any_exit_method_returns_validated(
+def test_majority_validated_positive_pnl_target_reached_returns_validated() -> None:
+    # The positive case (ALP-920): majority-VALIDATED, profitable, and the position
+    # actually hit the target → VALIDATED. This is the only profitable path to V.
+    result = classify_thesis_resolution((VALIDATED, VALIDATED, WRONG), 10.0, TARGET)
+    assert result == V
+
+
+@pytest.mark.parametrize(
+    "exit_method",
+    [em for em in PositionExitMethod if em is not TARGET],
+)
+def test_majority_validated_positive_pnl_non_target_exit_returns_profitable_but_wrong(
     exit_method: PositionExitMethod,
 ) -> None:
-    assert classify_thesis_resolution((VALIDATED,), 1.0, exit_method) == V
+    # ALP-920 gate: a profitable, majority-VALIDATED thesis forced out by any
+    # non-TARGET_REACHED exit did not hit the target → PROFITABLE_BUT_WRONG.
+    assert classify_thesis_resolution((VALIDATED,), 1.0, exit_method) == PBW
 
 
-def test_majority_validated_positive_pnl_returns_validated() -> None:
-    # 2 VALIDATED vs 1 WRONG → validated_count > wrong_count
+def test_majority_validated_positive_pnl_stop_triggered_returns_profitable_but_wrong() -> None:
+    # Reported scenario (ALP-920): profitable, forced out by a stop, two fired
+    # invalidations (VALIDATED) + a missed target (WRONG). Majority-VALIDATED but
+    # the position did not hit the target → PROFITABLE_BUT_WRONG, not VALIDATED.
     result = classify_thesis_resolution((VALIDATED, VALIDATED, WRONG), 100.0, STOP)
-    assert result == V
+    assert result == PBW
+
+
+def test_majority_validated_positive_pnl_time_expired_returns_profitable_but_wrong() -> None:
+    # TIME_EXPIRED variant of the reported scenario — a time-limit forced exit is
+    # equally a non-target exit, so a profitable majority-VALIDATED thesis is
+    # PROFITABLE_BUT_WRONG.
+    result = classify_thesis_resolution((VALIDATED, VALIDATED, WRONG), 100.0, TIME)
+    assert result == PBW
+
+
+def test_majority_validated_positive_pnl_pm_decision_returns_profitable_but_wrong() -> None:
+    # Deliberate behavior change beyond the reported stop-out (ALP-920): a
+    # profitable majority-VALIDATED thesis the PM closed by hand did not hit the
+    # target → PROFITABLE_BUT_WRONG.
+    result = classify_thesis_resolution((VALIDATED, VALIDATED, WRONG), 200.0, PM)
+    assert result == PBW
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +178,14 @@ def test_all_inconclusive_negative_pnl_stop_returns_stopped_correctly() -> None:
     assert result == ISC
 
 
+def test_wrong_nonpositive_pnl_option_expiry_returns_stopped_correctly() -> None:
+    """ALP-918 AC2: an option-lifecycle close is categorically mechanical — an
+    OTM expiry with a wrong component and non-positive P/L is stopped-correctly,
+    not held-too-long (the new members joined ``_MECHANICAL_EXIT_METHODS``)."""
+    assert classify_thesis_resolution((WRONG,), -100.0, OPTION_EXPIRY) == ISC
+    assert classify_thesis_resolution((WRONG,), 0.0, OPTION_EXPIRY) == ISC
+
+
 # ---------------------------------------------------------------------------
 # INVALIDATED_WRONG_ON_EXIT path: P/L <= 0 + pm-decision
 # ---------------------------------------------------------------------------
@@ -181,24 +232,32 @@ def test_never_returns_cancelled_never_entered() -> None:
 
 @pytest.mark.parametrize("exit_method", list(PositionExitMethod))
 @pytest.mark.parametrize(
-    "outcomes,pnl,expected",
+    "outcomes",
     [
-        # P/L > 0, all VALIDATED → always VALIDATED regardless of exit
-        ((VALIDATED, VALIDATED), 100.0, V),
-        # P/L > 0, all WRONG → always PROFITABLE_BUT_WRONG regardless of exit
-        ((WRONG, WRONG), 100.0, PBW),
-        # P/L > 0, all INCONCLUSIVE → always PROFITABLE_BUT_WRONG regardless of exit
-        ((INCONCLUSIVE,), 100.0, PBW),
+        # Not majority-VALIDATED, so the TARGET_REACHED gate never engages — these
+        # are PROFITABLE_BUT_WRONG for every exit method when P/L > 0.
+        (WRONG, WRONG),
+        (INCONCLUSIVE,),
     ],
 )
-def test_positive_pnl_exit_method_irrelevant(
+def test_positive_pnl_non_majority_validated_always_profitable_but_wrong(
     exit_method: PositionExitMethod,
     outcomes: tuple[ThesisComponentOutcome, ...],
-    pnl: float,
-    expected: ThesisResolutionCategory,
 ) -> None:
-    """Exit method does not affect classification when P/L > 0."""
-    assert classify_thesis_resolution(outcomes, pnl, exit_method) == expected
+    """When P/L > 0 and components are not majority-VALIDATED, exit method is
+    irrelevant — the result is PROFITABLE_BUT_WRONG for every exit (ALP-920 only
+    gates the majority-VALIDATED case on TARGET_REACHED)."""
+    assert classify_thesis_resolution(outcomes, 100.0, exit_method) == PBW
+
+
+@pytest.mark.parametrize("exit_method", list(PositionExitMethod))
+def test_positive_pnl_majority_validated_only_target_reached_is_validated(
+    exit_method: PositionExitMethod,
+) -> None:
+    """When P/L > 0 and components are majority-VALIDATED, exit method is the
+    deciding factor: TARGET_REACHED → VALIDATED, every other exit → PROFITABLE_BUT_WRONG."""
+    expected = V if exit_method is TARGET else PBW
+    assert classify_thesis_resolution((VALIDATED, VALIDATED), 100.0, exit_method) == expected
 
 
 @pytest.mark.parametrize("exit_method", MECHANICAL_EXITS)
@@ -227,8 +286,11 @@ def test_pm_decision_exit_all_wrong_negative_returns_wrong_on_exit() -> None:
 @pytest.mark.parametrize(
     "outcomes,exit_method,pnl,expected",
     [
-        # Validate all four categories are reachable
-        ((VALIDATED,), STOP, 1.0, V),
+        # Validate all four categories are reachable. VALIDATED requires both
+        # majority-VALIDATED and a TARGET_REACHED exit (ALP-920).
+        ((VALIDATED,), TARGET, 1.0, V),
+        # Majority-VALIDATED but a non-target exit → PROFITABLE_BUT_WRONG
+        ((VALIDATED,), STOP, 1.0, PBW),
         ((WRONG,), STOP, 1.0, PBW),
         ((WRONG,), STOP, -1.0, ISC),
         ((WRONG,), PM, -1.0, IWE),
@@ -242,8 +304,10 @@ def test_pm_decision_exit_all_wrong_negative_returns_wrong_on_exit() -> None:
         # majority VALIDATED + negative P/L falls to the INVALIDATED branch per exit method)
         ((VALIDATED, VALIDATED, WRONG), STOP, -10.0, ISC),
         ((VALIDATED, VALIDATED, WRONG), PM, -10.0, IWE),
-        # Majority VALIDATED, positive P/L → VALIDATED
-        ((VALIDATED, VALIDATED, WRONG), PM, 10.0, V),
+        # Majority VALIDATED, positive P/L, TARGET_REACHED → VALIDATED (positive case)
+        ((VALIDATED, VALIDATED, WRONG), TARGET, 10.0, V),
+        # Majority VALIDATED, positive P/L, but a non-target exit → PROFITABLE_BUT_WRONG
+        ((VALIDATED, VALIDATED, WRONG), PM, 10.0, PBW),
     ],
 )
 def test_truth_table(

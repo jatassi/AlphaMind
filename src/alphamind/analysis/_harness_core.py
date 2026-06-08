@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import random
 import time
@@ -47,11 +48,17 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
+from alphamind.analysis._agent_call_capture import CaptureDiagFields
 from alphamind.analysis._shared import TokensUsed
+
+if TYPE_CHECKING:
+    from alphamind.analysis._agent_call_capture import CaptureSignals
 
 __all__ = [
     "_PROMPT_CACHE",
@@ -77,6 +84,7 @@ __all__ = [
     "_load_prompt",
     "_render_raw_response",
     "_tokens_from_usage",
+    "capture_agent_call",
     "invoke_sdk",
 ]
 
@@ -138,6 +146,12 @@ class DiagWriter(Protocol):
     the per-harness metadata shape while keeping the failure-path flush
     and the ``agent_response`` model-name emission consistent across the
     seven harnesses.
+
+    The agent_calls capture (ALP-880) rides the same ``write`` funnel: each
+    ``write`` stamps the terminal outcome onto the diag, and the harness body
+    wrapped in :func:`capture_agent_call` drains the one aggregated capture on
+    exit. The richer ``CaptureSignals`` Protocol in
+    :mod:`alphamind.analysis._agent_call_capture` describes that surface.
     """
 
     model: str
@@ -392,7 +406,7 @@ def _render_raw_response(payload: dict[str, Any] | None, response_text: str) -> 
 
 
 @dataclass
-class DiagState:
+class DiagState(CaptureDiagFields):
     """Mutable diagnostic state accumulated during an invocation.
 
     The default layout writes ``response_initial.md`` and conditionally
@@ -437,6 +451,17 @@ class DiagState:
     # default, decision harnesses override to "decision".
     archive_layer: str = "analysis"
 
+    # The agent_calls capture provenance fields + outcome stamps (``prompt_path``,
+    # ``output_schema``, ``tools_definition``, ``sampling_params``,
+    # ``output_payload``, ``agent_call_id``, ``last_*``) are inherited from
+    # ``CaptureDiagFields`` (ALP-909 L1) so the same DiagState that backs the
+    # diagnostic archive also satisfies ``CaptureSignals``.
+
+    @property
+    def attempt_number(self) -> int:
+        """1-indexed attempt count of the aggregated call (``retry_count`` + 1)."""
+        return self.retry_count + 1
+
     @property
     def diag_dir(self) -> Path | None:
         """Per-agent diagnostic directory, or ``None`` when unarchived.
@@ -466,7 +491,20 @@ class DiagState:
         wall_clock_seconds: float,
         stop_reason: str | None,
     ) -> None:
-        """Flush the diagnostic record to disk, if archive_root is set."""
+        """Flush the diagnostic record to disk, if archive_root is set.
+
+        Also records this terminal outcome (success / wall-clock / stop-reason)
+        and mints the stable ``agent_call_id`` on first call (via the shared
+        :meth:`CaptureDiagFields.stamp_outcome`), so a subsequent
+        :func:`build_capture_from_diag` can assemble the single aggregated
+        agent_calls record regardless of whether the archive is enabled. Capture
+        is independent of ``archive_root`` — the diag archive and the agent_calls
+        provenance are separate layouts.
+        """
+        self.stamp_outcome(
+            success=success, wall_clock_seconds=wall_clock_seconds, stop_reason=stop_reason
+        )
+
         diag_dir = self.diag_dir
         if diag_dir is None:
             return
@@ -498,6 +536,90 @@ class DiagState:
         if self.record_tool_calls or self.tool_calls_used:
             metadata["tool_calls_used"] = self.tool_calls_used
         (diag_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+
+@contextlib.asynccontextmanager
+async def capture_agent_call(
+    diag: CaptureSignals,
+    *,
+    telemetry_session: AsyncSession | None,
+    provenance_root: Path | None,
+) -> AsyncGenerator[None]:
+    """Drain *diag*'s agent_calls capture once, on exit of the harness body.
+
+    Wraps a harness's single attempt-loop scope. On exit — clean OR a raised
+    :class:`HarnessFailure` — assembles the one aggregated capture from *diag*
+    and persists the row + four provenance artifacts. A no-op when telemetry
+    is not wired (``telemetry_session`` or ``provenance_root`` is ``None``), so
+    the production-without-telemetry and unit-test paths are unchanged.
+
+    Accepts any *diag* satisfying the ``CaptureSignals`` Protocol — the shared
+    :class:`DiagState` and the decision harnesses' private ``_DiagState`` both
+    qualify — so the single drain serves all nine agents.
+
+    Capture must never break the call it observes: a persistence error is
+    swallowed (the harness result / failure propagates regardless), mirroring
+    the diagnostic writer's "diagnostics never break the call" contract.
+
+    Outcome fidelity (ALP-909 C1): any exception escaping the wrapped body —
+    a :class:`HarnessFailure` or otherwise — drains a row with ``success=False``,
+    so a call that failed after the harness stamped ``success=True`` never
+    persists a success row. A :class:`HarnessFailure` classifies via its
+    subclass; any other exception records ``internal_error`` with ``str(exc)``
+    and re-raises unchanged (capture never alters propagation). A clean exit —
+    or an exception raised before any terminal ``write`` — is unaffected: the
+    former drains the stamped success, the latter produces no row.
+    """
+    if telemetry_session is None or provenance_root is None:
+        yield
+        return
+    error: HarnessFailure | None = None
+    internal_error: BaseException | None = None
+    try:
+        yield
+    except HarnessFailure as exc:
+        error = exc
+        raise
+    except Exception as exc:
+        # A non-HarnessFailure escaping after the success stamp is an internal
+        # error — record it as such and re-raise unchanged. ``GeneratorExit`` /
+        # ``BaseException`` (cancellation, benign generator close) are NOT
+        # caught, so a normal teardown is not misclassified as a failure.
+        internal_error = exc
+        raise
+    finally:
+        await _drain_capture(
+            diag,
+            telemetry_session=telemetry_session,
+            provenance_root=provenance_root,
+            error=error,
+            internal_error=internal_error,
+        )
+
+
+async def _drain_capture(
+    diag: CaptureSignals,
+    *,
+    telemetry_session: AsyncSession,
+    provenance_root: Path,
+    error: HarnessFailure | None,
+    internal_error: BaseException | None = None,
+) -> None:
+    """Build + persist *diag*'s capture; swallow persistence errors."""
+    from alphamind.analysis._agent_call_capture import (
+        build_capture_from_diag,
+        persist_agent_call,
+    )
+
+    capture = build_capture_from_diag(diag, error=error, internal_error=internal_error)
+    if capture is None:
+        return
+    try:
+        await persist_agent_call(telemetry_session, capture, provenance_root=provenance_root)
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "agent_calls capture failed for %s/%s", diag.invocation_id, diag.agent_name
+        )
 
 
 # ---------------------------------------------------------------------------

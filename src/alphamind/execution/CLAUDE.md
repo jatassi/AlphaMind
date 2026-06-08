@@ -19,7 +19,7 @@ PM-rejected-proposal simulation → `counterfactual_replay_engine/`
 | `constants.py` | Listed-options execution-layer constants. |
 | `continuous_monitor/` | AlphaMind continuous-monitor package. |
 | `corporate_actions/` | Corporate-actions integration package. |
-| `counterfactual_replay_engine/` | Counterfactual replay engine — records, enums, and config entry point. |
+| `counterfactual_replay_engine/` | Counterfactual replay engine — config entry point. |
 | `guardrail_enforcement/` | Guardrail enforcement layer (execution-layer engine component). |
 | `oms/` | OMS package — command-ID derivation and OMS-side submission paths. |
 | `paper_evaluation_harness/` | Paper-evaluation harness — calibrates Alpaca paper fills with estimated live-execution drag. |

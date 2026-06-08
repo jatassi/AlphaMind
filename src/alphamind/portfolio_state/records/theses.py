@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 
-from alphamind._kernel.ids import PositionId, ThesisId
+from alphamind._kernel.ids import InvocationId, PositionId, ThesisId
 from alphamind.portfolio_state.records.orders import BracketLegType
 
 
@@ -139,6 +139,11 @@ class ThesisRecord:
     # Persisted from the analyst's proposal at OPEN time; not modified by
     # ADJUST or ADD (those have their own per-action rationale fields).
     position_size_rationale: str | None = None
+    # The invocation that generated this thesis (ALP-919 / story 02i).
+    # Stamped at OPEN write-back time; NULL for theses created before the
+    # column existed or before THESIS_CREATED emission landed.
+    # Back-populated via migration from the THESIS_CREATED activity_log entry.
+    invocation_id: InvocationId | None = None
 
     def __post_init__(self) -> None:
         if self.position_size_rationale is not None and not self.position_size_rationale.strip():

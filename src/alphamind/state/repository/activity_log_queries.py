@@ -11,6 +11,9 @@ isomorphic with the writes the emission helper performs.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from datetime import datetime
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +24,7 @@ from alphamind.portfolio_state.events.activity_log import (
 from alphamind.state.invocation_context.activity_log import (
     activity_log_entry_from_row,
 )
+from alphamind.state.repository._window_prefix import SECOND_PREFIX_LEN, second_prefix
 from alphamind.state.tables.activity_log import ActivityLogRow
 from alphamind.state.tables.invocations import InvocationRow
 
@@ -124,3 +128,35 @@ async def read_most_recent_config_change_new_hash(
     if row is None:
         return None
     return str(activity_log_entry_from_row(row).detail.new_hash)
+
+
+async def read_activity_events_in_window(
+    session: AsyncSession,
+    start: datetime,
+    end: datetime,
+    event_types: Sequence[EventType],
+) -> tuple[ActivityLogEntry, ...]:
+    """Activity-log entries of *event_types* whose ``entry_at`` falls in ``[start, end)``.
+
+    The feedback-loop analytics spine's strictly-window-bounded activity-log slice
+    (story 06b / ALP-884) — the execution-process metrics (guardrail-rejection count,
+    command-abandonment rate, engine-originated-CLOSE frequency) count event types the
+    ``PM_DECISION``-only sliding window (:func:`read_recent_pm_decision_log`) does not
+    carry. The start bound is inclusive, the end bound exclusive, matching every other
+    window-scoped read in the analytics spine. An empty *event_types* yields an empty
+    tuple without a query.
+    """
+    if not event_types:
+        return ()
+    entry_at_prefix = func.substr(ActivityLogRow.entry_at, 1, SECOND_PREFIX_LEN)
+    stmt = (
+        select(ActivityLogRow)
+        .where(
+            ActivityLogRow.event_type.in_([et.value for et in event_types]),
+            entry_at_prefix >= second_prefix(start),
+            entry_at_prefix < second_prefix(end),
+        )
+        .order_by(ActivityLogRow.entry_at.asc(), ActivityLogRow.entry_id.asc())
+    )
+    result = await session.execute(stmt)
+    return tuple(activity_log_entry_from_row(row) for row in result.scalars())

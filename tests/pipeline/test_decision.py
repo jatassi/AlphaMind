@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal
 
 import pytest
@@ -670,6 +671,21 @@ def test_normal_mode_dispatches_normal_to_analyst_and_strategist(
     _drive(mode="normal")
     assert log.analyst["mode"] == "normal"
     assert log.strategist["mode"] == "normal"
+
+
+def test_pipeline_forwards_provenance_root_to_all_three_runners(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``provenance_root`` reaches the analyst, strategist, and PM runners
+    (ALP-907 — each forwards it to its subprocess wrapper → the worker's per-call
+    agent_calls telemetry session)."""
+    log = _CallLog()
+    _patch_runners(monkeypatch, log=log)
+    prov = tmp_path / "provenance"
+    _drive(provenance_root=prov)
+    assert log.analyst["provenance_root"] == prov
+    assert log.strategist["provenance_root"] == prov
+    assert log.pm["provenance_root"] == prov
 
 
 def test_halt_mode_dispatches_modal_vocabulary(monkeypatch: pytest.MonkeyPatch) -> None:

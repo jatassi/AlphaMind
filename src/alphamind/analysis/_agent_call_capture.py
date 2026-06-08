@@ -1,0 +1,460 @@
+"""agent_calls telemetry capture — extends the shared harness diag mechanism (ALP-880).
+
+Every LLM agent invocation persists one ``agent_calls`` row plus its four raw
+provenance artifacts. This module is the capture layer that the shared harness
+core (:mod:`alphamind.analysis._harness_core`) drives off the same
+``DiagState`` it already accumulates for the diagnostic archive — *extending*
+that mechanism rather than introducing a second independent artifact writer.
+
+Two halves, split functional-core / imperative-shell:
+
+* :class:`AgentCallCapture` is an immutable value object holding every signal a
+  completed call yields. :meth:`AgentCallCapture.to_record` is a pure
+  projection to the persisted :class:`AgentCallRecord` (story 02a's shape — not
+  redefined here). :meth:`AgentCallCapture.write_artifacts` writes the four
+  provenance files (synchronous filesystem I/O, the same idiom
+  ``DiagState.write`` already uses for ``prompt.md`` / ``metadata.json``).
+* :func:`persist_agent_call` is the async shell: write the artifacts, then
+  insert the row via story 02a's :func:`insert_agent_call`. The DB insert is
+  the only async step; it runs in the subprocess worker that owns the session.
+
+The provenance layout
+``data/provenance/invocations/{invocation_id}/agent_calls/{agent_call_id}/``
+is pinned by ``docs/design/05-execution-layer/state-persistence.md`` § Agent
+calls — distinct from the date-partitioned diagnostic archive layout.
+
+Multi-API-call agents (the adaptive researcher's tool loop, below-boundary
+retries) aggregate into exactly one capture: the harness accumulates tokens
+across constituent calls onto its ``DiagState`` and assembles a single
+capture at the terminal path, so one row is written per agent call regardless
+of how many API round-trips it took.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import hashlib
+import json
+import subprocess
+import uuid
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from alphamind.analysis._shared import TokensUsed
+from alphamind.state.repository.agent_calls_queries import insert_agent_call
+from alphamind.state.tables.agent_calls import AgentCallErrorClass, AgentCallRecord
+
+if TYPE_CHECKING:
+    # Annotation-only: ``from __future__ import annotations`` keeps these as
+    # strings at runtime. The canonical ``DiagState`` (in ``_harness_core``)
+    # inherits ``CaptureDiagFields`` defined below, so ``_harness_core`` imports
+    # this module at module scope — a runtime import of the harness exceptions
+    # here would close that loop into a cycle. The one runtime use
+    # (``isinstance`` in ``error_class_for_failure``) imports them lazily.
+    from alphamind.analysis._harness_core import HarnessFailure
+
+__all__ = [
+    "AgentCallCapture",
+    "CaptureDiagFields",
+    "CaptureSignals",
+    "build_capture_from_diag",
+    "error_class_for_failure",
+    "new_agent_call_id",
+    "persist_agent_call",
+    "prompt_content_hash",
+    "prompt_git_sha",
+    "provenance_dir",
+]
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def new_agent_call_id() -> str:
+    """Mint a fresh, stable per-agent-call identifier."""
+    return f"ac-{uuid.uuid4().hex}"
+
+
+def prompt_content_hash(text: str) -> str:
+    """SHA-256 of the prompt text actually sent to the API (hex digest)."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+# Process-scoped memoization of ``git hash-object`` results (ALP-909 L3).
+# Keyed by ``(prompt_path, mtime_ns, size)`` so a committed prompt re-hashed
+# within the process (e.g. an aggregated capture after a corrective retry, or
+# repeated unit-test builds) does not re-spawn the subprocess, while a changed
+# file (new mtime / size) recomputes and distinct paths never collide. No
+# invalidation needed beyond the stat key: the pipeline process restarts on
+# prompt edits per the deploy-time-vs-invocation classification, and a stale
+# entry could only survive an in-place same-mtime-and-size edit.
+_PROMPT_GIT_SHA_CACHE: dict[tuple[str, int, int], str] = {}
+
+
+def prompt_git_sha(prompt_path: str) -> str:
+    """Git blob SHA of the committed prompt file, or ``""`` if unavailable.
+
+    Computes ``git hash-object`` against the working-tree file so the value
+    confirms which committed prompt version was on disk for the call. A
+    non-git environment (or a deleted prompt) yields ``""`` — the capture
+    stays best-effort and never fails the call it observes.
+
+    Memoized by ``(prompt_path, mtime_ns, size)`` (ALP-909 L3): a repeated
+    build for the same on-disk prompt within a process reuses the cached SHA
+    instead of re-spawning ``git hash-object`` (notably slower on the Windows
+    prod target). A missing file is not cached — so a prompt that appears later
+    is hashed on its next call rather than pinned to ``""``.
+    """
+    try:
+        stat = Path(prompt_path).stat()
+    except OSError:
+        return ""
+    key = (prompt_path, stat.st_mtime_ns, stat.st_size)
+    cached = _PROMPT_GIT_SHA_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        completed = subprocess.run(
+            ["git", "hash-object", prompt_path],
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+    sha = completed.stdout.strip()
+    _PROMPT_GIT_SHA_CACHE[key] = sha
+    return sha
+
+
+_SYSTEM_PROMPT_FILENAME = "system_prompt.md"
+_OUTPUT_SCHEMA_FILENAME = "output_schema.json"
+_TOOLS_DEFINITION_FILENAME = "tools_definition.json"
+_OUTPUT_FILENAME = "output.json"
+
+
+def provenance_dir(*, provenance_root: Path, invocation_id: str, agent_call_id: str) -> Path:
+    """Return the per-call provenance directory under *provenance_root*.
+
+    Pins ``invocations/{invocation_id}/agent_calls/{agent_call_id}/`` —
+    *provenance_root* is the ``data/provenance`` directory; callers append
+    nothing further. Distinct from the date-partitioned diagnostic archive
+    layout (:func:`alphamind._kernel.archive_layout.invocation_archive_dir`).
+    """
+    return provenance_root / "invocations" / invocation_id / "agent_calls" / agent_call_id
+
+
+def error_class_for_failure(exc: HarnessFailure) -> AgentCallErrorClass:
+    """Map a :class:`HarnessFailure` subclass to its persisted ``error_class``.
+
+    ``TimeoutFailure`` / ``MalformedOutputFailure`` / ``ContextOverflowFailure``
+    map to their like-named members. An :class:`EmptyResponseFailure` (the
+    synthesizer's exhausted-empty-response transient) records as
+    ``empty_response`` so a recoverable empty turn is not conflated with a real
+    model-API error. An :class:`SDKFailure` (auth / non-recoverable SDK /
+    CLI-error result) records as ``model_api_error``; any other future
+    ``HarnessFailure`` subclass falls through to ``model_api_error`` — the
+    fail-closed bucket for a non-recoverable call. ``internal_error`` is not
+    produced here — it is stamped by the capture wrapper when a
+    non-:class:`HarnessFailure` exception escapes the wrapped body.
+    """
+    # Lazy imports: the harness exception classes live in ``_harness_core``,
+    # which imports this module at module scope (its ``DiagState`` inherits
+    # ``CaptureDiagFields``); importing them here at module scope would form a
+    # cycle. ``EmptyResponseFailure`` lives in the synthesizer sub-package and
+    # importing it at module scope would pull a heavy harness module into this
+    # functional core. The failure path is rare and both modules are cached
+    # after first import, so the cost is trivial.
+    from alphamind.analysis._harness_core import (
+        ContextOverflowFailure,
+        MalformedOutputFailure,
+        TimeoutFailure,
+    )
+    from alphamind.analysis.synthesizer.harness import EmptyResponseFailure
+
+    if isinstance(exc, TimeoutFailure):
+        return AgentCallErrorClass.timeout
+    if isinstance(exc, MalformedOutputFailure):
+        return AgentCallErrorClass.malformed_output
+    if isinstance(exc, ContextOverflowFailure):
+        return AgentCallErrorClass.context_overflow
+    if isinstance(exc, EmptyResponseFailure):
+        return AgentCallErrorClass.empty_response
+    return AgentCallErrorClass.model_api_error
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class AgentCallCapture:
+    """Every signal one completed agent call yields, ready to persist.
+
+    Assembled by the harness at its terminal path from the accumulated
+    ``DiagState`` plus the call-specific provenance signals the harness knows
+    (the system prompt's git SHA + content hash, the sampling params, the
+    output schema, the tool definitions, and the structured output payload).
+    Immutable; projected to the persisted record by :meth:`to_record`.
+    """
+
+    agent_call_id: str
+    invocation_id: str
+    agent_name: str
+    attempt_number: int
+    model_id: str
+    prompt_path: str
+    prompt_git_sha: str
+    prompt_content_hash: str
+    system_prompt_text: str
+    sampling_params: dict[str, Any]
+    output_schema: dict[str, Any] | None
+    tools_definition: list[str] | None
+    output_payload: dict[str, Any] | None
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    wall_clock_ms: int
+    stop_reason: str
+    success: bool
+    error_class: AgentCallErrorClass | None
+    error_message: str | None
+
+    def to_record(self, *, provenance_root: Path) -> AgentCallRecord:
+        """Project to the persisted :class:`AgentCallRecord` (pure).
+
+        ``output_artifact_ref`` points at the per-call provenance directory the
+        four artifacts are written under; ``output_schema_ref`` /
+        ``tools_definition_ref`` point at the individual artifact files (null
+        when the agent has no schema / no tools).
+        """
+        pdir = provenance_dir(
+            provenance_root=provenance_root,
+            invocation_id=self.invocation_id,
+            agent_call_id=self.agent_call_id,
+        )
+        return AgentCallRecord(
+            agent_call_id=self.agent_call_id,
+            invocation_id=self.invocation_id,
+            agent_name=self.agent_name,
+            attempt_number=self.attempt_number,
+            model_id=self.model_id,
+            prompt_path=self.prompt_path,
+            prompt_git_sha=self.prompt_git_sha,
+            prompt_content_hash=self.prompt_content_hash,
+            sampling_params_json=json.dumps(self.sampling_params, sort_keys=True),
+            output_schema_ref=(
+                str(pdir / _OUTPUT_SCHEMA_FILENAME) if self.output_schema is not None else None
+            ),
+            tools_definition_ref=(
+                str(pdir / _TOOLS_DEFINITION_FILENAME)
+                if self.tools_definition is not None
+                else None
+            ),
+            input_tokens=self.input_tokens,
+            output_tokens=self.output_tokens,
+            cache_read_tokens=self.cache_read_tokens,
+            cache_write_tokens=self.cache_write_tokens,
+            wall_clock_ms=self.wall_clock_ms,
+            stop_reason=self.stop_reason,
+            success=self.success,
+            error_class=self.error_class,
+            error_message=self.error_message,
+            output_artifact_ref=str(pdir),
+        )
+
+    def write_artifacts(self, *, provenance_root: Path) -> None:
+        """Write the four provenance files for this call (synchronous fs I/O).
+
+        All four files are always emitted so the layout is uniform across the
+        9 agents; a narrative agent with no schema / no tools / no structured
+        output gets ``null`` payloads rather than missing files.
+        """
+        pdir = provenance_dir(
+            provenance_root=provenance_root,
+            invocation_id=self.invocation_id,
+            agent_call_id=self.agent_call_id,
+        )
+        pdir.mkdir(parents=True, exist_ok=True)
+        (pdir / _SYSTEM_PROMPT_FILENAME).write_text(self.system_prompt_text, encoding="utf-8")
+        (pdir / _OUTPUT_SCHEMA_FILENAME).write_text(
+            json.dumps(self.output_schema, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        (pdir / _TOOLS_DEFINITION_FILENAME).write_text(
+            json.dumps(self.tools_definition, indent=2), encoding="utf-8"
+        )
+        (pdir / _OUTPUT_FILENAME).write_text(
+            json.dumps(self.output_payload, indent=2, sort_keys=True), encoding="utf-8"
+        )
+
+
+@dataclasses.dataclass(kw_only=True)
+class CaptureDiagFields:
+    """The capture data fields + outcome-stamp shared by every diag state (ALP-909 L1).
+
+    The canonical :class:`alphamind.analysis._harness_core.DiagState` and the two
+    decision harnesses' private ``_DiagState`` records all carried byte-identical
+    copies of these nine provenance/outcome fields plus the same ``write``-time
+    stamp block (mint ``agent_call_id`` once, record the terminal ``last_*``
+    outcome). This base holds them once so a future capture field is a single
+    edit, not three.
+
+    Fields are ``kw_only`` so the base can be mixed into dataclasses whose own
+    non-default fields (``agent_name``, ``invocation_id``, …) precede these —
+    keyword-only fields are appended to ``__init__`` regardless of declaration
+    order, sidestepping the "non-default follows default" ordering error.
+
+    All fields default so a diag can be constructed without naming any of them;
+    the harness sets the provenance signals (``prompt_path`` / ``output_schema``
+    / ``tools_definition`` / ``sampling_params`` / ``output_payload``) at
+    construction and :meth:`stamp_outcome` records the terminal outcome on each
+    ``write``. The defaults make every subclass satisfy :class:`CaptureSignals`.
+    """
+
+    # Provenance signals the harness sets at construction (defaults = a narrative
+    # agent with no schema / no tools / no structured output).
+    prompt_path: str | None = None
+    output_schema: dict[str, Any] | None = None
+    tools_definition: list[str] | None = None
+    sampling_params: dict[str, Any] = dataclasses.field(default_factory=dict)
+    output_payload: dict[str, Any] | None = None
+    # Stable per-agent-call id, minted once on first ``write`` so retries
+    # aggregate into one record/provenance dir rather than one per attempt.
+    agent_call_id: str | None = None
+    # Last terminal outcome stamped by ``write`` — drives the capture build.
+    last_success: bool | None = None
+    last_wall_clock_seconds: float | None = None
+    last_stop_reason: str | None = None
+
+    def stamp_outcome(
+        self, *, success: bool, wall_clock_seconds: float, stop_reason: str | None
+    ) -> None:
+        """Mint ``agent_call_id`` on first call, then record this terminal outcome.
+
+        Called from each diag's ``write`` before its diagnostic-archive I/O so a
+        subsequent :func:`build_capture_from_diag` assembles the single
+        aggregated agent_calls record, independent of whether the archive is
+        enabled.
+        """
+        if self.agent_call_id is None:
+            self.agent_call_id = new_agent_call_id()
+        self.last_success = success
+        self.last_wall_clock_seconds = wall_clock_seconds
+        self.last_stop_reason = stop_reason
+
+
+class CaptureSignals(Protocol):
+    """The capture-relevant surface every diag state exposes (ALP-880).
+
+    Both the shared :class:`alphamind.analysis._harness_core.DiagState` and the
+    decision harnesses' private ``_DiagState`` records satisfy this Protocol,
+    so :func:`build_capture_from_diag` assembles the single aggregated capture
+    off either without each diag class re-implementing the projection. The
+    diag mints ``agent_call_id`` once and stamps the last terminal outcome
+    onto ``last_success`` / ``last_wall_clock_seconds`` / ``last_stop_reason``
+    when its ``write`` runs; ``None`` ``last_success`` means no terminal write
+    happened and no capture is produced.
+    """
+
+    agent_name: str
+    invocation_id: str
+    model: str
+    prompt_text: str
+    prompt_path: str | None
+    sampling_params: dict[str, Any]
+    output_schema: dict[str, Any] | None
+    tools_definition: list[str] | None
+    output_payload: dict[str, Any] | None
+    tokens_used: TokensUsed
+    agent_call_id: str | None
+    last_success: bool | None
+    last_wall_clock_seconds: float | None
+    last_stop_reason: str | None
+
+    @property
+    def attempt_number(self) -> int:
+        """1-indexed aggregated attempt count — each diag derives it from its
+        own retry/attempt counter (read-only)."""
+        ...
+
+
+def build_capture_from_diag(
+    diag: CaptureSignals,
+    *,
+    error: HarnessFailure | None = None,
+    internal_error: BaseException | None = None,
+) -> AgentCallCapture | None:
+    """Assemble the single aggregated capture for *diag*, or ``None``.
+
+    Returns ``None`` when no terminal ``write`` has stamped an outcome
+    (``agent_call_id`` unset or ``last_success`` ``None``). The accumulated
+    ``tokens_used`` / ``attempt_number`` / outcome reflect every constituent
+    API call (tool loop + below-boundary retries), so the result is exactly
+    one aggregated record per agent call.
+
+    Failure overrides the stamped outcome so a row always reflects the call's
+    true terminal result (ALP-909 C1): if *error* (a :class:`HarnessFailure`)
+    or *internal_error* (any other exception that escaped the wrapped body) is
+    present, ``success`` is forced ``False`` regardless of what the harness
+    stamped. *error*'s subclass selects the persisted ``error_class`` via
+    :func:`error_class_for_failure`; *internal_error* records ``internal_error``
+    with ``str(exc)`` as the message. The two are mutually exclusive at the
+    call site (a HarnessFailure is caught as *error*; anything else as
+    *internal_error*).
+    """
+    if diag.agent_call_id is None or diag.last_success is None:
+        return None
+    wall_clock_seconds = diag.last_wall_clock_seconds or 0.0
+    prompt_path = diag.prompt_path or ""
+    if error is not None:
+        success = False
+        error_class: AgentCallErrorClass | None = error_class_for_failure(error)
+        error_message: str | None = str(error)
+    elif internal_error is not None:
+        success = False
+        error_class = AgentCallErrorClass.internal_error
+        error_message = str(internal_error)
+    else:
+        success = diag.last_success
+        error_class = None
+        error_message = None
+    return AgentCallCapture(
+        agent_call_id=diag.agent_call_id,
+        invocation_id=diag.invocation_id,
+        agent_name=diag.agent_name,
+        attempt_number=diag.attempt_number,
+        model_id=diag.model,
+        prompt_path=prompt_path,
+        prompt_git_sha=prompt_git_sha(prompt_path) if prompt_path else "",
+        prompt_content_hash=prompt_content_hash(diag.prompt_text),
+        system_prompt_text=diag.prompt_text,
+        sampling_params=dict(diag.sampling_params),
+        output_schema=diag.output_schema,
+        tools_definition=diag.tools_definition,
+        output_payload=diag.output_payload,
+        input_tokens=diag.tokens_used.input_tokens,
+        output_tokens=diag.tokens_used.output_tokens,
+        cache_read_tokens=diag.tokens_used.cache_read_tokens,
+        cache_write_tokens=diag.tokens_used.cache_write_tokens,
+        wall_clock_ms=int(wall_clock_seconds * 1000),
+        stop_reason=diag.last_stop_reason or "",
+        success=success,
+        error_class=error_class,
+        error_message=error_message,
+    )
+
+
+async def persist_agent_call(
+    session: AsyncSession,
+    capture: AgentCallCapture,
+    *,
+    provenance_root: Path,
+) -> None:
+    """Write the provenance artifacts, then insert the ``agent_calls`` row.
+
+    The artifacts land first so the row's ``output_artifact_ref`` always points
+    at an existing directory. The row is queued on *session*; the caller
+    controls the commit (the subprocess worker commits its telemetry session
+    before returning).
+    """
+    capture.write_artifacts(provenance_root=provenance_root)
+    await insert_agent_call(session, capture.to_record(provenance_root=provenance_root))

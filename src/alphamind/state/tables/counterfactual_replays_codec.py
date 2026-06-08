@@ -24,15 +24,13 @@ from typing import Any
 
 from alphamind._kernel.ids import EnvelopeId, ReplayId
 from alphamind._kernel.money import Money, money, signed_money
-from alphamind.execution.counterfactual_replay_engine.enums import (
+from alphamind.state.tables.counterfactual_replays import (
     Confidence,
+    CounterfactualReplayRecord,
     ExitLeg,
     ReplayKind,
     ReplayStatus,
     UnevaluableReason,
-)
-from alphamind.execution.counterfactual_replay_engine.records import (
-    CounterfactualReplayRecord,
 )
 
 

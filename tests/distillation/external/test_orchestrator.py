@@ -55,6 +55,13 @@ from alphamind.persistence.models import (
     PredictionMarketSnapshots,
     SectorClassification,
 )
+from alphamind.portfolio_state.events import (
+    DistillationAnomalyFlagDetail,
+    EventSource,
+    EventType,
+)
+from alphamind.state.invocation_context.activity_log import activity_log_entry_from_row
+from alphamind.state.tables.activity_log import ActivityLogRow
 from alphamind.state.tables.invocations import InvocationRow
 
 from .conftest import _build_distillation_config
@@ -320,6 +327,7 @@ def _run_orchestrator(
     archive_root: Path,
     invocation_id: str = "20260425T120000Z-test",
     provenance_root: Path | None = None,
+    emit_anomaly_flags: bool = False,
 ) -> DistillationOutputs:
     """Helper that drives the orchestrator with the standard fixture config.
 
@@ -327,6 +335,9 @@ def _run_orchestrator(
     per-invocation calibration-state snapshot lands inside ``tmp_path``
     rather than the operator's home directory; tests that exercise the
     snapshot path explicitly can override.
+
+    ``emit_anomaly_flags`` opts into the story 04b anomaly activity-log
+    emission (off by default to match the replay-harness no-op path).
     """
     _seed_invocation_row(session, invocation_id)
     config = _build_distillation_config()
@@ -343,6 +354,7 @@ def _run_orchestrator(
             invocation_id=invocation_id,
             archive_root=archive_root,
             provenance_root=provenance_root,
+            emit_anomaly_flags=emit_anomaly_flags,
         )
     )
 
@@ -780,3 +792,136 @@ def test_orchestrator_threads_resolved_contract_scope_to_both_consumers(
     # The above-floor monetary_policy contract is in scope; the low-volume
     # one and the election contract are out.
     assert captured["refresh"] == ("ct-fed-active",)
+
+
+# ---------------------------------------------------------------------------
+# Anomaly activity-log emission (ALP-881 / story 04b)
+# ---------------------------------------------------------------------------
+
+
+def _read_anomaly_entries(session: Session, invocation_id: str) -> list[ActivityLogRow]:
+    """Read every ``DISTILLATION_ANOMALY_FLAG`` row for an invocation.
+
+    Queries by the anomaly ``EventType`` + ``invocation_id`` — the shape
+    ALP-96's flag-rate reporter consumes.
+    """
+    return list(
+        session.execute(
+            select(ActivityLogRow)
+            .where(
+                ActivityLogRow.event_type == EventType.DISTILLATION_ANOMALY_FLAG.value,
+                ActivityLogRow.invocation_id == invocation_id,
+            )
+            .order_by(ActivityLogRow.entry_id)
+        )
+        .scalars()
+        .all()
+    )
+
+
+def test_orchestrator_emits_one_anomaly_entry_per_flag(
+    populated_session: Session, tmp_path: Path
+) -> None:
+    """N produced flags → N ``DISTILLATION_ANOMALY_FLAG`` rows, each carrying the
+    detail-payload fields from the originating flag and the running invocation FK.
+
+    The persisted rows are queried by the anomaly ``EventType`` (the read-back
+    shape ALP-96 consumes) and rehydrated into typed entries to assert the
+    detail payload round-trips with ``threshold_class`` / ``threshold_key``
+    resolved via the taxonomy registry.
+    """
+    invocation_id = "20260425T120000Z-emit"
+    outputs = _run_orchestrator(
+        populated_session,
+        archive_root=tmp_path,
+        invocation_id=invocation_id,
+        emit_anomaly_flags=True,
+    )
+
+    # The orchestrator's diagnostic count is the source of truth for how many
+    # flags the fixture produced this run; the emission must match it 1:1.
+    expected_flag_count = sum(len(block.anomaly_flags) for block in outputs.all_blocks)
+    assert expected_flag_count >= 1, (
+        "fixture must produce at least one anomaly flag so this test exercises emission"
+    )
+
+    rows = _read_anomaly_entries(populated_session, invocation_id)
+    assert len(rows) == expected_flag_count
+
+    for row in rows:
+        assert row.invocation_id == invocation_id
+        entry = activity_log_entry_from_row(row)
+        assert entry.event_type is EventType.DISTILLATION_ANOMALY_FLAG
+        assert entry.source is EventSource.DISTILLATION_ORCHESTRATOR
+        detail = entry.detail
+        assert isinstance(detail, DistillationAnomalyFlagDetail)
+        # Required, non-empty taxonomy fields populated via resolve_flag_taxonomy.
+        assert detail.threshold_class
+        assert detail.threshold_key
+
+    # Every produced (block_id, flag.name) pair is represented exactly once.
+    emitted_keys = {
+        (activity_log_entry_from_row(r).detail.block_id, _flag_name_from_row(r)) for r in rows
+    }
+    produced_keys = {
+        (block.block_id, flag.name) for block in outputs.all_blocks for flag in block.anomaly_flags
+    }
+    assert emitted_keys == produced_keys
+
+
+def _flag_name_from_row(row: ActivityLogRow) -> str:
+    """Recover the originating flag name from the deterministic entry_id suffix."""
+    detail = activity_log_entry_from_row(row).detail
+    assert isinstance(detail, DistillationAnomalyFlagDetail)
+    # entry_id = "{invocation_id}-DISTILLATION_ANOMALY_FLAG-{block_id}-{flag_name}".
+    prefix = f"{row.invocation_id}-{EventType.DISTILLATION_ANOMALY_FLAG.value}-{detail.block_id}-"
+    assert row.entry_id.startswith(prefix)
+    return row.entry_id.removeprefix(prefix)
+
+
+def test_orchestrator_emits_nothing_without_opt_in(
+    populated_session: Session, tmp_path: Path
+) -> None:
+    """A run with no invocation handle (emit disabled — the replay-harness path)
+    emits zero anomaly entries and does not raise."""
+    invocation_id = "20260425T120000Z-noemit"
+    _run_orchestrator(
+        populated_session,
+        archive_root=tmp_path,
+        invocation_id=invocation_id,
+        emit_anomaly_flags=False,
+    )
+    assert _read_anomaly_entries(populated_session, invocation_id) == []
+
+
+def test_orchestrator_zero_flags_emits_zero_entries(tmp_path: Path) -> None:
+    """A run that produces zero anomaly flags writes zero anomaly entries.
+
+    Uses a session with no seeded market data beyond the universe/sector rows,
+    so no per-category producer fires a flag; emission must be a clean no-op
+    even with ``emit_anomaly_flags=True``.
+    """
+    eng = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(eng)
+    factory = sessionmaker(bind=eng, expire_on_commit=False)
+    sess = factory()
+    try:
+        _seed_universe_and_sectors(sess)
+        # No OHLCV / macro / liquidity history → no baselines → no flags fire.
+        invocation_id = "20260425T120000Z-zero"
+        outputs = _run_orchestrator(
+            sess,
+            archive_root=tmp_path,
+            invocation_id=invocation_id,
+            emit_anomaly_flags=True,
+        )
+        produced = sum(len(block.anomaly_flags) for block in outputs.all_blocks)
+        assert produced == 0, "fixture unexpectedly produced a flag; the zero-flag path is untested"
+        assert _read_anomaly_entries(sess, invocation_id) == []
+    finally:
+        sess.close()
+        eng.dispose()

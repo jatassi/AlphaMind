@@ -65,6 +65,7 @@ from alphamind.commands.submission_results import _ValidationMetadata
 from alphamind.decision.portfolio_manager.models import (
     AddCommand,
     AdjustCommand,
+    AntiPattern,
     CancelCommand,
     CloseCommand,
     CriterionAssessment,
@@ -490,6 +491,7 @@ def _add_command(
 def _make_analyst_envelope(
     envelope_id: str = "ENV-REC-1",
     commands: tuple[Any, ...] = (),
+    anti_patterns_identified: tuple[AntiPattern, ...] | None = None,
 ) -> PMEnvelope:
     if not commands:
         commands = (_open_command(),)
@@ -504,7 +506,7 @@ def _make_analyst_envelope(
         modifications=(),
         concerns=(),
         rationale_narrative="OK proposal.",
-        anti_patterns_identified=None,
+        anti_patterns_identified=anti_patterns_identified,
         commands=commands,
     )
 
@@ -1259,6 +1261,45 @@ async def test_pm_decision_carries_originating_proposal_json_and_reprice_markers
     detail = decode_detail(pm_rows[0].detail_json, PMDecisionDetail)
     assert detail.originating_proposal_json == proposal_body
     assert detail.reprice_markers_json == [markers[0]]
+
+
+async def test_pm_decision_persists_envelope_anti_patterns(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-911: ``_emit_pm_decision`` threads the PM's identified anti-patterns
+    from the in-hand envelope into the persisted ``PM_DECISION`` row, so the
+    feedback-loop frequency metrics can read them off the ``pm_decision_log``
+    bundle. An envelope flagging none persists an empty list."""
+    from alphamind.execution.write_paths.command_execution import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    tags: tuple[AntiPattern, ...] = ("sunk_cost_persistence", "conviction_inflation")
+    envelope = _make_analyst_envelope(
+        commands=(_open_command(underlying=Symbol("NVDA")),),
+        anti_patterns_identified=tags,
+    )
+    results = (_accepted_result(command_ordinal=0, command_id=_open_command_id()),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle,
+        envelope,
+        results,
+        config=_make_state_persistence_config(),
+        originating_proposal_json={},
+    )
+    await ctx.__aexit__(None, None, None)
+
+    rows = await _read_activity_log_for(factory, handle.invocation_id)
+    pm_rows = [r for r in rows if r.event_type == EventType.PM_DECISION.value]
+    assert len(pm_rows) == 1
+    detail = decode_detail(pm_rows[0].detail_json, PMDecisionDetail)
+    assert detail.anti_patterns_json == list(tags)
 
 
 async def test_open_persisted_thesis_id_equals_link_embedded_thesis(

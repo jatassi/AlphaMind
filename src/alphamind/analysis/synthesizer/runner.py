@@ -129,6 +129,7 @@ async def _run_synthesizer(  # noqa: PLR0913 — signature dictated by ALP-210 s
     now_utc: datetime,
     deps: _Deps,
     archive_root: Path | None = None,
+    provenance_root: Path | None = None,
 ) -> SynthesizerResult:
     """Compose the synthesizer's full work and return a ``SynthesizerResult``.
 
@@ -166,6 +167,7 @@ async def _run_synthesizer(  # noqa: PLR0913 — signature dictated by ALP-210 s
         invocation_id=invocation_id,
         portfolio_reader=portfolio_reader,
         archive_root=archive_root,
+        provenance_root=provenance_root,
     )
     logger.info(
         "synthesizer harness invoked (tokens=%s, tool_calls=%d, stop_reason=%s)",
@@ -219,6 +221,7 @@ async def run_synthesizer(  # noqa: PLR0913 — signature dictated by ALP-210 sp
     invocation_id: str,
     now_utc: datetime,
     archive_root: Path | None = None,
+    provenance_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     agent_config: BaseAgentConfig | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
@@ -246,6 +249,7 @@ async def run_synthesizer(  # noqa: PLR0913 — signature dictated by ALP-210 sp
         invocation_id: str,
         portfolio_reader: SynthesizerPortfolioStateReader,
         archive_root: Path | None,
+        provenance_root: Path | None,
     ) -> HarnessSuccess:
         return await invoke_synthesizer_in_subprocess(
             agent_config=agent_config,
@@ -254,6 +258,7 @@ async def run_synthesizer(  # noqa: PLR0913 — signature dictated by ALP-210 sp
             portfolio_reader=portfolio_reader,
             as_of=now_utc,
             archive_root=archive_root,
+            provenance_root=provenance_root,
             sdk_query_fn=sdk_query_fn,
             progress=progress,
             phase=phase,
@@ -271,4 +276,5 @@ async def run_synthesizer(  # noqa: PLR0913 — signature dictated by ALP-210 sp
         now_utc=now_utc,
         deps=_Deps(harness_fn=_default_harness),
         archive_root=archive_root,
+        provenance_root=provenance_root,
     )

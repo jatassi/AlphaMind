@@ -19,14 +19,14 @@ from alphamind.execution.counterfactual_replay_engine.eligibility import (
     check_eligibility,
     compute_replay_window,
 )
-from alphamind.execution.counterfactual_replay_engine.enums import (
-    ReplayStatus,
-    UnevaluableReason,
-)
 from alphamind.execution.counterfactual_replay_engine.iv_lookup import (
     IVSnapshotLookupResult,
 )
 from alphamind.execution.counterfactual_replay_engine.repos import OhlcvBar
+from alphamind.state.tables.counterfactual_replays import (
+    ReplayStatus,
+    UnevaluableReason,
+)
 
 # ---------------------------------------------------------------------------
 # Config fixture

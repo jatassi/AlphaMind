@@ -35,7 +35,6 @@ from alphamind.execution.counterfactual_replay_engine.eligibility import (
     check_eligibility,
     compute_replay_window,
 )
-from alphamind.execution.counterfactual_replay_engine.enums import ReplayKind, ReplayStatus
 from alphamind.execution.counterfactual_replay_engine.equity_replay import replay_equity_proposal
 from alphamind.execution.counterfactual_replay_engine.iv_lookup import (
     SqlOptionsSnapshotRepository,
@@ -52,7 +51,6 @@ from alphamind.execution.counterfactual_replay_engine.record_mapping import (
     record_from_option_result,
     record_from_strategist_result,
 )
-from alphamind.execution.counterfactual_replay_engine.records import CounterfactualReplayRecord
 from alphamind.execution.counterfactual_replay_engine.repos import OhlcvBar
 from alphamind.execution.counterfactual_replay_engine.sql_repos import (
     SqlBarRepository,
@@ -75,6 +73,11 @@ from alphamind.state.repository.counterfactual_replays import (
 from alphamind.state.repository.position_state import (
     PositionStateNotFoundError,
     load_position_state_at,
+)
+from alphamind.state.tables.counterfactual_replays import (
+    CounterfactualReplayRecord,
+    ReplayKind,
+    ReplayStatus,
 )
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.orders_codec import row_to_record as order_row_to_record

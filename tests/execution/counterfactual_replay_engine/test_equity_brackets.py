@@ -12,12 +12,12 @@ from decimal import Decimal
 from typing import Any
 
 from alphamind._kernel.money import price
-from alphamind.execution.counterfactual_replay_engine.enums import ExitLeg
 from alphamind.execution.counterfactual_replay_engine.equity_replay import (
     EquityEntryResult,
     simulate_equity_brackets,
 )
 from alphamind.execution.counterfactual_replay_engine.repos import OhlcvBar
+from alphamind.state.tables.counterfactual_replays import ExitLeg
 
 _TS = datetime(2026, 1, 10, 14, 0, tzinfo=UTC)
 

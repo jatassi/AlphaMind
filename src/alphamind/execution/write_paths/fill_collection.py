@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -53,8 +52,6 @@ from alphamind.execution.write_paths.projection_rebuild import (
 )
 from alphamind.execution.write_paths.thesis_pnl_ledger import rederive_thesis_pnl_ledgers
 from alphamind.portfolio_state.events.activity_log import (
-    EVENT_TYPE_TO_GROUP,
-    ActivityLogEntry,
     BracketActivatedDetail,
     BracketDissolvedDetail,
     BracketIncompleteWarningDetail,
@@ -99,7 +96,7 @@ from alphamind.portfolio_state.records.positions import (
 from alphamind.risk_guardrails.guardrail_evaluation.types import MarketInputs
 from alphamind.state.config import StatePersistenceConfig
 from alphamind.state.invocation_context.activity_log import (
-    append_activity_log_entry,
+    emit_activity_log_entry,
 )
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
@@ -2223,19 +2220,16 @@ def _emit(
     source: EventSource = EventSource.FILL_PROCESSOR,
 ) -> None:
     """Construct + persist one ``ActivityLogEntry`` joined to the current handle."""
-    entry = ActivityLogEntry(
-        entry_id=f"{handle.invocation_id}-{event_type.value}-{uuid.uuid4().hex}",
-        invocation_id=handle.invocation_id,
-        timestamp=timestamp,
+    emit_activity_log_entry(
+        handle,
         event_type=event_type,
-        event_group=EVENT_TYPE_TO_GROUP[event_type],
         position_id=position_id,
         order_id=order_id,
         thesis_id=thesis_id,
-        source=source,
+        timestamp=timestamp,
         detail=detail,
+        source=source,
     )
-    append_activity_log_entry(handle, entry)
 
 
 def _ticker_of(position: PositionRecord) -> str:

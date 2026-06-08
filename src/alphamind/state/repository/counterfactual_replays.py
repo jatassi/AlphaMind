@@ -20,10 +20,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.ids import EnvelopeId
-from alphamind.execution.counterfactual_replay_engine.records import (
+from alphamind.state.tables.counterfactual_replays import (
     CounterfactualReplayRecord,
+    CounterfactualReplays,
 )
-from alphamind.state.tables.counterfactual_replays import CounterfactualReplays
 from alphamind.state.tables.counterfactual_replays_codec import (
     decode_counterfactual_replay,
     encode_counterfactual_replay,

@@ -25,6 +25,7 @@ from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventSource,
     EventType,
+    build_activity_log_entry,
     decode_detail,
     encode_detail,
 )
@@ -112,3 +113,39 @@ def append_activity_log_entry(
         )
         raise ValueError(msg)
     handle.session.add(activity_log_entry_to_row(entry))
+
+
+def emit_activity_log_entry(  # noqa: PLR0913 — imperative-shell wrapper mirrors build_activity_log_entry's ALP-923 signature, minus invocation_id (taken from the handle)
+    handle: InvocationHandle,
+    *,
+    event_type: EventType,
+    position_id: str | None,
+    order_id: str | None,
+    thesis_id: str | None,
+    timestamp: datetime,
+    detail: object,
+    source: EventSource,
+    entry_id: str | None = None,
+) -> ActivityLogEntry:
+    """Build one activity-log entry against the handle and append it.
+
+    The imperative shell over the pure ``build_activity_log_entry``: it binds
+    ``invocation_id`` to ``handle.invocation_id``, appends the built entry to the
+    open ``InvocationContext`` transaction via ``append_activity_log_entry``, and
+    returns the entry so returning callers (operator-console audit) can hand it
+    back. ``entry_id`` defaults to the standard token; custom-token callers
+    (verb-PK audit rows) override it.
+    """
+    entry = build_activity_log_entry(
+        invocation_id=handle.invocation_id,
+        event_type=event_type,
+        position_id=position_id,
+        order_id=order_id,
+        thesis_id=thesis_id,
+        timestamp=timestamp,
+        detail=detail,
+        source=source,
+        entry_id=entry_id,
+    )
+    append_activity_log_entry(handle, entry)
+    return entry

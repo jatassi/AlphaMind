@@ -161,6 +161,7 @@ def _build_repo(factory: async_sessionmaker[AsyncSession]) -> PortfolioStateRepo
                 "invocation_provenance_root": str(Path("/tmp/provenance")),
             }
         ),
+        thesis_quality_aggregates_trailing_windows_days=(5, 20),
     )
 
 

@@ -50,6 +50,12 @@ from alphamind.execution.account_activities.records import (
 )
 from alphamind.execution.corporate_actions.handlers._shared import _persist_position_update
 from alphamind.execution.write_paths.broker_event_persistence import append_broker_event
+from alphamind.portfolio_state.events.activity_log import (
+    EventSource,
+    EventType,
+    PositionClosedDetail,
+    PositionExitMethod,
+)
 from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
     InstrumentType,
@@ -58,6 +64,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
     alpaca_occ_symbol,
 )
+from alphamind.state.invocation_context.activity_log import emit_activity_log_entry
 from alphamind.state.invocation_context.context import InvocationHandle
 from alphamind.state.records_broker_event_log import (
     BrokerEventRecord,
@@ -67,6 +74,7 @@ from alphamind.state.records_broker_event_log import (
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.positions_codec import record_to_row, row_to_record
+from alphamind.state.tables.theses import ThesisRow
 
 
 def event_key_for(activity_id: str) -> str:
@@ -157,6 +165,43 @@ async def _persist_booking(
     await handle.session.flush()
 
 
+def _emit_position_closed(
+    handle: InvocationHandle,
+    *,
+    option_record: PositionRecord,
+    exit_method: PositionExitMethod,
+    realized_pnl_usd: Money,
+    timestamp: datetime,
+) -> None:
+    """Append one POSITION_CLOSED activity-log entry for the closed option.
+
+    The closed-position thesis resolver reads the exit method (and, for an
+    expiry, resolves the thesis) off this entry — without it the option-close
+    path leaves the thesis ``ACTIVE`` indefinitely. Built inline (mirroring the
+    resolver's ``_emit_thesis_resolved``) rather than via the corporate-actions
+    private ``_emit``. ``exit_price`` is the sanctioned 0 placeholder (no market
+    sale — the option expired worthless or converted at strike), and
+    ``thesis_resolution_category`` is the empty non-load-bearing hint (the
+    resolver computes the real category) — both matching the equity
+    ``fill_collection`` close convention.
+    """
+    emit_activity_log_entry(
+        handle,
+        event_type=EventType.POSITION_CLOSED,
+        position_id=str(option_record.position_id),
+        order_id=None,
+        thesis_id=str(option_record.thesis_id) if option_record.thesis_id is not None else None,
+        timestamp=timestamp,
+        detail=PositionClosedDetail(
+            exit_method=exit_method,
+            exit_price=Money(Decimal(0)),
+            realized_pnl_usd=realized_pnl_usd,
+            thesis_resolution_category="",
+        ),
+        source=EventSource.ACCOUNT_ACTIVITIES_PROCESSOR,
+    )
+
+
 async def _already_booked(handle: InvocationHandle, event_key: str) -> bool:
     """Whether *event_key* is already in ``broker_event_log`` (a re-poll no-op).
 
@@ -217,6 +262,17 @@ async def handle_expiry(handle: InvocationHandle, event: LifecycleEvent) -> None
         broker_timestamp=event.transaction_time,
     )
     await _persist_booking(handle, option_row=option_row, result=result)
+    # Emit POSITION_CLOSED so the closed-position thesis resolver can resolve the
+    # thesis at option-close (the option is the entire trade for an OTM expiry).
+    # The emit rides the booking path — a later re-poll resolves ``found is None``
+    # above and never reaches here, so the entry lands exactly once.
+    _emit_position_closed(
+        handle,
+        option_record=option_record,
+        exit_method=PositionExitMethod.OPTION_EXPIRY,
+        realized_pnl_usd=result.realized_pnl_usd,
+        timestamp=event.transaction_time,
+    )
 
 
 async def handle_assignment_or_exercise(
@@ -331,6 +387,52 @@ async def handle_assignment_or_exercise(
         broker_timestamp=event.transaction_time,
     )
     await _persist_booking(handle, option_row=option_row, result=result)
+    # Emit POSITION_CLOSED for the option so the changelog records the close,
+    # then re-point the thesis to the delivered equity leg. The thesis carries
+    # the same ``thesis_id`` into the opened equity position (booking.py), so
+    # resolving it at option-close would freeze ``resolution_pnl_usd`` at the
+    # option leg's -premium while the equity leg keeps accruing under the same
+    # thesis — corrupting the learning signal. Re-pointing makes the resolver's
+    # ACTIVE-thesis/CLOSED-position join skip the closed option and resolve the
+    # thesis only when the delivered equity position later closes.
+    exit_method = (
+        PositionExitMethod.OPTION_ASSIGNMENT
+        if event.activity_type is LifecycleActivityType.OPASN
+        else PositionExitMethod.OPTION_EXERCISE
+    )
+    _emit_position_closed(
+        handle,
+        option_record=option_record,
+        exit_method=exit_method,
+        realized_pnl_usd=result.realized_pnl_usd,
+        timestamp=event.transaction_time,
+    )
+    await _repoint_thesis_to_equity(
+        handle,
+        thesis_id=option_record.thesis_id,
+        equity_position_id=equity_position_id,
+    )
+
+
+async def _repoint_thesis_to_equity(
+    handle: InvocationHandle,
+    *,
+    thesis_id: ThesisId | None,
+    equity_position_id: PositionId,
+) -> None:
+    """Re-point the option's thesis row to the delivered equity position.
+
+    The equity row is added in the same write unit (its FK target exists), and
+    the join runs within the open fill-collection transaction, so the re-point
+    commits atomically with the close. A no-op when the option carried no thesis
+    link (a broker option with no local Intent).
+    """
+    if thesis_id is None:
+        return
+    thesis_row = await handle.session.get(ThesisRow, str(thesis_id))
+    if thesis_row is None:
+        return
+    thesis_row.position_id = str(equity_position_id)
 
 
 def _equity_cost_basis(result: BookingResult) -> Money:

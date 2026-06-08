@@ -360,7 +360,9 @@ def test_pipeline_runs_domain_and_qualitative_in_parallel(
 def test_pipeline_forwards_archive_root_and_provenance_root(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """``archive_root`` reaches every stage; ``provenance_root`` reaches distillation."""
+    """``archive_root`` reaches every stage; ``provenance_root`` reaches
+    distillation AND the four analysis runners (ALP-907 — the runners forward it
+    to their subprocess wrappers → the worker's per-call telemetry session)."""
     log = _CallLog()
     _patch_runners(monkeypatch, log=log)
     archive = tmp_path / "archive"
@@ -387,6 +389,27 @@ def test_pipeline_forwards_archive_root_and_provenance_root(
     assert log.qualitative["archive_root"] == archive
     assert log.adaptive["archive_root"] == archive
     assert log.synthesizer["archive_root"] == archive
+    # ALP-907 — provenance_root reaches all four analysis runners.
+    assert log.domain["provenance_root"] == prov
+    assert log.qualitative["provenance_root"] == prov
+    assert log.adaptive["provenance_root"] == prov
+    assert log.synthesizer["provenance_root"] == prov
+
+
+def test_pipeline_opts_into_anomaly_activity_log_emission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production composition root threads ``emit_anomaly_flags=True`` to
+    distillation so anomaly flags persist against the running invocation (ALP-881).
+
+    The replay harness calls the orchestrator directly (defaulting the flag off);
+    only the production pipeline opts in, so the invocation FK on each emitted row
+    is the live invocation.
+    """
+    log = _CallLog()
+    _patch_runners(monkeypatch, log=log)
+    _drive()
+    assert log.distillation["emit_anomaly_flags"] is True
 
 
 def test_pipeline_forwards_routing_inputs_to_runners(

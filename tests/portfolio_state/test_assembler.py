@@ -525,7 +525,8 @@ class _FailingRepository:
     ) -> dict[str, tuple[ActivityLogEntry, ...]]:
         raise RepositoryReadError("simulated read failure")
 
-    def get_thesis_quality_aggregates(self) -> ThesisQualityAggregate:
+    def get_thesis_quality_aggregates(self, now: datetime) -> ThesisQualityAggregate:
+        del now
         raise RepositoryReadError("simulated read failure")
 
     def get_brackets_for_positions(

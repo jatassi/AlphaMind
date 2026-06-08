@@ -52,11 +52,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import exchange_calendars
@@ -67,6 +68,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind._kernel.mode import PipelineMode
 from alphamind._kernel.progress import NOOP_PROGRESS_EMITTER, ProgressEmitter
+from alphamind.analysis.thesis_resolution import (
+    persist_thesis_resolutions,
+    prepare_closed_position_resolutions,
+)
 from alphamind.config.assets_views import (
     build_sector_resolver,
     sectors_config_from_assets,
@@ -77,6 +82,7 @@ from alphamind.config.guardrails_helpers import (
 )
 from alphamind.config.load import PipelineConfig
 from alphamind.config.loaders import load_overlays, read_yaml_file
+from alphamind.config.models.agents import AllowedModel, BaseAgentConfig
 from alphamind.config.models.execution import ExecutionConfig
 from alphamind.config.models.guardrails import ProgressiveTier
 from alphamind.config.models.main import ExecutionMode, MainConfig
@@ -288,6 +294,23 @@ def _load_base_profile_rule_values(config_dir: Path) -> dict[str, float]:
 # ---------------------------------------------------------------------------
 
 
+async def _bind_invocation_row(handle: InvocationHandle, *, phase_label: str) -> InvocationRow:
+    """Fetch the bound invocation row or raise — the shared get-row-or-raise shape.
+
+    ``insert_invocation_record`` commits the row before any phase update opens, so a
+    missing row is an invariant breach, not an expected absence; *phase_label* names
+    the phase for the ``RuntimeError`` message.
+    """
+    row = await handle.session.get(InvocationRow, handle.invocation_id)
+    if row is None:
+        msg = (
+            f"invocations row {handle.invocation_id!r} disappeared mid-{phase_label} update; "
+            "insert_invocation_record should have committed it before this phase opened"
+        )
+        raise RuntimeError(msg)
+    return row
+
+
 async def _update_row_fill_collection(
     handle: InvocationHandle,
     *,
@@ -295,13 +318,7 @@ async def _update_row_fill_collection(
     staleness_flag: bool,
 ) -> None:
     """Persist fill-collection outcomes onto the bound invocation row."""
-    row = await handle.session.get(InvocationRow, handle.invocation_id)
-    if row is None:
-        msg = (
-            f"invocations row {handle.invocation_id!r} disappeared mid-fill-collection update; "
-            "insert_invocation_record should have committed it before this phase opened"
-        )
-        raise RuntimeError(msg)
+    row = await _bind_invocation_row(handle, phase_label="fill-collection")
     row.fill_collection_summary_json = json.dumps(
         {
             "fills_processed": fill_collection_summary.fills_processed,
@@ -320,13 +337,7 @@ async def _update_row_command_execution(
     command_execution_summary: CommandExecutionSummary,
 ) -> None:
     """Persist command execution outcomes onto the bound invocation row."""
-    row = await handle.session.get(InvocationRow, handle.invocation_id)
-    if row is None:
-        msg = (
-            f"invocations row {handle.invocation_id!r} disappeared mid-command-execution update; "
-            "insert_invocation_record should have committed it before this phase opened"
-        )
-        raise RuntimeError(msg)
+    row = await _bind_invocation_row(handle, phase_label="command-execution")
     row.command_execution_summary_json = json.dumps(
         {
             "commands_submitted": command_execution_summary.commands_submitted,
@@ -334,6 +345,33 @@ async def _update_row_command_execution(
         },
         sort_keys=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# Provenance-root derivation (ALP-907)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_provenance_root(state_persistence_config: StatePersistenceConfig) -> Path:
+    """Resolve the agent_calls provenance root from the loaded persistence config.
+
+    The provenance root is the parent of
+    :attr:`StatePersistenceConfig.invocation_provenance_root` (i.e.
+    ``…/data/provenance``), with ``%USERPROFILE%`` expanded the same way the
+    rest of AlphaMind's per-invocation writers do (the environment value, or
+    :func:`Path.home` on POSIX). The config value is a Windows-style path
+    (``%USERPROFILE%\\AlphaMind\\data\\provenance\\invocations``); parsing it
+    via :class:`PureWindowsPath` makes the backslash-separated parent resolve
+    correctly on the macOS dev machine too.
+
+    The result equals
+    :func:`alphamind.distillation.orchestrator._default_provenance_root`, so
+    threading it into the analysis/decision pipelines leaves distillation's
+    own provenance artifacts at the same path (ALP-907 AC: no regression).
+    """
+    userprofile = os.environ.get("USERPROFILE") or str(Path.home())
+    raw = state_persistence_config.invocation_provenance_root.replace("%USERPROFILE%", userprofile)
+    return Path(PureWindowsPath(raw).parent)
 
 
 # ---------------------------------------------------------------------------
@@ -351,6 +389,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     halt_state: HaltState | None,
     now: datetime,
     archive_root: Path,
+    provenance_root: Path | None,
     state_delivery_config: StateDeliveryConfig,
     state_persistence_config: StatePersistenceConfig,
     sector_resolver: Callable[[str], str],
@@ -394,6 +433,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
         "invocation_id": invocation_id,
         "timestamp": now,
         "archive_root": archive_root,
+        "provenance_root": provenance_root,
         "debug_e2e": debug_e2e,
         "resume_context": resume_context,
         # ALP-711 — broker-routing inputs (all picklable; the PM subprocess
@@ -407,6 +447,24 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     }
 
 
+def _debug_e2e_source_factory(
+    context: RunInvocationContext,
+    select: Callable[[Any], Any],
+) -> Any:
+    """Shared ``(venue, mode) -> source`` factory derived from ``context.debug_e2e``.
+
+    Returns ``None`` on the production daemon path so the caller falls back to its
+    inline Alpaca-backed default; on a debug-e2e run, returns a ``(venue, mode)``
+    closure yielding ``select(debug_settings)`` — the bundle's log-only stand-in for
+    that source — so the harness stays offline and deterministic (story ALP-501). The
+    four ``*_from_debug_e2e`` factories below differ only in *select*.
+    """
+    debug_settings = context.debug_e2e
+    if debug_settings is None:
+        return None
+    return lambda _venue, _mode: select(debug_settings)
+
+
 def _account_queries_factory_from_debug_e2e(
     context: RunInvocationContext,
 ) -> Any:
@@ -417,10 +475,7 @@ def _account_queries_factory_from_debug_e2e(
     default. Returns a closure over the bundle's log-only queries when
     debug-e2e is active (story ALP-501).
     """
-    debug_settings = context.debug_e2e
-    if debug_settings is None:
-        return None
-    return lambda _venue, _mode: debug_settings.account_queries
+    return _debug_e2e_source_factory(context, lambda settings: settings.account_queries)
 
 
 def _ca_queries_factory_from_debug_e2e(
@@ -431,10 +486,7 @@ def _ca_queries_factory_from_debug_e2e(
     Mirrors :func:`_account_queries_factory_from_debug_e2e`; ``None`` on
     the production path, the bundle's log-only queries on debug-e2e.
     """
-    debug_settings = context.debug_e2e
-    if debug_settings is None:
-        return None
-    return lambda _venue, _mode: debug_settings.ca_queries
+    return _debug_e2e_source_factory(context, lambda settings: settings.ca_queries)
 
 
 def _activities_source_factory_from_debug_e2e(
@@ -449,10 +501,7 @@ def _activities_source_factory_from_debug_e2e(
     ``get_account_activities`` yields nothing — the synthetic portfolio carries
     no option-lifecycle events.
     """
-    debug_settings = context.debug_e2e
-    if debug_settings is None:
-        return None
-    return lambda _venue, _mode: debug_settings.account_queries
+    return _debug_e2e_source_factory(context, lambda settings: settings.account_queries)
 
 
 def _quote_source_factory_from_debug_e2e(
@@ -467,10 +516,7 @@ def _quote_source_factory_from_debug_e2e(
     Alpaca quote request for the whole active universe — breaking the harness's
     offline, deterministic contract.
     """
-    debug_settings = context.debug_e2e
-    if debug_settings is None:
-        return None
-    return lambda _venue, _mode: debug_settings.quote_source
+    return _debug_e2e_source_factory(context, lambda settings: settings.quote_source)
 
 
 def _price_provider_from_fill_collection(
@@ -573,6 +619,11 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     state_persistence_config = load_state_persistence_config(
         read_yaml_file(config_dir / "main.yaml")
     )
+    # ALP-907 — the agent_calls telemetry-capture provenance root (parent of the
+    # config's invocation_provenance_root), threaded through the analysis +
+    # decision pipelines → runners → subprocess worker so each production LLM
+    # agent call persists its row + four provenance artifacts.
+    provenance_root = _resolve_provenance_root(state_persistence_config)
     state_delivery_config = load_state_delivery_config(config_dir / "state_delivery.yaml")
     scheduler_config = SchedulerConfig.model_validate(read_yaml_file(config_dir / "scheduler.yaml"))
     overlays_map = load_overlays(config_dir)
@@ -799,6 +850,32 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     fill_collection_summary = await run_with_sqlite_busy_retry(_run_fill_collection_write_unit)
     progress.phase_done("fill_collection", fills_processed=fill_collection_summary.fills_processed)
 
+    # Step 3b — Thesis resolution (ALP-834 / ALP-899). Fill collection (or the
+    # continuous monitor) left closed-position theses ACTIVE; author ACTIVE →
+    # RESOLVED here, in its OWN transaction — a slow LLM component-evaluation
+    # must not sit inside the fill-collection write lock — and BEFORE snapshot
+    # assembly, so a thesis whose position closed this invocation feeds the same
+    # invocation's snapshot (the recent-resolutions feed + thesis_quality
+    # aggregates) and ``get_recent_thesis_resolutions`` no longer raises on a
+    # half-written RESOLVED row.
+    await _run_thesis_resolution_step(
+        session_factory=session_factory,
+        invocation_id=invocation_id,
+        archive_root=archive_root,
+        progress=progress,
+        now=now,
+        # ALP-914 finding 5 — the invocation's resolution-time underlying prices
+        # (a primitive Mapping[str, float], not the MarketInputs type — the
+        # analysis-layer resolver must not import a risk_guardrails type) feed
+        # the LLM evaluator's entry-vs-resolution market-data slice.
+        underlying_prices=fill_collection_inputs.market_inputs.underlying_prices,
+        # ALP-922 — the agent_calls telemetry-capture provenance root, threaded
+        # like the roster-agent steps (``_run_analysis`` / ``_build_decision_kwargs``)
+        # so each closed-thesis component LLM evaluation captures its row +
+        # provenance artifacts.
+        provenance_root=provenance_root,
+    )
+
     # Step 4 — Between-phase snapshot read.
     _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="distill")
     progress.phase_start("snapshot_assembly")
@@ -825,6 +902,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         pipeline_config=pipeline_config,
         config_dir=config_dir,
         archive_root=archive_root,
+        provenance_root=provenance_root,
         now=now,
         portfolio_reader=portfolio_reader,
         progress=progress,
@@ -871,6 +949,7 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         halt_state=halt_state,
         now=now,
         archive_root=archive_root,
+        provenance_root=provenance_root,
         state_delivery_config=state_delivery_config,
         state_persistence_config=state_persistence_config,
         sector_resolver=sector_resolver,
@@ -958,6 +1037,92 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     )
 
 
+# The targeted thesis-component evaluator (story 04d) is a non-roster agent —
+# no ``AgentName`` slot, no ``agents.yaml`` entry. The resolver supplies a
+# ``BaseAgentConfig`` on demand pointing at the committed minimal-eval prompt;
+# the analysis-layer model + an LLM-call budget match the analysis researchers.
+_THESIS_EVALUATOR_PROMPT = "prompts/analysis/thesis_component_evaluator.md"
+
+
+def _build_thesis_evaluator_config() -> BaseAgentConfig:
+    """The non-roster config the resolver hands the LLM component-evaluator."""
+    return BaseAgentConfig(
+        model=AllowedModel.sonnet_4_6,
+        prompt=_THESIS_EVALUATOR_PROMPT,
+        latency_budget_seconds=120,
+        context_token_budget=4000,
+        output_token_budget=2000,
+        tools=[],
+    )
+
+
+async def _run_thesis_resolution_step(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    invocation_id: str,
+    archive_root: Path,
+    progress: ProgressEmitter,
+    now: datetime,
+    underlying_prices: Mapping[str, float],
+    provenance_root: Path | None = None,
+) -> None:
+    """Resolve closed-position theses in two phases (ALP-899 / ALP-914 finding 2).
+
+    Phase 1 (no write lock): on a fresh read session, bulk-fetch + assess the
+    eligible theses — the slow LLM component evaluation and the
+    exit-method/ledger reads run here, OUTSIDE any write transaction, so they
+    never sit inside the SQLite write lock that races the continuous monitor.
+    A per-thesis data gap logs a WARNING and skips that thesis (finding 1)
+    rather than aborting the invocation. The evaluator config is built lazily,
+    only if a component needs the LLM fallback (finding 4).
+
+    Phase 2 (short IMMEDIATE write transaction, busy-retry): if anything was
+    prepared, persist the ACTIVE → RESOLVED rows + ``THESIS_RESOLVED`` entries
+    through ``run_with_sqlite_busy_retry`` — a write unit that opens a fresh
+    session, calls ``begin_write_immediate`` first (so ``busy_timeout`` governs
+    monitor contention), persists, and commits. No LLM I/O or POSITION_CLOSED /
+    ledger read occurs inside it, so a busy-retry re-runs only the persist.
+    """
+    progress.phase_start("thesis_resolution")
+    async with session_factory() as read_session:
+        prepared = await prepare_closed_position_resolutions(
+            read_session,
+            invocation_id=invocation_id,
+            evaluator_config_factory=_build_thesis_evaluator_config,
+            now=now,
+            underlying_prices=underlying_prices,
+            archive_root=archive_root,
+            progress=progress,
+            # ALP-922 — the in-process per-component LLM evaluations capture
+            # their agent_calls row + provenance artifacts via a fresh
+            # best-effort session opened per call from this same in-process
+            # factory (the read phase uses ``read_session``; telemetry is a
+            # separate session). ``provenance_root=None`` (in-process / test, or
+            # a non-telemetry-wired invocation) keeps ``capture_agent_call`` a
+            # clean no-op — mirroring the roster agents under ALP-907.
+            telemetry_session_factory=session_factory,
+            provenance_root=provenance_root,
+        )
+
+    if not prepared:
+        progress.phase_done("thesis_resolution", theses_resolved=0)
+        return
+
+    async def _run_resolution_write_unit() -> int:
+        # Fresh session per attempt so the identity map is clean on retry;
+        # ``begin_write_immediate`` takes the SQLite write lock before the first
+        # write, mirroring the fill-collection write unit (ALP-824).
+        async with session_factory() as write_session:
+            await begin_write_immediate(write_session)
+            write_handle = InvocationHandle(session=write_session, invocation_id=invocation_id)
+            resolved = await persist_thesis_resolutions(write_handle, prepared, now=now)
+            await write_session.commit()
+            return len(resolved)
+
+    theses_resolved = await run_with_sqlite_busy_retry(_run_resolution_write_unit)
+    progress.phase_done("thesis_resolution", theses_resolved=theses_resolved)
+
+
 def _assemble_fill_collection_snapshot(
     *,
     session_factory: async_sessionmaker[AsyncSession],
@@ -989,6 +1154,9 @@ def _assemble_fill_collection_snapshot(
         active_risk_parameters_provider=active_provider,
         prior_active_risk_parameters_provider=prior_provider,
         config=state_persistence_config,
+        thesis_quality_aggregates_trailing_windows_days=(
+            portfolio_state_config.thesis_quality_aggregates_trailing_windows_days
+        ),
     )
     price_provider = _price_provider_from_fill_collection(fill_collection_market_inputs)
     option_price_provider = SqlOptionPriceProvider(session_factory=session_factory)
@@ -1143,11 +1311,7 @@ def _resolve_last_invocation_time(
     raw = session.execute(stmt).scalar_one_or_none()
     if raw is None:
         return now - _LAST_INVOCATION_FALLBACK
-    text = raw.replace("Z", "+00:00") if raw.endswith("Z") else raw
-    parsed = datetime.fromisoformat(text)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed
+    return _parse_invocation_timestamp(raw)
 
 
 async def _run_analysis(  # noqa: PLR0913 — composition surface threads orchestrator state into the analysis pipeline; the alternative (a kwargs dict) loses the typed signature.
@@ -1157,6 +1321,7 @@ async def _run_analysis(  # noqa: PLR0913 — composition surface threads orches
     pipeline_config: PipelineConfig,
     config_dir: Path,
     archive_root: Path,
+    provenance_root: Path | None,
     now: datetime,
     portfolio_reader: SynthesizerPortfolioStateReader,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
@@ -1193,6 +1358,7 @@ async def _run_analysis(  # noqa: PLR0913 — composition surface threads orches
             sectors_config=sectors_config_from_assets(resolved),
             portfolio_reader=portfolio_reader,
             archive_root=archive_root,
+            provenance_root=provenance_root,
             progress=progress,
             debug_e2e=debug_e2e,
         )

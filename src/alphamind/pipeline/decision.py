@@ -368,6 +368,7 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
     invocation_id: str,
     timestamp: datetime,
     archive_root: Path | None = None,
+    provenance_root: Path | None = None,
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
     active_regime_overrides: tuple[RegimeOverride, ...] = (),
@@ -403,6 +404,11 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
     ``timestamp`` flows into each of the four agent runners as the
     per-invocation timestamp the agents stamp into their structured
     outputs.
+
+    ``provenance_root`` (ALP-907) is forwarded alongside ``archive_root`` to
+    the analyst / strategist / PM runners → their subprocess wrappers → the
+    worker, which opens the per-call agent_calls telemetry session. ``None``
+    (the in-process / test path) leaves capture inert.
 
     Active-guardrails composition (story ALP-433) runs once per call:
     the runner reads :class:`DrawdownState` via
@@ -592,6 +598,7 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
                         short_selling_enabled=short_selling_enabled,
                         halt_state=halt_state,
                         archive_root=archive_root,
+                        provenance_root=provenance_root,
                         agent_config=resolved_agents.get(AgentName.analyst.value),
                         borrow_cost_resolver=borrow_cost_resolver,
                         progress=progress,
@@ -620,6 +627,7 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
                         library_market=library_market,
                         starting_snapshot=library_snapshot,
                         archive_root=archive_root,
+                        provenance_root=provenance_root,
                         agent_config=resolved_agents.get(AgentName.strategist.value),
                         sector_label_display=sector_label_display,
                         regime_transition_breaches=regime_transition_breaches,
@@ -725,6 +733,7 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
         correlation_state=correlation_state,
         dependency_risk_flag=dependency_risk_flag,
         archive_root=archive_root,
+        provenance_root=provenance_root,
         agent_config=resolved_agents.get(AgentName.portfolio_manager.value),
         borrow_cost_resolver=borrow_cost_resolver,
         prior_health_snapshots=prior_health_snapshots,

@@ -195,6 +195,7 @@ async def run_adaptive_researcher(  # noqa: PLR0913 — prescribed signature; va
     universe: frozenset[str],
     agents_config: Mapping[str, BaseAgentConfig],
     archive_root: Path | None = None,
+    provenance_root: Path | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "adaptive",
 ) -> AdaptiveResearcherResult:
@@ -231,6 +232,10 @@ async def run_adaptive_researcher(  # noqa: PLR0913 — prescribed signature; va
         correlation_regime_brief: CorrelationRegimeBrief,
         archive_root: Path | None,
     ) -> HarnessSuccess:
+        # ``provenance_root`` is captured from this enclosing scope alongside
+        # ``as_of`` / ``progress`` / ``phase`` (constant for the whole call), so
+        # the core need not thread it through ``deps.harness_fn`` — keeping the
+        # closure's brief fan-out within the argument-count rule (ALP-907).
         return await invoke_adaptive_researcher_in_subprocess(
             agent_config=agent_config,
             user_message=user_message,
@@ -241,6 +246,7 @@ async def run_adaptive_researcher(  # noqa: PLR0913 — prescribed signature; va
             correlation_regime_brief=correlation_regime_brief,
             as_of=as_of,
             archive_root=archive_root,
+            provenance_root=provenance_root,
             progress=progress,
             phase=phase,
         )

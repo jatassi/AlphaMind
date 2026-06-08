@@ -386,6 +386,10 @@ async def _emit_pm_decision(
         verdict=_VERDICT_TO_PM_VERDICT[envelope.verdict],
         originating_proposal_json=originating_proposal_json,
         reprice_markers_json=list(reprice_markers),
+        # ALP-911: persist the PM's identified anti-patterns off the in-hand
+        # envelope so the feedback-loop frequency metrics can read them later
+        # (both envelope variants carry ``anti_patterns_identified``).
+        anti_patterns_json=[str(p) for p in (envelope.anti_patterns_identified or ())],
     )
     _emit(
         handle,

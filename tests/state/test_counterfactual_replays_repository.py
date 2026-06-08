@@ -22,21 +22,19 @@ from sqlalchemy.orm import Session
 import alphamind.state.invocation_context  # noqa: F401 — break circular import seam
 from alphamind._kernel.ids import EnvelopeId, ReplayId
 from alphamind._kernel.money import Money, money
-from alphamind.execution.counterfactual_replay_engine.enums import (
-    Confidence,
-    ExitLeg,
-    ReplayKind,
-    ReplayStatus,
-    UnevaluableReason,
-)
-from alphamind.execution.counterfactual_replay_engine.records import (
-    CounterfactualReplayRecord,
-)
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.state.repository.counterfactual_replays import (
     insert_counterfactual_replay,
     load_counterfactual_replays_for_envelope,
+)
+from alphamind.state.tables.counterfactual_replays import (
+    Confidence,
+    CounterfactualReplayRecord,
+    ExitLeg,
+    ReplayKind,
+    ReplayStatus,
+    UnevaluableReason,
 )
 
 _TS = datetime(2026, 6, 6, 12, 0, 0, tzinfo=UTC)

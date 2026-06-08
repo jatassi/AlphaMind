@@ -347,6 +347,7 @@ async def _run_domain_and_qualitative_phase(  # noqa: PLR0913 — composition he
     agents_config: Mapping[str, BaseAgentConfig],
     sectors_config: Mapping[str, list[str]],
     archive_root: Path | None,
+    provenance_root: Path | None,
     progress: ProgressEmitter,
     replay_domain: bool,
     replay_qualitative: bool,
@@ -418,6 +419,7 @@ async def _run_domain_and_qualitative_phase(  # noqa: PLR0913 — composition he
             universe=universe,
             agents_config=agents_config,
             archive_root=archive_root,
+            provenance_root=provenance_root,
             progress=progress,
             phase="qualitative",
         )
@@ -439,6 +441,7 @@ async def _run_domain_and_qualitative_phase(  # noqa: PLR0913 — composition he
             agents_config=agents_config,
             sectors_config=sectors_config,
             archive_root=archive_root,
+            provenance_root=provenance_root,
             progress=progress,
             phase="domain_researchers",
         )
@@ -469,6 +472,7 @@ async def _run_domain_and_qualitative_phase(  # noqa: PLR0913 — composition he
                     agents_config=agents_config,
                     sectors_config=sectors_config,
                     archive_root=archive_root,
+                    provenance_root=provenance_root,
                     progress=progress,
                     phase="domain_researchers",
                 )
@@ -483,6 +487,7 @@ async def _run_domain_and_qualitative_phase(  # noqa: PLR0913 — composition he
                     universe=universe,
                     agents_config=agents_config,
                     archive_root=archive_root,
+                    provenance_root=provenance_root,
                     progress=progress,
                     phase="qualitative",
                 )
@@ -707,6 +712,10 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
         invocation_id,
         archive_root=archive_root,
         provenance_root=provenance_root,
+        # Persist each produced anomaly flag as a DISTILLATION_ANOMALY_FLAG
+        # activity-log row keyed to this invocation (story 04b / ALP-881). The
+        # replay harness calls the orchestrator directly and leaves this off.
+        emit_anomaly_flags=True,
     )
     progress.phase_done("distillation")
 
@@ -720,6 +729,7 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
         agents_config=agents_config,
         sectors_config=sectors_config,
         archive_root=archive_root,
+        provenance_root=provenance_root,
         progress=progress,
         replay_domain=_replay_domain,
         replay_qualitative=_replay_qualitative,
@@ -759,6 +769,7 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
             universe=universe,
             agents_config=agents_config,
             archive_root=archive_root,
+            provenance_root=provenance_root,
             progress=progress,
             phase="adaptive",
         )
@@ -800,6 +811,7 @@ async def run_analysis_pipeline(  # noqa: PLR0913 — composition surface thread
             invocation_id=invocation_id,
             now_utc=as_of,
             archive_root=archive_root,
+            provenance_root=provenance_root,
             agent_config=agents_config.get(AgentName.synthesizer.value),
             progress=progress,
             phase="synthesizer",
