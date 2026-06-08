@@ -466,15 +466,10 @@ def _compute_analyst_proposals_per_invocation(
     dataset: WindowDataset, conditioning: Conditioning
 ) -> MetricResult:
     counts = _analyst_proposal_counts(dataset, conditioning)
-    if not counts:
-        return rate_result(_ANALYST_PROPOSALS_PER_INVOCATION, 0, 0)
-    return MetricResult(
-        metric_id=_ANALYST_PROPOSALS_PER_INVOCATION,
-        value=sum(counts) / len(counts),
-        posterior_band=None,
-        sample_size=len(counts),
-        insufficient_sample=False,
-    )
+    # rate_result computes numerator / denominator as a float (types.py), so the
+    # per-invocation mean is sum(counts) / len(counts); a zero denominator yields the
+    # shared no-data shape.
+    return rate_result(_ANALYST_PROPOSALS_PER_INVOCATION, sum(counts), len(counts))
 
 
 _ANALYST_PROPOSAL_METRICS: tuple[Metric, ...] = (

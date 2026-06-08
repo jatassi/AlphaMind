@@ -701,6 +701,22 @@ class TestConditioning:
             assert metric is not None
             assert ConditioningDimension.REGIME in metric.supported_conditioning
 
+    def test_unreachable_agent_call_dimension_degrades_to_no_data(self) -> None:
+        # An agent-call-sourced dimension with no reachable field (SECTOR / CONVICTION /
+        # …) makes _conditioning_invocation_filter return the empty set, so the metric
+        # degrades to a no-data reading rather than raising. This guards the
+        # _CONDITIONING_AGENT_CALL_FIELD.get(...) is None branch.
+        log = (_pm_entry(verdict=PMVerdict.APPROVE, invocation_id="inv-1"),)
+        dataset = _dataset(log)
+        for dimension in (ConditioningDimension.SECTOR, ConditioningDimension.CONVICTION):
+            result = _compute(
+                "pm_approval_rate",
+                dataset,
+                Conditioning(dimension=dimension, value="anything"),
+            )
+            assert result.value is None, dimension
+            assert result.sample_size == 0, dimension
+
     def test_regime_slice_with_empty_map_degrades_to_no_data(self) -> None:
         # With no regime map (the default), a REGIME slice matches no invocation and
         # the metric degrades to an empty (no-data) reading rather than raising.
