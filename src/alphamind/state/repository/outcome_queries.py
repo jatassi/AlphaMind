@@ -34,7 +34,7 @@ from alphamind.portfolio_state.records.theses import ThesisRecord, ThesisRecordS
 from alphamind.state.repository._window_prefix import SECOND_PREFIX_LEN, second_prefix
 from alphamind.state.tables.invocations import InvocationRow
 from alphamind.state.tables.theses import ThesisRow
-from alphamind.state.tables.theses_codec import rows_to_record
+from alphamind.state.tables.theses_codec import project_resolution_pnl_usd, rows_to_record
 from alphamind.state.tables.thesis_components import ThesisComponentRow
 
 
@@ -115,39 +115,50 @@ async def read_resolved_thesis_pnl_by_position(
 
     The realized P/L of the resolved thesis on each requested position — the
     "actual approved/modified-form trade" leg of the counterfactual-replay join
-    (ALP-928). A thesis is one-to-one with a position, so the map carries at most
-    one entry per position. Unlike :func:`read_resolved_theses_in_window`, this is
-    **not** clipped to a window: the modified-form trade behind a
+    (ALP-928). Unlike :func:`read_resolved_theses_in_window`, this is **not**
+    clipped to a window: the modified-form trade behind a
     ``modification_original_form`` replay may resolve outside the replay's analytics
     window, so the join keys on position and reads the thesis's own resolution
     whenever it lands. Positions with no RESOLVED thesis (still ACTIVE, never
     opened, or unknown) are silently absent. An empty *position_ids* returns an
     empty dict without a query.
+
+    The schema permits two RESOLVED theses on one position (no UNIQUE on
+    ``position_id`` — cancel → reopen → re-resolve), so the query orders
+    ``resolution_timestamp ASC, thesis_id ASC`` (matching
+    :func:`read_resolved_theses_in_window`) and the dict-overwrite loop lets the
+    **latest-resolved** thesis win the position's entry — the most recently
+    resolved thesis is that position's live realized outcome.
+
+    Reads only the parent ``theses`` rows — no component fetch, no full-record
+    decode — and projects ``resolution_pnl_usd`` off each row's ``narrative_json``
+    via :func:`~alphamind.state.tables.theses_codec.project_resolution_pnl_usd`,
+    so the call site never touches the JSON layout. A RESOLVED thesis whose
+    projected P/L is null is inconsistent persisted state, surfaced loudly (not a
+    bare assert, which ``python -O`` would strip — silently storing ``None`` as a
+    float).
     """
     if not position_ids:
         return {}
-    thesis_stmt = select(ThesisRow).where(
-        ThesisRow.status == ThesisRecordStatus.RESOLVED.value,
-        ThesisRow.position_id.in_(position_ids),
+    thesis_stmt = (
+        select(ThesisRow)
+        .where(
+            ThesisRow.status == ThesisRecordStatus.RESOLVED.value,
+            ThesisRow.position_id.in_(position_ids),
+        )
+        .order_by(ThesisRow.resolution_timestamp.asc(), ThesisRow.thesis_id.asc())
     )
-    thesis_rows = tuple((await session.execute(thesis_stmt)).scalars())
-    if not thesis_rows:
-        return {}
-    thesis_ids = [row.thesis_id for row in thesis_rows]
-    components_by_thesis = await _load_components_by_thesis_ids(session, thesis_ids)
+    thesis_rows = (await session.execute(thesis_stmt)).scalars()
     pnl_by_position: dict[str, float] = {}
     for row in thesis_rows:
-        record = rows_to_record(row, tuple(components_by_thesis[row.thesis_id]))
-        # A RESOLVED record's resolution_pnl_usd is non-None by ThesisRecord's validators;
-        # a null here is inconsistent persisted state, surfaced loudly (not a bare assert,
-        # which `python -O` would strip — silently storing None as a float).
-        if record.resolution_pnl_usd is None:
+        pnl = project_resolution_pnl_usd(row)
+        if pnl is None:
             msg = (
-                f"thesis {record.thesis_id} has status RESOLVED but a null "
+                f"thesis {row.thesis_id} has status RESOLVED but a null "
                 "resolution_pnl_usd — inconsistent persisted state"
             )
             raise ValueError(msg)
-        pnl_by_position[str(record.position_id)] = record.resolution_pnl_usd
+        pnl_by_position[str(row.position_id)] = pnl
     return pnl_by_position
 
 

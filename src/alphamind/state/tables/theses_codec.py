@@ -118,6 +118,23 @@ def record_to_rows(
     return thesis_row, tuple(component_rows)
 
 
+def project_resolution_pnl_usd(thesis_row: ThesisRow) -> float | None:
+    """Read ``resolution_pnl_usd`` from the parent ``narrative_json`` without
+    decoding the full ThesisRecord or fetching component rows.
+
+    The realized-P/L projection the PM-accuracy replay join needs cheaply: it
+    parses only the parent row's NOT-NULL ``narrative_json`` and returns the
+    ``resolution_pnl_usd`` key (the same key :func:`record_to_rows` writes and
+    :func:`rows_to_record` reads). Keeping the JSON access here preserves the
+    codec's single-source-of-truth ownership of the parent JSON layout. Returns
+    ``None`` when the field is null — the caller owns the loud-on-None check that
+    a RESOLVED thesis with a null P/L is inconsistent persisted state.
+    """
+    payload = json.loads(thesis_row.narrative_json)
+    value = payload["resolution_pnl_usd"]
+    return None if value is None else float(value)
+
+
 def rows_to_record(
     thesis_row: ThesisRow,
     component_rows: tuple[ThesisComponentRow, ...],

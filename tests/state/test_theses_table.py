@@ -566,6 +566,28 @@ class TestThesisCodec:
         roundtripped = rows_to_record(thesis_row, component_rows)
         assert roundtripped == record
 
+    def test_project_resolution_pnl_usd_reads_parent_level_value(self) -> None:
+        """ALP-930 (A) — the projection reads ``resolution_pnl_usd`` off the parent
+        row's ``narrative_json`` without decoding the full record or its components."""
+        from alphamind.state.tables.theses_codec import (
+            project_resolution_pnl_usd,
+            record_to_rows,
+        )
+
+        thesis_row, _component_rows = record_to_rows(_resolved_thesis())
+        assert project_resolution_pnl_usd(thesis_row) == pytest.approx(125.50)
+
+    def test_project_resolution_pnl_usd_returns_none_when_null(self) -> None:
+        """ALP-930 (A) — a parent row whose ``resolution_pnl_usd`` is null projects
+        to ``None`` (the caller's loud-on-None guard owns the inconsistency check)."""
+        from alphamind.state.tables.theses_codec import (
+            project_resolution_pnl_usd,
+            record_to_rows,
+        )
+
+        thesis_row, _component_rows = record_to_rows(_active_thesis())
+        assert project_resolution_pnl_usd(thesis_row) is None
+
     def test_round_trip_persists_through_sqlalchemy(self, session: Session) -> None:
         from alphamind.state.tables.theses import ThesisRow
         from alphamind.state.tables.theses_codec import (
