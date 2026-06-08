@@ -59,7 +59,7 @@ from argparse import Namespace
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -136,6 +136,7 @@ from alphamind.state.invocation_context.context import InvocationHandle
 from alphamind.state.repository import build_sql_portfolio_state_repository
 from alphamind.state.tables.agent_calls import AgentCallsRow
 from alphamind.state.tables.invocations import InvocationRow
+from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.process_lifetimes import ProcessLifetimeRow
 from alphamind.state.tables.theses_codec import record_to_rows
 from alphamind.state.tables.thesis_pnl_ledger import ThesisPnlLedgerRow
@@ -220,7 +221,7 @@ class FeedbackLoopSeed:
     watched_metric_id: MetricId
     window_start: datetime
     window_end: datetime
-    week_monday: Any
+    week_monday: date
     resolve_now: datetime
     expected_resolution_category: ThesisResolutionCategory
 
@@ -347,7 +348,7 @@ def _active_thesis() -> ThesisRecord:
     )
 
 
-def _closed_position_row() -> Any:
+def _closed_position_row() -> PositionRow:
     """A CLOSED equity ``PositionRow`` carrying a real entry reference.
 
     Built by hand (not via ``stub_position_row``, which lives under ``tests/``) so
@@ -355,8 +356,6 @@ def _closed_position_row() -> Any:
     entry timestamp, non-empty execution history — must hold so ``row_to_record``
     rehydrates it for the resolver's entry-reference read.
     """
-    from alphamind.state.tables.positions import PositionRow
-
     return PositionRow(
         position_id=_POSITION_ID,
         thesis_id=_THESIS_ID,
