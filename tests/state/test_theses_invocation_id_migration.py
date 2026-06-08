@@ -72,7 +72,13 @@ def _theses_fk_targets(db_path: Path) -> set[tuple[str, str]]:
 def _build_legacy_theses_and_run_migration(db_path: Path) -> None:
     """Build ``theses`` in its LEGACY shape (no ``invocation_id`` column), plus the
     minimal FK-target / back-population tables, stamp the DB at the parent revision,
-    then run ``upgrade head`` so ONLY ``d001th0000aa`` executes against it.
+    then upgrade to ``d001th0000aa`` so ONLY that revision executes against it.
+
+    The upgrade targets ``d001th0000aa`` by revision, not ``head``: this is a
+    per-migration test for ``d001th0000aa``, and the hand-built ``activity_log`` is
+    a minimal stub (no ``event_group`` CHECK) that later activity_log-touching
+    migrations (e.g. ``e001eg0000aa``) would choke on — targeting the revision
+    isolates the column-add under test and keeps the fixture robust to new heads.
 
     The genesis baseline (``a000000000aa``) is ``create_all``-driven and builds
     ``theses`` *with* the ``invocation_id`` column + FK straight from the live model,
@@ -116,8 +122,8 @@ def _build_legacy_theses_and_run_migration(db_path: Path) -> None:
                     ")"
                 )
             )
-            # Alembic version table stamped at the parent revision, so ``upgrade head``
-            # runs only ``d001th0000aa`` against this legacy-shape DB.
+            # Alembic version table stamped at the parent revision, so the upgrade
+            # below runs only ``d001th0000aa`` against this legacy-shape DB.
             conn.execute(text("CREATE TABLE alembic_version (version_num TEXT NOT NULL)"))
             conn.execute(
                 text("INSERT INTO alembic_version (version_num) VALUES (:rev)"),
@@ -126,7 +132,7 @@ def _build_legacy_theses_and_run_migration(db_path: Path) -> None:
     finally:
         eng.dispose()
 
-    command.upgrade(_alembic_config(db_path), "head")
+    command.upgrade(_alembic_config(db_path), _MIGRATION_REVISION)
 
 
 def _seed_and_back_populate(db_path: Path, *, with_thesis_created_entry: bool) -> str | None:
@@ -233,7 +239,7 @@ class TestThesesInvocationIdMigration:
         assert "invocation_id" not in _column_names(db_path)
         assert _theses_fk_targets(db_path) == set()
 
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, _MIGRATION_REVISION)
         assert "invocation_id" in _column_names(db_path)
         assert ("invocations", "RESTRICT") in _theses_fk_targets(db_path)
 
