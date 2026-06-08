@@ -11,7 +11,6 @@ import them without a circular dependency on the legacy write path.
 
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Final
@@ -20,8 +19,6 @@ from sqlalchemy import select
 
 from alphamind._kernel.money import money, signed_money
 from alphamind.portfolio_state.events.activity_log import (
-    EVENT_TYPE_TO_GROUP,
-    ActivityLogEntry,
     BracketCancelledCorporateActionDetail,
     CashCreditedDetail,
     CashCreditReason,
@@ -34,7 +31,7 @@ from alphamind.portfolio_state.events.activity_log import (
 from alphamind.portfolio_state.records.orders import BracketLegStatus, BracketStatus
 from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.state.invocation_context.activity_log import (
-    append_activity_log_entry,
+    emit_activity_log_entry,
 )
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
@@ -86,19 +83,16 @@ def _emit(
     source: EventSource = EventSource.CORPORATE_ACTION_PROCESSOR,
 ) -> None:
     """Construct + persist one ``ActivityLogEntry`` joined to the current handle."""
-    entry = ActivityLogEntry(
-        entry_id=f"{handle.invocation_id}-{event_type.value}-{uuid.uuid4().hex}",
-        invocation_id=handle.invocation_id,
-        timestamp=timestamp,
+    emit_activity_log_entry(
+        handle,
         event_type=event_type,
-        event_group=EVENT_TYPE_TO_GROUP[event_type],
         position_id=position_id,
         order_id=order_id,
         thesis_id=thesis_id,
-        source=source,
+        timestamp=timestamp,
         detail=detail,
+        source=source,
     )
-    append_activity_log_entry(handle, entry)
 
 
 # ---------------------------------------------------------------------------
