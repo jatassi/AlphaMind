@@ -661,6 +661,29 @@ class TestConditioning:
         assert sliced.value == 1.0
         assert sliced.sample_size == 1
 
+    def test_analyst_proposal_volume_on_model_version_does_not_narrow_by_pm_provenance(
+        self,
+    ) -> None:
+        # The analyst proposal-volume metrics declare only REGIME. Conditioning one on
+        # MODEL_VERSION (a PM agent-call dimension) must NOT route analyst observations
+        # through the PM agent-call provenance filter — that would be a wrong reading.
+        # It degrades to no-data instead.
+        bundle = _proposals(("inv-a", 3), ("inv-b", 0))
+        # A matching PM agent call exists for inv-a; if the analyst path wrongly used the
+        # PM-provenance filter it would narrow to inv-a and report a non-empty reading.
+        calls = (_agent_call(invocation_id="inv-a", model_id="claude-opus-4-8"),)
+        dataset = _dataset(analyst_proposals=bundle, agent_calls=calls)
+        for metric_id in ("analyst_inaction_rate", "analyst_proposals_per_invocation"):
+            result = _compute(
+                metric_id,
+                dataset,
+                Conditioning(
+                    dimension=ConditioningDimension.MODEL_VERSION, value="claude-opus-4-8"
+                ),
+            )
+            assert result.value is None, metric_id
+            assert result.sample_size == 0, metric_id
+
     def test_metric_declares_supported_conditioning(self) -> None:
         metric = get_metric(MetricId("pm_approval_rate"))
         assert metric is not None

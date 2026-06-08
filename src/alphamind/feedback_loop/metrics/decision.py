@@ -82,11 +82,7 @@ def _conditioning_invocation_filter(
     if conditioning.dimension is None:
         return None
     if conditioning.dimension is ConditioningDimension.REGIME:
-        return frozenset(
-            invocation_id
-            for invocation_id, regime in dataset.regimes.by_invocation.items()
-            if regime == conditioning.value
-        )
+        return _regime_invocation_filter(dataset, conditioning.value)
     field = _CONDITIONING_AGENT_CALL_FIELD.get(conditioning.dimension)
     if field is None:
         return frozenset()
@@ -94,6 +90,19 @@ def _conditioning_invocation_filter(
         call.invocation_id
         for call in dataset.agent_calls
         if call.agent_name == "portfolio_manager" and getattr(call, field) == conditioning.value
+    )
+
+
+def _regime_invocation_filter(dataset: WindowDataset, regime: str | None) -> frozenset[str]:
+    """The invocation ids whose held ``active_regime`` is *regime* (loader's regime map).
+
+    The single REGIME-narrowing comprehension, shared by the PM-decision slice and the
+    analyst-observation slice so the two paths cannot drift apart.
+    """
+    return frozenset(
+        invocation_id
+        for invocation_id, held in dataset.regimes.by_invocation.items()
+        if held == regime
     )
 
 
@@ -429,15 +438,20 @@ def _analyst_proposal_counts(dataset: WindowDataset, conditioning: Conditioning)
     """The (conditioned) per-invocation analyst proposal counts.
 
     One entry per analyst invocation in the window; ``0`` for a watchlist run or a
-    normal run that emitted no recommendations (both inactions). When a conditioning
-    slice is active, only observations whose invocation matches the held-fixed value
-    contribute — the same invocation-narrowing the ``pm_decision_log`` slice uses.
+    normal run that emitted no recommendations (both inactions). Only ``REGIME`` is a
+    reachable slice here (``_ANALYST_SUPPORTED_CONDITIONING``): a ``REGIME`` slice
+    narrows to the observations whose invocation held that regime (the loader's regime
+    map); any other conditioned dimension yields no observations, so the metric degrades
+    to a no-data reading rather than borrowing the ``pm_decision_log`` slice's PM
+    agent-call provenance — which is not the analyst run's provenance.
     """
     observations = dataset.analyst_proposals.observations
-    matching = _conditioning_invocation_filter(dataset, conditioning)
-    if matching is not None:
-        observations = tuple(o for o in observations if o.invocation_id in matching)
-    return tuple(o.proposal_count for o in observations)
+    if conditioning.dimension is None:
+        return tuple(o.proposal_count for o in observations)
+    if conditioning.dimension is not ConditioningDimension.REGIME:
+        return ()
+    matching = _regime_invocation_filter(dataset, conditioning.value)
+    return tuple(o.proposal_count for o in observations if o.invocation_id in matching)
 
 
 def _compute_analyst_inaction_rate(
