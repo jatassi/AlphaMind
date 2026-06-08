@@ -47,6 +47,12 @@ from alphamind.distillation.orchestrator import (
     run_external_distillation,
 )
 from alphamind.distillation.output import AnomalyFlag, OutputAudience, OutputBlock
+from alphamind.distillation.q3 import (
+    PairTradeSignature,
+    SectorWideSweep,
+    assemble_q3_pair_trade_blocks,
+    assemble_q3_sector_wide_sweep_blocks,
+)
 from alphamind.distillation.q12_corporate_actions import (
     _emit_divergence_blocks,
     _emit_event_novelty_blocks,
@@ -1088,3 +1094,97 @@ def test_emit_anomaly_activity_log_persists_all_distinct_q12_subjects(session: S
     assert written == 4
     rows = _read_anomaly_entries(session, invocation_id)
     assert len(rows) == 4
+
+
+def _q3_pair_and_sweep_blocks(*, freshness_ts: datetime) -> list[OutputBlock]:
+    """q3 blocks: two distinct pair signatures + one sector sweeping both directions.
+
+    Drives the two q3 cross-ticker producers that each fan a constant ``block_id``
+    block out per subject — the ALP-935 collision shape: per-pair for pair-trade
+    signatures, per-``(sector, direction)`` for sector-wide sweeps.
+    """
+    pair_blocks = assemble_q3_pair_trade_blocks(
+        signatures=(
+            PairTradeSignature(
+                bullish_leg="NVDA",
+                bearish_leg="JPM",
+                bullish_call_bto_z=2.0,
+                bearish_put_bto_z=2.0,
+                correlation=0.7,
+            ),
+            PairTradeSignature(
+                bullish_leg="AMD",
+                bearish_leg="BAC",
+                bullish_call_bto_z=2.5,
+                bearish_put_bto_z=2.1,
+                correlation=0.8,
+            ),
+        ),
+        ticker_to_sector={
+            "NVDA": "tech_semis",
+            "JPM": "financials",
+            "AMD": "tech_semis",
+            "BAC": "financials",
+        },
+        sector_to_audience={
+            "tech_semis": OutputAudience.SECTOR_TECH_SEMIS,
+            "financials": OutputAudience.SECTOR_FINANCIALS,
+        },
+        freshness_ts=freshness_ts,
+    )
+    sweep_blocks = assemble_q3_sector_wide_sweep_blocks(
+        sweeps=(
+            SectorWideSweep(sector="tech_semis", direction="call", tickers=("AMD", "INTC", "NVDA")),
+            SectorWideSweep(sector="tech_semis", direction="put", tickers=("AMD", "INTC", "NVDA")),
+        ),
+        sector_to_audience={"tech_semis": OutputAudience.SECTOR_TECH_SEMIS},
+        freshness_ts=freshness_ts,
+    )
+    return [*pair_blocks, *sweep_blocks]
+
+
+def test_emit_anomaly_activity_log_persists_all_distinct_q3_subjects(
+    session: Session, caplog: pytest.LogCaptureFixture
+) -> None:
+    """≥2 pair signatures + a sector firing both sweep directions persist distinct rows.
+
+    Regression for ALP-935: q3's ``assemble_q3_pair_trade_blocks`` /
+    ``assemble_q3_sector_wide_sweep_blocks`` each fan a constant ``block_id``
+    block out per subject. With the per-subject flag-name suffix, driving them
+    through ``collect_anomalies`` → the emit boundary mints a distinct
+    ``activity_log.entry_id`` per subject, so the single ``executemany`` no
+    longer collides on the PK and the dedup WARNING never fires for any q3 flag.
+    Pre-fix the two same-block pairs / two same-sector sweeps shared one PK each
+    and the dedup net dropped half of them with a WARNING.
+    """
+    invocation_id = "20260608T151419Z-q3"
+    _seed_invocation_row(session, invocation_id)
+    as_of = datetime(2026, 6, 8, 15, 14, 19, tzinfo=UTC)
+
+    summaries = collect_anomalies(_q3_pair_and_sweep_blocks(freshness_ts=as_of))
+    distinct_keys = {(s.source_block_id, s.flag.name) for s in summaries}
+    assert len(distinct_keys) == len(summaries) == 4, (
+        "fixture must fan out 2 pairs + 1 sector x 2 directions with distinct entry_id keys"
+    )
+
+    with caplog.at_level(logging.WARNING, logger="alphamind.distillation.orchestrator"):
+        written = _emit_anomaly_activity_log(
+            session, summaries=summaries, invocation_id=invocation_id, as_of=as_of
+        )
+
+    assert written == 4
+    rows = _read_anomaly_entries(session, invocation_id)
+    assert len(rows) == 4
+    assert len({row.entry_id for row in rows}) == 4
+    # The per-subject suffix removes the collision, so the dedup net stays silent.
+    q3_warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and r.name == "alphamind.distillation.orchestrator"
+    ]
+    assert q3_warnings == []
+    # Neither a leg pair nor a (sector, direction) is a single symbol → ticker None.
+    for row in rows:
+        detail = activity_log_entry_from_row(row).detail
+        assert isinstance(detail, DistillationAnomalyFlagDetail)
+        assert detail.ticker is None

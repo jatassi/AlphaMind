@@ -311,7 +311,10 @@ def assemble_q3_pair_trade_blocks(
                 payload=payload,
                 anomaly_flags=(
                     AnomalyFlag(
-                        name="pair_trade_signature",
+                        # Embed the ordered leg pair so a per-pair fan-out never
+                        # collides on activity_log.entry_id (ALP-935); a leg pair
+                        # is not a single symbol, so detail.ticker stays None.
+                        name=f"pair_trade_signature:{sig.bullish_leg}:{sig.bearish_leg}",
                         magnitude=max(sig.bullish_call_bto_z, sig.bearish_put_bto_z),
                         severity="investigate_now",
                     ),
@@ -350,7 +353,12 @@ def assemble_q3_sector_wide_sweep_blocks(
                 payload=payload,
                 anomaly_flags=(
                     AnomalyFlag(
-                        name="sector_wide_sweep",
+                        # Embed (sector, direction): compute_sector_wide_sweeps
+                        # emits one block per (sector, direction), so a sector
+                        # breaching both calls and puts needs both segments to
+                        # keep entry_ids distinct (ALP-935). A sector is not a
+                        # single symbol, so detail.ticker stays None.
+                        name=f"sector_wide_sweep:{sweep.sector}:{sweep.direction}",
                         magnitude=float(len(sweep.tickers)),
                         severity="investigate_now",
                     ),

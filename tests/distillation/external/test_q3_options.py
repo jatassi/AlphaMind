@@ -1093,6 +1093,59 @@ class TestBlockAssembly:
         )
         assert block.payload["bullish_leg"] == "NVDA"
         assert block.payload["bearish_leg"] == "JPM"
+        # ALP-935: the flag name embeds the ordered leg pair so a per-pair
+        # fan-out never collides on activity_log.entry_id; block_id is constant.
+        assert block.anomaly_flags[0].name == "pair_trade_signature:NVDA:JPM"
+
+    def test_pair_trade_blocks_distinct_signatures_get_distinct_flag_names(self) -> None:
+        """Two pair signatures in one call → two distinct flag names, one block_id.
+
+        ALP-935: the producer fans a constant ``block_id`` block out per pair, so
+        a bare-constant flag name would mint colliding ``activity_log.entry_id``
+        PKs once ≥2 pairs fire. Embedding the ordered leg pair keeps them distinct.
+        """
+        from alphamind.distillation.q3 import (
+            PairTradeSignature,
+            assemble_q3_pair_trade_blocks,
+        )
+
+        signatures = (
+            PairTradeSignature(
+                bullish_leg="NVDA",
+                bearish_leg="JPM",
+                bullish_call_bto_z=2.0,
+                bearish_put_bto_z=2.0,
+                correlation=0.7,
+            ),
+            PairTradeSignature(
+                bullish_leg="AMD",
+                bearish_leg="BAC",
+                bullish_call_bto_z=2.5,
+                bearish_put_bto_z=2.1,
+                correlation=0.8,
+            ),
+        )
+        blocks = assemble_q3_pair_trade_blocks(
+            signatures=signatures,
+            ticker_to_sector={
+                "NVDA": "tech_semis",
+                "JPM": "financials",
+                "AMD": "tech_semis",
+                "BAC": "financials",
+            },
+            sector_to_audience={
+                "tech_semis": OutputAudience.SECTOR_TECH_SEMIS,
+                "financials": OutputAudience.SECTOR_FINANCIALS,
+            },
+            freshness_ts=_FRESHNESS,
+        )
+
+        assert {b.block_id for b in blocks} == {"q3.pair_trade_signature"}
+        names = [b.anomaly_flags[0].name for b in blocks]
+        assert names == [
+            "pair_trade_signature:NVDA:JPM",
+            "pair_trade_signature:AMD:BAC",
+        ]
 
     def test_index_vs_sector_block_carries_universal_audience(self) -> None:
         """Index-vs-sector spans every sector audience (universal cross-sector)."""
@@ -1154,6 +1207,48 @@ class TestBlockAssembly:
         assert block.audience == frozenset({OutputAudience.SECTOR_TECH_SEMIS})
         assert block.payload["direction"] == "call"
         assert block.payload["tickers"] == ("AMD", "INTC", "NVDA")
+        # ALP-935: the flag name embeds (sector, direction) — a sector breaching
+        # both calls and puts emits two same-block sweeps, so direction is
+        # required to keep entry_ids distinct; block_id is constant.
+        assert block.anomaly_flags[0].name == "sector_wide_sweep:tech_semis:call"
+
+    def test_sector_wide_sweep_both_directions_get_distinct_flag_names(self) -> None:
+        """One sector firing both a call and a put sweep → two distinct flag names.
+
+        ALP-935: ``compute_sector_wide_sweeps`` emits one block per
+        ``(sector, direction)``, so a sector breaching both sides produces two
+        ``q3.sector_wide_sweep`` blocks in one run. The direction segment keeps
+        their ``activity_log.entry_id`` PKs distinct.
+        """
+        from alphamind.distillation.q3 import (
+            SectorWideSweep,
+            assemble_q3_sector_wide_sweep_blocks,
+        )
+
+        sweeps = (
+            SectorWideSweep(
+                sector="tech_semis",
+                direction="call",
+                tickers=("AMD", "INTC", "NVDA"),
+            ),
+            SectorWideSweep(
+                sector="tech_semis",
+                direction="put",
+                tickers=("AMD", "INTC", "NVDA"),
+            ),
+        )
+        blocks = assemble_q3_sector_wide_sweep_blocks(
+            sweeps=sweeps,
+            sector_to_audience={"tech_semis": OutputAudience.SECTOR_TECH_SEMIS},
+            freshness_ts=_FRESHNESS,
+        )
+
+        assert {b.block_id for b in blocks} == {"q3.sector_wide_sweep"}
+        names = [b.anomaly_flags[0].name for b in blocks]
+        assert names == [
+            "sector_wide_sweep:tech_semis:call",
+            "sector_wide_sweep:tech_semis:put",
+        ]
 
     def test_etf_iv_divergence_block_per_sector(self) -> None:
         """One ``q3.etf_iv_divergence`` block per detected divergence."""

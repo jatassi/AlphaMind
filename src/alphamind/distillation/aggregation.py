@@ -146,9 +146,12 @@ def collect_anomalies(blocks: Iterable[OutputBlock]) -> list[AnomalySummary]:
 # ``news_price_divergence:{ticker}``; and q12's ``etf_vs_single_name_divergence:{etf}``
 # — a sector ETF is a symbol — ALP-934). Every other dynamic-suffix flag carries a
 # *pair* (``correlation_breakdown_flag:{row}:{col}``,
-# ``intra_sector_correlation_divergence:{row}:{col}``), a pair-key
+# ``intra_sector_correlation_divergence:{row}:{col}``,
+# ``pair_trade_signature:{bullish_leg}:{bearish_leg}`` — a leg pair, not one
+# symbol — ALP-935), a pair-key
 # (``lead_lag_inversion_flag:{pair_key}``, ``overdue_lag_flag:{pair_key}``), or a
 # non-symbol subject (``q12_event_novelty:{sector_audience}``,
+# ``sector_wide_sweep:{sector}:{direction}`` — a sector, not a symbol — ALP-935,
 # ``prediction_market_delta:{contract_id}`` — a contract, not a symbol) — none
 # names a single subject ticker, so all resolve to ``ticker=None``. Segment
 # *count* alone can't separate the locus / per-ticker case from the pair-key /
