@@ -554,7 +554,14 @@ async def _seed_replays_db(
     *,
     pm_entries: tuple[ActivityLogEntry, ...],
     replays: tuple[CounterfactualReplayRecord, ...],
+    resolved_theses: tuple[tuple[str, str, float], ...] = (),
 ) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
+    """Seed the replays DB. ``resolved_theses`` is ``(thesis_id, position_id, pnl)``
+    tuples seeded as RESOLVED theses on their positions (the modified-form lineage)."""
+    from alphamind.state.tables.theses_codec import record_to_rows
+    from tests.feedback_loop.metrics._outcome_fixtures import make_resolved_thesis_record
+    from tests.state._fk_substrate import stub_position_row
+
     db_path = tmp_path / "replays_loader.db"
     sync_engine = make_engine(str(db_path))
     Base.metadata.create_all(sync_engine)
@@ -565,6 +572,31 @@ async def _seed_replays_db(
         inv.start_at = "2026-06-10T14:00:00+00:00"
         sess.add(inv)
         sess.flush()
+        seeded_positions: set[str] = set()
+        for thesis_id, position_id, pnl in resolved_theses:
+            sess.add(stub_position_row(position_id))
+            sess.flush()
+            seeded_positions.add(position_id)
+            thesis_record = make_resolved_thesis_record(
+                thesis_id,
+                position_id,
+                resolution_timestamp=_REPLAY_TS,
+                resolution_pnl_usd=pnl,
+            )
+            thesis_row, comp_rows = record_to_rows(thesis_record)
+            sess.add(thesis_row)
+            for crow in comp_rows:
+                sess.add(crow)
+            sess.flush()
+        # Seed any position a PM entry references (the activity_log FK) but that
+        # the resolved-thesis seeding did not already create — the realistic
+        # production shape where the modified-form trade's thesis is still ACTIVE.
+        for entry in pm_entries:
+            pid = entry.position_id
+            if pid is not None and pid not in seeded_positions:
+                sess.add(stub_position_row(pid))
+                sess.flush()
+                seeded_positions.add(pid)
         for entry in pm_entries:
             sess.add(activity_log_entry_to_row(entry))
         for record in replays:
@@ -720,6 +752,88 @@ class TestLoadReplays:
             await async_engine.dispose()
 
         assert bundle == ReplaysBundle()
+
+    async def test_actual_modified_pnl_joined_from_resolved_thesis(self, tmp_path: Path) -> None:
+        """A modification replay's actual_modified_pnl comes from the resolved thesis
+        on the originating position, and modification-effectiveness reads a real value."""
+        from alphamind.feedback_loop.dataset import _load_replays
+        from alphamind.feedback_loop.metrics.pm_accuracy import (
+            _compute_modification_effectiveness,
+        )
+
+        pm = _pm_decision_entry(
+            "alog-1",
+            "ENV-MOD-1",
+            verdict=PMVerdict.APPROVE_WITH_MODIFICATION,
+            modifications_json=[{"adjustment_category": "risk_reduction"}],
+            position_id="pos-mod-1",
+        )
+        replay = _replay_record(
+            "rpl-1",
+            "ENV-MOD-1",
+            kind=ReplayKind.MODIFICATION_ORIGINAL_FORM,
+            realized_pl=Money(Decimal("30.00")),  # counterfactual original-form P/L
+            confidence=Confidence.HIGH,
+        )
+        async_engine, factory = await _seed_replays_db(
+            tmp_path,
+            pm_entries=(pm,),
+            replays=(replay,),
+            # The actual modified-form trade resolved at +75 on pos-mod-1.
+            resolved_theses=(("thes-mod-1", "pos-mod-1", 75.0),),
+        )
+        try:
+            async with factory() as session:
+                bundle = await _load_replays(session, _REPLAY_WINDOW_START, _REPLAY_WINDOW_END)
+        finally:
+            await async_engine.dispose()
+
+        assert len(bundle.replays) == 1
+        assert bundle.replays[0].actual_modified_pnl == 75.0
+        # Modified-form +75 beat counterfactual original-form +30 -> effectiveness 1/1.
+        dataset = WindowDataset(
+            start=_REPLAY_WINDOW_START,
+            end=_REPLAY_WINDOW_END,
+            agent_calls=(),
+            pm_decision_log=(),
+            validations=(),
+            replays=bundle,
+        )
+        result = _compute_modification_effectiveness(dataset, UNCONDITIONED)
+        assert result.value == 1.0
+        assert result.sample_size == 1
+        assert result.insufficient_sample is False
+
+    async def test_actual_modified_pnl_none_when_thesis_unresolved(self, tmp_path: Path) -> None:
+        """With no resolved thesis on the originating position, actual_modified_pnl
+        stays None and the modification cannot be scored (degrades gracefully)."""
+        from alphamind.feedback_loop.dataset import _load_replays
+
+        pm = _pm_decision_entry(
+            "alog-1",
+            "ENV-MOD-1",
+            verdict=PMVerdict.APPROVE_WITH_MODIFICATION,
+            modifications_json=[{"adjustment_category": "risk_reduction"}],
+            position_id="pos-mod-1",
+        )
+        replay = _replay_record(
+            "rpl-1",
+            "ENV-MOD-1",
+            kind=ReplayKind.MODIFICATION_ORIGINAL_FORM,
+            realized_pl=Money(Decimal("30.00")),
+            confidence=Confidence.HIGH,
+        )
+        async_engine, factory = await _seed_replays_db(
+            tmp_path, pm_entries=(pm,), replays=(replay,)
+        )
+        try:
+            async with factory() as session:
+                bundle = await _load_replays(session, _REPLAY_WINDOW_START, _REPLAY_WINDOW_END)
+        finally:
+            await async_engine.dispose()
+
+        assert len(bundle.replays) == 1
+        assert bundle.replays[0].actual_modified_pnl is None
 
     async def test_anti_patterns_populated_from_pm_decision_detail(self, tmp_path: Path) -> None:
         """A rejection replay carries the originating PM decision's anti-pattern tags,

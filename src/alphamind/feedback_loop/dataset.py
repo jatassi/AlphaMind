@@ -71,6 +71,7 @@ from alphamind.state.repository.outcome_queries import (
     InvocationConditioning,
     read_invocation_conditioning,
     read_resolved_theses_in_window,
+    read_resolved_thesis_pnl_by_position,
 )
 from alphamind.state.repository.validation_queries import (
     read_pending_validations,
@@ -152,10 +153,9 @@ class ReplayObservation:
     * ``is_sizing_modification`` — whether the PM modification was a sizing-down
       (``risk_reduction`` adjustment category) — the sizing-effectiveness subset.
     * ``anti_patterns`` — the canonical anti-pattern names the PM tagged on this
-      envelope. Always empty until the anti-pattern persistence join lands (the
-      ``pm_decision`` activity-log detail does not yet carry ``anti_patterns_identified``
-      — see ALP-887 report / ALP-906), so anti-pattern detector accuracy reads empty in
-      production and is exercised by fixtures; fixtures populate it directly.
+      envelope, read off the originating ``PMDecisionDetail.anti_patterns_json`` (ALP-911
+      persists them at ``_emit_pm_decision``; ALP-928 wires the join). Empty when the PM
+      flagged none.
     """
 
     envelope_id: str
@@ -621,13 +621,15 @@ load_counterfactual_replays_for_envelope`), filters to the single latest
     aggregated values, per the engine's confidence rule. ``Money`` outcome fields
     are decoded to ``float`` here at the I/O boundary so the cores stay arithmetic.
 
-    ``actual_modified_pnl`` (the resolved modified-form trade behind a
-    ``modification_original_form`` replay) and ``anti_patterns`` are not yet
-    populated — the ``pm_decision`` detail does not persist
-    ``anti_patterns_identified``, and the modified-form resolution join is deferred
-    (see ALP-887 report / ALP-906); both remain empty until that join lands, so the
-    modification-effectiveness and anti-pattern-detector metrics degrade to
-    insufficient-sample in production while the cores are exercised by fixtures.
+    ``anti_patterns`` is read off each replay's originating
+    ``PMDecisionDetail.anti_patterns_json`` (ALP-911 persists the PM's tags at
+    ``_emit_pm_decision``). ``actual_modified_pnl`` joins each
+    ``modification_original_form`` replay to the realized P/L of the resolved thesis on
+    its originating position — keyed by position and read regardless of window, since
+    the modified-form trade may resolve outside this replay's analytics window (ALP-928).
+    A modification whose thesis has not yet resolved keeps ``actual_modified_pnl=None``,
+    so its modification-effectiveness reading degrades to insufficient-sample until the
+    trade lands.
     """
     pm_entries = await read_activity_events_in_window(session, start, end, (EventType.PM_DECISION,))
     pm_details = {
@@ -641,11 +643,52 @@ load_counterfactual_replays_for_envelope`), filters to the single latest
         lambda sync_session: _read_replays_for_envelopes(sync_session, tuple(pm_details))
     )
     selected = _filter_to_latest_version(records)
+    # The actual modified-form leg: each modification replay's originating position
+    # resolves to the realized P/L of the resolved thesis on that position (keyed by
+    # position, regardless of window — ALP-928). Read once for all such positions.
+    modification_positions = _originating_positions(selected, pm_details)
+    actual_modified_pnl_by_position = await read_resolved_thesis_pnl_by_position(
+        session, modification_positions
+    )
     observations = tuple(
-        _to_replay_observation(record, pm_details[record.pm_decision_envelope_id])
+        _to_replay_observation(
+            record,
+            pm_details[record.pm_decision_envelope_id],
+            actual_modified_pnl_by_position,
+        )
         for record in selected
     )
     return ReplaysBundle(replays=observations)
+
+
+def _originating_position(detail: PMDecisionDetail) -> str | None:
+    """The position the PM decision acted on, from ``source_provenance_json``.
+
+    ``_emit_pm_decision`` persists the envelope's ``position_id`` under
+    ``source_provenance_json["position_id"]``; ``None`` for a proposal with no
+    position (an OPEN whose position is allocated downstream).
+    """
+    position_id = detail.source_provenance_json.get("position_id")
+    return position_id if isinstance(position_id, str) else None
+
+
+def _originating_positions(
+    records: tuple[CounterfactualReplayRecord, ...],
+    pm_details: Mapping[str, PMDecisionDetail],
+) -> list[str]:
+    """Originating position ids for the ``modification_original_form`` replays.
+
+    Only modification replays carry an actual modified-form trade to score against;
+    rejection replays have no taken trade, so their positions are not read.
+    """
+    positions = {
+        position_id
+        for record in records
+        if record.replay_kind is ReplayKind.MODIFICATION_ORIGINAL_FORM
+        and (position_id := _originating_position(pm_details[record.pm_decision_envelope_id]))
+        is not None
+    }
+    return list(positions)
 
 
 def _read_replays_for_envelopes(
@@ -674,20 +717,33 @@ def _filter_to_latest_version(
 
 
 def _to_replay_observation(
-    record: CounterfactualReplayRecord, detail: PMDecisionDetail
+    record: CounterfactualReplayRecord,
+    detail: PMDecisionDetail,
+    actual_modified_pnl_by_position: Mapping[str, float],
 ) -> ReplayObservation:
-    """Flatten one replay + its PM decision into a :class:`ReplayObservation`."""
+    """Flatten one replay + its PM decision into a :class:`ReplayObservation`.
+
+    For a ``modification_original_form`` replay, ``actual_modified_pnl`` is the
+    realized P/L of the resolved thesis on the originating position (the actual
+    modified-form trade the PM approved), or ``None`` when that trade has not yet
+    resolved. ``None`` for ``rejection`` replays — the rejected trade was never taken.
+    """
     is_sizing = any(
         mod.get("adjustment_category") == _SIZING_ADJUSTMENT_CATEGORY
         for mod in detail.modifications_json
     )
+    actual_modified_pnl: float | None = None
+    if record.replay_kind is ReplayKind.MODIFICATION_ORIGINAL_FORM:
+        position_id = _originating_position(detail)
+        if position_id is not None:
+            actual_modified_pnl = actual_modified_pnl_by_position.get(position_id)
     return ReplayObservation(
         envelope_id=record.pm_decision_envelope_id,
         replay_kind=record.replay_kind,
         replay_status=record.replay_status,
         confidence=record.confidence,
         counterfactual_pnl=None if record.realized_pl is None else float(record.realized_pl),
-        actual_modified_pnl=None,
+        actual_modified_pnl=actual_modified_pnl,
         is_sizing_modification=is_sizing,
         anti_patterns=tuple(detail.anti_patterns_json),
     )

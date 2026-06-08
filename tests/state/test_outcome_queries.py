@@ -25,8 +25,8 @@ from alphamind.persistence.session import (
 from alphamind.portfolio_state.records.theses import ThesisRecordStatus
 from alphamind.state.repository.outcome_queries import (
     read_invocation_conditioning,
-    read_resolved_thesis_pnl_by_position,
     read_resolved_theses_in_window,
+    read_resolved_thesis_pnl_by_position,
 )
 from alphamind.state.tables.theses_codec import record_to_rows
 from tests.feedback_loop.metrics._outcome_fixtures import make_resolved_thesis_record
@@ -180,9 +180,7 @@ class TestReadResolvedThesisPnlByPosition:
         assert "pos-active" not in result
         assert result == {"pos-a": 42.0}
 
-    async def test_unknown_position_absent(
-        self, pnl_by_position_session: AsyncSession
-    ) -> None:
+    async def test_unknown_position_absent(self, pnl_by_position_session: AsyncSession) -> None:
         result = await read_resolved_thesis_pnl_by_position(
             pnl_by_position_session, ["pos-a", "pos-missing"]
         )
