@@ -26,6 +26,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from alpaca.data.enums import DataFeed
+from alpaca.data.requests import StockLatestQuoteRequest
 
 from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.broker_adapter.queries import (
@@ -36,6 +38,7 @@ from alphamind.execution.continuous_monitor.safety_core.evaluation import Safety
 from alphamind.execution.continuous_monitor.safety_core.heartbeat import FileHeartbeatSink
 from alphamind.execution.continuous_monitor.safety_core.loop import run_safety_core
 from alphamind.execution.continuous_monitor.safety_core.price_feed import (
+    AlpacaLatestQuoteFetcher,
     _latest_quotes_to_underlying,
     run_price_feed,
 )
@@ -225,6 +228,42 @@ def test_mapper_keeps_only_the_two_sided_rows_in_a_mixed_batch() -> None:
     result = _latest_quotes_to_underlying(response, ["AAPL", "BAD"])
 
     assert result == [UnderlyingQuote(ticker="AAPL", price=101.0, as_of=ts)]
+
+
+# ---------------------------------------------------------------------------
+# AlpacaLatestQuoteFetcher — request building + response mapping (broker boundary)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetcher_builds_sorted_iex_request_and_maps_response() -> None:
+    """The fetcher passes sorted symbols + IEX feed to the SDK and maps the keyed response.
+
+    The Alpaca ``StockHistoricalDataClient`` is the sanctioned broker boundary —
+    faked here. Asserts the glue the unit tests above don't cover: ``sorted(symbols)``
+    → ``StockLatestQuoteRequest`` (IEX) → ``_latest_quotes_to_underlying``, including
+    the degenerate-row drop on the real fetch path.
+    """
+    ts = datetime(2026, 6, 5, 14, 0, tzinfo=UTC)
+    captured: dict[str, StockLatestQuoteRequest] = {}
+
+    class _FakeClient:
+        def get_stock_latest_quote(self, request: StockLatestQuoteRequest) -> dict[str, _FakeQuote]:
+            captured["request"] = request
+            return {
+                "AAPL": _FakeQuote(symbol="AAPL", bid_price=100.0, ask_price=102.0, timestamp=ts),
+                # Zero-bid row must be dropped on the real fetch path too.
+                "MSFT": _FakeQuote(symbol="MSFT", bid_price=0.0, ask_price=50.0, timestamp=ts),
+            }
+
+    fetcher = AlpacaLatestQuoteFetcher(client=_FakeClient())  # type: ignore[arg-type]
+
+    result = await fetcher(frozenset({"MSFT", "AAPL"}))
+
+    assert result == [UnderlyingQuote(ticker="AAPL", price=101.0, as_of=ts)]
+    request = captured["request"]
+    assert request.symbol_or_symbols == ["AAPL", "MSFT"]  # sorted before the request is built
+    assert request.feed == DataFeed.IEX
 
 
 # ---------------------------------------------------------------------------
