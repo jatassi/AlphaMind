@@ -162,6 +162,7 @@ from alphamind.scheduler.control.sse_progress_bridge import (
 )
 from alphamind.scheduler.fill_collection_inputs import gather_fill_collection_inputs
 from alphamind.scheduler.invocation import insert_invocation_record
+from alphamind.scheduler.reprotection import run_reprotection_step
 from alphamind.scheduler.run_context import RunInvocationContext
 from alphamind.scheduler.runtime import resolve_runtime_dimensions
 from alphamind.scripts._common import load_distillation_config
@@ -849,6 +850,25 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
 
     fill_collection_summary = await run_with_sqlite_busy_retry(_run_fill_collection_write_unit)
     progress.phase_done("fill_collection", fills_processed=fill_collection_summary.fills_processed)
+
+    # Step 3a — Auto re-protection (ALP-938). After fill collection cancelled a
+    # PM-directed partial-close position's broker legs (ALP-937) and marked it
+    # ``reprotection_needed``, re-submit a fresh standalone OCO for the remaining
+    # shares at the original protective levels and append the new legs onto the
+    # still-ACTIVE bracket — without waiting for the PM. Runs AFTER the
+    # fill-collection write unit commits (lock released) in its own gather → submit
+    # → persist sequence, so no broker network call happens under the SQLite write
+    # lock (the ALP-824 invariant). Placed ahead of the slow thesis-resolution LLM
+    # step so the naked window closes fast. Never raises out of the orchestrator.
+    await run_reprotection_step(
+        session_factory=session_factory,
+        invocation_id=invocation_id,
+        venue_config=venue_config,
+        execution_mode=execution_mode,
+        execution_config=pipeline_config.loaded.execution,
+        broker_routing_active=context.debug_e2e is None,
+        now=now,
+    )
 
     # Step 3b — Thesis resolution (ALP-834 / ALP-899). Fill collection (or the
     # continuous monitor) left closed-position theses ACTIVE; author ACTIVE →
