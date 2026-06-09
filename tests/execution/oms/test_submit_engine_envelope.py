@@ -83,7 +83,6 @@ from alphamind.state.invocation_context.records import (
     process_lifetime_record_to_row,
 )
 from alphamind.state.tables.activity_log import ActivityLogRow
-from alphamind.state.tables.bracket_legs import BracketLegRow
 from alphamind.state.tables.brackets_codec import (
     record_to_rows as bracket_record_to_rows,
 )
@@ -388,7 +387,11 @@ async def _seed_native_bracket_equity(
     cancel set. Reuses ``_open_position`` / ``_active_thesis`` (NVDA, POS-NVDA-001,
     bracket BRK-NVDA-1).
     """
-    from tests.state._fk_substrate import stub_bracket_row, stub_order_row
+    from tests.state._fk_substrate import (
+        stub_bracket_leg_row,
+        stub_bracket_row,
+        stub_order_row,
+    )
 
     position = _open_position()
     thesis = _active_thesis()
@@ -433,26 +436,12 @@ async def _seed_native_bracket_equity(
         await sess.flush()
         for leg_index, (order_id, _role, _alpaca_id, binding) in enumerate(leg_specs):
             sess.add(
-                BracketLegRow(
-                    bracket_leg_id=f"{bracket_id}-leg-{leg_index}",
-                    bracket_id=bracket_id,
+                stub_bracket_leg_row(
+                    f"{bracket_id}-leg-{leg_index}",
+                    bracket_id,
                     leg_index=leg_index,
-                    leg_type=BracketLegType.PRICE_STOP.value,
                     order_id=order_id,
-                    trigger_kind="PRICE",
-                    trigger_payload_json=json.dumps(
-                        {
-                            "trigger_type": "price",
-                            "underlying_ticker": "NVDA",
-                            "threshold_usd": 140.0,
-                            "direction": "LTE",
-                        }
-                    ),
-                    pl_anchor_json=None,
-                    enforcement=BracketLegEnforcement.MECHANICAL.value,
                     enforcement_binding=binding.value,
-                    leg_status=BracketLegStatus.ACTIVE.value,
-                    trigger_signal=None,
                 )
             )
         await sess.commit()

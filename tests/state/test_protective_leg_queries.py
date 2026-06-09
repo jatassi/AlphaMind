@@ -21,9 +21,6 @@ from alphamind.persistence.session import (
     make_session_factory,
 )
 from alphamind.portfolio_state.records.orders import (
-    BracketLegEnforcement,
-    BracketLegStatus,
-    BracketLegType,
     EnforcementBinding,
     OrderRole,
     OrderStatus,
@@ -32,8 +29,8 @@ from alphamind.state.protective_leg_queries import (
     equity_broker_enforced_protective_leg_ids,
     leg_enforcement_binding,
 )
-from alphamind.state.tables.bracket_legs import BracketLegRow
 from tests.state._fk_substrate import (
+    stub_bracket_leg_row,
     stub_bracket_row,
     stub_order_row,
     stub_position_row,
@@ -52,23 +49,6 @@ class _LegSpec(NamedTuple):
     alpaca_order_id: str | None
     binding: EnforcementBinding | None  # None → no bracket_legs row for this order
     status: str = OrderStatus.PENDING.value
-
-
-def _leg_row(leg_index: int, order_id: str, binding: EnforcementBinding) -> BracketLegRow:
-    return BracketLegRow(
-        bracket_leg_id=f"{_BRACKET_ID}-leg-{leg_index}",
-        bracket_id=_BRACKET_ID,
-        leg_index=leg_index,
-        leg_type=BracketLegType.PRICE_STOP.value,
-        order_id=order_id,
-        trigger_kind="PRICE",
-        trigger_payload_json="{}",
-        pl_anchor_json=None,
-        enforcement=BracketLegEnforcement.MECHANICAL.value,
-        enforcement_binding=binding.value,
-        leg_status=BracketLegStatus.ACTIVE.value,
-        trigger_signal=None,
-    )
 
 
 def _seed(db_path: Path, specs: list[_LegSpec]) -> None:
@@ -100,7 +80,15 @@ def _seed(db_path: Path, specs: list[_LegSpec]) -> None:
         sess.flush()
         for leg_index, spec in enumerate(specs):
             if spec.binding is not None:
-                sess.add(_leg_row(leg_index, spec.order_id, spec.binding))
+                sess.add(
+                    stub_bracket_leg_row(
+                        f"{_BRACKET_ID}-leg-{leg_index}",
+                        _BRACKET_ID,
+                        leg_index=leg_index,
+                        order_id=spec.order_id,
+                        enforcement_binding=spec.binding.value,
+                    )
+                )
         sess.commit()
     sync_engine.dispose()
 

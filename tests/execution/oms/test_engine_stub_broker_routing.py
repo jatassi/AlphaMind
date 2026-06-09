@@ -1919,27 +1919,12 @@ async def test_engine_close_dispatch_kwargs_strategy_leg_without_direction_raise
         )
 
 
-async def test_engine_close_dispatch_kwargs_equity_threads_empty_legs_with_no_bracket_rows(
-    empty_session: AsyncSession,
-) -> None:
-    """Equity routing threads symbol/qty/side plus the protective-leg set; against
-    an unseeded DB (no bracket rows) that set is the empty tuple (ALP-939)."""
-    from alphamind.execution.oms.submit_engine_envelope import (
-        _engine_close_dispatch_kwargs,
-    )
-
-    position = _open_position()
-    kwargs = await _engine_close_dispatch_kwargs(
-        position, session=empty_session, position_id=position.position_id
-    )
-
-    assert kwargs == {
-        "position_asset_type": "equity",
-        "position_symbol": "NVDA",
-        "position_qty": 10.0,
-        "position_side": "long",
-        "close_protective_leg_alpaca_order_ids": (),
-    }
+# NOTE: the equity branch of ``_engine_close_dispatch_kwargs`` (which now also
+# threads ``close_protective_leg_alpaca_order_ids``, ALP-939) is covered
+# end-to-end by ``test_submit_engine_envelope`` — the broker-routed CLOSE there
+# rejects (``available: 0``) if the key is dropped — and the resolver's empty /
+# populated cases by ``tests/state/test_protective_leg_queries``; no separate
+# kwargs-shape unit test is kept here.
 
 
 # ---------------------------------------------------------------------------
