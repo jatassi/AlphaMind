@@ -440,19 +440,18 @@ class TestRegimeTimeline:
         assert data["from_ts"] == "2026-05-26T00:00:00Z"
         assert data["to_ts"] == "2026-05-27T00:00:00Z"
 
-    @pytest.mark.xfail(
-        reason=(
-            "Pre-existing failure (GUARDRAIL_REJECTION event type not appearing). "
-            "Orthogonal to ALP-724. See CLAUDE.md local-CI fallback for billing sentinel."
-        ),
-        strict=False,
-    )
     def test_guardrail_rejection_in_timeline(self, client: TestClient) -> None:
-        """GUARDRAIL_REJECTION is in the timeline event types."""
-        data = client.get(
-            "/api/views/risk/regime-timeline",
-            params={"from": "2026-05-01T00:00:00Z", "to": "2026-05-27T23:59:59Z"},
-        ).json()
+        """GUARDRAIL_REJECTION is in the timeline event types.
+
+        The fixture seeds the sole GUARDRAIL_REJECTION row at a wall-clock
+        relative timestamp (``now - 1 h``) so it stays inside the dashboard's
+        24 h breach window; query the endpoint's default window (also
+        ``now - 24 h → now``) here so the timeline picks up that same row.
+        A fixed historical window the row falls outside of would drop it —
+        the endpoint already lists GUARDRAIL_REJECTION in its event-type
+        filter, so the assertion exercises the window, not the filter.
+        """
+        data = client.get("/api/views/risk/regime-timeline").json()
         event_types = {e["event_type"] for e in data["events"]}
         assert "GUARDRAIL_REJECTION" in event_types
 
