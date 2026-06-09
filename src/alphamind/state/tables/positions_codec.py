@@ -250,6 +250,7 @@ def record_to_row(record: PositionRecord) -> PositionRow:
         ),
         realized_pnl_to_date_usd=record.realized_pnl_to_date_usd,
         corporate_action_adjustment_needed=1 if record.corporate_action_adjustment_needed else 0,
+        reprotection_needed=1 if record.reprotection_needed else 0,
         parent_position_id=record.parent_position_id,
         origin=record.origin,
     )
@@ -285,6 +286,7 @@ def row_to_record(row: PositionRow) -> PositionRecord:
         execution_history=tuple(_fill_from_dict(f) for f in json.loads(row.execution_history_json)),
         realized_pnl_to_date_usd=row.realized_pnl_to_date_usd,
         corporate_action_adjustment_needed=bool(row.corporate_action_adjustment_needed),
+        reprotection_needed=bool(row.reprotection_needed),
         parent_position_id=PositionId(row.parent_position_id)
         if row.parent_position_id is not None
         else None,

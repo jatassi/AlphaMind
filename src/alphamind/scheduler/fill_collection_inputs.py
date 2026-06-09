@@ -167,13 +167,14 @@ class FillCollectionInputs:
     staleness_flag: bool
 
 
-def _alpaca_client_factory(
+def alpaca_client_factory(
     venue_config: VenueConfig, execution_mode: ExecutionMode
 ) -> AlpacaClientFactory:
     """Resolve the venue config + execution mode into an ``AlpacaClientFactory``.
 
     The single source of the ``ExecutionMode`` → paper/live mapping shared by the
-    three default Alpaca-backed factories below; each builds a different client
+    three default Alpaca-backed factories below and the re-protection step's
+    ``_default_trading_client_factory`` (ALP-938); each builds a different client
     off the returned factory. Raises ``RuntimeError`` (from the factory's
     constructor) when the mode's credentials are unset.
     """
@@ -191,7 +192,7 @@ def _default_account_queries_factory(
     Used when ``gather_fill_collection_inputs`` is called without an
     ``account_queries_factory`` kwarg (the production daemon path).
     """
-    factory = _alpaca_client_factory(venue_config, execution_mode)
+    factory = alpaca_client_factory(venue_config, execution_mode)
     return AccountStateQueries(factory.build_trading_client())
 
 
@@ -203,7 +204,7 @@ def _default_ca_queries_factory(
     Used when ``gather_fill_collection_inputs`` is called without a
     ``ca_queries_factory`` kwarg (the production daemon path).
     """
-    factory = _alpaca_client_factory(venue_config, execution_mode)
+    factory = alpaca_client_factory(venue_config, execution_mode)
     return CorporateActionsQueries(factory.build_corporate_actions_client())
 
 
@@ -219,7 +220,7 @@ def _default_quote_source_factory(
     Used when ``gather_fill_collection_inputs`` is called without a ``quote_source_factory``
     kwarg (the production daemon path).
     """
-    factory = _alpaca_client_factory(venue_config, execution_mode)
+    factory = alpaca_client_factory(venue_config, execution_mode)
     return AlpacaQuoteSource(factory.build_stock_data_client())
 
 

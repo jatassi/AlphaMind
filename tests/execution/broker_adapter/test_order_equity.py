@@ -59,11 +59,13 @@ from alphamind.config.models.execution import (
 )
 from alphamind.execution.broker_adapter import (
     EquityLegAck,
+    EquityOcoLevels,
     EquitySubmission,
     GatewaySubmissionFailed,
     Submitted,
     submit_equity_add,
     submit_equity_close,
+    submit_equity_oco,
     submit_equity_open,
 )
 
@@ -1046,3 +1048,186 @@ async def test_open_market_order_symbol_from_instrument() -> None:
 
     req = captured[0]
     assert req.symbol == "NVDA"
+
+
+# ---------------------------------------------------------------------------
+# ALP-938: submit_equity_oco — the standalone re-protection OCO primitive
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_submit_oco_long_constructs_oco_request_no_entry() -> None:
+    """submit_equity_oco builds an OCO LimitOrderRequest carrying a take-profit +
+    stop child and NO entry leg, SELL side for a LONG position."""
+    captured: list[Any] = []
+
+    fake_order = _make_fake_order(order_class=OrderClass.OCO, client_order_id=_CLIENT_ORDER_ID_MON)
+    fake_order.order_type = AlpacaOrderType.LIMIT
+    fake_order.legs = [_make_fake_leg(AlpacaOrderType.STOP)]
+
+    def fake_submit(request: Any) -> Any:
+        captured.append(request)
+        return fake_order
+
+    client = MagicMock()
+    client.submit_order = fake_submit
+
+    result = await submit_equity_oco(
+        client=client,
+        execution=_make_execution_config(),
+        client_order_id=_CLIENT_ORDER_ID_MON,
+        symbol="AAPL",
+        qty=6.0,
+        position_side="long",
+        levels=EquityOcoLevels(take_profit_price=price(200.0), stop_price=price(140.0)),
+    )
+
+    assert isinstance(result, Submitted)
+    assert len(captured) == 1
+    req = captured[0]
+    assert isinstance(req, LimitOrderRequest)
+    assert req.order_class == OrderClass.OCO
+    assert req.side == OrderSide.SELL
+    assert req.qty == 6.0
+    assert req.time_in_force == TimeInForce.DAY
+    # No entry leg: the parent carries no limit_price; the take-profit rides the child.
+    assert req.limit_price is None
+    assert req.take_profit is not None
+    assert req.take_profit.limit_price == 200.0
+    assert req.stop_loss is not None
+    assert req.stop_loss.stop_price == 140.0
+    assert req.stop_loss.limit_price is None
+
+
+@pytest.mark.asyncio
+async def test_submit_oco_short_uses_buy_to_cover_side() -> None:
+    """A SHORT position's protective OCO covers with the BUY side."""
+    captured: list[Any] = []
+    fake_order = _make_fake_order(order_class=OrderClass.OCO, client_order_id=_CLIENT_ORDER_ID_MON)
+    fake_order.order_type = AlpacaOrderType.LIMIT
+    fake_order.legs = [_make_fake_leg(AlpacaOrderType.STOP)]
+
+    def fake_submit(request: Any) -> Any:
+        captured.append(request)
+        return fake_order
+
+    client = MagicMock()
+    client.submit_order = fake_submit
+
+    await submit_equity_oco(
+        client=client,
+        execution=_make_execution_config(),
+        client_order_id=_CLIENT_ORDER_ID_MON,
+        symbol="TSLA",
+        qty=3.0,
+        position_side="short",
+        levels=EquityOcoLevels(take_profit_price=price(100.0), stop_price=price(160.0)),
+    )
+    assert captured[0].side == OrderSide.BUY
+
+
+@pytest.mark.asyncio
+async def test_submit_oco_captures_both_protective_ids_parent_tp_leg_stop() -> None:
+    """Result.leg_acks carries BOTH ids when the take-profit is the parent limit and
+    the stop surfaces on order.legs (one shape alpaca-py returns for an OCO)."""
+    fake_order = _make_fake_order(order_class=OrderClass.OCO, client_order_id=_CLIENT_ORDER_ID_MON)
+    fake_order.order_type = AlpacaOrderType.LIMIT
+    stop_leg = _make_fake_leg(AlpacaOrderType.STOP)
+    fake_order.legs = [stop_leg]
+
+    client = MagicMock()
+    client.submit_order = lambda request: fake_order
+
+    result = await submit_equity_oco(
+        client=client,
+        execution=_make_execution_config(),
+        client_order_id=_CLIENT_ORDER_ID_MON,
+        symbol="AAPL",
+        qty=6.0,
+        position_side="long",
+        levels=EquityOcoLevels(take_profit_price=price(200.0), stop_price=price(140.0)),
+    )
+    assert isinstance(result, Submitted)
+    acks = {ack.role: ack.alpaca_order_id for ack in result.payload.leg_acks}
+    assert acks == {
+        "take_profit": AlpacaOrderId(str(fake_order.id)),
+        "stop_loss": AlpacaOrderId(str(stop_leg.id)),
+    }
+
+
+@pytest.mark.asyncio
+async def test_submit_oco_captures_both_ids_when_both_surface_as_legs() -> None:
+    """The classifier is robust to the other shape — both children on order.legs —
+    and never double-counts the take-profit even though the parent is also a LIMIT."""
+    fake_order = _make_fake_order(order_class=OrderClass.OCO, client_order_id=_CLIENT_ORDER_ID_MON)
+    fake_order.order_type = AlpacaOrderType.LIMIT
+    tp_leg = _make_fake_leg(AlpacaOrderType.LIMIT)
+    stop_leg = _make_fake_leg(AlpacaOrderType.STOP)
+    fake_order.legs = [tp_leg, stop_leg]
+
+    client = MagicMock()
+    client.submit_order = lambda request: fake_order
+
+    result = await submit_equity_oco(
+        client=client,
+        execution=_make_execution_config(),
+        client_order_id=_CLIENT_ORDER_ID_MON,
+        symbol="AAPL",
+        qty=6.0,
+        position_side="long",
+        levels=EquityOcoLevels(take_profit_price=price(200.0), stop_price=price(140.0)),
+    )
+    assert isinstance(result, Submitted)
+    acks = {ack.role: ack.alpaca_order_id for ack in result.payload.leg_acks}
+    # take-profit comes from the leg, not the parent — no double-count.
+    assert acks == {
+        "take_profit": AlpacaOrderId(str(tp_leg.id)),
+        "stop_loss": AlpacaOrderId(str(stop_leg.id)),
+    }
+
+
+@pytest.mark.asyncio
+async def test_submit_oco_stop_limit_threads_limit_price() -> None:
+    """A stop-limit protective stop threads its limit_price onto the stop_loss child."""
+    captured: list[Any] = []
+    fake_order = _make_fake_order(order_class=OrderClass.OCO, client_order_id=_CLIENT_ORDER_ID_MON)
+    fake_order.order_type = AlpacaOrderType.LIMIT
+    fake_order.legs = [_make_fake_leg(AlpacaOrderType.STOP_LIMIT)]
+
+    def fake_submit(request: Any) -> Any:
+        captured.append(request)
+        return fake_order
+
+    client = MagicMock()
+    client.submit_order = fake_submit
+
+    await submit_equity_oco(
+        client=client,
+        execution=_make_execution_config(),
+        client_order_id=_CLIENT_ORDER_ID_MON,
+        symbol="AAPL",
+        qty=6.0,
+        position_side="long",
+        levels=EquityOcoLevels(
+            take_profit_price=price(200.0),
+            stop_price=price(140.0),
+            stop_limit_price=price(139.5),
+        ),
+    )
+    assert captured[0].stop_loss.stop_price == 140.0
+    assert captured[0].stop_loss.limit_price == 139.5
+
+
+@pytest.mark.asyncio
+async def test_submit_oco_rejects_invalid_client_order_id() -> None:
+    client = MagicMock()
+    with pytest.raises(ValueError, match="client_order_id"):
+        await submit_equity_oco(
+            client=client,
+            execution=_make_execution_config(),
+            client_order_id="not-a-valid-id",
+            symbol="AAPL",
+            qty=6.0,
+            position_side="long",
+            levels=EquityOcoLevels(take_profit_price=price(200.0), stop_price=price(140.0)),
+        )

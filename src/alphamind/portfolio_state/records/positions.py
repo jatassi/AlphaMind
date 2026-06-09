@@ -322,6 +322,14 @@ class PositionRecord:
     corporate_action_adjustment_needed: bool
     parent_position_id: PositionId | None
     origin: str | None
+    # ALP-938 — durable re-protection marker. fill collection sets it True when a
+    # PM-directed partial CLOSE leaves this equity position OPEN with all its
+    # broker-enforced protective legs already CANCELLED (ALP-937); the
+    # post-fill-collection re-bracket step re-protects the remainder and clears it.
+    # Defaults False — the overwhelming majority of positions never need it, and a
+    # default keeps the field additive across the many PositionRecord build sites
+    # (the column itself is NOT NULL DEFAULT 0).
+    reprotection_needed: bool = False
 
     @property
     def instrument_type(self) -> InstrumentType:

@@ -775,6 +775,9 @@ async def test_exit_fill_closes_position_and_leaves_thesis_active(
         pos = position_row_to_record(pos_row)
         assert pos.status == PositionStatus.CLOSED
         assert pos.realized_pnl_to_date_usd == pytest.approx(100.0)
+        # ALP-938 — a full close dissolves the bracket; the re-protection marker
+        # is never set (the remainder is zero, there is nothing to re-protect).
+        assert pos.reprotection_needed is False
 
         # Bracket transitions ACTIVE → DISSOLVED with all legs CANCELLED.
         bracket_row = (
@@ -809,6 +812,132 @@ async def test_exit_fill_closes_position_and_leaves_thesis_active(
     assert EventType.THESIS_RESOLVED.value not in types
     assert EventType.CASH_CREDITED.value in types
     assert EventType.ORDER_FILLED.value in types
+
+
+def _make_bracket_with_leg_status(
+    leg_status: BracketLegStatus,
+    *,
+    bracket_id: str = "brk-1",
+    position_id: str = "pos-1",
+) -> BracketRecord:
+    """An ACTIVE bracket whose single protective leg carries *leg_status*.
+
+    ``leg_status=CANCELLED`` models the ALP-937 partial-close naked state (the
+    broker-enforced legs were cancelled but the bracket left ACTIVE on the
+    remainder); ``ACTIVE`` models a still-protected remainder.
+    """
+    leg = BracketLeg(
+        leg_id=f"{bracket_id}-leg-stop",
+        leg_type=BracketLegType.PRICE_STOP,
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=leg_status,
+    )
+    return BracketRecord(
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
+        status=BracketStatus.ACTIVE,
+        entry_order_id=OrderId("ord-entry-1"),
+        protective_legs=(leg,),
+        modification_history=(),
+        corporate_action_cancellation_reason=None,
+        entry_window_deadline=None,
+    )
+
+
+async def _run_partial_close_and_read_position(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    leg_status: BracketLegStatus,
+) -> PositionRecord:
+    """Seed an OPEN position + ACTIVE bracket (legs at *leg_status*) + CLOSE order,
+    process a partial-close fill (sell 4 of 10), and return the re-read position."""
+    from alphamind.execution.write_paths.fill_collection import process_unprocessed_fills
+    from tests.state._fk_substrate import stub_order_row
+
+    await _seed_invocation_substrate(factory)
+    close_order = _make_pending_entry_order(
+        order_id=OrderId("ord-close-1"),
+        role=OrderRole.CLOSE,
+        direction=OrderDirection.SELL,
+        position_id=PositionId("pos-1"),
+    )
+    entry_order = _make_pending_entry_order()
+    thesis_row, component_rows = thesis_record_to_rows(_make_active_thesis())
+    bracket_row, leg_rows = bracket_record_to_rows(_make_bracket_with_leg_status(leg_status))
+    leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
+    seeded_order_ids: set[str] = {entry_order.order_id, close_order.order_id}
+    async with factory() as sess:
+        sess.add(position_record_to_row(_make_open_position(share_count=10.0)))
+        sess.add(thesis_row)
+        for crow in component_rows:
+            sess.add(crow)
+        sess.add(order_record_to_row(entry_order))
+        sess.add(order_record_to_row(close_order))
+        for oid in leg_order_ids:
+            if oid not in seeded_order_ids:
+                sess.add(stub_order_row(oid, bracket_row.bracket_id))
+                seeded_order_ids.add(oid)
+        sess.add(bracket_row)
+        await sess.flush()
+        for lrow in leg_rows:
+            sess.add(lrow)
+        await sess.commit()
+    await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=98_500.0))
+    await _seed_drawdown_state(factory)
+    # Sell 4 of 10 shares -> position stays OPEN with 6 remaining (partial close).
+    await _append_fill(
+        factory,
+        _make_unprocessed_fill(
+            fill_id="fill-close-partial-1",
+            order_id=OrderId("ord-close-1"),
+            fill_price=160.0,
+            fill_quantity=4.0,
+            remaining_quantity_after=6.0,
+            order_status_after=OrderStatus.PARTIALLY_FILLED,
+        ),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        return position_row_to_record(pos_row)
+
+
+async def test_partial_close_with_cancelled_legs_sets_reprotection_marker(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-938 — a CLOSE-role partial fill that leaves the position OPEN with all
+    bracket legs CANCELLED (the ALP-937 naked state) sets reprotection_needed."""
+    _, factory = db
+    pos = await _run_partial_close_and_read_position(factory, leg_status=BracketLegStatus.CANCELLED)
+    assert pos.status == PositionStatus.OPEN
+    assert isinstance(pos.details, EquityPositionDetails)
+    assert pos.details.share_count == pytest.approx(6.0)
+    assert pos.reprotection_needed is True
+
+
+async def test_partial_close_with_resting_legs_does_not_set_marker(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-938 — a partial close whose protective legs still REST (e.g. an engine
+    close pre-ALP-939) is still broker-protected, so the marker stays clear."""
+    _, factory = db
+    pos = await _run_partial_close_and_read_position(factory, leg_status=BracketLegStatus.ACTIVE)
+    assert pos.status == PositionStatus.OPEN
+    assert pos.reprotection_needed is False
 
 
 async def test_take_profit_leg_fill_marks_leg_filled_and_closes_position(

@@ -149,7 +149,7 @@ def record_to_rows(record: BracketRecord) -> tuple[BracketRow, tuple[BracketLegR
         ),
     )
     leg_rows = tuple(
-        _leg_to_row(leg, bracket_id=record.bracket_id, leg_index=idx)
+        leg_to_row(leg, bracket_id=record.bracket_id, leg_index=idx)
         for idx, leg in enumerate(record.protective_legs)
     )
     return bracket_row, leg_rows
@@ -218,7 +218,7 @@ def rows_to_records_isolated(
 def _leg_column_values(leg: BracketLeg) -> dict[str, Any]:
     """The non-identity ``bracket_legs`` column values for *leg*.
 
-    Shared by :func:`_leg_to_row` (fresh insert) and :func:`update_leg_row`
+    Shared by :func:`leg_to_row` (fresh insert) and :func:`update_leg_row`
     (in-place modification) so the leg-row serialization lives in one place.
     """
     return {
@@ -236,7 +236,13 @@ def _leg_column_values(leg: BracketLeg) -> dict[str, Any]:
     }
 
 
-def _leg_to_row(leg: BracketLeg, *, bracket_id: str, leg_index: int) -> BracketLegRow:
+def leg_to_row(leg: BracketLeg, *, bracket_id: str, leg_index: int) -> BracketLegRow:
+    """Build a fresh ``bracket_legs`` row for *leg* at *leg_index*.
+
+    The append-a-leg counterpart of :func:`update_leg_row` (in-place). Used by
+    :func:`record_to_rows` to lay down a whole bracket and by the ALP-938
+    re-bracket persist to append new protective legs to an existing bracket.
+    """
     return BracketLegRow(
         bracket_leg_id=leg.leg_id,
         bracket_id=bracket_id,

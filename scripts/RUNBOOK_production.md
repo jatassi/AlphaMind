@@ -1262,7 +1262,7 @@ it has no SSE / `/events` channel (§ 5.2) and writes nothing to the DB. Watch
   price feed. The position's broker-side bracket legs still protect it meanwhile;
   it clears at the next Phase-1.
 
-### 8.10 PM equity CLOSE / reduce — protective legs cancelled before the sell (ALP-937)
+### 8.10 PM equity CLOSE / reduce — protective legs cancelled before the sell, remainder auto re-bracketed (ALP-937 / ALP-938)
 
 A native equity bracket's take-profit + stop legs reserve 100% of the position's
 shares at the broker (`held_for_orders`). So a PM-directed equity CLOSE (full **or**
@@ -1272,23 +1272,42 @@ submission log as leg cancels immediately preceding the close order — not a bu
 
 Two operational consequences to know:
 
-- **Partial-reduce re-bracket window.** A *partial* close cancels **all** protective
-  legs (you cannot partially cancel an OCO leg), so once the reduce fills the
-  remaining shares are **broker-unprotected** until the PM re-brackets them on its
-  next invocation. The continuous-monitor position-level max-loss guardrail is the
-  active backstop during that window (the same cancel-and-review model used for
-  corporate actions). Automatic re-protection of the remainder with a fresh OCO is a
-  deferred follow-up (ALP-938, ALP-937 deliverable D); until it ships, expect a
-  partially-reduced equity position to read with an ACTIVE bracket whose legs are all
-  CANCELLED until the next PM pass re-protects or closes it.
+- **Partial-reduce remainder is auto re-bracketed (ALP-938).** A *partial* close
+  cancels **all** protective legs (you cannot partially cancel an OCO leg), so the
+  reduce briefly leaves the remaining shares broker-unprotected. Fill collection now
+  marks the position with a durable `positions.reprotection_needed=1` flag, and a
+  post-fill-collection re-bracket step — running every invocation right after fill
+  collection commits, **before** the slow thesis/LLM steps — automatically re-protects
+  the remainder: it submits a fresh standalone OCO (take-profit + stop) at the
+  **original** protective levels for the remaining shares and appends the new legs onto
+  the same still-ACTIVE bracket, **without waiting for the PM**. On success the flag
+  clears. The continuous-monitor position-level max-loss guardrail backstops the brief
+  window between the reduce filling and the re-bracket landing (same cancel-and-review
+  model used for corporate actions). A partially-reduced equity position should
+  therefore read with an ACTIVE bracket carrying the original CANCELLED legs **plus**
+  fresh ACTIVE take-profit + stop legs; a position still showing `reprotection_needed=1`
+  with all-CANCELLED legs after an invocation means the re-bracket submit failed (see
+  next bullet).
 
-- **"NAKED POSITION" CRITICAL alert in `pipeline.log`.** If the close sell is rejected
-  *after* the protective legs were already cancelled, the dispatcher logs
-  `ALP-937 NAKED POSITION: equity CLOSE of <SYMBOL> ...` at CRITICAL. The position is
-  broker-unprotected and the monitor max-loss guardrail is the only backstop until
-  the PM re-evaluates next invocation. **Operator action:** confirm the monitor is
-  live (§ 8.9), watch the named position's P/L, and — if the next scheduled PM pass
-  is far off — consider a manual invocation (§ 3) so the PM re-brackets or closes it.
+- **"ALP-938 NAKED POSITION: re-bracket OCO submit FAILED" CRITICAL alert in
+  `pipeline.log`.** If the automatic re-bracket OCO submit fails (broker gateway failure
+  or permanent rejection — e.g. shares-not-available, OCO ineligibility), the step logs
+  `ALP-938 NAKED POSITION: re-bracket OCO submit FAILED for <SYMBOL> ...` at CRITICAL,
+  **leaves `reprotection_needed=1` set so the next invocation retries**, and never aborts
+  the invocation. The remaining shares stay broker-unprotected and the monitor max-loss
+  guardrail is the active backstop until a retry succeeds or the PM re-evaluates.
+  **Operator action:** confirm the monitor is live (§ 8.9) and watch the named position's
+  P/L; if the submit keeps failing across consecutive invocations, investigate the broker
+  rejection in the submission log and — if the next scheduled PM pass is far off —
+  consider a manual invocation (§ 3) so the PM re-brackets or closes the position.
+
+- **"NAKED POSITION" CRITICAL alert in `pipeline.log` (close dispatch, ALP-937).** If the
+  close sell itself is rejected *after* the protective legs were already cancelled, the
+  dispatcher logs `ALP-937 NAKED POSITION: equity CLOSE of <SYMBOL> ...` at CRITICAL. The
+  position is broker-unprotected and the monitor max-loss guardrail is the only backstop
+  until the PM re-evaluates next invocation. **Operator action:** confirm the monitor is
+  live (§ 8.9), watch the named position's P/L, and — if the next scheduled PM pass is far
+  off — consider a manual invocation (§ 3) so the PM re-brackets or closes it.
 
 ---
 
