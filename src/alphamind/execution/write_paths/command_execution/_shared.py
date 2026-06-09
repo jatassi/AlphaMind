@@ -47,6 +47,7 @@ from alphamind.portfolio_state.events.activity_log import (
     OrderSubmittedDetail,
 )
 from alphamind.portfolio_state.records.orders import (
+    PROTECTIVE_LEG_ROLE_VALUES,
     BracketLegModification,
     BracketLegStatus,
     EquityInstrumentSpec,
@@ -540,10 +541,10 @@ async def _release_capital(
 
 
 # Protective-leg roles (entry / add-entry deliberately omitted — the entry-
-# CANCEL path cancels the entry separately before any protective sweep).
-_ALL_PROTECTIVE_ROLES: frozenset[str] = frozenset(
-    {OrderRole.PRICE_STOP.value, OrderRole.TAKE_PROFIT.value, OrderRole.TIME_STOP.value}
-)
+# CANCEL path cancels the entry separately before any protective sweep). Aliased
+# to the single source of truth in ``portfolio_state.records.orders`` so this
+# sweep and the decision-side close leg resolution cannot drift (ALP-937).
+_ALL_PROTECTIVE_ROLES: frozenset[str] = PROTECTIVE_LEG_ROLE_VALUES
 
 # The options capital-floor OrderRow's ``order_id`` prefix (ALP-856). Mirrors
 # ``command_execution.open._capital_floor_order_id`` (``ORD-FLOOR-{suffix}``); duplicated as a
