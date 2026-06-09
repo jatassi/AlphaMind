@@ -208,13 +208,13 @@ Compose a discrepancy report, grouped by severity. Stop here and pause for opera
 
 For each finding, give the operator: the issue ID, a one-line description of the problem, the concrete repair you'd apply. Group by severity; within each group, group by issue ID for navigability.
 
-End the report with a **path-of-action menu** offering the operator at least three repair-scope options. Default-recommended:
+End the report with a **path-of-action menu**. This is a scope-shaped repair fork, so frame it as the ladder in `docs/agents/operator-decisions.md` and present it with **no** recommendation — three rungs, smallest to most thorough, each characterized by blast radius (not time):
 
-1. **Tactical patch.** Fix only P0 + relation cleanup. Smallest blast radius; lands in 30-60 min.
-2. **Targeted refactor.** Tactical patch plus repurposing the wrongly-scoped stories (verification stories, schema-reconciliation stories) and any new shared-types story that consolidates collisions. Couple of hours.
-3. **Targeted refactor + parent rewrite.** All of (2) plus rewriting the parent body to the breach-behavior pattern (cross-feature deps, dep graph, orchestrator notes). Most thorough; required when the parent body is missing structural sections.
+1. **The Minimal Choice — tactical patch.** Fix only P0 + relation cleanup. Smallest blast radius (`Surgical`/`Local`).
+2. **Targeted refactor.** Tactical patch plus repurposing the wrongly-scoped stories (verification stories, schema-reconciliation stories) and any new shared-types story that consolidates collisions (`Module`).
+3. **The Principled Choice — targeted refactor + parent rewrite.** All of (2) plus rewriting the parent body to the breach-behavior pattern (cross-feature deps, dep graph, orchestrator notes); addresses the work tree's structure at the root (`Subsystem`). Required when the parent body is missing structural sections.
 
-Recommend one based on the severity profile you found. If the audit found one P0 (body corruption) and many P2s (path drift), tactical is right. If the audit found 5+ P1s and the parent body is thin, recommend (3).
+Report the severity profile you found (P0/P1/P2 counts) alongside the menu as the operator's decision input — but make no pick yourself; how much repair blast radius to accept is the operator's call.
 
 **Then stop and wait.** The operator picks the path; do not start Phase 5 unilaterally.
 

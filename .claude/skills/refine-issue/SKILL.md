@@ -80,9 +80,11 @@ Resolve everything you can from evidence + code yourself. Surface to the operato
 **genuine** decision the evidence cannot settle — a design trade-off (a broad structural fix
 vs a narrow targeted guard; whether a sibling operation shares the defect and belongs in
 scope; a config value with no design-doc default). Give options + a recommendation, and wait,
-*before* writing the scope. Don't invent a decision the data already settles; don't
-unilaterally pick where it's a real fork. (This is the drafting-time vs dispatch-time cut from
-the standard.)
+*before* writing the scope — **except** when the fork is scope-shaped (how much to change: a
+broad structural fix vs a narrow targeted guard), which you frame as the ladder in
+`docs/agents/operator-decisions.md` and surface with **no** recommendation. Don't
+invent a decision the data already settles; don't unilaterally pick where it's a real fork.
+(This is the drafting-time vs dispatch-time cut from the standard.)
 
 ### Phase 4 — Rewrite the whole issue to the standard
 
