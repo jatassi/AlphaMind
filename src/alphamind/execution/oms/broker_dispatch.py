@@ -577,9 +577,14 @@ async def _cancel_protective_legs(
             rejection = classify_alpaca_error(exc)
             if rejection is None:
                 raise
+            # A permanent rejection on a cancel is realistically a 404 not-found /
+            # 422 already-filled — the leg is already terminal (OCO sibling fired /
+            # leg filled), so its shares are already free. Any other permanent code
+            # is likewise un-cancellable; proceed regardless and let the close sell
+            # surface the held-shares problem if the leg somehow still rests.
             logger.info(
-                "broker_dispatch: protective leg %s already terminal at cancel "
-                "(%s); shares already free — proceeding with the close",
+                "broker_dispatch: protective leg %s permanently rejected at cancel (%s) — "
+                "assuming already terminal; proceeding with the close",
                 leg_alpaca_order_id,
                 rejection.code,
             )

@@ -185,6 +185,14 @@ async def _cancel_equity_protective_legs(
     is the write-time guard against an unreadable row (ALP-731). No-op for an
     options / strategy CLOSE (the native-bracket share-reservation is equity-only)
     or a position with no bracket.
+
+    **Timing — runs at pre-commit, so the naked-close path stays consistent.** This
+    writeback is part of ``precommit_command`` (ALP-836), which commits BEFORE the
+    broker dispatch. The dispatch then cancels the same legs at the broker ahead of
+    the close sell, so even when that sell is *rejected* (the ALP-937 (F)
+    naked-position case), OMS state already reads the legs CANCELLED — matching the
+    broker, where they were cancelled before the failed sell. The abandon path tears
+    down only the close *order* row; the protective legs correctly stay CANCELLED.
     """
     if not isinstance(position.details, EquityPositionDetails) or not position.bracket_id:
         return
