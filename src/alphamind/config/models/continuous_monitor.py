@@ -28,7 +28,9 @@ pre-resolved decision (E):
   may extend the union if a second provider gets validated.
 * ``subscription_refresh_seconds`` — cadence at which the underlying-price
   stream (story 02b) diffs its target subscription set against the
-  open-position set and issues add / remove deltas.
+  open-position set and issues add / remove deltas. The isolated safety core
+  reuses this same cadence as its REST latest-quote poll interval (ALP-940 — it
+  has no websocket subscription to diff, only a poll to repeat).
 * ``max_reconnect_attempts`` — websocket-reconnect ceiling per session.
 * ``supervisor_shutdown_timeout_seconds`` — per-task cancellation budget the
   ``MonitorSupervisor`` enforces at shutdown (scope section 7 default = 5s).
