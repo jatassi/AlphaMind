@@ -20,9 +20,15 @@ six NSSM services are the supported runtime form on prod:
 **Safety core + out-of-process watchdog (ADR-0004 / ALP-857).** Breach detection
 + price-staleness — the lone safety item with **no broker floor** — is isolated
 into the `alphamind-safety-core` service, which reads the **broker snapshot** +
-live price stream, beats a heartbeat file under
+**REST latest-quote snapshots** (polled, no second market-data websocket —
+ALP-940), beats a heartbeat file under
 `%USERPROFILE%\AlphaMind\logs\safety_core.heartbeat`, and **writes nothing** to
-the DB. The `alphamind-safety-core-watchdog` service is a **dedicated
+the DB. The safety core polls REST quotes rather than opening its own
+`StockDataStream`: Alpaca's free IEX plan allows exactly **one** authenticated
+market-data websocket per account, so a second stream collided with the
+monitor's (`connection limit exceeded`) and starved both feeds. REST latest-quote
+is not connection-limited, so dropping it frees the single market-data connection
+for the `alphamind-monitor` proper. The `alphamind-safety-core-watchdog` service is a **dedicated
 out-of-process** watchdog: it probes that heartbeat file and runs
 `nssm restart alphamind-safety-core` when it goes stale (a loop-resident watchdog
 cannot catch a freeze of its own loop). The `alphamind-monitor` proper now runs

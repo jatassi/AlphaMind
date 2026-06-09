@@ -55,3 +55,13 @@ fixed.
   than per-cell.
 - The safety core writing nothing to the shared DB is a precondition for
   [0005](0005-single-writer-by-construction.md).
+
+## Update — 2026-06-08 (ALP-940)
+
+The safety core's price *source* moved from its own live market-data websocket to
+**REST latest-quote polling**. Alpaca's free IEX plan allows one authenticated
+market-data websocket per account, so the safety core's second `StockDataStream`
+collided with the monitor's (`connection limit exceeded`) and starved both feeds.
+REST polling is not connection-limited; the safety core stays isolated in its own
+process with prices independent of the monitor's liveness — only the price source
+changed, not the isolation.
