@@ -202,6 +202,7 @@ def _build_equity_position_row(
         execution_history_json="[]",
         realized_pnl_to_date_usd=None,
         corporate_action_adjustment_needed=0,
+        reprotection_needed=0,
         parent_position_id=None,
         origin=None,
     )
@@ -250,6 +251,7 @@ def _build_option_position_row(
         execution_history_json="[]",
         realized_pnl_to_date_usd=None,
         corporate_action_adjustment_needed=0,
+        reprotection_needed=0,
         parent_position_id=None,
         origin=None,
     )
@@ -362,6 +364,7 @@ def _build_strategy_position_row(
         execution_history_json="[]",
         realized_pnl_to_date_usd=None,
         corporate_action_adjustment_needed=0,
+        reprotection_needed=0,
         parent_position_id=None,
         origin=None,
     )

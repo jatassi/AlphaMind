@@ -10,6 +10,7 @@ Covers:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from datetime import UTC, datetime
 
@@ -128,6 +129,24 @@ class TestAccruedBorrowCostCodec:
 
         assert isinstance(restored.details, EquityPositionDetails)
         assert restored.details.accrued_borrow_cost_usd == 0.0
+
+
+class TestReprotectionNeededCodec:
+    """ALP-938: round-trip codec for the reprotection_needed durable marker."""
+
+    def test_true_round_trips_through_codec(self) -> None:
+        """reprotection_needed=True survives record -> row -> record."""
+        record = dataclasses.replace(_make_long_record(), reprotection_needed=True)
+        row = record_to_row(record)
+        assert row.reprotection_needed == 1
+        assert row_to_record(row).reprotection_needed is True
+
+    def test_default_false_round_trips_to_zero(self) -> None:
+        """The default (False) projects to the column's 0 and restores to False."""
+        record = _make_long_record()
+        row = record_to_row(record)
+        assert row.reprotection_needed == 0
+        assert row_to_record(row).reprotection_needed is False
 
 
 class TestLegacyBlobDeserialization:

@@ -795,6 +795,17 @@ async def _integrate_one_fill(
             borrow_cost_resolver=borrow_cost_resolver,
         )
         incomplete_legs = ()
+        if await _exit_fill_left_naked_remainder(
+            handle, order=order, position_before=position, position_after=updated_position
+        ):
+            # ALP-938 — a PM-directed partial CLOSE (ALP-937) cancelled every
+            # broker-enforced protective leg but left the bracket ACTIVE on the
+            # remainder, so once this CLOSE-role exit fill lands the remaining
+            # shares are broker-unprotected. Mark the position durably so the
+            # post-fill-collection re-bracket step re-submits a fresh OCO; a
+            # submit failure self-heals because the marker survives. Pure-DB —
+            # stays inside the fill-collection write unit (ALP-824 safe).
+            updated_position = dataclasses.replace(updated_position, reprotection_needed=True)
     _persist_position_update(position_row, updated_position)
 
     bracket_status_change = await _maybe_update_bracket(handle, position, updated_position)
@@ -1785,6 +1796,44 @@ async def _dissolve_bracket_for_incomplete_strategy(
     return BracketStatus.DISSOLVED, incomplete_legs
 
 
+async def _exit_fill_left_naked_remainder(
+    handle: InvocationHandle,
+    *,
+    order: OrderRecord,
+    position_before: PositionRecord,
+    position_after: PositionRecord,
+) -> bool:
+    """Whether this CLOSE-role exit fill left an equity position broker-naked (ALP-938).
+
+    True iff a CLOSE-role fill reduced an equity position that stays OPEN
+    (a partial close) and every leg of its bracket is already CANCELLED — the
+    naked state a PM-directed partial close produces (ALP-937 cancels all the
+    broker-enforced legs but leaves the bracket ACTIVE on the remainder). The
+    all-legs-CANCELLED gate is what isolates this case:
+
+    * a full close (``position_after`` CLOSED) dissolves the bracket — excluded;
+    * a protective-leg fill (its own leg is FILLED/TRIGGERED, not CANCELLED) — excluded;
+    * an engine partial close whose legs are not yet cancelled (pre-ALP-939) — excluded,
+      so the marker never fires for a still-protected remainder and double-protects.
+    """
+    if order.role != OrderRole.CLOSE:
+        return False
+    if not isinstance(position_after.details, EquityPositionDetails):
+        return False
+    if (
+        position_before.status != PositionStatus.OPEN
+        or position_after.status != PositionStatus.OPEN
+    ):
+        return False
+    bracket_id = position_after.bracket_id
+    if bracket_id is None:
+        return False
+    leg_rows = await _read_bracket_legs(handle, bracket_id)
+    return bool(leg_rows) and all(
+        row.leg_status == BracketLegStatus.CANCELLED.value for row in leg_rows
+    )
+
+
 def _persist_position_update(row: PositionRow, position: PositionRecord) -> None:
     """Project the updated record back onto the existing ``PositionRow``."""
     new_row = position_record_to_row(position)
@@ -1794,6 +1843,7 @@ def _persist_position_update(row: PositionRow, position: PositionRecord) -> None
     row.execution_history_json = new_row.execution_history_json
     row.realized_pnl_to_date_usd = new_row.realized_pnl_to_date_usd
     row.corporate_action_adjustment_needed = new_row.corporate_action_adjustment_needed
+    row.reprotection_needed = new_row.reprotection_needed
 
 
 def _position_fill_from_record(fill: FillRecord) -> PositionFill:

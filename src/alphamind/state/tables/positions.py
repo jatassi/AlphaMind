@@ -17,7 +17,7 @@ that resolve at COMMIT.
 
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, Float, ForeignKey, Index, Integer, Text
+from sqlalchemy import CheckConstraint, Float, ForeignKey, Index, Integer, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from alphamind.persistence.models import Base
@@ -83,6 +83,16 @@ class PositionRow(Base):
     execution_history_json: Mapped[str] = mapped_column(Text, nullable=False)
     realized_pnl_to_date_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     corporate_action_adjustment_needed: Mapped[int] = mapped_column(Integer, nullable=False)
+    # ALP-938 — durable re-protection marker. Set to 1 by fill collection when a
+    # PM-directed partial CLOSE leaves an equity position OPEN with all its
+    # broker-enforced protective legs already CANCELLED (ALP-937), so the
+    # post-fill-collection re-bracket step re-protects the remainder with a fresh
+    # OCO; cleared back to 0 once that succeeds. ``server_default`` carries the
+    # ``NOT NULL DEFAULT 0`` shape onto fresh metadata-built schemas so the
+    # column's two paths (create_all + the incremental ALTER) agree.
+    reprotection_needed: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
     parent_position_id: Mapped[str | None] = mapped_column(
         Text,
         ForeignKey(
