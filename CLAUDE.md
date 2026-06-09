@@ -108,6 +108,8 @@ from the dev Mac (WAL-mode SQLite; writes only run on prod):
 Alert the user if these aren't accessible. Scripts that hit vendor APIs need `.env`
 loaded (`load_dotenv()` / `source .env`) — prod doesn't auto-source.
 
+Before including a time in your response (timestamp, next scheduled run, etc.) - ALWAYS establish local time and timezone first, then translate into local time.
+
 ## Linear
 
 Read `docs/agents/linear.md` before using Linear tools.
