@@ -28,6 +28,7 @@ Design intent (historical): `docs/design/pipeline-control-and-events-schema.md`,
 | `logging_setup.py` | ``pipeline.log`` rotation setup for the scheduler. |
 | `orchestrator.py` | End-to-end phase orchestrator — ``run_invocation``. |
 | `progress.py` | Re-export of the kernel-level ``ProgressEmitter`` Protocol + NoOp default. |
+| `reprotection.py` | Post-fill-collection re-bracket step (ALP-938). |
 | `run_context.py` | Per-invocation context bundle for ``run_invocation``. |
 | `runtime.py` | Runtime-dimensions resolver — produce the four per-invocation runtime values. |
 | `session.py` | ``PipelineSession`` — frozen handle for one pipeline-process lifetime. |

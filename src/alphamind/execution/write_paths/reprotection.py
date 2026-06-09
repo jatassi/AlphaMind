@@ -88,8 +88,15 @@ class ReprotectionCandidate:
         """The OCO protective levels read off the original protective order rows."""
         tp_price = self.take_profit_order.price_parameters.limit_price
         stop_price = self.price_stop_order.price_parameters.stop_trigger_price
-        # gather only emits a candidate when both are present (see _build_candidate).
-        assert tp_price is not None and stop_price is not None
+        # gather only emits a candidate when both are present (see _build_candidate);
+        # raise (not assert — survives ``python -O``) so a malformed candidate fails
+        # loudly here rather than as a float(None) crash deeper in submit_equity_oco.
+        if tp_price is None or stop_price is None:
+            msg = (
+                f"reprotection levels require both a take-profit limit and a stop "
+                f"trigger; got tp={tp_price}, stop={stop_price}"
+            )
+            raise ValueError(msg)
         return EquityOcoLevels(
             take_profit_price=tp_price,
             stop_price=stop_price,

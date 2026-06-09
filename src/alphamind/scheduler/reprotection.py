@@ -50,7 +50,7 @@ from alphamind.execution.write_paths.reprotection import (
 )
 from alphamind.persistence.retry import run_with_sqlite_busy_retry
 from alphamind.persistence.session import begin_write_immediate
-from alphamind.scheduler.fill_collection_inputs import _alpaca_client_factory
+from alphamind.scheduler.fill_collection_inputs import alpaca_client_factory
 from alphamind.state.invocation_context.context import InvocationHandle
 
 if TYPE_CHECKING:
@@ -70,7 +70,7 @@ def _default_trading_client_factory(
     network client is faked at the sanctioned Alpaca boundary, never under the write
     lock and never against the real API.
     """
-    return _alpaca_client_factory(venue_config, execution_mode).build_trading_client()
+    return alpaca_client_factory(venue_config, execution_mode).build_trading_client()
 
 
 @dataclass(frozen=True)

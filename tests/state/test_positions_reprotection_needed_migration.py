@@ -144,7 +144,10 @@ class TestPositionsReprotectionNeededMigration:
         """After downgrade the reprotection_needed column is gone."""
         db_path = tmp_path / "down.db"
         cfg = _alembic_config(db_path)
-        command.upgrade(cfg, "head")
+        # Target this migration's own revision, not "head" — a future sibling head
+        # must not drag this per-migration test through the whole forward chain
+        # (the ALP-933 per-migration-head fragility).
+        command.upgrade(cfg, _MIGRATION_REVISION)
         assert _COLUMN in _column_names(db_path)
         command.downgrade(cfg, _PARENT_REVISION)
         assert _COLUMN not in _column_names(db_path)
@@ -153,7 +156,7 @@ class TestPositionsReprotectionNeededMigration:
         """downgrade → upgrade round-trip restores the column."""
         db_path = tmp_path / "roundtrip.db"
         cfg = _alembic_config(db_path)
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, _MIGRATION_REVISION)
         command.downgrade(cfg, _PARENT_REVISION)
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, _MIGRATION_REVISION)
         assert _COLUMN in _column_names(db_path)
