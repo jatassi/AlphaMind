@@ -31,6 +31,7 @@ __all__ = [
     "compute_attempt_seq",
     "derive_engine_command_id",
     "derive_open_thesis_id",
+    "derive_pipeline_protective_command_id",
     "derive_pm_base_command_id",
     "derive_pm_command_id",
     "is_engine_originated",
@@ -276,6 +277,55 @@ def derive_engine_command_id(
     return (
         f"MON.{monitor_session_id}.{trigger_id}.{command_ordinal}"
         f"~the-{thesis}~inv-{bare_invocation}"
+    )
+
+
+# The synthetic monitor-session prefix that marks an auto re-bracket protective
+# OCO id (ALP-938). It rides the engine ``MON.…`` family deliberately — see
+# :func:`derive_pipeline_protective_command_id`.
+_PIPELINE_PROTECTIVE_SESSION_PREFIX = "reprotect"
+
+
+def derive_pipeline_protective_command_id(
+    *,
+    position_id: str,
+    thesis_id: ThesisId,
+    invocation_id: str,
+) -> str:
+    """Format the command id for an auto re-bracket protective OCO (ALP-938).
+
+    The post-fill-collection re-bracket step re-protects a partial-close remainder
+    with a fresh standalone OCO. That submit is pipeline-issued (no PM envelope)
+    and automatic (no monitor trigger), so neither the PM ``inv-…ENV-…`` family
+    (it needs an ``ENV-…`` envelope id) nor a direct :func:`derive_engine_command_id`
+    call (it needs a real monitor session) fits. It is, however, structurally an
+    engine-originated id — pipeline-issued, thesis (*why*) + invocation (*when*)
+    self-attributing — so it reuses the engine ``MON.…`` family with a synthetic
+    ``reprotect-{position-suffix}`` session. That keeps the id admitted by
+    :func:`is_engine_originated` and parseable by :func:`parse_engine_command_id`
+    (so the eventual protective fill self-attributes through the broker-carried
+    link) with no new pattern, parser, or consumer branch.
+
+    The session is keyed off the position's id-suffix so two positions
+    re-bracketed in one invocation get distinct client_order_ids, and a retry on a
+    later invocation (the marker survives a submit failure) gets a distinct id from
+    its new invocation segment.
+
+    Raises :class:`ValueError` for a ``position_id`` whose suffix is empty / dotted
+    / tilde-bearing, and (via :func:`derive_engine_command_id`) for a missing /
+    malformed ``thesis_id`` or an empty / dotted ``invocation_id``.
+    """
+    suffix = position_id.rsplit("-", 1)[-1]
+    if not suffix or "." in suffix or _LINK_DELIMITER in suffix:
+        raise ValueError(
+            f"position_id must yield a non-empty '.'/'{_LINK_DELIMITER}'-free suffix, "
+            f"got {position_id!r}"
+        )
+    return derive_engine_command_id(
+        monitor_session_id=f"{_PIPELINE_PROTECTIVE_SESSION_PREFIX}-{suffix}",
+        trigger_id=0,
+        thesis_id=thesis_id,
+        invocation_id=invocation_id,
     )
 
 

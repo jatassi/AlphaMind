@@ -42,6 +42,7 @@ from alphamind.execution.oms import (
     PMCommandIdComponents,
     compute_attempt_seq,
     derive_engine_command_id,
+    derive_pipeline_protective_command_id,
     derive_pm_command_id,
     is_engine_originated,
     is_pm_originated,
@@ -781,3 +782,73 @@ class TestDeriveOpenThesisId:
         broker-carried-link parser validates."""
         thesis_id = derive_open_thesis_id("NVDA", "inv-X.ENV-REC-1.0.0")
         assert thesis_id == ThesisId(f"THE-NVDA-{synthesize_id_suffix('inv-X.ENV-REC-1.0.0')}")
+
+
+# A representative position id (POS-<ticker>-<32hex>) — the suffix the
+# re-bracket session is keyed off.
+_POSITION_ID = "POS-NVDA-0123456789abcdef0123456789abcdef"
+
+
+class TestDerivePipelineProtectiveCommandId:
+    """ALP-938: the auto re-bracket protective OCO command id."""
+
+    def test_is_admitted_by_validate_client_order_id(self) -> None:
+        """AC-4: the derived id passes the broker adapter's _validate_client_order_id."""
+        from alphamind.execution.broker_adapter.order_equity import _validate_client_order_id
+
+        cid = derive_pipeline_protective_command_id(
+            position_id=_POSITION_ID,
+            thesis_id=ThesisId(_THESIS_ID),
+            invocation_id="inv-2026-06-08T19-00Z-abc",
+        )
+        # Does not raise — engine-originated, so _validate_client_order_id admits it.
+        _validate_client_order_id(cid)
+        assert is_engine_originated(cid)
+
+    def test_self_attributes_thesis_and_invocation(self) -> None:
+        """AC-4: the id round-trips the position's thesis (*why*) + invocation (*when*)."""
+        cid = derive_pipeline_protective_command_id(
+            position_id=_POSITION_ID,
+            thesis_id=ThesisId(_THESIS_ID),
+            invocation_id="inv-2026-06-08T19-00Z-abc",
+        )
+        parsed = parse_engine_command_id(cid)
+        assert parsed.thesis_id == ThesisId(_THESIS_ID)
+        assert parsed.invocation_id == InvocationId("inv-2026-06-08T19-00Z-abc")
+        # The synthetic session carries the position suffix so distinct positions
+        # in one invocation never collide.
+        assert parsed.monitor_session_id == "reprotect-0123456789abcdef0123456789abcdef"
+
+    def test_distinct_positions_yield_distinct_ids(self) -> None:
+        """Two positions re-bracketed in one invocation get distinct client_order_ids."""
+        cid_a = derive_pipeline_protective_command_id(
+            position_id="POS-AAA-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            thesis_id=ThesisId(_THESIS_ID),
+            invocation_id="inv-X",
+        )
+        cid_b = derive_pipeline_protective_command_id(
+            position_id="POS-BBB-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            thesis_id=ThesisId(_THESIS_ID),
+            invocation_id="inv-X",
+        )
+        assert cid_a != cid_b
+
+    def test_dotted_ticker_position_id_yields_clean_suffix(self) -> None:
+        """A multi-share-class ticker (BRK.B) keeps the dot out of the session suffix."""
+        cid = derive_pipeline_protective_command_id(
+            position_id="POS-BRK.B-0123456789abcdef0123456789abcdef",
+            thesis_id=ThesisId(_THESIS_ID),
+            invocation_id="inv-X",
+        )
+        assert is_engine_originated(cid)
+        assert parse_engine_command_id(cid).monitor_session_id == (
+            "reprotect-0123456789abcdef0123456789abcdef"
+        )
+
+    def test_empty_position_suffix_raises(self) -> None:
+        with pytest.raises(ValueError, match="position_id must yield"):
+            derive_pipeline_protective_command_id(
+                position_id="",
+                thesis_id=ThesisId(_THESIS_ID),
+                invocation_id="inv-X",
+            )

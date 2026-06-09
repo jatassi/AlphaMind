@@ -16,6 +16,7 @@ Public API:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, cast
 
@@ -89,6 +90,20 @@ class EquityLegAck:
 
     alpaca_order_id: AlpacaOrderId
     role: LegRole
+
+
+@dataclass(frozen=True)
+class EquityOcoLevels:
+    """The protective price geometry for a standalone re-protection OCO (ALP-938).
+
+    Groups the take-profit limit, the stop trigger, and the optional stop-limit
+    price — the cohesive unit the re-bracket step reads off the original (now
+    cancelled) protective order rows and replays onto a fresh OCO.
+    """
+
+    take_profit_price: Price
+    stop_price: Price
+    stop_limit_price: Price | None = None
 
 
 @dataclass(frozen=True)
@@ -248,6 +263,54 @@ async def submit_equity_close(
     return await _submit_and_map(request, client=client, execution=execution)
 
 
+async def submit_equity_oco(
+    *,
+    client: TradingClient,
+    execution: ExecutionConfig,
+    client_order_id: str,
+    symbol: str,
+    qty: float,
+    position_side: Literal["long", "short"],
+    levels: EquityOcoLevels,
+) -> SubmissionOutcome[EquitySubmission]:
+    """Translate + submit a standalone protective OCO (take-profit + stop, NO entry).
+
+    The auto re-bracket primitive (ALP-938 — the deferred ALP-937 (E)). Unlike a
+    native bracket it re-protects an *existing* OPEN position's remaining shares, so
+    there is no entry leg. The protective side is the close side: SELL for a LONG
+    position, BUY (buy-to-cover) for a SHORT.
+
+    Built as a ``LimitOrderRequest`` with ``order_class=OCO`` carrying a
+    ``take_profit`` (the limit child) and a ``stop_loss`` (the stop / stop-limit
+    child). alpaca-py exempts an OCO ``LimitOrderRequest`` from the
+    parent-``limit_price`` requirement precisely because the take-profit price rides
+    the ``take_profit`` child. The result's ``leg_acks`` carry BOTH protective broker
+    ids (:func:`_classify_oco_leg_acks`).
+    """
+    _validate_client_order_id(client_order_id)
+
+    side = OrderSide.SELL if position_side == "long" else OrderSide.BUY
+    request = LimitOrderRequest(
+        symbol=symbol,
+        qty=qty,
+        side=side,
+        time_in_force=TimeInForce.DAY,
+        order_class=OrderClass.OCO,
+        # Price → float at the Alpaca SDK boundary.
+        take_profit=TakeProfitRequest(limit_price=float(levels.take_profit_price)),
+        stop_loss=StopLossRequest(
+            stop_price=float(levels.stop_price),
+            limit_price=(
+                float(levels.stop_limit_price) if levels.stop_limit_price is not None else None
+            ),
+        ),
+        client_order_id=client_order_id,
+    )
+    return await _submit_and_map(
+        request, client=client, execution=execution, classify_legs=_classify_oco_leg_acks
+    )
+
+
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
@@ -356,8 +419,15 @@ async def _submit_and_map(
     *,
     client: TradingClient,
     execution: ExecutionConfig,
+    classify_legs: Callable[[Order], tuple[EquityLegAck, ...]] | None = None,
 ) -> SubmissionOutcome[EquitySubmission]:
-    """Wrap the SDK call with retry and map the result to :class:`EquitySubmission`."""
+    """Wrap the SDK call with retry and map the result to :class:`EquitySubmission`.
+
+    ``classify_legs`` defaults to the native-bracket/OTO classifier (the entry
+    parent is excluded; only ``order.legs`` children are captured). The standalone
+    OCO path (ALP-938) passes :func:`_classify_oco_leg_acks`, which also captures
+    the top-level order because an OCO has no entry parent to exclude.
+    """
 
     async def _submit() -> Order:
         # alpaca-py declares submit_order → Union[Order, dict]; we always receive
@@ -372,13 +442,18 @@ async def _submit_and_map(
     )
     match outcome:
         case Submitted(payload=order, attempt_count=n):
+            acks = (
+                classify_legs(order)
+                if classify_legs is not None
+                else _classify_leg_acks(order.legs)
+            )
             return Submitted(
                 EquitySubmission(
                     alpaca_order_id=AlpacaOrderId(str(order.id)),
                     client_order_id=ClientOrderId(order.client_order_id),
                     status=order.status.value,
                     order_class=order.order_class.value,
-                    leg_acks=_classify_leg_acks(order.legs),
+                    leg_acks=acks,
                 ),
                 attempt_count=n,
             )
@@ -420,4 +495,29 @@ def _classify_leg_acks(legs: object) -> tuple[EquityLegAck, ...]:
         if role is None:
             continue
         acks.append(EquityLegAck(alpaca_order_id=AlpacaOrderId(str(leg.id)), role=role))
+    return tuple(acks)
+
+
+def _classify_oco_leg_acks(order: Order) -> tuple[EquityLegAck, ...]:
+    """Capture BOTH protective ids for a standalone OCO submission (ALP-938).
+
+    A native bracket / OTO returns its entry as the top-level order and its
+    protective children on ``order.legs``, so :func:`_classify_leg_acks` (children
+    only) suffices. A standalone OCO has NO entry parent — depending on alpaca-py's
+    shape the take-profit may surface as the top-level order itself (with the stop
+    child on ``order.legs``) or both may surface as legs. So classify the children
+    first, then fill any role the children did NOT supply from the top-level order.
+    Filling only the *missing* role never double-counts when both already surface
+    as legs, and recovers the take-profit when it is the parent limit.
+    """
+    acks: list[EquityLegAck] = list(_classify_leg_acks(order.legs))
+    present_roles = {ack.role for ack in acks}
+    parent_order_type = getattr(order.order_type, "value", order.order_type)
+    parent_role = (
+        _LEG_ROLE_BY_ORDER_TYPE.get(parent_order_type)
+        if isinstance(parent_order_type, str)
+        else None
+    )
+    if parent_role is not None and parent_role not in present_roles:
+        acks.append(EquityLegAck(alpaca_order_id=AlpacaOrderId(str(order.id)), role=parent_role))
     return tuple(acks)
