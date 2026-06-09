@@ -24,8 +24,10 @@ position-level max-loss guardrail backstops the brief unprotected window.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -51,7 +53,24 @@ from alphamind.persistence.session import begin_write_immediate
 from alphamind.scheduler.fill_collection_inputs import _alpaca_client_factory
 from alphamind.state.invocation_context.context import InvocationHandle
 
+if TYPE_CHECKING:
+    from alpaca.trading.client import TradingClient
+
 logger = logging.getLogger(__name__)
+
+
+def _default_trading_client_factory(
+    venue_config: VenueConfig, execution_mode: ExecutionMode
+) -> TradingClient:
+    """Resolve the venue config + execution mode into a live broker ``TradingClient``.
+
+    The production builder for :func:`run_reprotection_step`'s broker submit. Tests
+    inject a substitute via the step's ``trading_client_factory`` parameter, mirroring
+    ``gather_fill_collection_inputs(account_queries_factory=…)`` — so the broker
+    network client is faked at the sanctioned Alpaca boundary, never under the write
+    lock and never against the real API.
+    """
+    return _alpaca_client_factory(venue_config, execution_mode).build_trading_client()
 
 
 @dataclass(frozen=True)
@@ -74,6 +93,7 @@ async def run_reprotection_step(
     execution_config: ExecutionConfig,
     broker_routing_active: bool,
     now: datetime,
+    trading_client_factory: Callable[[VenueConfig, ExecutionMode], TradingClient] | None = None,
 ) -> int:
     """Re-protect every naked partial-close remainder; return the count persisted.
 
@@ -81,6 +101,10 @@ async def run_reprotection_step(
     ``broker_routing_active`` is False (debug_e2e / log-only) no broker call is made
     and the legs persist monitor-enforced with NULL broker ids, mirroring the OPEN
     path. Never raises out of the orchestrator.
+
+    ``trading_client_factory`` defaults to :func:`_default_trading_client_factory`
+    (the live Alpaca builder); tests inject a substitute to fake the broker at the
+    sanctioned boundary.
     """
     try:
         # --- 1. Gather (read session, no write lock) ---
@@ -91,11 +115,8 @@ async def run_reprotection_step(
             return 0
 
         # --- 2. Submit (broker client, no write lock) ---
-        client = (
-            _alpaca_client_factory(venue_config, execution_mode).build_trading_client()
-            if broker_routing_active
-            else None
-        )
+        build_client = trading_client_factory or _default_trading_client_factory
+        client = build_client(venue_config, execution_mode) if broker_routing_active else None
         submitted: list[_SubmittedReprotection] = []
         for candidate in candidates:
             client_order_id = derive_pipeline_protective_command_id(
@@ -153,14 +174,11 @@ async def run_reprotection_step(
 async def _submit_one(
     candidate: ReprotectionCandidate,
     *,
-    client: object,
+    client: TradingClient,
     execution: ExecutionConfig,
     client_order_id: str,
 ) -> _SubmittedReprotection | None:
     """Submit one candidate's OCO; alert + return None on failure (marker stays set)."""
-    from alpaca.trading.client import TradingClient
-
-    assert isinstance(client, TradingClient)
     try:
         outcome: SubmissionOutcome[EquitySubmission] = await submit_equity_oco(
             client=client,
