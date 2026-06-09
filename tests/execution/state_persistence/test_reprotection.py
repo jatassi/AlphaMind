@@ -21,7 +21,6 @@ import sqlite3
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any, cast
 from unittest.mock import MagicMock
 
@@ -324,12 +323,17 @@ def _fake_leg(order_type: AlpacaOrderType) -> MagicMock:
 
 class _OcoStubClient:
     """A duck-typed Alpaca ``TradingClient`` whose ``submit_order`` returns an OCO
-    order: the take-profit as the top-level LIMIT, the stop child on ``order.legs``."""
+    order: the take-profit as the top-level order, the stop child on ``order.legs``.
 
-    def __init__(self) -> None:
+    ``parent_order_type`` defaults to LIMIT (the take-profit rides the parent, so
+    _classify_oco_leg_acks recovers both roles). Pass an unmapped type (e.g. MARKET)
+    to simulate alpaca returning a shape from which only the stop role classifies."""
+
+    def __init__(self, *, parent_order_type: AlpacaOrderType = AlpacaOrderType.LIMIT) -> None:
         self.requests: list[Any] = []
         self.tp_id = uuid.uuid4()
         self.stop_leg = _fake_leg(AlpacaOrderType.STOP)
+        self.parent_order_type = parent_order_type
         self.on_submit: Any = None
 
     def submit_order(self, request: Any) -> Any:
@@ -341,7 +345,7 @@ class _OcoStubClient:
         order.client_order_id = request.client_order_id
         order.status = AlpacaOrderStatus.ACCEPTED
         order.order_class = AlpacaOrderClass.OCO
-        order.order_type = AlpacaOrderType.LIMIT
+        order.order_type = self.parent_order_type
         order.legs = [self.stop_leg]
         return order
 
@@ -467,14 +471,16 @@ async def test_reprotection_step_resubmits_oco_and_appends_active_legs(
 
 async def test_submit_runs_with_no_write_lock_held(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
-    tmp_path: Path,
 ) -> None:
     """The broker submit happens outside any write transaction (ALP-824). Probed by
     acquiring the SQLite write lock from a separate connection *during* the submit —
     it succeeds only because the step holds no write lock across the broker call."""
-    _, factory = db
+    engine, factory = db
     await _seed_naked_remainder(factory)
-    db_path = tmp_path / "alphamind.db"
+    # Resolve the real DB file off the engine, not a hardcoded fixture filename — a
+    # wrong path would open a fresh empty DB whose lock is always free (false green).
+    db_path = engine.url.database
+    assert db_path is not None
     client = _OcoStubClient()
     lock_free_during_submit: list[bool] = []
 
@@ -682,3 +688,104 @@ async def test_gateway_failure_leaves_marker_and_alerts(
     )
     # The retry path was exercised (more than one attempt before the window closed).
     assert len(client.requests) >= 1
+
+
+async def test_incomplete_oco_acks_leave_marker_and_do_not_persist_null_broker_id(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A broker-routed OCO that yields only ONE protective id (e.g. an alpaca shape
+    from which the take-profit role does not classify) is treated as a failed
+    re-protection — never persisting a BROKER_ENFORCED leg with a NULL broker id (which
+    neither the broker nor the monitor would enforce). The marker survives for retry."""
+    _, factory = db
+    await _seed_naked_remainder(factory)
+    # MARKET parent → _classify_oco_leg_acks cannot recover the take_profit role, so
+    # only the stop child surfaces an ack.
+    client = _OcoStubClient(parent_order_type=AlpacaOrderType.MARKET)
+    await _assert_failure_leaves_position_unprotected_but_marked(
+        factory, client=client, execution_config=_make_execution_config(), caplog=caplog
+    )
+    # The submit itself was attempted (it is the ack classification, not the submit,
+    # that came up short).
+    assert len(client.requests) == 1
+
+
+# ---------------------------------------------------------------------------
+# Cross-invocation re-protection — the persisted ids must not collide (PK safety)
+# ---------------------------------------------------------------------------
+
+
+async def _cancel_active_legs_and_remark(factory: async_sessionmaker[AsyncSession]) -> None:
+    """Simulate a second PM partial close: cancel every currently-ACTIVE leg on the
+    bracket and re-set the marker, recreating the all-legs-CANCELLED naked state."""
+    async with factory() as sess:
+        leg_rows = list(
+            (
+                await sess.execute(
+                    select(BracketLegRow).where(BracketLegRow.bracket_id == _BRACKET_ID)
+                )
+            ).scalars()
+        )
+        for row in leg_rows:
+            if row.leg_status == BracketLegStatus.ACTIVE.value:
+                row.leg_status = BracketLegStatus.CANCELLED.value
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == _POSITION_ID))
+        ).scalar_one()
+        pos_row.reprotection_needed = 1
+        await sess.commit()
+
+
+async def test_second_reprotection_of_same_position_does_not_collide_on_pk(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A position re-protected twice must not collide on the persisted order/leg PKs.
+
+    The re-bracket client_order_id's id-suffix is invocation-invariant (the broker link
+    is stripped before hashing), so the persisted order_id / leg_id must additionally
+    carry the monotonic leg_index to stay unique across re-protections. Without that, the
+    second persist would raise IntegrityError, get swallowed, and leave the position
+    permanently stuck (marker set, a fresh broker OCO leaked each invocation)."""
+    _, factory = db
+    await _seed_naked_remainder(factory)
+
+    first = await run_reprotection_step(
+        session_factory=factory,
+        invocation_id="inv-2026-05-08T12-00Z-aaaa",
+        venue_config=_make_venue_config(),
+        execution_mode=ExecutionMode.paper,
+        execution_config=_make_execution_config(),
+        broker_routing_active=True,
+        now=_NOW,
+        trading_client_factory=_factory_for(_OcoStubClient()),
+    )
+    assert first == 1
+
+    # A second PM partial close cancels the freshly-armed legs → naked again → re-marked.
+    await _cancel_active_legs_and_remark(factory)
+
+    second = await run_reprotection_step(
+        session_factory=factory,
+        invocation_id="inv-2026-05-08T15-00Z-bbbb",  # a distinct, later invocation
+        venue_config=_make_venue_config(),
+        execution_mode=ExecutionMode.paper,
+        execution_config=_make_execution_config(),
+        broker_routing_active=True,
+        now=_NOW,
+        trading_client_factory=_factory_for(_OcoStubClient()),
+    )
+    assert second == 1  # would be 0 (swallowed IntegrityError) under a PK collision
+
+    leg_rows, legs = await _read_legs(factory)
+    # 2 original + 2 from the first re-protect + 2 from the second = 6, all PKs distinct.
+    assert len(legs) == 6
+    assert len({r.bracket_leg_id for r in leg_rows}) == 6
+    # Only the latest pair rests ACTIVE; the marker cleared.
+    active = [leg for leg in legs if leg.status == BracketLegStatus.ACTIVE]
+    assert {leg.leg_type for leg in active} == {
+        BracketLegType.TAKE_PROFIT,
+        BracketLegType.PRICE_STOP,
+    }
+    pos = await _read_position(factory)
+    assert pos.reprotection_needed is False

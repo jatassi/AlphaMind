@@ -180,17 +180,23 @@ async def _build_candidate(
 async def _latest_protective_pair(
     handle: InvocationHandle, bracket_id: str, leg_type: BracketLegType
 ) -> tuple[OrderRecord, BracketLeg] | None:
-    """The highest-``leg_index`` leg of *leg_type* on *bracket_id* + its order.
+    """The highest-``leg_index`` CANCELLED leg of *leg_type* on *bracket_id* + its order.
 
-    Highest index = the most recently appended protective geometry (a re-protected
+    Restricted to CANCELLED legs: re-protection replays the levels of a *naked*
+    (cancelled) protective leg, never a currently-ACTIVE one — gather is only reached
+    when the marker fired, which requires every leg CANCELLED, so this is the latest
+    cancelled geometry. Filtering on status keeps a stale read or a future weakening
+    of that invariant from replaying a live leg's levels onto a duplicate OCO.
+    Highest index = the most recently cancelled protective geometry (a re-protected
     remainder appends fresh legs), so a position re-protected more than once replays
-    its latest levels rather than a stale original. Returns ``None`` when the leg or
-    its backing order is absent.
+    its latest levels rather than a stale original. Returns ``None`` when no such leg
+    or its backing order is present.
     """
     leg_stmt = (
         select(BracketLegRow)
         .where(BracketLegRow.bracket_id == bracket_id)
         .where(BracketLegRow.leg_type == leg_type.value)
+        .where(BracketLegRow.leg_status == BracketLegStatus.CANCELLED.value)
         .order_by(BracketLegRow.leg_index.desc())
         .limit(1)
     )
@@ -231,7 +237,13 @@ async def persist_reprotection(
         Direction.LONG if candidate.position_side == "long" else Direction.SHORT
     )
     suffix = synthesize_id_suffix(client_order_id)
-    next_index = await _next_leg_index(handle, candidate.bracket_id)
+    # The leg_index is woven into the persisted order_id / leg_id PKs (below): the
+    # client_order_id suffix is invocation-invariant (synthesize_id_suffix strips the
+    # ~inv- link, so re-protecting the SAME position again mints the same suffix), and
+    # only the monotonic leg_index makes the second re-protection's rows distinct —
+    # without it the re-INSERT would collide on the primary key.
+    tp_index = await _next_leg_index(handle, candidate.bracket_id)
+    stop_index = tp_index + 1
 
     def _build(
         *, original_order: OrderRecord, original_leg: BracketLeg, order_id: str, leg_id: str
@@ -274,22 +286,20 @@ async def persist_reprotection(
     tp_order, tp_leg = _build(
         original_order=candidate.take_profit_order,
         original_leg=candidate.take_profit_leg,
-        order_id=f"ORD-RBR-tp-{suffix}",
-        leg_id=f"{candidate.bracket_id}-leg-rbr-tp-{suffix}",
+        order_id=f"ORD-RBR-tp-{suffix}-{tp_index}",
+        leg_id=f"{candidate.bracket_id}-leg-rbr-tp-{suffix}-{tp_index}",
     )
     stop_order, stop_leg = _build(
         original_order=candidate.price_stop_order,
         original_leg=candidate.price_stop_leg,
-        order_id=f"ORD-RBR-stop-{suffix}",
-        leg_id=f"{candidate.bracket_id}-leg-rbr-stop-{suffix}",
+        order_id=f"ORD-RBR-stop-{suffix}-{stop_index}",
+        leg_id=f"{candidate.bracket_id}-leg-rbr-stop-{suffix}-{stop_index}",
     )
 
     handle.session.add(order_record_to_row(tp_order))
     handle.session.add(order_record_to_row(stop_order))
-    handle.session.add(leg_to_row(tp_leg, bracket_id=candidate.bracket_id, leg_index=next_index))
-    handle.session.add(
-        leg_to_row(stop_leg, bracket_id=candidate.bracket_id, leg_index=next_index + 1)
-    )
+    handle.session.add(leg_to_row(tp_leg, bracket_id=candidate.bracket_id, leg_index=tp_index))
+    handle.session.add(leg_to_row(stop_leg, bracket_id=candidate.bracket_id, leg_index=stop_index))
 
     pos_row = await handle.session.get(PositionRow, candidate.position_id)
     if pos_row is not None:

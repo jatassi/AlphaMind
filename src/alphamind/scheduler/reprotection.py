@@ -199,9 +199,21 @@ async def _submit_one(
         _alert_reprotection_failed(candidate, reason=f"gateway failure ({outcome.reason})")
         return None
     assert isinstance(outcome, Submitted)
-    return _SubmittedReprotection(
-        candidate, client_order_id, outcome.payload.leg_acks, broker_enforced=True
-    )
+    leg_acks = outcome.payload.leg_acks
+    roles = {ack.role for ack in leg_acks}
+    if not {"take_profit", "stop_loss"} <= roles:
+        # A broker-routed OCO must yield BOTH protective ids. Persisting a
+        # BROKER_ENFORCED leg with a NULL broker id (the missing-role branch in
+        # persist_reprotection) would leave that leg enforced by neither the broker
+        # (no order exists) nor the continuous monitor (it skips BROKER_ENFORCED
+        # legs) — a silently half-naked remainder with the marker already cleared.
+        # Treat an incomplete ack set as a failed re-protection: alert and leave the
+        # marker set so the next invocation retries.
+        _alert_reprotection_failed(
+            candidate, reason=f"incomplete OCO leg acks (roles={sorted(roles)})"
+        )
+        return None
+    return _SubmittedReprotection(candidate, client_order_id, leg_acks, broker_enforced=True)
 
 
 def _alert_reprotection_failed(candidate: ReprotectionCandidate, *, reason: str) -> None:
