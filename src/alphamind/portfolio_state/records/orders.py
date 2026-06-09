@@ -31,6 +31,18 @@ class OrderRole(StrEnum):
     ADD_ENTRY = "ADD_ENTRY"
 
 
+# The protective-leg roles a bracket carries — the take-profit + the hard
+# invalidation legs (price / time). Entry / add-entry are deliberately excluded
+# (they are not protection). Single source of truth so the command-execution
+# leg-cancellation sweep (``command_execution._shared``) and the decision-side
+# close leg resolution (``submit_envelope.dispatch``) cannot drift — a drift
+# would silently omit a protective leg from a CLOSE's pre-cancel, the exact
+# ``held_for_orders`` defect ALP-937 fixes.
+PROTECTIVE_LEG_ROLE_VALUES: frozenset[str] = frozenset(
+    {OrderRole.PRICE_STOP.value, OrderRole.TAKE_PROFIT.value, OrderRole.TIME_STOP.value}
+)
+
+
 class OrderType(StrEnum):
     MARKET = "MARKET"
     LIMIT = "LIMIT"

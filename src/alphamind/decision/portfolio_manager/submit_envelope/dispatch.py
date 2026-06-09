@@ -38,8 +38,8 @@ from alphamind.decision.portfolio_manager.submit_envelope.types import (
 )
 from alphamind.persistence.retry import run_with_sqlite_busy_retry
 from alphamind.portfolio_state.records.orders import (
+    PROTECTIVE_LEG_ROLE_VALUES,
     EnforcementBinding,
-    OrderRole,
     OrderStatus,
 )
 from alphamind.portfolio_state.records.positions import (
@@ -100,12 +100,6 @@ _COMMAND_TYPE_TO_LABEL: dict[str, Literal["OPEN", "CLOSE", "ADD", "ADJUST", "CAN
 # materially incoherent vs the live touch at dispatch (a stale-anchor mispricing
 # that straddled its own stale reference and so cleared the analyst-side guard).
 _STALE_ANCHOR_REJECTION_CODE = "stale_anchor_vs_live_quote"
-
-# ALP-937 — the protective-leg roles an equity bracket reserves shares against.
-# A PM equity CLOSE must cancel the broker-enforced ones before its SIMPLE sell.
-_PROTECTIVE_LEG_ROLES: frozenset[str] = frozenset(
-    {OrderRole.PRICE_STOP.value, OrderRole.TAKE_PROFIT.value, OrderRole.TIME_STOP.value}
-)
 
 logger = logging.getLogger(__name__)
 
@@ -859,7 +853,7 @@ async def _equity_broker_enforced_protective_legs(
     rows = (await invocation_handle.session.execute(stmt)).scalars().all()
     leg_ids: list[AlpacaOrderId] = []
     for row in rows:
-        if row.order_role not in _PROTECTIVE_LEG_ROLES or row.alpaca_order_id is None:
+        if row.order_role not in PROTECTIVE_LEG_ROLE_VALUES or row.alpaca_order_id is None:
             continue
         binding = await _leg_enforcement_binding(invocation_handle, row.order_id)
         if binding is EnforcementBinding.BROKER_ENFORCED:

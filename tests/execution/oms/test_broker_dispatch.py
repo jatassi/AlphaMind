@@ -358,30 +358,50 @@ def _insufficient_qty_api_error() -> APIError:
     return cast(APIError, cast(Any, APIError)(body, http_error=fake_http_error))
 
 
+def _order_not_found_api_error() -> APIError:
+    """The 404 Alpaca returns when cancelling an order that is already terminal
+    (filled, or cancelled as the OCO sibling fired). ``classify_alpaca_error``
+    maps the 404 to a permanent rejection — a benign already-terminal leg."""
+    body = json.dumps({"code": 40410000, "message": "order not found"})
+    fake_http_error = MagicMock()
+    fake_http_error.response.status_code = 404
+    return cast(APIError, cast(Any, APIError)(body, http_error=fake_http_error))
+
+
 class _HeldForOrdersClient:
     """Fake Alpaca client modelling ``held_for_orders`` share reservation (ALP-937).
 
     A native equity bracket's resting OCO protective legs reserve 100% of a
     position's shares, so a SIMPLE close *sell* is rejected ``available: 0`` (403)
-    until those legs are cancelled. ``cancel_order_by_id`` releases a leg; once no
-    leg still reserves shares, the sell is accepted. ``sell_fails_after_cancel``
-    forces the post-cancel sell to still reject (the ALP-937 (F) naked-position
-    case). Every broker call is appended to ``calls`` in invocation order so a
-    test can assert cancel-before-submit ordering.
+    until those legs are cancelled. ``cancel_order_by_id`` releases a reserving leg;
+    once no leg still reserves shares, the sell is accepted.
+
+    * ``terminal_leg_ids`` — legs already terminal at the broker (filled / cancelled
+      OCO sibling): they reserve no shares and ``cancel_order_by_id`` on them raises
+      a 404, exercising the benign already-terminal path.
+    * ``sell_fails_after_cancel`` — forces the post-cancel sell to still reject (the
+      ALP-937 (F) naked-position case).
+
+    Every broker call is appended to ``calls`` in invocation order so a test can
+    assert cancel-before-submit ordering.
     """
 
     def __init__(
         self,
         *,
         protective_leg_ids: tuple[str, ...] = (),
+        terminal_leg_ids: tuple[str, ...] = (),
         sell_fails_after_cancel: bool = False,
     ) -> None:
         self._reserving: set[str] = {str(i) for i in protective_leg_ids}
+        self._terminal: set[str] = {str(i) for i in terminal_leg_ids}
         self._sell_fails_after_cancel = sell_fails_after_cancel
         self.calls: list[tuple[str, str]] = []
 
     def cancel_order_by_id(self, order_id: str) -> None:
         self.calls.append(("cancel", str(order_id)))
+        if str(order_id) in self._terminal:
+            raise _order_not_found_api_error()
         self._reserving.discard(str(order_id))
 
     def submit_order(self, request: Any) -> MagicMock:
@@ -848,6 +868,60 @@ async def test_close_equity_cancels_protective_legs_before_the_sell() -> None:
     # Both leg cancels precede the close sell submit.
     assert [op for op, _ in client.calls] == ["cancel", "cancel", "submit"]
     assert {arg for op, arg in client.calls if op == "cancel"} == set(leg_ids)
+
+
+@pytest.mark.asyncio
+async def test_close_equity_tolerates_already_terminal_protective_leg() -> None:
+    """ALP-937 — `submit_cancel` re-raises a raw 404 `APIError` (not a
+    `PermanentRejectionError`) when a protective leg is already terminal (the OCO
+    sibling fired / the leg filled). `_cancel_protective_legs` must classify it as
+    a benign already-terminal leg and proceed with the close, not let it abort."""
+    client = _HeldForOrdersClient(terminal_leg_ids=("alp-tp-1",))
+    queries = MagicMock()
+
+    outcome = await dispatch_command_to_broker(
+        _close_command("POS-MRVL-001"),
+        client=cast(Any, client),
+        queries=queries,
+        execution=_execution_config(),
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+        position_symbol="MRVL",
+        position_qty=8.0,
+        position_side="long",
+        position_asset_type="equity",
+        close_protective_leg_alpaca_order_ids=(AlpacaOrderId("alp-tp-1"),),
+    )
+
+    assert isinstance(outcome, Submitted)
+    assert [op for op, _ in client.calls] == ["cancel", "submit"]
+
+
+@pytest.mark.asyncio
+async def test_close_equity_no_naked_alert_when_legs_already_terminal(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """ALP-937 (F) — the naked-position alert fires only when LIVE protection was
+    torn down. If every cancel hit an already-terminal leg (404, the position
+    likely already exited) and the sell then fails, no alert is raised — the
+    position was not made naked by this close."""
+    client = _HeldForOrdersClient(terminal_leg_ids=("alp-tp-1",), sell_fails_after_cancel=True)
+    queries = MagicMock()
+
+    with caplog.at_level("CRITICAL"), pytest.raises(APIError):
+        await dispatch_command_to_broker(
+            _close_command("POS-MRVL-001"),
+            client=cast(Any, client),
+            queries=queries,
+            execution=_execution_config(),
+            client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+            position_symbol="MRVL",
+            position_qty=8.0,
+            position_side="long",
+            position_asset_type="equity",
+            close_protective_leg_alpaca_order_ids=(AlpacaOrderId("alp-tp-1"),),
+        )
+
+    assert "NAKED POSITION" not in caplog.text
 
 
 @pytest.mark.asyncio
