@@ -465,6 +465,23 @@ def _build_db_factory(tmp_path: Path) -> tuple[Any, async_sessionmaker[AsyncSess
     return async_engine, make_async_session_factory(async_engine)
 
 
+@pytest.fixture()
+async def empty_session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
+    """An ``AsyncSession`` over a fresh (table-only, unseeded) SQLite DB.
+
+    The ``_engine_close_dispatch_kwargs`` projection unit tests need a session
+    only for the equity branch's broker-enforced-leg query (ALP-939); against an
+    unseeded DB that query resolves to an empty tuple, and the options / strategy
+    branches never touch it.
+    """
+    async_engine, factory = _build_db_factory(tmp_path)
+    try:
+        async with factory() as session:
+            yield session
+    finally:
+        await async_engine.dispose()
+
+
 # ---------------------------------------------------------------------------
 # Engine envelope builders
 # ---------------------------------------------------------------------------
@@ -1811,7 +1828,9 @@ async def test_reconcile_reindexes_survivors_so_later_envelope_does_not_collide(
 # ---------------------------------------------------------------------------
 
 
-def test_engine_close_dispatch_kwargs_routes_options_position() -> None:
+async def test_engine_close_dispatch_kwargs_routes_options_position(
+    empty_session: AsyncSession,
+) -> None:
     """Engine CLOSE on an options position threads OCC + sell-to-close intent.
 
     Regression: the helper used to raise ``NotImplementedError`` for any
@@ -1825,7 +1844,9 @@ def test_engine_close_dispatch_kwargs_routes_options_position() -> None:
     from alphamind.portfolio_state.records.positions import OptionsPositionDetails
 
     position = _options_open_position()
-    kwargs = _engine_close_dispatch_kwargs(position, position_id=position.position_id)
+    kwargs = await _engine_close_dispatch_kwargs(
+        position, session=empty_session, position_id=position.position_id
+    )
 
     assert kwargs["position_asset_type"] == "option"
     assert kwargs["position_intent"] == "sell_to_close"
@@ -1840,7 +1861,9 @@ def test_engine_close_dispatch_kwargs_routes_options_position() -> None:
     assert kwargs["occ_symbol"] == expected_occ
 
 
-def test_engine_close_dispatch_kwargs_routes_strategy_position() -> None:
+async def test_engine_close_dispatch_kwargs_routes_strategy_position(
+    empty_session: AsyncSession,
+) -> None:
     """Engine CLOSE on a strategy position threads close-side legs + strategy_type.
 
     Each leg reverses the position it opened: the LONG-opened leg closes
@@ -1852,7 +1875,9 @@ def test_engine_close_dispatch_kwargs_routes_strategy_position() -> None:
     )
 
     position = _strategy_open_position()
-    kwargs = _engine_close_dispatch_kwargs(position, position_id=position.position_id)
+    kwargs = await _engine_close_dispatch_kwargs(
+        position, session=empty_session, position_id=position.position_id
+    )
 
     assert kwargs["position_asset_type"] == "strategy"
     assert kwargs["strategy_type"] == "vertical_spread"
@@ -1867,7 +1892,9 @@ def test_engine_close_dispatch_kwargs_routes_strategy_position() -> None:
     assert all(not leg.position_intent.endswith("_to_open") for leg in close_legs)
 
 
-def test_engine_close_dispatch_kwargs_strategy_leg_without_direction_raises() -> None:
+async def test_engine_close_dispatch_kwargs_strategy_leg_without_direction_raises(
+    empty_session: AsyncSession,
+) -> None:
     """A strategy CLOSE leg whose ``direction`` is unset raises ValueError.
 
     The leg-direction-is-None guard is preserved in the shared close-leg seam.
@@ -1887,24 +1914,17 @@ def test_engine_close_dispatch_kwargs_strategy_leg_without_direction_raises() ->
     broken_position = dataclasses.replace(position, details=broken_details)
 
     with pytest.raises(ValueError, match="direction"):
-        _engine_close_dispatch_kwargs(broken_position, position_id=broken_position.position_id)
+        await _engine_close_dispatch_kwargs(
+            broken_position, session=empty_session, position_id=broken_position.position_id
+        )
 
 
-def test_engine_close_dispatch_kwargs_equity_unchanged() -> None:
-    """Equity routing remains symbol/qty/side — same as the prior behavior."""
-    from alphamind.execution.oms.submit_engine_envelope import (
-        _engine_close_dispatch_kwargs,
-    )
-
-    position = _open_position()
-    kwargs = _engine_close_dispatch_kwargs(position, position_id=position.position_id)
-
-    assert kwargs == {
-        "position_asset_type": "equity",
-        "position_symbol": "NVDA",
-        "position_qty": 10.0,
-        "position_side": "long",
-    }
+# NOTE: the equity branch of ``_engine_close_dispatch_kwargs`` (which now also
+# threads ``close_protective_leg_alpaca_order_ids``, ALP-939) is covered
+# end-to-end by ``test_submit_engine_envelope`` — the broker-routed CLOSE there
+# rejects (``available: 0``) if the key is dropped — and the resolver's empty /
+# populated cases by ``tests/state/test_protective_leg_queries``; no separate
+# kwargs-shape unit test is kept here.
 
 
 # ---------------------------------------------------------------------------

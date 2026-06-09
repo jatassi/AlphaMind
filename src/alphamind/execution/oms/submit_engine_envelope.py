@@ -63,9 +63,13 @@ from alphamind.state.config import StatePersistenceConfig
 from alphamind.state.invocation_context.context import (
     InvocationHandle,
 )
+from alphamind.state.protective_leg_queries import (
+    equity_broker_enforced_protective_leg_ids,
+)
 
 if TYPE_CHECKING:
     from alpaca.trading.client import TradingClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
     from alphamind.config.models.execution import ExecutionConfig
     from alphamind.execution.broker_adapter import AccountStateQueries
@@ -439,7 +443,9 @@ async def _dispatch_engine_close(
         raise ValueError(msg)
     position = position_row_to_record(pos_row)
 
-    dispatch_kwargs = _engine_close_dispatch_kwargs(position, position_id=close_command.position_id)
+    dispatch_kwargs = await _engine_close_dispatch_kwargs(
+        position, session=handle.session, position_id=close_command.position_id
+    )
 
     try:
         outcome = await dispatch_command_to_broker(
@@ -480,19 +486,28 @@ async def _dispatch_engine_close(
     return outcome.payload.alpaca_order_id
 
 
-def _engine_close_dispatch_kwargs(
+async def _engine_close_dispatch_kwargs(
     position: Any,
     *,
+    session: AsyncSession,
     position_id: PositionId,
 ) -> dict[str, Any]:
     """Project the persisted *position* into the dispatcher's per-asset kwargs.
 
-    Equity → symbol/qty/side. Options → OCC + sell-to-close intent. Strategy
-    → close_legs + strategy_type + units. Mirrors the per-asset routing the
-    PM-side ``_close_command_context`` performs; surfaces engine-close on
-    options / strategy positions so the substrate (``submit_options_close`` /
+    Equity → symbol/qty/side + the native bracket's broker-enforced protective
+    leg ids. Options → OCC + sell-to-close intent. Strategy → close_legs +
+    strategy_type + units. Mirrors the per-asset routing the PM-side
+    ``_close_command_context`` performs; surfaces engine-close on options /
+    strategy positions so the substrate (``submit_options_close`` /
     ``submit_mleg_close``) is exercised end-to-end rather than blocked behind
     a hardcoded ``NotImplementedError``.
+
+    The equity branch (ALP-939) threads ``close_protective_leg_alpaca_order_ids``
+    via the shared :func:`equity_broker_enforced_protective_leg_ids` resolver —
+    symmetric with the PM-directed CLOSE — so ``_close_equity`` cancels the
+    native bracket's broker-enforced OCO legs (freeing the ``held_for_orders``
+    shares) before the SIMPLE close sell. The options / strategy branches need
+    none (no native-bracket share reservation).
 
     The strategy branch builds *close-side* legs via the single inversion
     seam :func:`strategy_legs_to_close_acks` — each leg reverses the position
@@ -519,6 +534,11 @@ def _engine_close_dispatch_kwargs(
             "position_symbol": position.details.ticker,
             "position_qty": position.details.share_count,
             "position_side": "long" if direction is Direction.LONG else "short",
+            "close_protective_leg_alpaca_order_ids": (
+                await equity_broker_enforced_protective_leg_ids(
+                    session, bracket_id=position.bracket_id
+                )
+            ),
         }
     if isinstance(position.details, OptionsPositionDetails):
         direction = position_direction(position)

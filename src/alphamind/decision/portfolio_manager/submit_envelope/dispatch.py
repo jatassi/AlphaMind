@@ -37,11 +37,7 @@ from alphamind.decision.portfolio_manager.submit_envelope.types import (
     _BreachedRule,
 )
 from alphamind.persistence.retry import run_with_sqlite_busy_retry
-from alphamind.portfolio_state.records.orders import (
-    PROTECTIVE_LEG_ROLE_VALUES,
-    EnforcementBinding,
-    OrderStatus,
-)
+from alphamind.portfolio_state.records.orders import EnforcementBinding
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -50,7 +46,10 @@ from alphamind.portfolio_state.records.positions import (
     StrategyPositionDetails,
     position_direction,
 )
-from alphamind.state.tables.bracket_legs import BracketLegRow
+from alphamind.state.protective_leg_queries import (
+    equity_broker_enforced_protective_leg_ids,
+    leg_enforcement_binding,
+)
 from alphamind.state.tables.orders import OrderRow
 from alphamind.state.tables.positions import PositionRow
 from alphamind.state.tables.positions_codec import (
@@ -645,8 +644,8 @@ async def _close_command_context(
             # before the SIMPLE close sell. Empty for a position with no
             # broker-enforced legs.
             "close_protective_leg_alpaca_order_ids": (
-                await _equity_broker_enforced_protective_legs(
-                    invocation_handle, bracket_id=position.bracket_id
+                await equity_broker_enforced_protective_leg_ids(
+                    invocation_handle.session, bracket_id=position.bracket_id
                 )
             ),
         }
@@ -771,9 +770,9 @@ async def _adjust_command_context(
     # hits the live Alpaca order rather than leaving it stale and mutating only
     # the monitor leg. ``binding_by_order_id`` maps each candidate's order_id to
     # its leg binding; absent (non-protective) → BROKER_ENFORCED (see
-    # :func:`_leg_enforcement_binding`).
+    # :func:`alphamind.state.protective_leg_queries.leg_enforcement_binding`).
     binding_by_order_id = {
-        r.order_id: await _leg_enforcement_binding(invocation_handle, r.order_id)
+        r.order_id: await leg_enforcement_binding(invocation_handle.session, order_id=r.order_id)
         for r in candidates
     }
     target = next(
@@ -829,55 +828,6 @@ def _adjust_target_roles(command: AdjustCommand) -> frozenset[str]:
     return frozenset(roles)
 
 
-async def _equity_broker_enforced_protective_legs(
-    invocation_handle: Any, *, bracket_id: str | None
-) -> tuple[AlpacaOrderId, ...]:
-    """Resolve a bracket's PENDING broker-enforced protective legs' broker ids (ALP-937).
-
-    These are the native-bracket OCO legs that reserve 100% of the position's
-    shares (``held_for_orders``); an equity CLOSE must cancel them at the broker
-    before its SIMPLE sell or the sell sees ``available: 0``. Mirrors
-    :func:`_adjust_command_context`'s leg resolution — read each PENDING protective
-    ``orders`` row for the bracket, then its typed ``enforcement_binding`` from
-    ``bracket_legs`` (ALP-847). Only ``BROKER_ENFORCED`` legs carrying a real
-    broker id are returned: a monitor-enforced leg (e.g. TIME_STOP) has no broker
-    order, so it is never sent to ``submit_cancel`` — its state-side cancellation
-    rides the CLOSE writeback instead.
-    """
-    if bracket_id is None:
-        return ()
-    stmt = _select(OrderRow).where(
-        OrderRow.bracket_id == bracket_id,
-        OrderRow.status == OrderStatus.PENDING.value,
-    )
-    rows = (await invocation_handle.session.execute(stmt)).scalars().all()
-    leg_ids: list[AlpacaOrderId] = []
-    for row in rows:
-        if row.order_role not in PROTECTIVE_LEG_ROLE_VALUES or row.alpaca_order_id is None:
-            continue
-        binding = await _leg_enforcement_binding(invocation_handle, row.order_id)
-        if binding is EnforcementBinding.BROKER_ENFORCED:
-            leg_ids.append(AlpacaOrderId(row.alpaca_order_id))
-    return tuple(leg_ids)
-
-
-async def _leg_enforcement_binding(invocation_handle: Any, order_id: str) -> EnforcementBinding:
-    """Read the protective leg's typed ``enforcement_binding`` by its ``order_id``.
-
-    The binding is the Broker-Owned-Fact-vs-Intent distinction (ADR-0003) the
-    dispatch router keys on. It lives on ``bracket_legs`` (populated by the OPEN
-    writeback, 02c), keyed by the leg's ``order_id``. A target ``order_id`` with
-    no ``bracket_legs`` row (a non-protective order — e.g. a primary entry) is
-    treated as ``BROKER_ENFORCED``: it always carries a real broker order, so a
-    CANCEL must dispatch, never local-cancel.
-    """
-    stmt = _select(BracketLegRow.enforcement_binding).where(BracketLegRow.order_id == order_id)
-    binding = (await invocation_handle.session.execute(stmt)).scalars().one_or_none()
-    if binding is None:
-        return EnforcementBinding.BROKER_ENFORCED
-    return EnforcementBinding(binding)
-
-
 async def _cancel_command_context(
     command: CancelCommand, *, invocation_handle: Any
 ) -> dict[str, Any]:
@@ -890,8 +840,8 @@ async def _cancel_command_context(
         raise ValueError(msg)
     return {
         "target_alpaca_order_id": order_row.alpaca_order_id,
-        "target_enforcement_binding": await _leg_enforcement_binding(
-            invocation_handle, command.order_id
+        "target_enforcement_binding": await leg_enforcement_binding(
+            invocation_handle.session, order_id=command.order_id
         ),
     }
 

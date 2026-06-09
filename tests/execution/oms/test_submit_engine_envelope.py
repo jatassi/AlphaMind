@@ -53,6 +53,9 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
+    EnforcementBinding,
+    OrderRole,
+    OrderStatus,
     PriceTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
@@ -367,6 +370,83 @@ async def _seed_position_cluster(
         await sess.commit()
 
 
+async def _seed_native_bracket_equity(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    broker_legs: tuple[tuple[str, str, str], ...],
+    monitor_leg: tuple[str, str] | None = None,
+) -> None:
+    """Seed a native-bracket equity position whose PENDING protective legs reserve
+    shares (ALP-939 reproduction substrate).
+
+    ``broker_legs`` are ``(order_id, order_role, alpaca_order_id)`` triples
+    inserted as PENDING, ``BROKER_ENFORCED`` legs carrying a real broker id (the
+    OCO legs an equity CLOSE must cancel). ``monitor_leg`` is an optional
+    ``(order_id, order_role)`` inserted as a PENDING ``MONITOR_ENFORCED`` leg with
+    NO broker id (e.g. a TIME_STOP) — the resolver must exclude it from the broker
+    cancel set. Reuses ``_open_position`` / ``_active_thesis`` (NVDA, POS-NVDA-001,
+    bracket BRK-NVDA-1).
+    """
+    from tests.state._fk_substrate import (
+        stub_bracket_leg_row,
+        stub_bracket_row,
+        stub_order_row,
+    )
+
+    position = _open_position()
+    thesis = _active_thesis()
+    thesis_row, component_rows = thesis_record_to_rows(thesis)
+    bracket_id = str(position.bracket_id)
+    entry_order_id = f"{bracket_id}-ord-entry"
+
+    leg_specs: list[tuple[str, str, str | None, EnforcementBinding]] = [
+        (order_id, role, alpaca_id, EnforcementBinding.BROKER_ENFORCED)
+        for order_id, role, alpaca_id in broker_legs
+    ]
+    if monitor_leg is not None:
+        leg_specs.append(
+            (monitor_leg[0], monitor_leg[1], None, EnforcementBinding.MONITOR_ENFORCED)
+        )
+
+    async with factory() as sess:
+        sess.add(position_record_to_row(position))
+        sess.add(thesis_row)
+        for crow in component_rows:
+            sess.add(crow)
+        sess.add(stub_order_row(entry_order_id, bracket_id, position_id=str(position.position_id)))
+        sess.add(
+            stub_bracket_row(
+                bracket_id,
+                str(position.position_id),
+                entry_order_id,
+                status=BracketStatus.ACTIVE.value,
+            )
+        )
+        for order_id, role, alpaca_id, _binding in leg_specs:
+            row = stub_order_row(
+                order_id,
+                bracket_id,
+                position_id=str(position.position_id),
+                role=role,
+                status=OrderStatus.PENDING.value,
+            )
+            row.alpaca_order_id = alpaca_id
+            row.alpaca_order_id_chain_json = "[]" if alpaca_id is None else f'["{alpaca_id}"]'
+            sess.add(row)
+        await sess.flush()
+        for leg_index, (order_id, _role, _alpaca_id, binding) in enumerate(leg_specs):
+            sess.add(
+                stub_bracket_leg_row(
+                    f"{bracket_id}-leg-{leg_index}",
+                    bracket_id,
+                    leg_index=leg_index,
+                    order_id=order_id,
+                    enforcement_binding=binding.value,
+                )
+            )
+        await sess.commit()
+
+
 async def _open_handle(
     factory: async_sessionmaker[AsyncSession],
     *,
@@ -574,6 +654,64 @@ async def test_derives_command_id_when_embedded_close_lacks_one(
     # The parsed invocation_id is the FULL inv-prefixed form (FK-valid against
     # invocations.invocation_id) — it equals the handle's invocation id verbatim.
     assert derived.invocation_id == handle.invocation_id
+
+
+async def test_engine_equity_close_cancels_broker_enforced_legs_before_sell(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-939 — the engine-envelope equity CLOSE threads the native bracket's
+    broker-enforced protective legs into the dispatcher, so ``_close_equity``
+    cancels them BEFORE the SIMPLE close sell.
+
+    Against the ``held_for_orders`` fake (the resting OCO legs reserve 100% of the
+    shares) the close sell is ``available: 0`` pre-fix and accepted post-fix. A
+    monitor-enforced TIME_STOP leg (no broker id) is excluded from the cancel set —
+    only the two broker-enforced legs are sent to the broker.
+    """
+    from typing import Any, cast
+    from unittest.mock import MagicMock
+
+    from alphamind.execution.broker_adapter import AccountStateQueries
+    from alphamind.execution.oms import build_initial_submit_engine_envelope_state
+    from alphamind.execution.oms.submit_engine_envelope import submit_engine_envelope
+    from tests.execution.oms.test_broker_dispatch import (
+        _execution_config,
+        _HeldForOrdersClient,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory)
+    await _seed_native_bracket_equity(
+        factory,
+        broker_legs=(
+            ("BRK-NVDA-1-ord-tp", OrderRole.TAKE_PROFIT.value, "alp-tp-1"),
+            ("BRK-NVDA-1-ord-stop", OrderRole.PRICE_STOP.value, "alp-stop-1"),
+        ),
+        monitor_leg=("BRK-NVDA-1-ord-time", OrderRole.TIME_STOP.value),
+    )
+
+    state = build_initial_submit_engine_envelope_state(monitor_session_id=_MONITOR_SESSION)
+    client = _HeldForOrdersClient(protective_leg_ids=("alp-tp-1", "alp-stop-1"))
+    queries = MagicMock(spec=AccountStateQueries)
+
+    ctx, handle = await _open_handle(factory)
+    result, _state = await submit_engine_envelope(
+        _engine_envelope(),
+        handle=handle,
+        state=state,
+        config=_make_state_persistence_config(),
+        client=cast(Any, client),
+        queries=queries,
+        execution_config=_execution_config(),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    assert result.status == "accepted"
+    # Both broker-enforced legs are cancelled before the close sell; the
+    # monitor-enforced TIME_STOP (no broker id) is never sent to the broker.
+    assert [op for op, _ in client.calls] == ["cancel", "cancel", "submit"]
+    assert {arg for op, arg in client.calls if op == "cancel"} == {"alp-tp-1", "alp-stop-1"}
 
 
 async def test_validates_command_id_consistency_with_envelope(
