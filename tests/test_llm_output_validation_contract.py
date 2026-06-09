@@ -5,9 +5,10 @@ contract: retry-message shape, diagnostic-record schema, stop-reason
 classification semantics, canonical :class:`ValidationResult` ownership
 (ALP-520), and bare-prefix discipline (ALP-521).
 
-The synthesizer has degenerate retry and validator contracts —
-assertions that require either skip or branch around the synthesizer
-rather than fail.
+The synthesizer has degenerate retry and validator contracts; clause
+assertions that don't apply to it (or to PM, whose validation lives in an
+MCP wrapper) parametrize over the applicable-harness subset rather than
+branching inside the test body.
 """
 
 from __future__ import annotations
@@ -128,6 +129,22 @@ _VALIDATOR_FUNCTIONS: dict[str, str] = {
     "adaptive_research": "validate_adaptive_brief",
 }
 
+# Per-clause applicability subsets. Tests that assert a contract clause only a
+# subset of harnesses can satisfy parametrize over the relevant subset directly
+# (shadowing the ``agent`` fixture) rather than skipping the inapplicable rows —
+# a clause that *should* hold for a harness then fails loudly instead of being
+# silently skipped.
+_RETRY_AGENTS = tuple(a for a in AGENTS if a.has_retry)  # all but synthesizer
+# PM validates inside its submit_envelope MCP wrapper, not at the harness
+# boundary, so it has no ``_build_retry_message_for_validation_failure``.
+_HARNESS_VALIDATION_RETRY_AGENTS = tuple(a for a in _RETRY_AGENTS if a.name != "pm")
+_VALIDATOR_AGENTS = tuple(a for a in AGENTS if a.has_validator)  # all but synthesizer
+# PM's validator input surface (ProposalPreProcessorBundle + view + resolver)
+# is fabricated only in the per-harness fixtures, so its runtime invocation is
+# covered there rather than in this cross-harness contract.
+_RUNTIME_VALIDATOR_AGENTS = tuple(a for a in _VALIDATOR_AGENTS if a.name != "pm")
+_BARE_PREFIX_SPECS = tuple(a for a in AGENTS if a.name in BARE_PREFIX_AGENTS)
+
 
 @pytest.fixture(params=AGENTS, ids=lambda spec: spec.name)
 def agent(request: pytest.FixtureRequest) -> AgentSpec:
@@ -190,7 +207,7 @@ def test_synthesizer_defines_empty_response_failure() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Retry-message shape — six retry-bearing agents; skip synthesizer
+# Retry-message shape — the retry-bearing agents (synthesizer excluded)
 # ---------------------------------------------------------------------------
 
 
@@ -245,6 +262,7 @@ def _assert_canonical_retry_shape(message: str) -> None:
     assert "re-emit" in lowered or "json" in lowered
 
 
+@pytest.mark.parametrize("agent", _HARNESS_VALIDATION_RETRY_AGENTS, ids=lambda s: s.name)
 def test_retry_message_shape_validation_failure(agent: AgentSpec) -> None:
     """Validation-failure retry carries the canonical 4-part shape and
     omits the second-or-later error (the iterative-repair-avoidance
@@ -254,15 +272,8 @@ def test_retry_message_shape_validation_failure(agent: AgentSpec) -> None:
     validator lives inside the submit_envelope MCP wrapper — so PM is
     covered by the parse-error arm below.
     """
-    if not agent.has_retry:
-        pytest.skip("synthesizer has no retry path")
     mod = _harness(agent)
-    builder = getattr(mod, "_build_retry_message_for_validation_failure", None)
-    if builder is None:
-        pytest.skip(
-            f"{agent.name} performs validation inside an MCP wrapper rather "
-            "than at the harness boundary"
-        )
+    builder = mod._build_retry_message_for_validation_failure
     message = builder(_two_error_validation_result())
     _assert_canonical_retry_shape(message)
     assert "recommendations[0].thesis_narrative" in message
@@ -271,10 +282,9 @@ def test_retry_message_shape_validation_failure(agent: AgentSpec) -> None:
     assert "recommendations[1].thesis_narrative" not in message
 
 
+@pytest.mark.parametrize("agent", _RETRY_AGENTS, ids=lambda s: s.name)
 def test_retry_message_shape_parse_error(agent: AgentSpec) -> None:
     """Parse-error retry carries the canonical 4-part shape."""
-    if not agent.has_retry:
-        pytest.skip("synthesizer has no retry path")
     mod = _harness(agent)
     message = mod._build_retry_message_for_parse_error(_parse_error_for(agent))
     _assert_canonical_retry_shape(message)
@@ -460,11 +470,10 @@ def test_invoke_sdk_init_stall_timeout_arm(agent: AgentSpec) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("agent", _VALIDATOR_AGENTS, ids=lambda s: s.name)
 def test_validator_return_type_is_canonical_validation_result(agent: AgentSpec) -> None:
     """Each validator's return annotation resolves to the canonical
     :class:`ValidationResult` (ALP-520 consolidation)."""
-    if not agent.has_validator:
-        pytest.skip("synthesizer has no validator")
     fn = getattr(_validation_module_for(agent), _VALIDATOR_FUNCTIONS[agent.name])
     hints = typing.get_type_hints(fn)
     assert hints["return"] is ValidationResult
@@ -584,19 +593,16 @@ def _build_validator_kwargs(agent: AgentSpec) -> dict[str, Any]:
     raise AssertionError(f"no validator-kwargs builder for {agent.name!r}")
 
 
+@pytest.mark.parametrize("agent", _RUNTIME_VALIDATOR_AGENTS, ids=lambda s: s.name)
 def test_validator_returns_validation_result_instance(agent: AgentSpec) -> None:
     """Invoking the validator on a minimal-valid output returns an actual
     :class:`ValidationResult` instance (runtime confirmation).
 
-    PM is skipped — its input surface (ProposalPreProcessorBundle +
+    PM is excluded — its input surface (ProposalPreProcessorBundle +
     PortfolioManagerView + sector_resolver) is fabricated only in the
     per-harness test fixtures; the annotation-surface test +
     ``test_harness_module_imports`` identity check cover PM here.
     """
-    if not agent.has_validator:
-        pytest.skip("synthesizer has no validator")
-    if agent.name == "pm":
-        pytest.skip("PM validator inputs are fabricated only in per-harness fixtures")
     fn = getattr(_validation_module_for(agent), _VALIDATOR_FUNCTIONS[agent.name])
     result = fn(_build_minimal_output_for(agent), **_build_validator_kwargs(agent))
     assert isinstance(result, ValidationResult)
@@ -619,6 +625,7 @@ def _bare_prefix_helper_for(agent: AgentSpec) -> Any:
     return validation._check_narrative_references
 
 
+@pytest.mark.parametrize("agent", _BARE_PREFIX_SPECS, ids=lambda s: s.name)
 def test_bare_prefix_citation_detected(agent: AgentSpec) -> None:
     """Analyst / strategist / PM surface ``[CR]`` (a bare ReferencePrefix
     body with no ``-N`` index) as a ``bare_prefix_citation`` error
@@ -627,8 +634,6 @@ def test_bare_prefix_citation_detected(agent: AgentSpec) -> None:
     Analyst/strategist tag via the ``rule`` field; PM tags via
     ``criterion`` (its evaluation-criterion-set vocabulary).
     """
-    if agent.name not in BARE_PREFIX_AGENTS:
-        pytest.skip("consumer-side discipline only")
     helper = _bare_prefix_helper_for(agent)
     errors = tuple(
         helper(
@@ -649,6 +654,7 @@ def test_bare_prefix_citation_detected(agent: AgentSpec) -> None:
         assert err.rule == "bare_prefix_citation"
 
 
+@pytest.mark.parametrize("agent", _VALIDATOR_AGENTS, ids=lambda s: s.name)
 def test_no_separate_validation_failure_class(agent: AgentSpec) -> None:
     """ALP-520 unified ``ValidationFailure`` into ``ValidationError``.
 
@@ -656,8 +662,6 @@ def test_no_separate_validation_failure_class(agent: AgentSpec) -> None:
     distinct class. If any validator module re-exports the symbol, it must
     alias :class:`ValidationError` — never be its own dataclass.
     """
-    if not agent.has_validator:
-        pytest.skip("synthesizer has no validator")
     validation = _validation_module_for(agent)
     legacy = getattr(validation, "ValidationFailure", None)
     if legacy is not None:
