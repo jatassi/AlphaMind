@@ -219,14 +219,22 @@ def _attach_provisional_estimate(
     The write unit's re-resolution (under the up-front write lock) is the
     authoritative one; the provisional estimate transfers only when both the
     ``oms_order_id`` and the gap-reconciled quantity match the provisional
-    fingerprint. On any divergence — the order row or the logged-quantity sum
-    moved between the two passes — the record persists with
+    fingerprint. On any other outcome the record persists with
     ``live_execution_estimate = NULL`` (an existing legal state; live mode
-    always persists NULL) and the divergence is logged.
+    always persists NULL): a genuine fingerprint divergence — the order row or
+    the logged-quantity sum moved between the two passes — logs a WARNING,
+    while a fill whose order resolved only under the write lock (nothing was
+    enriched provisionally, an expected commit-ordering race) logs at INFO.
     """
+    if provisional is None:
+        log.info(
+            "no provisional enrichment for fill_id=%s (the order resolved only "
+            "under the write lock); persisting live_execution_estimate=NULL",
+            record.fill_id,
+        )
+        return record
     if (
-        provisional is not None
-        and provisional.oms_order_id == final_oms_order_id
+        provisional.oms_order_id == final_oms_order_id
         and provisional.fill_quantity == final_fill_quantity
     ):
         return record.model_copy(update={"live_execution_estimate": provisional.estimate})
@@ -234,8 +242,8 @@ def _attach_provisional_estimate(
         "provisional enrichment diverged from the write unit's re-resolution: "
         "provisional=(order_id=%s qty=%s) final=(order_id=%s qty=%s) — "
         "persisting live_execution_estimate=NULL for fill_id=%s",
-        provisional.oms_order_id if provisional is not None else None,
-        provisional.fill_quantity if provisional is not None else None,
+        provisional.oms_order_id,
+        provisional.fill_quantity,
         final_oms_order_id,
         final_fill_quantity,
         record.fill_id,
