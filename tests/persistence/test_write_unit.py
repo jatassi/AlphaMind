@@ -63,9 +63,7 @@ async def _read_halt_reason(factory: async_sessionmaker[AsyncSession]) -> str | 
 
 
 def _transient_lock_error() -> OperationalError:
-    return OperationalError(
-        "INSERT INTO t", {}, sqlite3.OperationalError("database is locked")
-    )
+    return OperationalError("INSERT INTO t", {}, sqlite3.OperationalError("database is locked"))
 
 
 def _event_row(event_key: str) -> BrokerEventLogRow:
@@ -206,9 +204,7 @@ async def test_deferred_read_then_write_upgrade_fails_busy_snapshot(db_path: str
             session.add(_event_row("tevt-busy-snapshot-repro"))
             with pytest.raises(OperationalError) as excinfo:
                 await session.flush()
-        assert (
-            getattr(excinfo.value.orig, "sqlite_errorname", None) == "SQLITE_BUSY_SNAPSHOT"
-        )
+        assert getattr(excinfo.value.orig, "sqlite_errorname", None) == "SQLITE_BUSY_SNAPSHOT"
     finally:
         await reader_engine.dispose()
         await committer_engine.dispose()
@@ -253,9 +249,7 @@ async def test_immediate_write_unit_survives_the_same_concurrent_committer(
         await committer_task
         async with unit_factory() as session:
             assert await _read_halt_reason(unit_factory) == "concurrent-commit"
-            event = (
-                await session.execute(select(BrokerEventLogRow))
-            ).scalar_one()
+            event = (await session.execute(select(BrokerEventLogRow))).scalar_one()
         assert event.event_key == "tevt-immediate-survives"
     finally:
         await unit_engine.dispose()

@@ -54,6 +54,8 @@ from alphamind.execution.write_paths.unattributed_fill_persistence import (
     append_unattributed_fill,
     mark_unattributed_fill_alerted,
 )
+from alphamind.persistence.write_unit import run_immediate_write_unit
+from alphamind.portfolio_state.records.positions import LiveExecutionEstimate
 from alphamind.state.records import FillRecord, UnattributedFill
 from alphamind.state.records_broker_event_log import (
     BrokerEventRecord,
@@ -141,6 +143,106 @@ class _FillAttribution:
         self.oms_order_id = oms_order_id
 
 
+class _ProvisionalEstimate:
+    """The Scope D enrichment cache: a resolution fingerprint + the estimate.
+
+    Produced by :func:`_provisional_enrichment` on a plain read session BEFORE
+    the ``BEGIN IMMEDIATE`` write unit opens, so the (potentially slow)
+    enrichment await never holds the cross-process write lock. The fingerprint
+    — the resolved ``oms_order_id`` and the (gap-reconciled) ``fill_quantity``
+    — lets the write unit attach the cached estimate only when its own
+    re-resolution under the write lock landed on the same facts.
+    """
+
+    __slots__ = ("estimate", "fill_quantity", "oms_order_id")
+
+    def __init__(
+        self,
+        *,
+        oms_order_id: str,
+        fill_quantity: float | None,
+        estimate: LiveExecutionEstimate | None,
+    ) -> None:
+        self.oms_order_id = oms_order_id
+        self.fill_quantity = fill_quantity
+        self.estimate = estimate
+
+
+async def _provisional_enrichment(
+    report: FillReport,
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    enrichment_callable: EnrichmentCallable,
+    recovered: bool,
+) -> _ProvisionalEstimate | None:
+    """Resolve + reconcile on a plain read session, then enrich (Scope D).
+
+    The read pass mirrors the write unit's resolution (FS1 gap reconcile for a
+    recovered report, then attribution) but stages NOTHING — its session is
+    closed before ``enrichment_callable`` is awaited, so no transaction is open
+    during the enrichment's own DB-backed lookups. Returns ``None`` when no
+    order-bearing attribution resolves provisionally (nothing to enrich); the
+    write unit then persists a NULL estimate if its own resolution does land an
+    order — NULL is the legal live-mode state.
+    """
+    async with session_factory() as db:
+        provisional_report = report
+        if recovered:
+            reconciled = await _reconcile_recovered_fill_to_gap(db, report)
+            if reconciled is None:
+                return None
+            provisional_report = reconciled
+        attribution = await _resolve_attribution(db, provisional_report)
+        if attribution is None or attribution.oms_order_id is None:
+            return None
+        record = fill_report_to_fill_record(
+            provisional_report, oms_order_id=attribution.oms_order_id
+        )
+        assert record is not None
+    enriched = await enrichment_callable(record)
+    return _ProvisionalEstimate(
+        oms_order_id=attribution.oms_order_id,
+        fill_quantity=provisional_report.fill_quantity,
+        estimate=enriched.live_execution_estimate,
+    )
+
+
+def _attach_provisional_estimate(
+    record: FillRecord,
+    *,
+    final_oms_order_id: str,
+    final_fill_quantity: float | None,
+    provisional: _ProvisionalEstimate | None,
+) -> FillRecord:
+    """Attach the cached estimate when the write unit re-resolved the same facts.
+
+    The write unit's re-resolution (under the up-front write lock) is the
+    authoritative one; the provisional estimate transfers only when both the
+    ``oms_order_id`` and the gap-reconciled quantity match the provisional
+    fingerprint. On any divergence — the order row or the logged-quantity sum
+    moved between the two passes — the record persists with
+    ``live_execution_estimate = NULL`` (an existing legal state; live mode
+    always persists NULL) and the divergence is logged.
+    """
+    if (
+        provisional is not None
+        and provisional.oms_order_id == final_oms_order_id
+        and provisional.fill_quantity == final_fill_quantity
+    ):
+        return record.model_copy(update={"live_execution_estimate": provisional.estimate})
+    log.warning(
+        "provisional enrichment diverged from the write unit's re-resolution: "
+        "provisional=(order_id=%s qty=%s) final=(order_id=%s qty=%s) — "
+        "persisting live_execution_estimate=NULL for fill_id=%s",
+        provisional.oms_order_id if provisional is not None else None,
+        provisional.fill_quantity if provisional is not None else None,
+        final_oms_order_id,
+        final_fill_quantity,
+        record.fill_id,
+    )
+    return record
+
+
 async def persist_fill_report(
     report: FillReport,
     *,
@@ -184,6 +286,15 @@ async def persist_fill_report(
     realizing 03b's recovery intent). A non-positive gap appends nothing (the
     log is already complete for that order); idempotency holds because a second
     recovery pass sees gap == 0.
+
+    The write runs as one ``BEGIN IMMEDIATE`` unit via
+    :func:`run_immediate_write_unit` (ALP-942): reconcile + resolve + event
+    append + fill append in a single atomic transaction (B4) whose write lock
+    is held from BEGIN, so a concurrent committer (collector / scheduler)
+    serializes behind ``busy_timeout`` instead of invalidating a deferred read
+    snapshot into an instant ``SQLITE_BUSY_SNAPSHOT``. The paper-mode
+    enrichment await runs BEFORE the unit on a provisional read-only pass
+    (Scope D) so the write lock is never held across it.
     """
     record = fill_report_to_fill_record(report)
     log.debug(
@@ -196,43 +307,62 @@ async def persist_fill_report(
         await _sync_terminal_status_if_any(report, session_factory=session_factory)
         return
 
-    # One session spans resolution AND the append/commit, removing the TOCTOU
-    # window between resolving attribution and writing the event/fill rows (B4).
-    async with session_factory() as db:
+    provisional: _ProvisionalEstimate | None = None
+    if enrichment_callable is not None:
+        provisional = await _provisional_enrichment(
+            report,
+            session_factory=session_factory,
+            enrichment_callable=enrichment_callable,
+            recovered=recovered,
+        )
+
+    async def _unit(db: AsyncSession) -> bool:
+        # One IMMEDIATE transaction spans reconcile + resolution + the
+        # appends, removing the TOCTOU window between resolving attribution
+        # and writing the event/fill rows (B4). A retried attempt re-runs the
+        # whole unit on a fresh session; the appends are idempotent at the
+        # storage layer (ON CONFLICT DO NOTHING).
+        unit_report = report
         if recovered:
             # FS1 — a recovery report carries the order's CUMULATIVE fill; reduce
             # it to the residual gap over what is already logged, or skip entirely
             # when the log is already complete for this order. Done in this
             # DB-bearing layer (not the broker adapter, which must not query the
             # local DB) so recovery.py stays a pure broker→FillReport translator.
-            reconciled = await _reconcile_recovered_fill_to_gap(db, report)
+            reconciled = await _reconcile_recovered_fill_to_gap(db, unit_report)
             if reconciled is None:
-                return
-            report = reconciled
-            record = fill_report_to_fill_record(report)
-            # The residual is still a fill-bearing report, so the translator
-            # returns a record; assert to narrow for the append below.
-            assert record is not None
-        attribution = await _resolve_attribution(db, report)
+                return True
+            unit_report = reconciled
+        attribution = await _resolve_attribution(db, unit_report)
         if attribution is None:
             # No link AND no resolvable+attributable order-row projection cache —
             # a genuinely out-of-band fill, or a native-bracket child whose
-            # position→thesis edge has not committed yet (B1). Quarantine it; the
+            # position→thesis edge has not committed yet (B1). Quarantine it
+            # (outside this unit — the park is its own write transaction); the
             # drain retries an order that later resolves.
-            await _quarantine_unattributed_fill(report, session_factory=session_factory)
-            return
-        await append_broker_event(db, _fill_event_record(report, attribution))
+            return False
+        await append_broker_event(db, _fill_event_record(unit_report, attribution))
         if attribution.oms_order_id is not None:
-            if attribution.oms_order_id != record.order_id:
-                # Re-derive so ``order_id`` + ``fill_id`` reflect the resolved PK.
-                record = fill_report_to_fill_record(report, oms_order_id=attribution.oms_order_id)
-            # ``record`` is non-None here: only fill-bearing reports reach this
-            # block, and the re-derive preserves that (same fill-bearing report).
-            assert record is not None
+            # Re-derive so ``order_id`` + ``fill_id`` reflect the resolved PK
+            # and the reconciled residual quantity. Only fill-bearing reports
+            # reach this block, so the translator returns a record.
+            unit_record = fill_report_to_fill_record(
+                unit_report, oms_order_id=attribution.oms_order_id
+            )
+            assert unit_record is not None
             if enrichment_callable is not None:
-                record = await enrichment_callable(record)
-            await append_fill_record(db, record)
-        await db.commit()
+                unit_record = _attach_provisional_estimate(
+                    unit_record,
+                    final_oms_order_id=attribution.oms_order_id,
+                    final_fill_quantity=unit_report.fill_quantity,
+                    provisional=provisional,
+                )
+            await append_fill_record(db, unit_record)
+        return True
+
+    attributed = await run_immediate_write_unit(session_factory, _unit)
+    if not attributed:
+        await _quarantine_unattributed_fill(report, session_factory=session_factory)
 
 
 async def _resolve_attribution(db: AsyncSession, report: FillReport) -> _FillAttribution | None:
@@ -486,25 +616,30 @@ async def _quarantine_unattributed_fill(
         retry_count=0,
         alerted=False,
     )
+
+    async def _unit(db: AsyncSession) -> bool:
+        inserted = await append_unattributed_fill(db, record)
+        if inserted:
+            await mark_unattributed_fill_alerted(db, record.broker_fill_key)
+        return inserted
+
     try:
-        async with session_factory() as db:
-            inserted = await append_unattributed_fill(db, record)
-            if inserted:
-                log.warning(
-                    "QUARANTINED out-of-band fill: broker_fill_key=%s client_order_id=%s "
-                    "alpaca_order_id=%s event=%s — no broker-carried link to self-attribute; "
-                    "parked for operator review (out-of-band / manually-placed order)",
-                    record.broker_fill_key,
-                    report.client_order_id,
-                    report.alpaca_order_id,
-                    report.event_type,
-                )
-                await mark_unattributed_fill_alerted(db, record.broker_fill_key)
-            await db.commit()
+        inserted = await run_immediate_write_unit(session_factory, _unit)
     except Exception:
         log.exception(
             "failed to quarantine unattributed fill: broker_fill_key=%s client_order_id=%s "
             "alpaca_order_id=%s event=%s — continuing; recovered by next recovery/backfill sweep",
+            record.broker_fill_key,
+            report.client_order_id,
+            report.alpaca_order_id,
+            report.event_type,
+        )
+        return
+    if inserted:
+        log.warning(
+            "QUARANTINED out-of-band fill: broker_fill_key=%s client_order_id=%s "
+            "alpaca_order_id=%s event=%s — no broker-carried link to self-attribute; "
+            "parked for operator review (out-of-band / manually-placed order)",
             record.broker_fill_key,
             report.client_order_id,
             report.alpaca_order_id,
@@ -552,22 +687,17 @@ async def _sync_terminal_status_if_any(
     cumulative = report.cumulative_filled_quantity
     if cumulative is None or cumulative > 0:
         return
-    async with session_factory() as db:
+
+    async def _unit(db: AsyncSession) -> bool | None:
+        # The production ALP-942 failure path: 1-3 attribution SELECTs followed
+        # by the event INSERT in one transaction. Under BEGIN IMMEDIATE the
+        # reads run behind the up-front write lock, so a concurrent committer
+        # (the collector's half-hourly news commit, a mid-pipeline scheduler
+        # write) can no longer invalidate this transaction's read snapshot.
         attribution = await _resolve_terminal_attribution(db, report)
         if attribution is None:
-            # Neither a parseable link nor a resolvable local order row — a
-            # genuinely out-of-band / manually-placed order's terminal event.
-            # No AlphaMind fact to record; skip (mirrors the fill path's
-            # decline-to-attribute, ADR-0002).
-            log.debug(
-                "terminal status for unknown order: client_order_id=%s alpaca_order_id=%s "
-                "status=%s — skipping",
-                report.client_order_id,
-                report.alpaca_order_id,
-                terminal_status.value,
-            )
-            return
-        newly = await append_broker_event(
+            return None
+        return await append_broker_event(
             db,
             terminal_status_event_record(
                 report,
@@ -577,8 +707,21 @@ async def _sync_terminal_status_if_any(
                 position_id=attribution.position_id,
             ),
         )
-        await db.commit()
-    if newly:
+
+    newly = await run_immediate_write_unit(session_factory, _unit)
+    if newly is None:
+        # Neither a parseable link nor a resolvable local order row — a
+        # genuinely out-of-band / manually-placed order's terminal event.
+        # No AlphaMind fact to record; skip (mirrors the fill path's
+        # decline-to-attribute, ADR-0002).
+        log.debug(
+            "terminal status for unknown order: client_order_id=%s alpaca_order_id=%s "
+            "status=%s — skipping",
+            report.client_order_id,
+            report.alpaca_order_id,
+            terminal_status.value,
+        )
+    elif newly:
         log.info(
             "appended terminal order-status event: alpaca_order_id=%s status=%s",
             report.alpaca_order_id,

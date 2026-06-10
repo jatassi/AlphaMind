@@ -20,6 +20,7 @@ import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -839,3 +840,230 @@ class TestRecoveryGapReconciliation:
         # Both per-event increments logged in full (60 + 40), no reconciliation.
         assert _logged_fill_quantity_total(rows) == 100.0
         assert len([r for r in rows if r.event_type == "FILL"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# ALP-942 — the persist runs as ONE BEGIN IMMEDIATE write unit (B4 atomicity +
+# transient-lock retry), and the paper-mode enrichment await runs OUTSIDE it.
+# ---------------------------------------------------------------------------
+
+
+def _flaky_commit_factory(
+    inner: async_sessionmaker[AsyncSession], *, failures: int
+) -> tuple[async_sessionmaker[AsyncSession], dict[str, int]]:
+    """Session factory whose first *failures* commits raise a transient lock
+    error (the DB is a sanctioned boundary; the injection sits on its seam)."""
+    import sqlite3
+
+    from sqlalchemy.exc import OperationalError
+
+    counters = {"commits": 0, "failures_left": failures}
+
+    class _FlakyCommitSession(AsyncSession):
+        async def commit(self) -> None:
+            if counters["failures_left"] > 0:
+                counters["failures_left"] -= 1
+                await self.rollback()
+                raise OperationalError("COMMIT", {}, sqlite3.OperationalError("database is locked"))
+            counters["commits"] += 1
+            await super().commit()
+
+    flaky: async_sessionmaker[AsyncSession] = async_sessionmaker(
+        bind=inner.kw["bind"], class_=_FlakyCommitSession, expire_on_commit=False
+    )
+    return flaky, counters
+
+
+def _stub_estimate() -> Any:
+    from alphamind._kernel.money import money, price
+    from alphamind.portfolio_state.records.positions import LiveExecutionEstimate
+
+    return LiveExecutionEstimate(
+        estimated_spread_usd=money("0.01"),
+        estimated_impact_usd=money("0.02"),
+        estimated_regulatory_fees_usd=money("0.03"),
+        live_adjusted_fill_price=price("189.50"),
+    )
+
+
+async def _read_fill_records(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> list[Any]:
+    from alphamind.state.tables.fill_records import FillRecordRow
+
+    async with session_factory() as session:
+        return list((await session.execute(select(FillRecordRow))).scalars().all())
+
+
+class TestImmediateWriteUnitDiscipline:
+    """ALP-942 Scope B — the fill persist is one retried IMMEDIATE transaction."""
+
+    async def test_transient_commit_failure_retries_and_lands_both_rows_in_one_commit(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A transient ``database is locked`` on the first commit (the 2026-06-09
+        production class) no longer propagates: the whole unit re-runs on a fresh
+        session and the event-log row + fill row land together in EXACTLY ONE
+        committed transaction — the B4 single-transaction invariant (two split
+        transactions would count two commits)."""
+        async with session_factory() as session:
+            session.add(
+                stub_order_row(
+                    "order-resolved-1",
+                    "bracket-1",
+                    position_id="pos-1",
+                    client_order_id=_PM_LINKED_COMMAND_ID,
+                )
+            )
+            await session.commit()
+        flaky, counters = _flaky_commit_factory(session_factory, failures=1)
+        report = _fill_report(client_order_id=_PM_LINKED_COMMAND_ID, order_id=uuid4())
+
+        await persist_fill_report(report, session_factory=flaky, enrichment_callable=None)
+
+        assert counters["commits"] == 1
+        rows = await _read_event_log(session_factory)
+        assert len(rows) == 1
+        fills = await _read_fill_records(session_factory)
+        assert len(fills) == 1
+        assert fills[0].order_id == "order-resolved-1"
+
+    async def test_terminal_status_sync_retries_transient_commit_failure(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """The exact production crash path — ``_sync_terminal_status_if_any``'s
+        read-then-append — survives a transient lock error instead of
+        propagating it (the 17:00:05Z monitor crash of 2026-06-09)."""
+        flaky, counters = _flaky_commit_factory(session_factory, failures=1)
+        report = _fill_report(
+            client_order_id=_PM_LINKED_COMMAND_ID,
+            event="canceled",
+            price=None,
+            qty=None,
+            filled_qty="0",
+        )
+
+        await persist_fill_report(report, session_factory=flaky, enrichment_callable=None)
+
+        assert counters["commits"] == 1
+        rows = await _read_event_log(session_factory)
+        assert len(rows) == 1
+        assert rows[0].event_type == "TERMINAL_ORDER_STATUS"
+
+
+class TestEnrichmentOutsideWriteTransaction:
+    """ALP-942 Scope D — enrich on a provisional pass, never under the lock."""
+
+    async def test_enrichment_callable_sees_no_open_transaction(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """The enrichment await runs with NO session transaction open — the
+        write lock is taken only afterwards, so a slow paper-mode enrichment
+        can no longer hold the cross-process write lock. The estimate still
+        persists (the provisional fingerprint matches the final resolution)."""
+        from alphamind.state.records import FillRecord
+
+        async with session_factory() as session:
+            session.add(
+                stub_order_row(
+                    "order-resolved-2",
+                    "bracket-1",
+                    position_id="pos-1",
+                    client_order_id=_PM_LINKED_COMMAND_ID,
+                )
+            )
+            await session.commit()
+
+        tracked: list[AsyncSession] = []
+
+        def tracking_factory(**kw: Any) -> AsyncSession:
+            session = session_factory(**kw)
+            tracked.append(session)
+            return session
+
+        open_transactions_during_enrichment: list[bool] = []
+
+        async def enrichment(record: FillRecord) -> FillRecord:
+            open_transactions_during_enrichment.append(any(s.in_transaction() for s in tracked))
+            return record.model_copy(update={"live_execution_estimate": _stub_estimate()})
+
+        report = _fill_report(client_order_id=_PM_LINKED_COMMAND_ID, order_id=uuid4())
+        await persist_fill_report(
+            report,
+            session_factory=cast("async_sessionmaker[AsyncSession]", tracking_factory),
+            enrichment_callable=enrichment,
+        )
+
+        assert open_transactions_during_enrichment == [False]
+        fills = await _read_fill_records(session_factory)
+        assert len(fills) == 1
+        assert fills[0].live_execution_estimate_json is not None
+
+    async def test_provisional_final_divergence_persists_null_estimate(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """When the facts move between the provisional pass and the write unit
+        — here a live partial lands for the same order DURING the enrichment,
+        shrinking the FS1 residual gap — the cached estimate (computed for the
+        provisional quantity) is dropped and the fill persists with a NULL
+        estimate at the re-reconciled quantity. The event log still nets to the
+        broker's cumulative exactly once."""
+        from alphamind.state.records import FillRecord
+
+        broker_uuid = uuid4()
+        async with session_factory() as session:
+            session.add(
+                stub_order_row(
+                    "order-resolved-3",
+                    "bracket-1",
+                    position_id="pos-1",
+                    client_order_id=_PM_LINKED_COMMAND_ID,
+                    alpaca_order_id=str(broker_uuid),
+                )
+            )
+            await session.commit()
+
+        async def enrichment(record: FillRecord) -> FillRecord:
+            # A live websocket partial of 2 shares lands while the enrichment
+            # is in flight — possible exactly BECAUSE no transaction is open.
+            async with session_factory() as session:
+                session.add(
+                    BrokerEventLogRow(
+                        event_key="tevt-interleaved-partial",
+                        event_type="FILL",
+                        thesis_id=None,
+                        invocation_id=None,
+                        position_id=None,
+                        raw_payload_json=json.dumps(
+                            {"alpaca_order_id": str(broker_uuid), "fill_quantity": 2.0}
+                        ),
+                        broker_timestamp=None,
+                        captured_at="2026-06-09T17:00:05.911Z",
+                    )
+                )
+                await session.commit()
+            return record.model_copy(update={"live_execution_estimate": _stub_estimate()})
+
+        # A REST-recovery report carrying the order's CUMULATIVE fill of 5.
+        report = _fill_report(
+            client_order_id=_PM_LINKED_COMMAND_ID,
+            order_id=broker_uuid,
+            qty=5.0,
+            filled_qty="5",
+        )
+        await persist_fill_report(
+            report,
+            session_factory=session_factory,
+            enrichment_callable=enrichment,
+            recovered=True,
+        )
+
+        fills = await _read_fill_records(session_factory)
+        assert len(fills) == 1
+        # Re-reconciled residual: cumulative 5 - interleaved 2 = 3 shares.
+        assert float(fills[0].fill_quantity) == 3.0
+        # The provisional estimate (computed for 5 shares) was NOT attached.
+        assert fills[0].live_execution_estimate_json is None
+        # Gap-free: the log nets to the cumulative exactly once (2 + 3).
+        rows = await _read_event_log(session_factory)
+        assert _logged_fill_quantity_total(rows) == 5.0
