@@ -78,12 +78,14 @@ _STATUS_TO_EVENT: Final[dict[str, OrderStatus]] = {
     "done_for_day": "done_for_day",
 }
 
-# Statuses whose ``filled_avg_price`` + ``filled_qty`` populate the
-# corresponding ``FillReport`` fields. Every other status leaves
+# Statuses carrying executed shares: ``filled_avg_price`` + ``filled_qty``
+# populate the corresponding ``FillReport`` fields. Every other status leaves
 # ``fill_price`` / ``fill_quantity`` as ``None`` per the design (the order
 # may carry a non-zero ``filled_qty`` from earlier partials, but a recovery
-# event for a *new* terminal status carries no incremental fill).
-_FILL_BEARING_STATUSES: Final[frozenset[str]] = frozenset({"filled", "partially_filled"})
+# event for a *new* terminal status carries no incremental fill). Public:
+# the equity CLOSE drift guard (ALP-943, ``oms.broker_dispatch``) shares this
+# set to classify a protective leg's broker state as executed.
+FILL_BEARING_STATUSES: Final[frozenset[str]] = frozenset({"filled", "partially_filled"})
 
 # OMS PositionIntentLiteral alphabet — used to coerce OrderLegSnapshot's
 # untyped ``str`` field at the boundary.
@@ -256,7 +258,7 @@ def _fill_metrics(status: str, source: _FillBearing) -> tuple[Price | None, floa
     non-zero ``filled_qty`` from prior partials — the recovery report
     describes the *current* terminal event, not historical fill increments.
     """
-    if status not in _FILL_BEARING_STATUSES:
+    if status not in FILL_BEARING_STATUSES:
         return None, None
     return source.filled_avg_price, source.filled_qty
 

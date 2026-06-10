@@ -1001,6 +1001,43 @@ async def test_close_equity_aborts_when_protective_leg_already_filled() -> None:
 
 
 @pytest.mark.asyncio
+async def test_close_equity_abort_after_live_cancel_emits_naked_position_alert(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """ALP-943 — the drift abort fires AFTER an earlier leg's cancel was
+    confirmed: live protection was actively torn down and the close will never
+    run, so the ALP-937 (F) CRITICAL alert must be emitted before the abort
+    propagates — a surviving remainder is never silently naked."""
+    client = _HeldForOrdersClient(
+        protective_leg_ids=("alp-tp-1",),  # live — cancel succeeds, protection torn
+        filled_leg_ids=("alp-stop-1",),  # filled — resolution aborts the close
+    )
+    queries = _FakeAccountQueries(positions={"MRVL": 8.0})
+
+    with caplog.at_level("CRITICAL"), pytest.raises(PermanentRejectionError):
+        await dispatch_command_to_broker(
+            _close_command("POS-MRVL-001"),
+            client=cast(Any, client),
+            queries=cast(Any, queries),
+            execution=_execution_config(),
+            client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+            position_symbol="MRVL",
+            position_qty=8.0,
+            position_side="long",
+            position_asset_type="equity",
+            close_protective_leg_alpaca_order_ids=(
+                AlpacaOrderId("alp-tp-1"),
+                AlpacaOrderId("alp-stop-1"),
+            ),
+        )
+
+    assert "NAKED POSITION" in caplog.text
+    assert "MRVL" in caplog.text
+    # No sell ever reached the broker.
+    assert [op for op, _ in client.calls] == ["cancel", "cancel", "get_order"]
+
+
+@pytest.mark.asyncio
 async def test_close_equity_no_naked_alert_when_legs_already_terminal(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

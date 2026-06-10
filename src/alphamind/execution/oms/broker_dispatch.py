@@ -97,6 +97,7 @@ from alphamind.execution.broker_adapter.order_options import (
     PermanentRejectionError,
 )
 from alphamind.execution.broker_adapter.queries import PositionSnapshot
+from alphamind.execution.broker_adapter.recovery import FILL_BEARING_STATUSES
 from alphamind.execution.broker_adapter.retry import bounded_broker_call
 
 __all__ = [
@@ -509,7 +510,6 @@ async def _close_equity(  # noqa: PLR0913 — close threads every broker-transla
         raise _missing("position_qty", command_kind="CLOSE equity")
     if position_side is None:
         raise _missing("position_side", command_kind="CLOSE equity")
-    symbol = position_symbol
 
     # ALP-943 — execution-time drift guard. The local positions projection is
     # frozen between fill-collection phases, while the monitor flattens
@@ -519,10 +519,10 @@ async def _close_equity(  # noqa: PLR0913 — close threads every broker-transla
     # side-flipped position rejects (a "close" would OPEN a new position —
     # the 2026-06-09 -4 MRVL naked short); a shrunken one clamps the quantity.
     requested_qty = position_qty if command.quantity == "all" else float(command.quantity)
-    live = await bounded_broker_call(lambda: queries.get_open_position(symbol))
+    live = await bounded_broker_call(lambda: queries.get_open_position(position_symbol))
     qty = _checked_close_quantity(
         live,
-        position_symbol=symbol,
+        position_symbol=position_symbol,
         position_side=position_side,
         requested_qty=requested_qty,
     )
@@ -535,9 +535,11 @@ async def _close_equity(  # noqa: PLR0913 — close threads every broker-transla
     # broker reports FILLED aborts the close (ALP-943 — the position exited).
     # Monitor-enforced legs (no broker id) are never threaded here.
     protection_torn_down = await _cancel_protective_legs(
+        command,
         client=client,
         execution=execution,
         leg_alpaca_order_ids=close_protective_leg_alpaca_order_ids,
+        position_symbol=position_symbol,
     )
 
     # Submit the close sell. If it fails AFTER live protection was torn down the
@@ -552,16 +554,16 @@ async def _close_equity(  # noqa: PLR0913 — close threads every broker-transla
             client=client,
             execution=execution,
             client_order_id=client_order_id,
-            symbol=symbol,
+            symbol=position_symbol,
             qty=qty,
             position_side=position_side,
         )
     except Exception:
         if protection_torn_down:
-            _alert_close_rejected_after_cancel(command, position_symbol=symbol)
+            _alert_close_rejected_after_cancel(command, position_symbol=position_symbol)
         raise
     if protection_torn_down and isinstance(outcome, GatewaySubmissionFailed):
-        _alert_close_rejected_after_cancel(command, position_symbol=symbol)
+        _alert_close_rejected_after_cancel(command, position_symbol=position_symbol)
     return _wrap_equity(outcome)
 
 
@@ -596,17 +598,20 @@ def _checked_close_quantity(
     direction (with ``short_selling_enabled`` Alpaca executes a sell on a flat
     position as ``sell_to_open``). A live absolute quantity below the requested
     quantity clamps the close to what actually exists at the broker.
+
+    The side comparison reads ``live.side`` — Alpaca's own ``PositionSide``
+    field — rather than inferring from the sign of ``qty``, so the guard does
+    not depend on the broker's qty sign convention for shorts.
     """
     if live is None or live.qty == 0:
         raise _position_state_drift(
             f"equity CLOSE drift guard: {position_symbol} expected {position_side} "
             f"{requested_qty}, live broker position is flat"
         )
-    live_side: Literal["long", "short"] = "long" if live.qty > 0 else "short"
-    if live_side != position_side:
+    if live.side != position_side:
         raise _position_state_drift(
             f"equity CLOSE drift guard: {position_symbol} expected {position_side} "
-            f"{requested_qty}, live broker position is {live_side} qty {live.qty}"
+            f"{requested_qty}, live broker position is {live.side} qty {live.qty}"
         )
     live_abs = abs(live.qty)
     if live_abs < requested_qty - _CLOSE_QTY_EPSILON:
@@ -622,10 +627,12 @@ def _checked_close_quantity(
 
 
 async def _cancel_protective_legs(
+    command: CloseCommand,
     *,
     client: TradingClient,
     execution: ExecutionConfig,
     leg_alpaca_order_ids: Sequence[AlpacaOrderId] | None,
+    position_symbol: str,
 ) -> bool:
     """Cancel each broker-enforced protective leg ahead of a CLOSE.
 
@@ -646,6 +653,11 @@ async def _cancel_protective_legs(
       never masked.
     * **Gateway-failed cancel** — unconfirmed (the leg may still rest and hold
       shares); the close sell itself surfaces the real problem if so.
+
+    If the loop aborts (drift rejection or an unclassifiable error) AFTER an
+    earlier leg's cancel was confirmed, live protection was already removed and
+    the close will never run — the ALP-937 (F) operator alert is emitted before
+    the abort propagates, so a surviving remainder is never silently naked.
     """
     leg_ids = tuple(leg_alpaca_order_ids or ())
     protection_torn_down = False
@@ -659,12 +671,19 @@ async def _cancel_protective_legs(
         except Exception as exc:
             rejection = classify_alpaca_error(exc)
             if rejection is None:
+                if protection_torn_down:
+                    _alert_close_rejected_after_cancel(command, position_symbol=position_symbol)
                 raise
-            await _resolve_rejected_leg_state(
-                client=client,
-                leg_alpaca_order_id=leg_alpaca_order_id,
-                rejection_code=rejection.code,
-            )
+            try:
+                await _resolve_rejected_leg_state(
+                    client=client,
+                    leg_alpaca_order_id=leg_alpaca_order_id,
+                    rejection_code=rejection.code,
+                )
+            except PermanentRejectionError:
+                if protection_torn_down:
+                    _alert_close_rejected_after_cancel(command, position_symbol=position_symbol)
+                raise
             continue
         if isinstance(cancel_outcome, GatewaySubmissionFailed):
             logger.warning(
@@ -676,12 +695,6 @@ async def _cancel_protective_legs(
             continue
         protection_torn_down = True
     return protection_torn_down
-
-
-# Broker order statuses proving a protective leg EXECUTED — the protected
-# position (or part of it) exited, so a close built from the projection must
-# not proceed (ALP-943).
-_LEG_EXECUTED_STATUSES = frozenset({"filled", "partially_filled"})
 
 
 async def _resolve_rejected_leg_state(
@@ -698,9 +711,11 @@ async def _resolve_rejected_leg_state(
     leg's actual broker state via ``get_order_by_id`` disambiguates without
     parsing rejection message text. A filled / partially-filled leg raises the
     ``position_state_drift`` rejection so the close never sells into the exited
-    position; every other resolved state — and an unresolvable leg (404 or a
-    failing lookup) — proceeds as before, with the close sell itself surfacing
-    any held-shares problem.
+    position — partial fills abort rather than clamp because the remainder is
+    mid-execution and ambiguous at this instant; the PM re-evaluates against the
+    next snapshot and the monitor backstops the interim. Every other resolved
+    state — and an unresolvable leg (404 or a failing lookup) — proceeds as
+    before, with the close sell itself surfacing any held-shares problem.
     """
     try:
         order = await bounded_broker_call(lambda: client.get_order_by_id(leg_alpaca_order_id))
@@ -713,8 +728,9 @@ async def _resolve_rejected_leg_state(
             rejection_code,
         )
         return
-    status = getattr(getattr(order, "status", None), "value", getattr(order, "status", None))
-    if status in _LEG_EXECUTED_STATUSES:
+    raw_status = getattr(order, "status", None)
+    status = getattr(raw_status, "value", raw_status)
+    if status in FILL_BEARING_STATUSES:
         raise _position_state_drift(
             f"equity CLOSE drift guard: protective leg {leg_alpaca_order_id} is "
             f"{status} at the broker — the protective exit executed, so the "
