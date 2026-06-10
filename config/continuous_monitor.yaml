@@ -118,6 +118,10 @@ watchdog_cadence_multiplier: 10.0
 # which the in-process watchdog structurally cannot catch) at ~2.5 minutes.
 # The faulthandler deadman re-arms on this cadence with the same bound, so the
 # frozen loop dumps its blocking frame to monitor_faulthandler.log first.
+# Note: this knob does NOT set how often the monitor WRITES the heartbeat —
+# the supervisor beats the file on its own watchdog-check interval (seconds in
+# practice, always far inside the stall bound); this knob governs only the
+# external watchdog's probe cadence + stall bound and the deadman's re-arm.
 monitor_watchdog_tick_seconds: 15.0
 
 # Seconds of trade_updates silence during RTH before the fill-stream consumer

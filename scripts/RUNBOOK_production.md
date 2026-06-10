@@ -49,7 +49,7 @@ event loop it guards, so a frozen loop (the 2026-06-09 wedge: 8 h of no fills
 with NSSM "Running") starves it — only an out-of-process watchdog bounds that
 failure. A frozen loop also self-captures its blocking frame: the faulthandler
 deadman dumps the frozen stack to `monitor_faulthandler.log` before the restart
-lands. The same same-account rule applies to this watchdog.
+lands. The same-account rule applies to this watchdog too.
 
 Logs land under `%USERPROFILE%\AlphaMind\logs\`. DB is
 `%USERPROFILE%\AlphaMind\data\alphamind.db`. Invocation archives land under
