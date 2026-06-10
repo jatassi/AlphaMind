@@ -1,11 +1,12 @@
-"""Production process controller for the safety core (ALP-857 / ADR-0004).
+"""Production process controller for a supervised NSSM service.
 
 :class:`NssmServiceController` is the watchdog's restart seam in production: it
-shells out to ``nssm restart alphamind-safety-core`` to restart the wedged
-safety-core service. It satisfies the :class:`ProcessController` Protocol the
-watchdog depends on, so the watchdog's restart-on-staleness logic stays testable
-against a fake controller while production uses NSSM (the Windows service
-manager that supervises every AlphaMind service).
+shells out to ``nssm restart <service>`` to restart the wedged supervised
+service (the safety core, the continuous monitor). It satisfies the
+:class:`ProcessController` Protocol the watchdog depends on, so the watchdog's
+restart-on-staleness logic stays testable against a fake controller while
+production uses NSSM (the Windows service manager that supervises every
+AlphaMind service).
 
 The ``run`` shell-out callable is injected so the boundary is faked in tests; it
 defaults to a checked ``subprocess.run``.
@@ -28,19 +29,19 @@ def _checked_run(cmd: list[str]) -> None:
 
 
 class NssmServiceController:
-    """Restarts the safety-core NSSM service by shelling out to ``nssm restart``."""
+    """Restarts a supervised NSSM service by shelling out to ``nssm restart``."""
 
     def __init__(
         self,
         *,
-        service_name: str = "alphamind-safety-core",
+        service_name: str,
         run: RunCommand = _checked_run,
     ) -> None:
         self._service_name = service_name
         self._run = run
 
     def restart(self) -> None:
-        """Restart the supervised safety-core service via ``nssm restart``.
+        """Restart the supervised service via ``nssm restart``.
 
         A failed restart shell-out is logged but not re-raised: the watchdog must
         keep probing so a transient ``nssm`` failure on one tick does not kill
@@ -48,8 +49,10 @@ class NssmServiceController:
         regardless).
         """
         cmd: Sequence[str] = ["nssm", "restart", self._service_name]
-        log.critical("safety-core watchdog: restarting service %r", self._service_name)
+        log.critical("watchdog: restarting service %r", self._service_name)
         try:
             self._run(list(cmd))
         except Exception:
-            log.exception("safety-core watchdog: nssm restart failed; will retry next tick")
+            log.exception(
+                "watchdog: nssm restart of %r failed; will retry next tick", self._service_name
+            )

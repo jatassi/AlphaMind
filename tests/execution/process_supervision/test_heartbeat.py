@@ -1,17 +1,18 @@
-"""Tests for the safety core's non-DB file heartbeat (ALP-857).
+"""Tests for the non-DB file heartbeat (ALP-857 / ALP-941).
 
-The heartbeat is the safety core's liveness signal to its out-of-process
-watchdog — written to a **file**, never the shared DB (ADR-0004: the safety
-core writes nothing to the DB). ``FileHeartbeatSink.beat`` writes a wall-clock
-timestamp; ``FileHeartbeatProbe.age`` reads it back so the watchdog can detect
-staleness without sharing the core's loop or its DB session.
+The heartbeat is a supervised process's liveness signal to its out-of-process
+watchdog — written to a **file**, never the shared DB (it must stay readable
+while the process is wedged; ADR-0004 additionally forbids safety-core DB
+writes). ``FileHeartbeatSink.beat`` writes a wall-clock timestamp;
+``FileHeartbeatProbe.age`` reads it back so the watchdog can detect staleness
+without sharing the supervised process's loop or its DB session.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from alphamind.execution.continuous_monitor.safety_core.heartbeat import (
+from alphamind.execution.process_supervision.heartbeat import (
     FileHeartbeatProbe,
     FileHeartbeatSink,
 )

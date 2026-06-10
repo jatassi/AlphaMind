@@ -1,11 +1,13 @@
-"""Non-DB file heartbeat for the safety core ↔ watchdog (ALP-857 / ADR-0004).
+"""Non-DB file heartbeat between a supervised process and its watchdog.
 
-The safety core's liveness signal is a **file**, never a row in the shared DB:
-ADR-0004 requires the safety core to write nothing to the DB, and an AC asserts
-it. The core's shell beats every tick (:class:`FileHeartbeatSink`); the
-out-of-process watchdog reads the file (:class:`FileHeartbeatProbe`) to decide
-whether the core has wedged. A file sink (not a DB row, not a pipe) is the
-simplest seam that crosses the process boundary and survives the core's death.
+The supervised process's liveness signal is a **file**, never a row in the
+shared DB: the heartbeat must stay readable while the process (and any DB
+connection it pins) is wedged, and ADR-0004 additionally requires the safety
+core to write nothing to the DB. The process beats every tick
+(:class:`FileHeartbeatSink`); the out-of-process watchdog reads the file
+(:class:`FileHeartbeatProbe`) to decide whether the process has wedged. A file
+sink (not a DB row, not a pipe) is the simplest seam that crosses the process
+boundary and survives the writer's death.
 
 Cross-process timing: the timestamp is a **wall-clock epoch** (``time.time()``),
 not ``time.monotonic()`` — a monotonic clock is per-process and meaningless to a
@@ -21,10 +23,23 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol
+
+
+class HeartbeatSink(Protocol):
+    """Structural Protocol for the per-iteration liveness beat a process writes.
+
+    The seam a supervised loop depends on (``MonitorSupervisor``'s injected
+    heartbeat, the safety core's shell loop): one ``beat()`` per iteration.
+    Production binds :class:`FileHeartbeatSink`; tests bind a fake that records
+    calls.
+    """
+
+    def beat(self) -> None: ...
 
 
 class FileHeartbeatSink:
-    """Writes the safety core's latest beat timestamp to a file (atomically)."""
+    """Writes the supervised process's latest beat timestamp to a file (atomically)."""
 
     def __init__(self, *, path: Path, clock: Callable[[], float] = time.time) -> None:
         # ``clock`` is the injected wall-clock port (default ``time.time``); tests
@@ -48,7 +63,7 @@ class FileHeartbeatSink:
 
 
 class FileHeartbeatProbe:
-    """Reads the safety core's heartbeat file to compute its age (read-only)."""
+    """Reads the supervised process's heartbeat file to compute its age (read-only)."""
 
     def __init__(self, *, path: Path) -> None:
         self._path = path
@@ -56,11 +71,11 @@ class FileHeartbeatProbe:
     def age(self, *, now: float) -> float | None:
         """Return seconds since the last beat, or ``None`` if never beaten.
 
-        ``None`` means the heartbeat file does not exist yet (the core has not
-        started / not yet written one) — the watchdog treats that as startup
-        grace, not a wedge. A malformed file (truncated mid-write despite the
-        atomic replace, or hand-corrupted) also reads as ``None`` so a single
-        bad read never trips a false restart.
+        ``None`` means the heartbeat file does not exist yet (the supervised
+        process has not started / not yet written one) — the watchdog treats
+        that as startup grace, not a wedge. A malformed file (truncated
+        mid-write despite the atomic replace, or hand-corrupted) also reads as
+        ``None`` so a single bad read never trips a false restart.
         """
         try:
             raw = self._path.read_text(encoding="utf-8")

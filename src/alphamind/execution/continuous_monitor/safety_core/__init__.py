@@ -11,7 +11,11 @@ to a non-DB file sink). It imports neither pipeline nor monitor internals (an
 A **dedicated out-of-process watchdog** probes the safety core's file heartbeat
 and restarts it on staleness. It is a separate process, not a loop-resident
 probe: a loop-resident watchdog cannot catch a freeze of its own loop — the
-structural ALP-841 failure this isolation makes unrepresentable.
+structural ALP-841 failure this isolation makes unrepresentable. The generic
+heartbeat / watchdog / process-control primitives live in the shared
+:mod:`alphamind.execution.process_supervision` package (hoisted by ALP-941 so
+the continuous monitor reuses them); this package wires them for the safety
+core in ``__main__``.
 
 Public surface:
 
@@ -19,17 +23,11 @@ Public surface:
 * :class:`SafetyEvaluation`, :class:`SafetyPosition`, :class:`PriceStaleness`,
   :class:`SafetyLimits` — the typed records.
 * :func:`run_safety_core` — the imperative shell loop.
-* :func:`run_watchdog` — the out-of-process watchdog loop.
-* :class:`FileHeartbeatSink`, :class:`FileHeartbeatProbe` — the non-DB heartbeat.
 """
 
 from alphamind.execution.continuous_monitor.safety_core.evaluation import (
     SafetyLimits,
     evaluate_safety,
-)
-from alphamind.execution.continuous_monitor.safety_core.heartbeat import (
-    FileHeartbeatProbe,
-    FileHeartbeatSink,
 )
 from alphamind.execution.continuous_monitor.safety_core.loop import run_safety_core
 from alphamind.execution.continuous_monitor.safety_core.records import (
@@ -37,20 +35,12 @@ from alphamind.execution.continuous_monitor.safety_core.records import (
     SafetyEvaluation,
     SafetyPosition,
 )
-from alphamind.execution.continuous_monitor.safety_core.watchdog import (
-    ProcessController,
-    run_watchdog,
-)
 
 __all__ = [
-    "FileHeartbeatProbe",
-    "FileHeartbeatSink",
     "PriceStaleness",
-    "ProcessController",
     "SafetyEvaluation",
     "SafetyLimits",
     "SafetyPosition",
     "evaluate_safety",
     "run_safety_core",
-    "run_watchdog",
 ]
