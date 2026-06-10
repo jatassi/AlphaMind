@@ -35,6 +35,7 @@ from typing import Any
 from alphamind._kernel.exception_group import first_non_cancelled
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.continuous_monitor.session import MonitorSession
+from alphamind.execution.process_supervision import HeartbeatSink
 
 log = logging.getLogger(__name__)
 
@@ -92,11 +93,16 @@ class MonitorSupervisor:
         config: ContinuousMonitorConfig,
         sleep: SleepFn = asyncio.sleep,
         monotonic: MonotonicFn = time.monotonic,
+        heartbeat: HeartbeatSink | None = None,
     ) -> None:
+        # ``heartbeat`` (ALP-941) is the off-hot-path file beat the dedicated
+        # out-of-process monitor watchdog probes. ``None`` (the default) opts
+        # out entirely — existing behavior is unchanged.
         self._session = session
         self._config = config
         self._sleep = sleep
         self._monotonic = monotonic
+        self._heartbeat = heartbeat
         self._registry: list[tuple[str, TaskCoroFn]] = []
         self._stop_event: asyncio.Event | None = None
         # Per-task watchdog state (ALP-826). Seeded at task-registration when an
@@ -277,6 +283,14 @@ class MonitorSupervisor:
         """
         while True:
             await self._sleep(self._check_interval())
+            # The sleep resumed, so the event loop is demonstrably turning —
+            # beat the cross-process file heartbeat (ALP-941). A loop-thread
+            # freeze stops this coroutine inside the sleep above, the file
+            # goes stale, and the out-of-process watchdog restarts the
+            # monitor — the wedge this in-loop watchdog structurally cannot
+            # catch.
+            if self._heartbeat is not None:
+                self._heartbeat.beat()
             # Exit cleanly if the supervisor is shutting down — avoids a
             # spurious os._exit(1) while tasks are mid-cancellation.
             if self._stop_event is not None and self._stop_event.is_set():
@@ -352,14 +366,16 @@ class MonitorSupervisor:
 def _install_signal_handlers(loop: asyncio.AbstractEventLoop, callback: Callable[[], None]) -> None:
     # ``add_signal_handler`` is unsupported on Windows event loops / loops
     # off the main thread; NSSM shims SIGINT via Ctrl-Break in production.
+    # CPython >= 3.13 surfaces the off-main-thread case as RuntimeError
+    # (wrapping set_wakeup_fd's ValueError), so both are tolerated.
     for sig in _SHUTDOWN_SIGNALS:
         try:
             loop.add_signal_handler(sig, callback)
-        except (NotImplementedError, ValueError):
+        except (NotImplementedError, ValueError, RuntimeError):
             log.debug("could not install signal handler for %s", sig.name)
 
 
 def _remove_signal_handlers(loop: asyncio.AbstractEventLoop) -> None:
     for sig in _SHUTDOWN_SIGNALS:
-        with contextlib.suppress(NotImplementedError, ValueError):
+        with contextlib.suppress(NotImplementedError, ValueError, RuntimeError):
             loop.remove_signal_handler(sig)

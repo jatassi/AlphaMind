@@ -21,6 +21,11 @@ import pytest
 from sqlalchemy import create_engine
 
 import alphamind.state.tables  # noqa: F401 — register state-layer tables on Base.metadata
+from alphamind.execution.continuous_monitor.__main__ import (
+    _log_filename_for_subcommand,
+    _parse_args,
+    _run_watchdog_daemon,
+)
 from alphamind.execution.continuous_monitor.__main__ import main as monitor_main
 from alphamind.persistence.models import Base
 
@@ -211,6 +216,93 @@ def test_main_registers_precision_and_data_tasks(
     assert "borrow_accrual" not in task_names, (
         f"borrow_accrual should be evicted from the monitor; got {task_names!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# ALP-941 — out-of-process monitor watchdog + heartbeat + faulthandler deadman
+# ---------------------------------------------------------------------------
+
+
+def test_main_run_wires_file_heartbeat_and_faulthandler_deadman(
+    _paper_boot: dict[str, Any],
+) -> None:
+    """The run daemon injects the monitor.heartbeat sink and registers the deadman.
+
+    Both are the monitor-side halves of the ALP-941 watchdog pattern: the
+    supervisor's watchdog loop beats ``monitor.heartbeat`` for the external
+    watchdog to probe, and the faulthandler deadman self-captures the blocking
+    frame on the next freeze.
+    """
+    supervisor = _paper_boot["supervisor"]
+    heartbeat = supervisor._heartbeat
+    assert heartbeat is not None, "_run_daemon did not inject a heartbeat sink"
+    expected_path = _paper_boot["tmp_path"] / "AlphaMind" / "logs" / "monitor.heartbeat"
+    assert heartbeat._path == expected_path
+    assert "faulthandler_deadman" in supervisor.task_names()
+
+
+def test_parse_args_routes_watchdog_subcommand() -> None:
+    args = _parse_args(["watchdog"])
+    assert args.subcommand == "watchdog"
+
+
+def test_run_and_watchdog_log_to_distinct_files() -> None:
+    """The monitor and its watchdog are separate processes — no shared rotating
+    file (ALP-868 WinError 32 rule), and neither collides with the safety-core
+    services' files."""
+    run_log = _log_filename_for_subcommand("run")
+    watchdog_log = _log_filename_for_subcommand("watchdog")
+
+    assert run_log == "monitor.log"
+    assert watchdog_log == "monitor_watchdog.log"
+    assert len({run_log, watchdog_log, "safety_core.log", "safety_core_watchdog.log"}) == 4
+
+
+class _ScriptedProbe:
+    """Heartbeat probe returning a scripted age per watchdog tick."""
+
+    def __init__(self, ages: list[float | None]) -> None:
+        self._ages = list(ages)
+
+    def age(self, *, now: float) -> float | None:
+        del now
+        return self._ages.pop(0) if self._ages else None
+
+
+class _RecordingController:
+    def __init__(self) -> None:
+        self.restart_calls = 0
+
+    def restart(self) -> None:
+        self.restart_calls += 1
+
+
+async def test_watchdog_daemon_restarts_only_past_the_config_stall_bound() -> None:
+    """The watchdog daemon's bound is monitor_watchdog_tick_seconds x multiplier.
+
+    With the shipped config (15s x 10 = 150s): an absent heartbeat (None) is
+    startup grace, an age inside the bound is healthy, and only an age past the
+    bound restarts — one restart across the three scripted ticks.
+    """
+    from collections.abc import AsyncIterator
+
+    probe = _ScriptedProbe(ages=[None, 149.0, 151.0])
+    controller = _RecordingController()
+
+    async def _three_ticks() -> AsyncIterator[None]:
+        for _ in range(3):
+            yield
+
+    clock = iter([1000.0, 2000.0, 3000.0])
+
+    await _run_watchdog_daemon(
+        probe=probe,
+        controller=controller,
+        loop=lambda: _three_ticks(),
+        now=lambda: next(clock),
+    )
+
+    assert controller.restart_calls == 1
 
 
 # ---------------------------------------------------------------------------
