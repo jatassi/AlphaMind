@@ -269,7 +269,12 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # Pin updated 2026-06-07 (FeedbackLoopConfig added, ALP-872): config/feedback.yaml
     # was registered in the config models and threaded into ResolvedConfig.feedback,
     # adding a new canonical-bytes block (the feedback-loop sample-size thresholds).
-    expected = "f17df9fc7e70d1f1ab937bc7ff9a273110b9ef754ab7c252836e721b7467b3ea"
+    # Pin updated 2026-06-09 (monitor out-of-process watchdog tick, ALP-941): ALP-941
+    # added monitor_watchdog_tick_seconds: 15.0 to config/continuous_monitor.yaml and
+    # ContinuousMonitorConfig (the dedicated monitor watchdog's probe cadence; stall
+    # bound = tick x watchdog_cadence_multiplier), shifting the resolved-config
+    # canonical bytes.
+    expected = "5c2aab97a711674c0e4ddc302910df06ddb2508c1353586710e4fd198bcb5999"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."
