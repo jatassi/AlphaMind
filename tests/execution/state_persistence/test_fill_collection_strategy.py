@@ -40,6 +40,7 @@ from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
 )
+from alphamind.persistence.session import begin_write_immediate
 from alphamind.portfolio_state.events.activity_log import EventType
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
@@ -732,6 +733,7 @@ async def _append_fill(
     fill: FillRecord,
 ) -> None:
     async with factory() as sess:
+        await begin_write_immediate(sess)
         await append_fill_record(sess, fill)
         await sess.commit()
 
@@ -773,6 +775,9 @@ async def _open_handle(
         ),
     )
     handle = await ctx.__aenter__()
+    # Mirror the orchestrator's write units (ALP-824/ALP-942): the paths under
+    # test append through the guarded helpers, which require BEGIN IMMEDIATE.
+    await begin_write_immediate(handle.session)
     return ctx, handle
 
 

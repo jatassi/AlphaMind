@@ -44,6 +44,7 @@ from alphamind.execution.write_paths.fill_persistence import (
 )
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
+    begin_write_immediate,
     make_async_engine,
     make_async_session_factory,
     make_engine,
@@ -495,6 +496,7 @@ class TestAppendFillRecord:
         _, factory = async_engine_and_factory
         record = _fill_record()
         async with factory() as session:
+            await begin_write_immediate(session)
             await append_fill_record(session, record)
             await session.commit()
             rows = (await session.execute(select(FillRecordRow))).scalars().all()
@@ -510,9 +512,11 @@ class TestAppendFillRecord:
         _, factory = async_engine_and_factory
         record = _fill_record()
         async with factory() as session:
+            await begin_write_immediate(session)
             await append_fill_record(session, record)
             await session.commit()
         async with factory() as session:
+            await begin_write_immediate(session)
             await append_fill_record(session, record)
             await session.commit()
         async with factory() as session:
@@ -531,9 +535,11 @@ class TestAppendFillRecord:
             persistence_timestamp=PERSISTED_AT + timedelta(hours=1),
         )
         async with factory() as session:
+            await begin_write_immediate(session)
             await append_fill_record(session, first)
             await session.commit()
         async with factory() as session:
+            await begin_write_immediate(session)
             await append_fill_record(session, second)
             await session.commit()
         async with factory() as session:
@@ -548,6 +554,7 @@ class TestAppendFillRecord:
         _, factory = async_engine_and_factory
         record = _fill_record(order_id=OrderId("ord-missing"))
         async with factory() as session:
+            await begin_write_immediate(session)
             with pytest.raises(IntegrityError):
                 await append_fill_record(session, record)
                 await session.commit()

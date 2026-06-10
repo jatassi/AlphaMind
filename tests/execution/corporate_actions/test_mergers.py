@@ -31,6 +31,7 @@ from alphamind._kernel.regime import RiskZone
 from alphamind.execution.broker_adapter.queries import PositionSnapshot
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
+    begin_write_immediate,
     make_async_engine,
     make_async_session_factory,
     make_engine,
@@ -616,6 +617,9 @@ async def _open_handle(
         record=_make_invocation_record(invocation_id=_INV_ID + "-direct"),
     )
     handle = await ctx.__aenter__()
+    # Mirror the orchestrator's write units (ALP-824/ALP-942): the paths under
+    # test append through the guarded helpers, which require BEGIN IMMEDIATE.
+    await begin_write_immediate(handle.session)
     return ctx, handle
 
 

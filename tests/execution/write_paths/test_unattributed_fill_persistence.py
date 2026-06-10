@@ -24,6 +24,7 @@ from alphamind.execution.write_paths.unattributed_fill_persistence import (
 )
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
+    begin_write_immediate,
     make_async_engine,
     make_async_session_factory,
     make_engine,
@@ -77,6 +78,7 @@ async def factory(
 class TestAppendUnattributedFill:
     async def test_inserts_new_row(self, factory: async_sessionmaker[AsyncSession]) -> None:
         async with factory() as session:
+            await begin_write_immediate(session)
             await append_unattributed_fill(session, _unattributed_fill())
             await session.commit()
             rows = (await session.execute(select(UnattributedFillRow))).scalars().all()
@@ -89,9 +91,11 @@ class TestAppendUnattributedFill:
         self, factory: async_sessionmaker[AsyncSession]
     ) -> None:
         async with factory() as session:
+            await begin_write_immediate(session)
             await append_unattributed_fill(session, _unattributed_fill())
             await session.commit()
         async with factory() as session:
+            await begin_write_immediate(session)
             # Same key, different payload — must NOT overwrite or duplicate.
             await append_unattributed_fill(
                 session, _unattributed_fill(raw_report_json='{"event":"changed"}')
@@ -108,10 +112,12 @@ class TestAppendUnattributedFill:
         """The insert reports whether a NEW row was written so the caller can
         fire its one-time alert only on a genuine first park (ALP-763 #3)."""
         async with factory() as session:
+            await begin_write_immediate(session)
             inserted = await append_unattributed_fill(session, _unattributed_fill())
             await session.commit()
         assert inserted is True
         async with factory() as session:
+            await begin_write_immediate(session)
             # Re-deliver the same key — ON CONFLICT DO NOTHING, no new row.
             reinserted = await append_unattributed_fill(session, _unattributed_fill())
             await session.commit()
@@ -131,6 +137,7 @@ class TestListUnattributedFills:
             first_seen_at=datetime(2026, 6, 1, 14, 0, 0, tzinfo=UTC),
         )
         async with factory() as session:
+            await begin_write_immediate(session)
             await append_unattributed_fill(session, later)
             await append_unattributed_fill(session, earlier)
             await session.commit()
@@ -143,6 +150,7 @@ class TestListUnattributedFills:
 class TestDeleteUnattributedFill:
     async def test_removes_matching_row(self, factory: async_sessionmaker[AsyncSession]) -> None:
         async with factory() as session:
+            await begin_write_immediate(session)
             await append_unattributed_fill(session, _unattributed_fill())
             await session.commit()
         async with factory() as session:
@@ -156,6 +164,7 @@ class TestDeleteUnattributedFill:
 class TestMarkAlerted:
     async def test_sets_alerted_flag(self, factory: async_sessionmaker[AsyncSession]) -> None:
         async with factory() as session:
+            await begin_write_immediate(session)
             await append_unattributed_fill(session, _unattributed_fill())
             await session.commit()
         async with factory() as session:
@@ -172,6 +181,7 @@ class TestTouchRetry:
     ) -> None:
         observed = datetime(2026, 6, 1, 16, 0, 0, tzinfo=UTC)
         async with factory() as session:
+            await begin_write_immediate(session)
             await append_unattributed_fill(session, _unattributed_fill())
             await session.commit()
         async with factory() as session:

@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from alphamind._kernel.money import signed_money
 from alphamind.execution.account_activities.poll import poll_account_activities
 from alphamind.execution.broker_adapter.queries import ActivitySnapshot
+from alphamind.persistence.session import begin_write_immediate
 from alphamind.state.invocation_context.context import InvocationContext, InvocationHandle
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.positions import PositionRow
@@ -46,6 +47,8 @@ async def _open_handle_with_id(
         record=make_invocation_record(invocation_id=invocation_id),
     )
     handle = await ctx.__aenter__()
+    # ALP-942 — the poll appends through the guarded helpers (IMMEDIATE only).
+    await begin_write_immediate(handle.session)
     return ctx, handle
 
 

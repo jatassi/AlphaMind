@@ -24,7 +24,7 @@ from collections.abc import Awaitable, Callable
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.persistence.retry import run_with_sqlite_busy_retry
-from alphamind.persistence.session import begin_write_immediate
+from alphamind.persistence.session import _SQLITE_BEGIN_MODE_OPTION, begin_write_immediate
 
 
 async def run_immediate_write_unit[T](
@@ -61,4 +61,30 @@ async def run_immediate_write_unit[T](
     return await run_with_sqlite_busy_retry(_attempt, attempts=attempts)
 
 
-__all__ = ["run_immediate_write_unit"]
+async def require_immediate_write_unit(session: AsyncSession, *, helper: str) -> None:
+    """Raise unless *session*'s active connection began ``BEGIN IMMEDIATE``.
+
+    The runtime tripwire of the write discipline (ALP-942 F): the shared
+    append helpers call this first, so any future write path that reaches them
+    on a deferred transaction fails loudly in its first test run instead of
+    shipping a latent ``SQLITE_BUSY_SNAPSHOT`` race. *helper* names the caller
+    in the error message.
+    """
+    conn = await session.connection()
+    sync_conn = conn.sync_connection
+    mode = (
+        sync_conn.get_execution_options().get(_SQLITE_BEGIN_MODE_OPTION)
+        if sync_conn is not None
+        else None
+    )
+    if mode != "IMMEDIATE":
+        msg = (
+            f"{helper} requires a BEGIN IMMEDIATE write transaction "
+            f"(got begin mode {mode!r}); run the transaction through "
+            "run_immediate_write_unit, or begin_write_immediate on a fresh "
+            "session (ALP-942)."
+        )
+        raise RuntimeError(msg)
+
+
+__all__ = ["require_immediate_write_unit", "run_immediate_write_unit"]

@@ -21,6 +21,7 @@ from sqlalchemy import CursorResult, delete, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from alphamind.persistence.write_unit import require_immediate_write_unit
 from alphamind.state.records import UnattributedFill
 from alphamind.state.tables.unattributed_fills import UnattributedFillRow
 from alphamind.state.tables.unattributed_fills_codec import record_to_row, row_to_record
@@ -33,7 +34,10 @@ async def append_unattributed_fill(session: AsyncSession, record: UnattributedFi
     ``ON CONFLICT DO NOTHING`` path collapsed a re-delivered fill onto an
     existing row. The caller uses this to fire the one-time quarantine alert
     only on a genuine first park (a re-park must not re-alert).
+
+    The session's transaction must have begun ``IMMEDIATE`` (ALP-942 F).
     """
+    await require_immediate_write_unit(session, helper="append_unattributed_fill")
     row = record_to_row(record)
     values = {col.name: getattr(row, col.name) for col in UnattributedFillRow.__table__.columns}
     stmt = sqlite_insert(UnattributedFillRow).values(**values)

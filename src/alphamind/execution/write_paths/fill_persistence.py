@@ -22,6 +22,7 @@ from __future__ import annotations
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from alphamind.persistence.write_unit import require_immediate_write_unit
 from alphamind.state.records import (
     FillProcessingStatus,
     FillRecord,
@@ -39,7 +40,10 @@ async def append_fill_record(session: AsyncSession, fill: FillRecord) -> None:
     accidentally trying to short-circuit fill collection by writing a pre-processed
     fill on the monitor path. The transition to ``processed`` belongs to
     fill collection and must run inside the integration transaction.
+
+    The session's transaction must have begun ``IMMEDIATE`` (ALP-942 F).
     """
+    await require_immediate_write_unit(session, helper="append_fill_record")
     if fill.processing_status != FillProcessingStatus.UNPROCESSED:
         msg = (
             "append_fill_record only persists unprocessed fills; "

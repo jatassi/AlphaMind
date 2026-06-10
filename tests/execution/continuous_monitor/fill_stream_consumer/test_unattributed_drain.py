@@ -54,6 +54,7 @@ from alphamind.execution.write_paths.unattributed_fill_persistence import (
 )
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
+    begin_write_immediate,
     make_async_engine,
     make_async_session_factory,
     make_engine,
@@ -777,6 +778,7 @@ class TestFillCollectionIntegrationOnDrain:
             live_execution_estimate=None,
         )
         async with factory() as sess:
+            await begin_write_immediate(sess)
             await append_fill_record(sess, fill)
             await sess.commit()
 
@@ -860,6 +862,7 @@ class TestFillCollectionIntegrationOnDrain:
             alerted=True,
         )
         async with factory() as sess:
+            await begin_write_immediate(sess)
             await append_unattributed_fill(sess, unattributed)
             await sess.commit()
 
@@ -936,6 +939,7 @@ class TestEscalation:
     ) -> None:
         fill = _park_out_of_band_fill(client_order_id="oob-1", first_seen_at=_SEEN_AT_771)
         async with session_factory() as sess:
+            await begin_write_immediate(sess)
             await append_unattributed_fill(sess, fill)
             await sess.commit()
 
@@ -974,6 +978,7 @@ class TestEscalation:
     ) -> None:
         fill = _park_out_of_band_fill(client_order_id="oob-2", first_seen_at=_SEEN_AT_771)
         async with session_factory() as sess:
+            await begin_write_immediate(sess)
             await append_unattributed_fill(sess, fill)
             await sess.commit()
 
@@ -999,6 +1004,7 @@ class TestEscalation:
         """No escalation_ttl_seconds → fills accumulate retries indefinitely without escalating."""
         fill = _park_out_of_band_fill(client_order_id="oob-3", first_seen_at=_SEEN_AT_771)
         async with session_factory() as sess:
+            await begin_write_immediate(sess)
             await append_unattributed_fill(sess, fill)
             await sess.commit()
 
