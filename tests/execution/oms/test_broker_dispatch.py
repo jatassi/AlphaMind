@@ -1134,6 +1134,37 @@ async def test_close_equity_flat_at_broker_is_rejected_before_any_rpc() -> None:
 
 
 @pytest.mark.asyncio
+async def test_close_equity_drift_read_failure_is_gateway_failure_not_blind_close() -> None:
+    """ALP-943 — the drift-guard read shares the submit calls' transient-retry
+    discipline. When it exhausts the window the close is NOT submitted blind:
+    the dispatch returns ``GatewaySubmissionFailed`` before any leg-cancel or
+    order-submit RPC, surfacing through the callers' existing rejection path."""
+    import httpx
+
+    class _UnreachableQueries:
+        def get_open_position(self, symbol: str) -> PositionSnapshot | None:
+            raise httpx.ConnectError("network down")
+
+    client = _HeldForOrdersClient(protective_leg_ids=("alp-tp-1",))
+
+    outcome = await dispatch_command_to_broker(
+        _close_command("POS-MRVL-001"),
+        client=cast(Any, client),
+        queries=cast(Any, _UnreachableQueries()),
+        execution=_execution_config_with_window(1),
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+        position_symbol="MRVL",
+        position_qty=8.0,
+        position_side="long",
+        position_asset_type="equity",
+        close_protective_leg_alpaca_order_ids=(AlpacaOrderId("alp-tp-1"),),
+    )
+
+    assert isinstance(outcome, GatewaySubmissionFailed)
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
 async def test_close_equity_side_flipped_at_broker_is_rejected() -> None:
     """ALP-943 — the live broker position's side contradicts the projection
     (e.g. the projected long already exited and a short now exists). The CLOSE

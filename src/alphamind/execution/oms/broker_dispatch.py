@@ -98,7 +98,7 @@ from alphamind.execution.broker_adapter.order_options import (
 )
 from alphamind.execution.broker_adapter.queries import PositionSnapshot
 from alphamind.execution.broker_adapter.recovery import FILL_BEARING_STATUSES
-from alphamind.execution.broker_adapter.retry import bounded_broker_call
+from alphamind.execution.broker_adapter.retry import bounded_broker_call, submit_with_retry
 
 __all__ = [
     "BrokerDispatchResult",
@@ -518,10 +518,19 @@ async def _close_equity(  # noqa: PLR0913 — close threads every broker-transla
     # Re-check the live broker position BEFORE any leg-cancel RPC: a flat or
     # side-flipped position rejects (a "close" would OPEN a new position —
     # the 2026-06-09 -4 MRVL naked short); a shrunken one clamps the quantity.
+    # The read shares the submit calls' transient-retry discipline; if the
+    # retry window exhausts, the close is NOT submitted blind — the gateway
+    # failure surfaces through the callers' existing rejection handling and
+    # the PM / monitor retries with fresh state.
     requested_qty = position_qty if command.quantity == "all" else float(command.quantity)
-    live = await bounded_broker_call(lambda: queries.get_open_position(position_symbol))
+    live_outcome = await submit_with_retry(
+        lambda: bounded_broker_call(lambda: queries.get_open_position(position_symbol)),
+        window_seconds=execution.submission_retry_window_seconds,
+    )
+    if isinstance(live_outcome, GatewaySubmissionFailed):
+        return live_outcome
     qty = _checked_close_quantity(
-        live,
+        live_outcome.payload,
         position_symbol=position_symbol,
         position_side=position_side,
         requested_qty=requested_qty,
