@@ -62,6 +62,9 @@ from alphamind.persistence.session import (
 )
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.orders import OrderRow
+from tests.execution.continuous_monitor.fill_stream_consumer._flaky_commit import (
+    flaky_commit_factory,
+)
 from tests.state._fk_substrate import (
     seed_position_cluster,
     stub_invocation_row,
@@ -848,32 +851,6 @@ class TestRecoveryGapReconciliation:
 # ---------------------------------------------------------------------------
 
 
-def _flaky_commit_factory(
-    inner: async_sessionmaker[AsyncSession], *, failures: int
-) -> tuple[async_sessionmaker[AsyncSession], dict[str, int]]:
-    """Session factory whose first *failures* commits raise a transient lock
-    error (the DB is a sanctioned boundary; the injection sits on its seam)."""
-    import sqlite3
-
-    from sqlalchemy.exc import OperationalError
-
-    counters = {"commits": 0, "failures_left": failures}
-
-    class _FlakyCommitSession(AsyncSession):
-        async def commit(self) -> None:
-            if counters["failures_left"] > 0:
-                counters["failures_left"] -= 1
-                await self.rollback()
-                raise OperationalError("COMMIT", {}, sqlite3.OperationalError("database is locked"))
-            counters["commits"] += 1
-            await super().commit()
-
-    flaky: async_sessionmaker[AsyncSession] = async_sessionmaker(
-        bind=inner.kw["bind"], class_=_FlakyCommitSession, expire_on_commit=False
-    )
-    return flaky, counters
-
-
 def _stub_estimate() -> Any:
     from alphamind._kernel.money import money, price
     from alphamind.portfolio_state.records.positions import LiveExecutionEstimate
@@ -916,7 +893,7 @@ class TestImmediateWriteUnitDiscipline:
                 )
             )
             await session.commit()
-        flaky, counters = _flaky_commit_factory(session_factory, failures=1)
+        flaky, counters = flaky_commit_factory(session_factory, failures=1)
         report = _fill_report(client_order_id=_PM_LINKED_COMMAND_ID, order_id=uuid4())
 
         await persist_fill_report(report, session_factory=flaky, enrichment_callable=None)
@@ -934,7 +911,7 @@ class TestImmediateWriteUnitDiscipline:
         """The exact production crash path — ``_sync_terminal_status_if_any``'s
         read-then-append — survives a transient lock error instead of
         propagating it (the 17:00:05Z monitor crash of 2026-06-09)."""
-        flaky, counters = _flaky_commit_factory(session_factory, failures=1)
+        flaky, counters = flaky_commit_factory(session_factory, failures=1)
         report = _fill_report(
             client_order_id=_PM_LINKED_COMMAND_ID,
             event="canceled",

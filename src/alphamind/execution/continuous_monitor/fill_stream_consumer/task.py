@@ -24,6 +24,7 @@ from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
@@ -42,6 +43,7 @@ from alphamind.execution.continuous_monitor.fill_stream_consumer.unattributed_dr
     drain_unattributed_fills,
 )
 from alphamind.execution.continuous_monitor.session import MonitorSession
+from alphamind.persistence.retry import is_transient_sqlite_lock_error
 from alphamind.state.tables.fill_records import FillRecordRow
 
 log = logging.getLogger(__name__)
@@ -137,14 +139,22 @@ async def run_fill_stream_consumer(  # noqa: PLR0913 — run-forever orchestrato
             log.exception("unattributed-fill drain failed; continuing")
 
         # Startup + post-disconnect recovery: replay missed events from REST.
-        since = await _latest_fill_timestamp(session_factory)
-        if since is not None:
-            await _replay_recovery(
-                queries,
-                since=since,
-                session_factory=session_factory,
-                enrichment_callable=enrichment_callable,
-            )
+        # Same tolerance as the drain above (ALP-942 Scope C): a recovery /
+        # persist error — e.g. a transient SQLite lock that outlived the write
+        # unit's retry budget — must not unwind the supervisor TaskGroup (the
+        # 2026-06-09 17:00:05Z monitor crash). The periodic backfill sweep is
+        # the designed backstop (ALP-763), so log and continue the cycle.
+        try:
+            since = await _latest_fill_timestamp(session_factory)
+            if since is not None:
+                await _replay_recovery(
+                    queries,
+                    since=since,
+                    session_factory=session_factory,
+                    enrichment_callable=enrichment_callable,
+                )
+        except Exception:
+            log.exception("startup/reconnect replay recovery failed; continuing")
 
         try:
             await _consume_stream(
@@ -237,11 +247,27 @@ async def _consume_stream(
     )
     try:
         async for report in gen:
-            await persist_fill_report(
-                report,
-                session_factory=session_factory,
-                enrichment_callable=enrichment_callable,
-            )
+            try:
+                await persist_fill_report(
+                    report,
+                    session_factory=session_factory,
+                    enrichment_callable=enrichment_callable,
+                )
+            except OperationalError as exc:
+                # ALP-942 Scope C — a transient SQLite lock that outlived the
+                # write unit's retry budget degrades to a dropped report (the
+                # REST recovery on the next reconnect + the periodic backfill
+                # sweep re-capture it) instead of tearing down the stream.
+                # Anything non-transient keeps propagating to the reconnect
+                # supervisor.
+                if not is_transient_sqlite_lock_error(exc):
+                    raise
+                log.exception(
+                    "transient SQLite lock outlived persist retries for report "
+                    "client_order_id=%s; dropping to next report — re-captured "
+                    "by REST recovery / backfill sweep",
+                    report.client_order_id,
+                )
     finally:
         await gen.aclose()
 
