@@ -33,7 +33,7 @@ _DEFAULT_ATTEMPTS = 5
 _DEFAULT_BASE_BACKOFF_S = 0.05
 
 
-def _is_transient_lock_error(exc: OperationalError) -> bool:
+def is_transient_sqlite_lock_error(exc: OperationalError) -> bool:
     """Whether an ``OperationalError`` is a transient SQLite lock worth retrying.
 
     Checks the wrapped DBAPI error's ``sqlite_errorname`` (the reliable
@@ -82,7 +82,7 @@ async def run_with_sqlite_busy_retry[T](
         try:
             return await operation()
         except OperationalError as exc:
-            if not _is_transient_lock_error(exc):
+            if not is_transient_sqlite_lock_error(exc):
                 raise
             backoff_s = base_backoff_s * (2**attempt)
             log.warning(
