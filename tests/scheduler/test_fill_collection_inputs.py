@@ -124,6 +124,11 @@ class _StubQueries:
     def get_positions(self) -> tuple[PositionSnapshot, ...]:
         return self._positions
 
+    def get_open_position(self, symbol: str) -> PositionSnapshot | None:
+        # gather_fill_collection_inputs never consults the single-symbol read;
+        # present to satisfy the AccountStateQueriesP protocol surface (ALP-943).
+        return next((p for p in self._positions if p.symbol == symbol), None)
+
     async def get_orders(
         self,
         *,
@@ -722,6 +727,10 @@ class TestGatherFillCollectionInputs:
 
             def get_positions(self) -> tuple[PositionSnapshot, ...]:
                 return ()
+
+            def get_open_position(self, symbol: str) -> PositionSnapshot | None:
+                # Present only for the AccountStateQueriesP surface (ALP-943).
+                return None
 
             async def get_orders(
                 self,

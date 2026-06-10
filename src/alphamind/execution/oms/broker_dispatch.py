@@ -80,7 +80,10 @@ from alphamind.execution.broker_adapter import (
     submit_options_open,
     submit_replace,
 )
-from alphamind.execution.broker_adapter.errors import classify_alpaca_error
+from alphamind.execution.broker_adapter.errors import (
+    PermanentRejection,
+    classify_alpaca_error,
+)
 from alphamind.execution.broker_adapter.order_modify import (
     AssetClass as ReplaceAssetClass,
 )
@@ -93,6 +96,8 @@ from alphamind.execution.broker_adapter.order_modify import (
 from alphamind.execution.broker_adapter.order_options import (
     PermanentRejectionError,
 )
+from alphamind.execution.broker_adapter.queries import PositionSnapshot
+from alphamind.execution.broker_adapter.retry import bounded_broker_call
 
 __all__ = [
     "BrokerDispatchResult",
@@ -181,13 +186,11 @@ async def dispatch_command_to_broker(  # noqa: PLR0913 — caller threads every 
     portfolio-state context for CLOSE / ADD (no embedded instrument on the
     canonical command) and order-record context for ADJUST / CANCEL.
 
-    The ``queries`` parameter is part of the runner-facing signature so the
-    caller (broker-routing coordinated swap, story 03e) supplies one canonical
-    ``AccountStateQueries`` bundle per invocation; the dispatcher does not
-    consult it directly at this story.
+    The caller (broker-routing coordinated swap, story 03e) supplies one
+    canonical ``AccountStateQueries`` bundle per invocation; the dispatcher
+    consults it on the equity CLOSE path, whose ALP-943 drift guard re-checks
+    the live broker position before any order reaches the wire.
     """
-    del queries  # accepted for runner-signature parity; consulted by callers/wiring downstream.
-
     if isinstance(command, OpenCommand):
         return await _dispatch_open(
             command,
@@ -212,6 +215,7 @@ async def dispatch_command_to_broker(  # noqa: PLR0913 — caller threads every 
         return await _dispatch_close(
             command,
             client=client,
+            queries=queries,
             execution=execution,
             client_order_id=client_order_id,
             position_asset_type=position_asset_type,
@@ -439,6 +443,7 @@ async def _dispatch_close(  # noqa: PLR0913 — close threads every per-asset-ty
     command: CloseCommand,
     *,
     client: TradingClient,
+    queries: AccountStateQueries,
     execution: ExecutionConfig,
     client_order_id: ClientOrderId,
     position_asset_type: Literal["equity", "option", "strategy"] | None,
@@ -457,6 +462,7 @@ async def _dispatch_close(  # noqa: PLR0913 — close threads every per-asset-ty
         return await _close_equity(
             command,
             client=client,
+            queries=queries,
             execution=execution,
             client_order_id=client_order_id,
             position_symbol=position_symbol,
@@ -485,10 +491,11 @@ async def _dispatch_close(  # noqa: PLR0913 — close threads every per-asset-ty
     )
 
 
-async def _close_equity(
+async def _close_equity(  # noqa: PLR0913 — close threads every broker-translator parameter plus the drift-guard query surface.
     command: CloseCommand,
     *,
     client: TradingClient,
+    queries: AccountStateQueries,
     execution: ExecutionConfig,
     client_order_id: ClientOrderId,
     position_symbol: str | None,
@@ -502,14 +509,31 @@ async def _close_equity(
         raise _missing("position_qty", command_kind="CLOSE equity")
     if position_side is None:
         raise _missing("position_side", command_kind="CLOSE equity")
+    symbol = position_symbol
+
+    # ALP-943 — execution-time drift guard. The local positions projection is
+    # frozen between fill-collection phases, while the monitor flattens
+    # positions between them by design (re-protection stops, ALP-938), so the
+    # projected symbol/qty/side may be stale by the time this dispatch runs.
+    # Re-check the live broker position BEFORE any leg-cancel RPC: a flat or
+    # side-flipped position rejects (a "close" would OPEN a new position —
+    # the 2026-06-09 -4 MRVL naked short); a shrunken one clamps the quantity.
+    requested_qty = position_qty if command.quantity == "all" else float(command.quantity)
+    live = await bounded_broker_call(lambda: queries.get_open_position(symbol))
+    qty = _checked_close_quantity(
+        live,
+        position_symbol=symbol,
+        position_side=position_side,
+        requested_qty=requested_qty,
+    )
 
     # ALP-937 — cancel the native bracket's broker-enforced protective legs
     # BEFORE the close sell. The resting OCO legs reserve 100% of the position's
     # shares (``held_for_orders``), so without this the SIMPLE sell sees
     # ``available: 0`` and Alpaca rejects it (``other_permanent`` / 403). Each
-    # cancel is best-effort: an already-terminal leg (filled / cancelled OCO
-    # sibling) frees its shares regardless. Monitor-enforced legs (no broker id)
-    # are never threaded here.
+    # cancel is best-effort for an already-CANCELED / unknown leg, but a leg the
+    # broker reports FILLED aborts the close (ALP-943 — the position exited).
+    # Monitor-enforced legs (no broker id) are never threaded here.
     protection_torn_down = await _cancel_protective_legs(
         client=client,
         execution=execution,
@@ -528,17 +552,73 @@ async def _close_equity(
             client=client,
             execution=execution,
             client_order_id=client_order_id,
-            symbol=position_symbol,
-            position_qty=position_qty,
+            symbol=symbol,
+            qty=qty,
             position_side=position_side,
         )
     except Exception:
         if protection_torn_down:
-            _alert_close_rejected_after_cancel(command, position_symbol=position_symbol)
+            _alert_close_rejected_after_cancel(command, position_symbol=symbol)
         raise
     if protection_torn_down and isinstance(outcome, GatewaySubmissionFailed):
-        _alert_close_rejected_after_cancel(command, position_symbol=position_symbol)
+        _alert_close_rejected_after_cancel(command, position_symbol=symbol)
     return _wrap_equity(outcome)
+
+
+# Float-dust tolerance for the live-vs-requested close-quantity comparison: a
+# live qty within 1e-9 of the requested qty is the same position, not drift.
+_CLOSE_QTY_EPSILON = 1e-9
+
+
+def _position_state_drift(message: str) -> PermanentRejectionError:
+    """Build the ALP-943 local drift rejection (``http_status=0`` — no HTTP exchange)."""
+    return PermanentRejectionError(
+        PermanentRejection(
+            code="position_state_drift",
+            http_status=0,
+            alpaca_message=message,
+        )
+    )
+
+
+def _checked_close_quantity(
+    live: PositionSnapshot | None,
+    *,
+    position_symbol: str,
+    position_side: Literal["long", "short"],
+    requested_qty: float,
+) -> float:
+    """Validate the projected equity CLOSE against the live broker position (ALP-943).
+
+    Returns the final close quantity. A flat broker (no live position) or a live
+    side contradicting the projection raises the ``position_state_drift``
+    rejection — submitting the "close" would open a NEW position in the opposite
+    direction (with ``short_selling_enabled`` Alpaca executes a sell on a flat
+    position as ``sell_to_open``). A live absolute quantity below the requested
+    quantity clamps the close to what actually exists at the broker.
+    """
+    if live is None or live.qty == 0:
+        raise _position_state_drift(
+            f"equity CLOSE drift guard: {position_symbol} expected {position_side} "
+            f"{requested_qty}, live broker position is flat"
+        )
+    live_side: Literal["long", "short"] = "long" if live.qty > 0 else "short"
+    if live_side != position_side:
+        raise _position_state_drift(
+            f"equity CLOSE drift guard: {position_symbol} expected {position_side} "
+            f"{requested_qty}, live broker position is {live_side} qty {live.qty}"
+        )
+    live_abs = abs(live.qty)
+    if live_abs < requested_qty - _CLOSE_QTY_EPSILON:
+        logger.warning(
+            "broker_dispatch: equity CLOSE of %s clamped from %s to live broker qty %s "
+            "(position shrank between snapshot and dispatch)",
+            position_symbol,
+            requested_qty,
+            live_abs,
+        )
+        return live_abs
+    return requested_qty
 
 
 async def _cancel_protective_legs(
@@ -547,20 +627,23 @@ async def _cancel_protective_legs(
     execution: ExecutionConfig,
     leg_alpaca_order_ids: Sequence[AlpacaOrderId] | None,
 ) -> bool:
-    """Best-effort cancel each broker-enforced protective leg ahead of a CLOSE.
+    """Cancel each broker-enforced protective leg ahead of a CLOSE.
 
     Returns whether at least one cancel was CONFIRMED accepted by the broker —
     i.e. live protection was actively torn down (the ALP-937 (F) naked-position
     signal). Two cases that do NOT count, because neither establishes that we
     removed live protection:
 
-    * **Already-terminal leg** — ``submit_cancel`` re-raises the raw alpaca-py
-      ``APIError`` on a permanent 404 (not-found) / 422 (already-filled), NOT a
-      ``PermanentRejectionError`` (it wraps the equity ``_is_transient`` classifier
-      that re-raises permanent errors). The OCO sibling fired or the leg already
-      filled, so the position likely already exited; its shares are already free
-      and the close proceeds. A genuinely non-broker exception re-raises so a real
-      fault is never masked.
+    * **Permanently-rejected cancel** — ``submit_cancel`` re-raises the raw
+      alpaca-py ``APIError`` on a permanent 404 (not-found) / 422
+      (already-terminal), NOT a ``PermanentRejectionError`` (it wraps the equity
+      ``_is_transient`` classifier that re-raises permanent errors). The leg is
+      already terminal — but WHICH terminal state matters (ALP-943): a FILLED
+      leg is broker-confirmed proof the position exited, so the close aborts via
+      :func:`_resolve_rejected_leg_state` rather than selling into a flat
+      position; a canceled / expired / unknown leg is benign and the close
+      proceeds. A genuinely non-broker exception re-raises so a real fault is
+      never masked.
     * **Gateway-failed cancel** — unconfirmed (the leg may still rest and hold
       shares); the close sell itself surfaces the real problem if so.
     """
@@ -577,16 +660,10 @@ async def _cancel_protective_legs(
             rejection = classify_alpaca_error(exc)
             if rejection is None:
                 raise
-            # A permanent rejection on a cancel is realistically a 404 not-found /
-            # 422 already-filled — the leg is already terminal (OCO sibling fired /
-            # leg filled), so its shares are already free. Any other permanent code
-            # is likewise un-cancellable; proceed regardless and let the close sell
-            # surface the held-shares problem if the leg somehow still rests.
-            logger.info(
-                "broker_dispatch: protective leg %s permanently rejected at cancel (%s) — "
-                "assuming already terminal; proceeding with the close",
-                leg_alpaca_order_id,
-                rejection.code,
+            await _resolve_rejected_leg_state(
+                client=client,
+                leg_alpaca_order_id=leg_alpaca_order_id,
+                rejection_code=rejection.code,
             )
             continue
         if isinstance(cancel_outcome, GatewaySubmissionFailed):
@@ -599,6 +676,57 @@ async def _cancel_protective_legs(
             continue
         protection_torn_down = True
     return protection_torn_down
+
+
+# Broker order statuses proving a protective leg EXECUTED — the protected
+# position (or part of it) exited, so a close built from the projection must
+# not proceed (ALP-943).
+_LEG_EXECUTED_STATUSES = frozenset({"filled", "partially_filled"})
+
+
+async def _resolve_rejected_leg_state(
+    *,
+    client: TradingClient,
+    leg_alpaca_order_id: AlpacaOrderId,
+    rejection_code: str,
+) -> None:
+    """Resolve a permanently-rejected leg cancel into proceed-or-abort (ALP-943).
+
+    The cancel rejection alone is ambiguous: the leg may be canceled / expired
+    (benign — the OCO sibling fired or the leg lapsed; its shares are free) or
+    FILLED (the protective exit executed — the position is gone). Reading the
+    leg's actual broker state via ``get_order_by_id`` disambiguates without
+    parsing rejection message text. A filled / partially-filled leg raises the
+    ``position_state_drift`` rejection so the close never sells into the exited
+    position; every other resolved state — and an unresolvable leg (404 or a
+    failing lookup) — proceeds as before, with the close sell itself surfacing
+    any held-shares problem.
+    """
+    try:
+        order = await bounded_broker_call(lambda: client.get_order_by_id(leg_alpaca_order_id))
+    except Exception:
+        logger.info(
+            "broker_dispatch: protective leg %s permanently rejected at cancel (%s) and "
+            "its state could not be resolved — assuming already terminal; proceeding "
+            "with the close",
+            leg_alpaca_order_id,
+            rejection_code,
+        )
+        return
+    status = getattr(getattr(order, "status", None), "value", getattr(order, "status", None))
+    if status in _LEG_EXECUTED_STATUSES:
+        raise _position_state_drift(
+            f"equity CLOSE drift guard: protective leg {leg_alpaca_order_id} is "
+            f"{status} at the broker — the protective exit executed, so the "
+            "position this CLOSE targets no longer exists as projected"
+        )
+    logger.info(
+        "broker_dispatch: protective leg %s permanently rejected at cancel (%s); broker "
+        "reports it %s — benign already-terminal, proceeding with the close",
+        leg_alpaca_order_id,
+        rejection_code,
+        status,
+    )
 
 
 def _alert_close_rejected_after_cancel(command: CloseCommand, *, position_symbol: str) -> None:

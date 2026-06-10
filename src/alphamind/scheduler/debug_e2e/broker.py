@@ -168,6 +168,20 @@ class LogOnlyAccountStateQueries:
         log.info("[debug_e2e] LogOnlyAccountStateQueries.get_positions()")
         return tuple(_position_snapshot(p) for p in self._portfolio.positions)
 
+    def get_open_position(self, symbol: str) -> PositionSnapshot | None:
+        """Resolve *symbol* against the synthetic portfolio (404 → ``None`` analog).
+
+        The equity CLOSE dispatch's drift guard (ALP-943) consults this before
+        submitting; resolving from the same synthetic portfolio that seeded the
+        run keeps an offline debug-e2e CLOSE consistent with its own state.
+        """
+        log.info("[debug_e2e] LogOnlyAccountStateQueries.get_open_position(%s)", symbol)
+        for position in self._portfolio.positions:
+            snapshot = _position_snapshot(position)
+            if snapshot.symbol == symbol:
+                return snapshot
+        return None
+
     async def get_orders(
         self,
         *,

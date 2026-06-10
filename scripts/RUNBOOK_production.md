@@ -1315,6 +1315,33 @@ Two operational consequences to know:
   live (§ 8.9), watch the named position's P/L, and — if the next scheduled PM pass is far
   off — consider a manual invocation (§ 3) so the PM re-brackets or closes it.
 
+### 8.11 Equity CLOSE rejected `position_state_drift` (ALP-943)
+
+An equity CLOSE (PM-directed or engine-envelope) was rejected at dispatch by the
+live-position drift guard: between the invocation snapshot the decision was made
+on and the moment of execution, the broker position changed — it exited entirely
+(a monitor re-protection stop or any protective leg filled), flipped side, or
+shrank below the requested quantity. The guard re-checks the live broker
+position (and, on a rejected protective-leg cancel, the leg's actual broker
+state) before any close order reaches the wire; a flat or side-flipped position
+rejects the command, and a shrunken one submits a sell clamped to the live
+quantity instead. The submission log carries the rejection with
+`gateway_reason=position_state_drift` plus a one-line message naming the symbol,
+the expected side/qty, and what the broker actually reported, and the PM path
+records a `command_abandoned` activity entry.
+
+This is the guard working, not a fault. Without it, the sell executes against a
+flat position and Alpaca opens an unmanaged opposite-side position
+(`sell_to_open` — the 2026-06-09 −4 MRVL short).
+
+**Operator action: none.** The position is already flat or smaller than the
+projection believed — there is nothing left for the rejected CLOSE to do. The
+next invocation's fill collection integrates the missed exit fills and the PM
+re-evaluates with corrected state; protection for any surviving remainder is the
+monitor's auto re-protection job (ALP-938, § 8.10). Only investigate if the same
+symbol rejects across consecutive invocations — that means fill integration is
+not catching the projection up to broker reality.
+
 ---
 
 ## 9. Feedback loop — analytics CLIs, cadences, and review skills

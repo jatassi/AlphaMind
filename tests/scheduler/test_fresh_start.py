@@ -124,6 +124,11 @@ class _StubQueries:
     def get_positions(self) -> tuple[PositionSnapshot, ...]:
         return self._positions
 
+    def get_open_position(self, symbol: str) -> PositionSnapshot | None:
+        # The fresh-start preconditions never consult the single-symbol read;
+        # present to satisfy the AccountStateQueriesP protocol surface (ALP-943).
+        return next((p for p in self._positions if p.symbol == symbol), None)
+
     async def get_orders(
         self,
         *,

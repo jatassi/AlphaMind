@@ -23,6 +23,7 @@ PermanentRejectionCode = Literal[
     "underlying_halted",  # 403 options
     "invalid_legs",  # 422 mleg
     "asset_not_tradable",  # 403 / 422 generic
+    "position_state_drift",  # local dispatch-time guard, http_status=0 (ALP-943)
     "other_permanent",  # fallback for unmapped 4xx
 ]
 

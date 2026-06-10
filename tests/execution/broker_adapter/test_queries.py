@@ -390,6 +390,66 @@ class TestGetPositions:
 
 
 # ---------------------------------------------------------------------------
+# 3b. get_open_position (ALP-943)
+# ---------------------------------------------------------------------------
+
+
+class TestGetOpenPosition:
+    """Single-symbol live-position lookup — the equity CLOSE drift guard's read."""
+
+    def test_open_symbol_returns_position_snapshot(self) -> None:
+        from alphamind.execution.broker_adapter.queries import (
+            AccountStateQueries,
+            PositionSnapshot,
+        )
+
+        client = _fake_client()
+        client.get_open_position.return_value = _make_position("MRVL")
+
+        qs = AccountStateQueries(client)
+        result = qs.get_open_position("MRVL")
+
+        assert isinstance(result, PositionSnapshot)
+        assert result.symbol == "MRVL"
+        assert result.qty == 10.0
+        assert result.side == "long"
+        client.get_open_position.assert_called_once_with("MRVL")
+
+    def test_no_position_404_returns_none(self) -> None:
+        from alphamind.execution.broker_adapter.queries import AccountStateQueries
+
+        client = _fake_client()
+        client.get_open_position.side_effect = _make_404_api_error()
+
+        qs = AccountStateQueries(client)
+        assert qs.get_open_position("FLAT") is None
+
+    def test_non_404_error_propagates(self) -> None:
+        from alphamind.execution.broker_adapter.queries import AccountStateQueries
+
+        mock_request = httpx.Request("GET", "https://paper-api.alpaca.markets/v2/positions/X")
+        mock_response = httpx.Response(
+            500,
+            json={"code": 50000000, "message": "internal server error"},
+            request=mock_request,
+        )
+        http_error = httpx.HTTPStatusError(
+            "500 Internal Server Error", request=mock_request, response=mock_response
+        )
+        err_500 = APIError(  # type: ignore[no-untyped-call]
+            error={"code": 50000000, "message": "internal server error"},
+            http_error=http_error,
+        )
+
+        client = _fake_client()
+        client.get_open_position.side_effect = err_500
+
+        qs = AccountStateQueries(client)
+        with pytest.raises(APIError):
+            qs.get_open_position("BROKEN")
+
+
+# ---------------------------------------------------------------------------
 # 4. get_asset
 # ---------------------------------------------------------------------------
 

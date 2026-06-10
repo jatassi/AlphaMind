@@ -392,7 +392,19 @@ async def _dispatch_to_broker(
         await _abandon_if_atomic(
             ctx, command=command, result=result, reason=f"permanent_rejection: {exc.rejection.code}"
         )
-        return _to_rejection(result, code=exc.rejection.code, reason=str(exc)), None, None
+        # A local guard rejection (http_status == 0, e.g. the ALP-943
+        # ``position_state_drift`` drift guard) means the command never reached
+        # the broker — emit the ``command_abandoned`` forensic entry, mirroring
+        # the stale-anchor backstop. A broker-rejected command (real 4xx) has
+        # the broker's rejection as its record and emits none, as before.
+        abandoned_entry = (
+            _abandoned(result, command, str(exc), 0) if exc.rejection.http_status == 0 else None
+        )
+        return (
+            _to_rejection(result, code=exc.rejection.code, reason=str(exc)),
+            None,
+            abandoned_entry,
+        )
     except Exception as exc:
         # Translation seam per runtime §G1: equity/mleg translators re-raise raw
         # alpaca-py APIError on permanent failure; classify here for a uniform
