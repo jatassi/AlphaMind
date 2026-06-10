@@ -182,13 +182,16 @@ def _register_immediate_begin_hooks(sync_engine: Engine) -> None:
 async def begin_write_immediate(session: AsyncSession) -> None:
     """Open *session*'s transaction with ``BEGIN IMMEDIATE`` (write lock up front).
 
-    Call before the first read or write of a write unit that races the
-    continuous monitor (e.g. fill-collection fill reconciliation). ``BEGIN IMMEDIATE``
-    takes the SQLite write lock eagerly, so a concurrent monitor write makes this
-    transaction *wait* (governed by ``PRAGMA busy_timeout``) instead of leaving a
-    deferred read snapshot that a later write-upgrade would race into an immediate
-    ``SQLITE_BUSY_SNAPSHOT``. IMMEDIATE is opt-in per transaction, so the
-    monitor's own deferred read transactions are unaffected (ALP-824).
+    Call before the first read or write of any write unit that shares the WAL
+    database with another committer. ``BEGIN IMMEDIATE`` takes the SQLite write
+    lock eagerly, so a concurrent write makes this transaction *wait* (governed
+    by ``PRAGMA busy_timeout``) instead of leaving a deferred read snapshot that
+    a later write-upgrade would race into an immediate ``SQLITE_BUSY_SNAPSHOT``.
+    IMMEDIATE is opt-in per transaction: pure-read transactions stay DEFERRED
+    (readers must never take the write lock), while every write transaction
+    opts in — the scheduler/command-execution units directly (ALP-824) and the
+    monitor's write transactions through
+    :func:`alphamind.persistence.write_unit.run_immediate_write_unit` (ALP-942).
 
     Must run before any other statement on *session*: the execution option is
     consumed when the transaction begins, so a transaction already opened by a

@@ -1485,3 +1485,95 @@ class TestWatchdogBinding:
         # The starved fill consumer (beat then silence past its bound) tripped
         # os._exit(1) → NSSM restart, exactly as ALP-819 required.
         assert exits == [1]
+
+
+# ---------------------------------------------------------------------------
+# ALP-942 Scope C — persist failures degrade, they do not crash the consumer
+# ---------------------------------------------------------------------------
+
+
+class TestPersistFailureTolerance:
+    """A transient SQLite lock error escaping persist (retry budget spent) must
+    not unwind ``run_fill_stream_consumer`` — the 2026-06-09 17:00:05Z monitor
+    crash propagated exactly this error from ``_replay_recovery`` through the
+    supervisor TaskGroup and took the whole process down."""
+
+    async def test_replay_recovery_persist_failure_does_not_crash_consumer(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        from tests.execution.continuous_monitor.fill_stream_consumer._flaky_commit import (
+            flaky_commit_factory,
+        )
+
+        ts = _now_utc() - timedelta(minutes=5)
+        await _seed_prior_fill(session_factory, fill_timestamp=ts)
+        # Recovery yields one report whose persist commit ALWAYS fails with the
+        # transient lock error — the write unit's retry budget is spent and the
+        # OperationalError escapes persist_fill_report.
+        queries = _FakeAccountStateQueries([_order_snapshot(filled_at=_now_utc(), filled_qty=2.0)])
+        stream = _FakeStream()
+        flaky, _counters = flaky_commit_factory(session_factory, failures=1_000)
+        kwargs = _build_run_kwargs(session_factory, stream, queries)
+        kwargs["session_factory"] = flaky
+
+        task = asyncio.create_task(run_fill_stream_consumer(_session(), _config(), **kwargs))
+
+        # The consumer must survive the failed replay and reach the stream
+        # (registering its handler proves the cycle continued past recovery).
+        await _wait_for_handler(stream, timeout_seconds=15.0)
+        assert not task.done()
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    async def test_live_consume_loop_drops_report_on_transient_lock_and_continues(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        from tests.execution.continuous_monitor.fill_stream_consumer._flaky_commit import (
+            flaky_commit_factory,
+        )
+
+        stream = _FakeStream()
+        queries = _FakeAccountStateQueries()
+        # Exactly 5 failing commits: report A's write unit exhausts its retry
+        # budget (5 attempts) and the transient error escapes persist; report B
+        # then persists normally on the same consumer connection cycle.
+        flaky, counters = flaky_commit_factory(session_factory, failures=5)
+        kwargs = _build_run_kwargs(session_factory, stream, queries)
+        kwargs["session_factory"] = flaky
+
+        task = asyncio.create_task(run_fill_stream_consumer(_session(), _config(), **kwargs))
+
+        await _wait_for_handler(stream)
+        ts = _now_utc()
+        await stream.inject(
+            _trade_update(
+                event="partial_fill",
+                order=_build_order(client_order_id="order-1", filled_qty="1"),
+                timestamp=ts,
+                price=189.42,
+                qty=1.0,
+            )
+        )
+        await stream.inject(
+            _trade_update(
+                event="fill",
+                order=_build_order(client_order_id="order-1", filled_qty="2"),
+                timestamp=ts + timedelta(seconds=1),
+                price=190.00,
+                qty=1.0,
+            )
+        )
+
+        # Report A was dropped (transient, degrade-don't-crash); report B landed.
+        rows = await _wait_for_rows(session_factory, expected=1, timeout_seconds=15.0)
+        assert not task.done()
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert len(rows) == 1
+        assert float(rows[0].fill_price) == 190.00
+        assert counters["commits"] == 1

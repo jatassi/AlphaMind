@@ -13,8 +13,9 @@ re-attempts attribution for every queued row:
 
 It is invoked opportunistically at the top of each fill-stream reconnect cycle
 so a queued race-fill integrates as soon as its order row exists. Each row runs
-in its own short transaction (mirroring the per-fill write discipline) so one
-failure never wedges the batch.
+in its own ``BEGIN IMMEDIATE`` write unit (the ALP-942 monitor-wide write
+discipline: re-resolution + appends behind the up-front write lock, transient
+lock errors retried on a fresh session) so one failure never wedges the batch.
 """
 
 from __future__ import annotations
@@ -28,7 +29,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alphamind.execution.broker_adapter import FillReport
 from alphamind.execution.continuous_monitor.fill_stream_consumer.persistence import (
     EnrichmentCallable,
+    _attach_provisional_estimate,
     _fill_event_record,
+    _FillAttribution,
+    _provisional_enrichment,
+    _ProvisionalEstimate,
     _resolve_attribution,
 )
 from alphamind.execution.continuous_monitor.fill_stream_consumer.translation import (
@@ -44,6 +49,8 @@ from alphamind.execution.write_paths.unattributed_fill_persistence import (
     mark_unattributed_fill_escalated,
     touch_unattributed_fill_retry,
 )
+from alphamind.persistence.write_unit import run_immediate_write_unit
+from alphamind.state.records import UnattributedFill
 
 log = logging.getLogger(__name__)
 
@@ -64,10 +71,10 @@ async def drain_unattributed_fills(
     the fill is appended to ``broker_event_log`` (the gap-free PnL substrate,
     B2) AND — when an order row resolves — to ``fill_records`` (enriched first if
     a paper-mode ``enrichment_callable`` is supplied, mirroring
-    ``persist_fill_report``), then the queue row is deleted. On failure (still
-    not attributable — order missing, or its position→thesis edge uncommitted)
-    the row is touched (``retry_count`` bumped) and alerted once, then left
-    queued.
+    ``persist_fill_report``; the enrichment await runs on a provisional pass
+    BEFORE the write unit, Scope D). On failure (still not attributable — order
+    missing, or its position→thesis edge uncommitted) the row is touched
+    (``retry_count`` bumped) and alerted once, then left queued.
 
     When *process_lifetime_id* is supplied and at least one fill was integrated,
     :func:`integrate_recovered_fills` is called immediately after the drain so
@@ -87,64 +94,55 @@ async def drain_unattributed_fills(
     integrated = 0
     for queued_fill in queued:
         report = FillReport.model_validate_json(queued_fill.raw_report_json)
-        async with session_factory() as db:
-            # Full re-resolution (B2): the same thesis/invocation/position
-            # attribution the live path resolves — so a resolved fill reaches
-            # BOTH ``broker_event_log`` (the gap-free PnL substrate) and
-            # ``fill_records``. ``None`` means still not attributable (order
-            # missing, or its position→thesis edge uncommitted, B1) — keep queued.
-            attribution = await _resolve_attribution(db, report)
-            if attribution is None:
-                observed_at = _now()
-                await touch_unattributed_fill_retry(
-                    db, queued_fill.broker_fill_key, observed_at=observed_at
-                )
-                if not queued_fill.alerted:
-                    log.warning(
-                        "QUARANTINED unattributed fill still unresolved on drain: "
-                        "broker_fill_key=%s client_order_id=%s alpaca_order_id=%s event=%s",
-                        queued_fill.broker_fill_key,
-                        report.client_order_id,
-                        report.alpaca_order_id,
-                        report.event_type,
-                    )
-                    await mark_unattributed_fill_alerted(db, queued_fill.broker_fill_key)
-                if (
-                    escalation_ttl_seconds is not None
-                    and not queued_fill.escalated
-                    and (observed_at - queued_fill.first_seen_at).total_seconds()
-                    >= escalation_ttl_seconds
-                ):
-                    log.error(
-                        "ESCALATED unattributed fill: unresolved after %.0fs TTL — "
-                        "broker_fill_key=%s client_order_id=%s alpaca_order_id=%s event=%s "
-                        "first_seen_at=%s retry_count=%d — operator review required",
-                        escalation_ttl_seconds,
-                        queued_fill.broker_fill_key,
-                        report.client_order_id,
-                        report.alpaca_order_id,
-                        report.event_type,
-                        queued_fill.first_seen_at.isoformat(),
-                        queued_fill.retry_count,
-                    )
-                    await mark_unattributed_fill_escalated(db, queued_fill.broker_fill_key)
-                await db.commit()
-                continue
 
-            # The gap-free PnL substrate gets the event-log row first (B2): a
-            # resolved fill reaches ``broker_event_log`` carrying its decoded
-            # thesis/position, mirroring the live persist path.
-            await append_broker_event(db, _fill_event_record(report, attribution))
-            oms_order_id = attribution.oms_order_id
-            if oms_order_id is not None:
-                record = fill_report_to_fill_record(report, oms_order_id=oms_order_id)
-                # Only fill-bearing reports are queued, so the re-derive is non-None.
-                assert record is not None
-                if enrichment_callable is not None:
-                    record = await enrichment_callable(record)
-                await append_fill_record(db, record)
-            await delete_unattributed_fill(db, queued_fill.broker_fill_key)
-            await db.commit()
+        provisional: _ProvisionalEstimate | None = None
+        if enrichment_callable is not None:
+            provisional = await _provisional_enrichment(
+                report,
+                session_factory=session_factory,
+                enrichment_callable=enrichment_callable,
+                recovered=False,
+            )
+
+        observed_at = _now()
+        should_escalate = (
+            escalation_ttl_seconds is not None
+            and not queued_fill.escalated
+            and (observed_at - queued_fill.first_seen_at).total_seconds() >= escalation_ttl_seconds
+        )
+        attribution = await _drain_one_queued_fill(
+            queued_fill,
+            report,
+            session_factory=session_factory,
+            enrichment_active=enrichment_callable is not None,
+            provisional=provisional,
+            observed_at=observed_at,
+            should_escalate=should_escalate,
+        )
+        if attribution is None:
+            if not queued_fill.alerted:
+                log.warning(
+                    "QUARANTINED unattributed fill still unresolved on drain: "
+                    "broker_fill_key=%s client_order_id=%s alpaca_order_id=%s event=%s",
+                    queued_fill.broker_fill_key,
+                    report.client_order_id,
+                    report.alpaca_order_id,
+                    report.event_type,
+                )
+            if should_escalate:
+                log.error(
+                    "ESCALATED unattributed fill: unresolved after %.0fs TTL — "
+                    "broker_fill_key=%s client_order_id=%s alpaca_order_id=%s event=%s "
+                    "first_seen_at=%s retry_count=%d — operator review required",
+                    escalation_ttl_seconds,
+                    queued_fill.broker_fill_key,
+                    report.client_order_id,
+                    report.alpaca_order_id,
+                    report.event_type,
+                    queued_fill.first_seen_at.isoformat(),
+                    queued_fill.retry_count,
+                )
+            continue
         integrated += 1
         log.info(
             "integrated previously-unattributed fill: broker_fill_key=%s order_id=%s",
@@ -163,6 +161,63 @@ async def drain_unattributed_fills(
         )
 
     return integrated
+
+
+async def _drain_one_queued_fill(
+    queued_fill: UnattributedFill,
+    report: FillReport,
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    enrichment_active: bool,
+    provisional: _ProvisionalEstimate | None,
+    observed_at: datetime,
+    should_escalate: bool,
+) -> _FillAttribution | None:
+    """Run one queued fill's drain attempt as a single IMMEDIATE write unit.
+
+    Returns the resolved attribution when the fill integrated (the queue row is
+    deleted in the same transaction), or ``None`` when it stays queued (the
+    retry/alert/escalation bookkeeping committed instead). Both branches write,
+    so the whole body runs behind the up-front write lock.
+    """
+
+    async def _unit(db: AsyncSession) -> _FillAttribution | None:
+        # Full re-resolution (B2): the same thesis/invocation/position
+        # attribution the live path resolves — so a resolved fill reaches
+        # BOTH ``broker_event_log`` (the gap-free PnL substrate) and
+        # ``fill_records``. ``None`` means still not attributable (order
+        # missing, or its position→thesis edge uncommitted, B1) — keep queued.
+        attribution = await _resolve_attribution(db, report)
+        if attribution is None:
+            await touch_unattributed_fill_retry(
+                db, queued_fill.broker_fill_key, observed_at=observed_at
+            )
+            if not queued_fill.alerted:
+                await mark_unattributed_fill_alerted(db, queued_fill.broker_fill_key)
+            if should_escalate:
+                await mark_unattributed_fill_escalated(db, queued_fill.broker_fill_key)
+            return None
+
+        # The gap-free PnL substrate gets the event-log row first (B2): a
+        # resolved fill reaches ``broker_event_log`` carrying its decoded
+        # thesis/position, mirroring the live persist path.
+        await append_broker_event(db, _fill_event_record(report, attribution))
+        if attribution.oms_order_id is not None:
+            record = fill_report_to_fill_record(report, oms_order_id=attribution.oms_order_id)
+            # Only fill-bearing reports are queued, so the re-derive is non-None.
+            assert record is not None
+            if enrichment_active:
+                record = _attach_provisional_estimate(
+                    record,
+                    final_oms_order_id=attribution.oms_order_id,
+                    final_fill_quantity=report.fill_quantity,
+                    provisional=provisional,
+                )
+            await append_fill_record(db, record)
+        await delete_unattributed_fill(db, queued_fill.broker_fill_key)
+        return attribution
+
+    return await run_immediate_write_unit(session_factory, _unit)
 
 
 __all__ = ["drain_unattributed_fills"]

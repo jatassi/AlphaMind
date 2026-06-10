@@ -19,6 +19,7 @@ from sqlalchemy import case, func, literal, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind.persistence.write_unit import run_immediate_write_unit
 from alphamind.state.tables.monitor_halt_mode import (
     MONITOR_HALT_MODE_SINGLETON_ID,
     MonitorHaltModeRow,
@@ -94,38 +95,41 @@ class HaltModeRepository:
             _datetime_to_iso_z(record.applied_at) if record.applied_at is not None else None
         )
         enabled_int = 1 if record.enabled else 0
-        async with self._session_factory() as session:
-            stmt = sqlite_insert(MonitorHaltModeRow).values(
-                id=MONITOR_HALT_MODE_SINGLETON_ID,
-                enabled=enabled_int,
-                reason=record.reason,
-                applied_at=applied_at_iso,
-            )
-            # Idempotent-on-same-value: preserve the existing applied_at when
-            # the new enabled/reason match the existing row. SQLite's
-            # ``excluded`` pseudo-row carries the proposed-insert values; the
-            # CASE picks between the existing applied_at (no-op confirmation)
-            # and excluded.applied_at (real transition).
-            upsert = stmt.on_conflict_do_update(
-                index_elements=[MonitorHaltModeRow.id],
-                set_={
-                    "enabled": stmt.excluded.enabled,
-                    "reason": stmt.excluded.reason,
-                    "applied_at": case(
-                        (
-                            (MonitorHaltModeRow.enabled == stmt.excluded.enabled)
-                            & (
-                                func.coalesce(MonitorHaltModeRow.reason, literal(""))
-                                == func.coalesce(stmt.excluded.reason, literal(""))
-                            ),
-                            MonitorHaltModeRow.applied_at,
+        stmt = sqlite_insert(MonitorHaltModeRow).values(
+            id=MONITOR_HALT_MODE_SINGLETON_ID,
+            enabled=enabled_int,
+            reason=record.reason,
+            applied_at=applied_at_iso,
+        )
+        # Idempotent-on-same-value: preserve the existing applied_at when
+        # the new enabled/reason match the existing row. SQLite's
+        # ``excluded`` pseudo-row carries the proposed-insert values; the
+        # CASE picks between the existing applied_at (no-op confirmation)
+        # and excluded.applied_at (real transition).
+        upsert = stmt.on_conflict_do_update(
+            index_elements=[MonitorHaltModeRow.id],
+            set_={
+                "enabled": stmt.excluded.enabled,
+                "reason": stmt.excluded.reason,
+                "applied_at": case(
+                    (
+                        (MonitorHaltModeRow.enabled == stmt.excluded.enabled)
+                        & (
+                            func.coalesce(MonitorHaltModeRow.reason, literal(""))
+                            == func.coalesce(stmt.excluded.reason, literal(""))
                         ),
-                        else_=stmt.excluded.applied_at,
+                        MonitorHaltModeRow.applied_at,
                     ),
-                },
-            )
+                    else_=stmt.excluded.applied_at,
+                ),
+            },
+        )
+
+        async def _unit(session: AsyncSession) -> None:
             await session.execute(upsert)
-            await session.commit()
+
+        # ALP-942 — IMMEDIATE write unit, mirroring every other monitor write.
+        await run_immediate_write_unit(self._session_factory, _unit)
 
 
 def _datetime_to_iso_z(value: datetime) -> str:

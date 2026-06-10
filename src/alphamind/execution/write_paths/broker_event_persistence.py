@@ -20,6 +20,7 @@ from sqlalchemy import CursorResult
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from alphamind.persistence.write_unit import require_immediate_write_unit
 from alphamind.state.records_broker_event_log import BrokerEventRecord
 from alphamind.state.tables.broker_event_log import BrokerEventLogRow
 from alphamind.state.tables.broker_event_log_codec import record_to_row
@@ -37,7 +38,10 @@ async def append_broker_event(session: AsyncSession, record: BrokerEventRecord) 
     side-effect once per event (e.g. the account-activities handlers booking
     realized PnL) gate on the return so a re-poll does not double-book; the
     fill-path callers ignore it (the event-log row is the only side-effect).
+
+    The session's transaction must have begun ``IMMEDIATE`` (ALP-942 F).
     """
+    await require_immediate_write_unit(session, helper="append_broker_event")
     row = record_to_row(record)
     values = {col.name: getattr(row, col.name) for col in BrokerEventLogRow.__table__.columns}
     stmt = sqlite_insert(BrokerEventLogRow).values(**values)

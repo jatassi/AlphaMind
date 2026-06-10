@@ -51,6 +51,7 @@ from alphamind.execution.write_paths.projection_rebuild import (
     rebuild_projection,
 )
 from alphamind.execution.write_paths.thesis_pnl_ledger import rederive_thesis_pnl_ledgers
+from alphamind.persistence.write_unit import run_immediate_write_unit
 from alphamind.portfolio_state.events.activity_log import (
     BracketActivatedDetail,
     BracketDissolvedDetail,
@@ -2386,7 +2387,7 @@ async def integrate_recovered_fills(
     now = datetime.now(UTC)
     invocation_id = mint_invocation_id(now)
 
-    async with session_factory() as db:
+    async def _insert_invocation(db: AsyncSession) -> None:
         db.add(
             _build_recovery_invocation_row(
                 invocation_id=invocation_id,
@@ -2394,10 +2395,16 @@ async def integrate_recovered_fills(
                 now=now,
             )
         )
-        await db.commit()
 
-    fills_processed = 0
-    async with session_factory() as session:
+    await run_immediate_write_unit(session_factory, _insert_invocation)
+
+    async def _integrate(session: AsyncSession) -> int:
+        # This unit reads the unprocessed fills before mutating positions /
+        # orders, so it must hold the write lock from BEGIN (ALP-942): under
+        # the default DEFERRED begin the first SELECT pins a read snapshot
+        # that any concurrent committer turns into an instant
+        # SQLITE_BUSY_SNAPSHOT at the write upgrade.
+        fills_processed = 0
         handle = InvocationHandle(session=session, invocation_id=invocation_id)
         fill_rows = await _read_unprocessed_fill_rows(handle)
         fills = tuple(fill_row_to_record(row) for row in fill_rows)
@@ -2429,9 +2436,9 @@ async def integrate_recovered_fills(
                 fills_processed += 1
 
         await stamp_phase_completion(handle, column="fill_collection_completed_at")
-        await session.commit()
+        return fills_processed
 
-    return fills_processed
+    return await run_immediate_write_unit(session_factory, _integrate)
 
 
 __all__ = [

@@ -34,6 +34,7 @@ from alphamind.execution.write_paths.thesis_pnl_ledger import (
 )
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
+    begin_write_immediate,
     make_async_engine,
     make_async_session_factory,
     make_engine,
@@ -169,6 +170,7 @@ async def _seed_extra_cluster(
 
 async def _append(factory: async_sessionmaker[AsyncSession], *events: BrokerEventRecord) -> None:
     async with factory() as sess:
+        await begin_write_immediate(sess)
         for event in events:
             await append_broker_event(sess, event)
         await sess.commit()

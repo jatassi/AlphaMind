@@ -94,6 +94,7 @@ from alphamind.execution.write_paths.fill_persistence import (
     append_fill_record,
 )
 from alphamind.persistence.session import (
+    begin_write_immediate,
     make_async_engine,
     make_async_session_factory,
 )
@@ -549,6 +550,7 @@ async def _seed_initial_state(factory: async_sessionmaker[AsyncSession]) -> None
         sess.add(drawdown_state_record_to_row(_drawdown_state(), last_updated_at=_NOW))
         await sess.commit()
     async with factory() as sess:
+        await begin_write_immediate(sess)
         await append_fill_record(sess, _unprocessed_fill())
         await sess.commit()
 
@@ -568,6 +570,9 @@ async def _open_handle_for_existing_invocation(
     commits and closes the returned session.
     """
     session = factory()
+    # ALP-942 — the phases under test append through the guarded helpers,
+    # which require the transaction to begin IMMEDIATE.
+    await begin_write_immediate(session)
     return session, InvocationHandle(session=session, invocation_id=invocation_id)
 
 

@@ -54,6 +54,7 @@ from alphamind.execution.write_paths.unattributed_fill_persistence import (
 )
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
+    begin_write_immediate,
     make_async_engine,
     make_async_session_factory,
     make_engine,
@@ -316,6 +317,49 @@ class TestTrulyUnknownOrder:
         rows = await _read_fill_records(session_factory)
         assert len(rows) == 1
         assert rows[0].live_execution_estimate_json is not None
+
+    async def test_drain_enrichment_sees_no_open_transaction(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """ALP-942 Scope D — the drain's enrichment await also runs on the
+        provisional pass, never inside the per-fill IMMEDIATE write unit, so a
+        slow paper-mode enrichment cannot hold the cross-process write lock."""
+        from typing import Any, cast
+
+        entry_uuid = uuid4()
+        report = _fill_report(
+            order_id=entry_uuid,
+            client_order_id="inv-20260601.CMD-3.0.0",
+            price=150.0,
+            qty=1.0,
+        )
+        await persist_fill_report(report, session_factory=session_factory, enrichment_callable=None)
+        await _seed_order_row_for(
+            session_factory,
+            order_id="ORD-DEFERRED-3",
+            alpaca_order_id=str(entry_uuid),
+        )
+
+        tracked: list[AsyncSession] = []
+
+        def tracking_factory(**kw: Any) -> AsyncSession:
+            session = session_factory(**kw)
+            tracked.append(session)
+            return session
+
+        open_transactions_during_enrichment: list[bool] = []
+
+        async def enrichment(record: FillRecord) -> FillRecord:
+            open_transactions_during_enrichment.append(any(s.in_transaction() for s in tracked))
+            return record
+
+        integrated = await drain_unattributed_fills(
+            session_factory=cast("async_sessionmaker[AsyncSession]", tracking_factory),
+            enrichment_callable=enrichment,
+        )
+
+        assert integrated == 1
+        assert open_transactions_during_enrichment == [False]
 
 
 class TestQuarantineAlertOnce:
@@ -734,6 +778,7 @@ class TestFillCollectionIntegrationOnDrain:
             live_execution_estimate=None,
         )
         async with factory() as sess:
+            await begin_write_immediate(sess)
             await append_fill_record(sess, fill)
             await sess.commit()
 
@@ -817,6 +862,7 @@ class TestFillCollectionIntegrationOnDrain:
             alerted=True,
         )
         async with factory() as sess:
+            await begin_write_immediate(sess)
             await append_unattributed_fill(sess, unattributed)
             await sess.commit()
 
@@ -893,6 +939,7 @@ class TestEscalation:
     ) -> None:
         fill = _park_out_of_band_fill(client_order_id="oob-1", first_seen_at=_SEEN_AT_771)
         async with session_factory() as sess:
+            await begin_write_immediate(sess)
             await append_unattributed_fill(sess, fill)
             await sess.commit()
 
@@ -931,6 +978,7 @@ class TestEscalation:
     ) -> None:
         fill = _park_out_of_band_fill(client_order_id="oob-2", first_seen_at=_SEEN_AT_771)
         async with session_factory() as sess:
+            await begin_write_immediate(sess)
             await append_unattributed_fill(sess, fill)
             await sess.commit()
 
@@ -956,6 +1004,7 @@ class TestEscalation:
         """No escalation_ttl_seconds → fills accumulate retries indefinitely without escalating."""
         fill = _park_out_of_band_fill(client_order_id="oob-3", first_seen_at=_SEEN_AT_771)
         async with session_factory() as sess:
+            await begin_write_immediate(sess)
             await append_unattributed_fill(sess, fill)
             await sess.commit()
 
