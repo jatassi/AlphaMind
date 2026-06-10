@@ -33,19 +33,23 @@ __all__ = ["AccountStateQueriesP", "CorporateActionsQueriesP"]
 
 @runtime_checkable
 class AccountStateQueriesP(Protocol):
-    """Sync read-only account/positions surface gather_fill_collection_inputs consumes.
+    """Sync read-only account/positions surface the OMS-facing consumers depend on.
 
     Mirrors the as-built methods on
     :class:`~alphamind.execution.broker_adapter.queries.AccountStateQueries`
-    — ``get_account`` / ``get_positions`` are synchronous because the
-    underlying ``alpaca-py`` ``TradingClient`` wraps httpx synchronously;
-    ``get_orders`` paginates, so it is an async generator (the fresh-start
-    open-orders precondition drains its ``status="open"`` cursor).
+    — ``get_account`` / ``get_positions`` / ``get_open_position`` are
+    synchronous because the underlying ``alpaca-py`` ``TradingClient`` wraps
+    httpx synchronously; ``get_orders`` paginates, so it is an async generator
+    (the fresh-start open-orders precondition drains its ``status="open"``
+    cursor). ``get_open_position`` is the equity CLOSE dispatch's execution-time
+    drift guard read (ALP-943).
     """
 
     def get_account(self) -> TradeAccountSnapshot: ...
 
     def get_positions(self) -> tuple[PositionSnapshot, ...]: ...
+
+    def get_open_position(self, symbol: str) -> PositionSnapshot | None: ...
 
     def get_orders(
         self,

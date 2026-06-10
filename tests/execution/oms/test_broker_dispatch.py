@@ -48,7 +48,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
-from alphamind._kernel.money import money, price
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
@@ -85,6 +85,8 @@ from alphamind.execution.broker_adapter import (
     OptionsSubmission,
     Submitted,
 )
+from alphamind.execution.broker_adapter.order_options import PermanentRejectionError
+from alphamind.execution.broker_adapter.queries import PositionSnapshot
 from alphamind.execution.oms.broker_dispatch import (
     BrokerDispatchResult,
     dispatch_command_to_broker,
@@ -368,6 +370,50 @@ def _order_not_found_api_error() -> APIError:
     return cast(APIError, cast(Any, APIError)(body, http_error=fake_http_error))
 
 
+def _already_in_state_api_error(state: str) -> APIError:
+    """The 422 Alpaca returns when cancelling an already-terminal order —
+    ``order is already in "<state>" state`` (the exact production payload from
+    the 2026-06-09 MRVL incident's rejected re-protection-leg CANCELs)."""
+    body = json.dumps({"code": 42210000, "message": f'order is already in "{state}" state'})
+    fake_http_error = MagicMock()
+    fake_http_error.response.status_code = 422
+    return cast(APIError, cast(Any, APIError)(body, http_error=fake_http_error))
+
+
+def _live_position(symbol: str, qty: float) -> PositionSnapshot:
+    """A live broker ``PositionSnapshot`` with signed *qty* (negative = short)."""
+    return PositionSnapshot(
+        symbol=symbol,
+        asset_class="us_equity",
+        qty=qty,
+        avg_entry_price=price(100.0),
+        market_value=signed_money(qty * 100.0),
+        cost_basis=signed_money(qty * 100.0),
+        unrealized_pl=signed_money(0.0),
+        unrealized_plpc=0.0,
+        current_price=price(100.0),
+        side="long" if qty > 0 else "short",
+    )
+
+
+class _FakeAccountQueries:
+    """Fake ``AccountStateQueries`` modelling live broker position existence (ALP-943).
+
+    ``positions`` maps symbol → signed live qty (negative = short). A symbol
+    absent from the map is flat at the broker — ``get_open_position`` returns
+    ``None``, mirroring the real wrapper's 404 → ``None`` translation.
+    """
+
+    def __init__(self, positions: dict[str, float] | None = None) -> None:
+        self._positions = dict(positions or {})
+
+    def get_open_position(self, symbol: str) -> PositionSnapshot | None:
+        qty = self._positions.get(symbol)
+        if qty is None:
+            return None
+        return _live_position(symbol, qty)
+
+
 class _HeldForOrdersClient:
     """Fake Alpaca client modelling ``held_for_orders`` share reservation (ALP-937).
 
@@ -376,9 +422,14 @@ class _HeldForOrdersClient:
     until those legs are cancelled. ``cancel_order_by_id`` releases a reserving leg;
     once no leg still reserves shares, the sell is accepted.
 
-    * ``terminal_leg_ids`` — legs already terminal at the broker (filled / cancelled
-      OCO sibling): they reserve no shares and ``cancel_order_by_id`` on them raises
-      a 404, exercising the benign already-terminal path.
+    * ``terminal_leg_ids`` — legs unknown to the broker: ``cancel_order_by_id``
+      raises a 404 and ``get_order_by_id`` raises the same 404 (the benign
+      already-terminal path — nothing confirms an exit).
+    * ``canceled_leg_ids`` / ``filled_leg_ids`` — legs already terminal with a
+      resolvable state: the cancel raises the production 422
+      ``order is already in "<state>" state`` and ``get_order_by_id`` reports
+      the matching status, exercising the ALP-943 leg-state resolution (a
+      CANCELED leg is benign; a FILLED leg means the position exited).
     * ``sell_fails_after_cancel`` — forces the post-cancel sell to still reject (the
       ALP-937 (F) naked-position case).
 
@@ -391,22 +442,44 @@ class _HeldForOrdersClient:
         *,
         protective_leg_ids: tuple[str, ...] = (),
         terminal_leg_ids: tuple[str, ...] = (),
+        canceled_leg_ids: tuple[str, ...] = (),
+        filled_leg_ids: tuple[str, ...] = (),
         sell_fails_after_cancel: bool = False,
     ) -> None:
         self._reserving: set[str] = {str(i) for i in protective_leg_ids}
         self._terminal: set[str] = {str(i) for i in terminal_leg_ids}
+        self._canceled: set[str] = {str(i) for i in canceled_leg_ids}
+        self._filled: set[str] = {str(i) for i in filled_leg_ids}
         self._sell_fails_after_cancel = sell_fails_after_cancel
         self.calls: list[tuple[str, str]] = []
+        self.submitted_qtys: list[float] = []
 
     def cancel_order_by_id(self, order_id: str) -> None:
         self.calls.append(("cancel", str(order_id)))
         if str(order_id) in self._terminal:
             raise _order_not_found_api_error()
+        if str(order_id) in self._canceled:
+            raise _already_in_state_api_error("canceled")
+        if str(order_id) in self._filled:
+            raise _already_in_state_api_error("filled")
         self._reserving.discard(str(order_id))
+
+    def get_order_by_id(self, order_id: str) -> MagicMock:
+        self.calls.append(("get_order", str(order_id)))
+        if str(order_id) in self._canceled:
+            order = MagicMock()
+            order.status = OrderStatus.CANCELED
+            return order
+        if str(order_id) in self._filled:
+            order = MagicMock()
+            order.status = OrderStatus.FILLED
+            return order
+        raise _order_not_found_api_error()
 
     def submit_order(self, request: Any) -> MagicMock:
         side = getattr(request, "side", None)
         self.calls.append(("submit", str(getattr(request, "symbol", ""))))
+        self.submitted_qtys.append(float(getattr(request, "qty", 0)))
         if side == OrderSide.SELL and (self._reserving or self._sell_fails_after_cancel):
             raise _insufficient_qty_api_error()
         return _make_fake_alpaca_order(order_class=OrderClass.SIMPLE)
@@ -790,12 +863,12 @@ async def test_dispatch_close_equity_routes_to_submit_equity_close() -> None:
     fake_order = _make_fake_alpaca_order(order_class=OrderClass.SIMPLE)
     client = MagicMock()
     client.submit_order = MagicMock(return_value=fake_order)
-    queries = MagicMock()
+    queries = _FakeAccountQueries(positions={"AAPL": 10.0})
 
     outcome = await dispatch_command_to_broker(
         _close_command(),
         client=client,
-        queries=queries,
+        queries=cast(Any, queries),
         execution=_execution_config(),
         client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
         position_symbol="AAPL",
@@ -826,12 +899,12 @@ async def test_close_equity_without_cancel_is_rejected_by_held_for_orders_fake()
     so the cancel-first test below fails for a reason this one establishes is real.
     """
     client = _HeldForOrdersClient(protective_leg_ids=("alp-tp-1", "alp-stop-1"))
-    queries = MagicMock()
+    queries = _FakeAccountQueries(positions={"MRVL": 8.0})
     with pytest.raises(APIError):
         await dispatch_command_to_broker(
             _close_command("POS-MRVL-001"),
             client=cast(Any, client),
-            queries=queries,
+            queries=cast(Any, queries),
             execution=_execution_config(),
             client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
             position_symbol="MRVL",
@@ -848,12 +921,12 @@ async def test_close_equity_cancels_protective_legs_before_the_sell() -> None:
     close sell, so the sell sees freed shares rather than ``available: 0``."""
     leg_ids = ("alp-tp-1", "alp-stop-1")
     client = _HeldForOrdersClient(protective_leg_ids=leg_ids)
-    queries = MagicMock()
+    queries = _FakeAccountQueries(positions={"MRVL": 8.0})
 
     outcome = await dispatch_command_to_broker(
         _close_command("POS-MRVL-001"),
         client=cast(Any, client),
-        queries=queries,
+        queries=cast(Any, queries),
         execution=_execution_config(),
         client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
         position_symbol="MRVL",
@@ -871,18 +944,19 @@ async def test_close_equity_cancels_protective_legs_before_the_sell() -> None:
 
 
 @pytest.mark.asyncio
-async def test_close_equity_tolerates_already_terminal_protective_leg() -> None:
-    """ALP-937 — `submit_cancel` re-raises a raw 404 `APIError` (not a
-    `PermanentRejectionError`) when a protective leg is already terminal (the OCO
-    sibling fired / the leg filled). `_cancel_protective_legs` must classify it as
-    a benign already-terminal leg and proceed with the close, not let it abort."""
-    client = _HeldForOrdersClient(terminal_leg_ids=("alp-tp-1",))
-    queries = MagicMock()
+async def test_close_equity_proceeds_when_protective_leg_already_canceled() -> None:
+    """ALP-937 / ALP-943 — a protective-leg cancel rejected because the leg is
+    already CANCELED at the broker (the OCO sibling fired) is benign: the leg's
+    shares are free and the position still exists, so the close proceeds. The
+    leg's actual state is confirmed via ``get_order_by_id`` — never inferred
+    from the rejection alone."""
+    client = _HeldForOrdersClient(canceled_leg_ids=("alp-tp-1",))
+    queries = _FakeAccountQueries(positions={"MRVL": 8.0})
 
     outcome = await dispatch_command_to_broker(
         _close_command("POS-MRVL-001"),
         client=cast(Any, client),
-        queries=queries,
+        queries=cast(Any, queries),
         execution=_execution_config(),
         client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
         position_symbol="MRVL",
@@ -893,7 +967,74 @@ async def test_close_equity_tolerates_already_terminal_protective_leg() -> None:
     )
 
     assert isinstance(outcome, Submitted)
-    assert [op for op, _ in client.calls] == ["cancel", "submit"]
+    assert [op for op, _ in client.calls] == ["cancel", "get_order", "submit"]
+
+
+@pytest.mark.asyncio
+async def test_close_equity_aborts_when_protective_leg_already_filled() -> None:
+    """ALP-943 — a protective-leg cancel rejected because the leg is already
+    FILLED is broker-confirmed proof the position exited (the stop/target
+    executed). The close must NOT proceed — selling would open a naked short.
+    The 2026-06-09 incident's exact signal: the ALP-937 design tolerated this
+    and sold 4 MRVL into a flat position."""
+    client = _HeldForOrdersClient(filled_leg_ids=("alp-stop-1",))
+    queries = _FakeAccountQueries(positions={"MRVL": 8.0})  # (B) raced: still live
+
+    with pytest.raises(PermanentRejectionError) as excinfo:
+        await dispatch_command_to_broker(
+            _close_command("POS-MRVL-001"),
+            client=cast(Any, client),
+            queries=cast(Any, queries),
+            execution=_execution_config(),
+            client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+            position_symbol="MRVL",
+            position_qty=8.0,
+            position_side="long",
+            position_asset_type="equity",
+            close_protective_leg_alpaca_order_ids=(AlpacaOrderId("alp-stop-1"),),
+        )
+
+    assert excinfo.value.rejection.code == "position_state_drift"
+    assert excinfo.value.rejection.http_status == 0
+    # The leg state was resolved, and no sell ever reached the broker.
+    assert [op for op, _ in client.calls] == ["cancel", "get_order"]
+
+
+@pytest.mark.asyncio
+async def test_close_equity_abort_after_live_cancel_emits_naked_position_alert(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """ALP-943 — the drift abort fires AFTER an earlier leg's cancel was
+    confirmed: live protection was actively torn down and the close will never
+    run, so the ALP-937 (F) CRITICAL alert must be emitted before the abort
+    propagates — a surviving remainder is never silently naked."""
+    client = _HeldForOrdersClient(
+        protective_leg_ids=("alp-tp-1",),  # live — cancel succeeds, protection torn
+        filled_leg_ids=("alp-stop-1",),  # filled — resolution aborts the close
+    )
+    queries = _FakeAccountQueries(positions={"MRVL": 8.0})
+
+    with caplog.at_level("CRITICAL"), pytest.raises(PermanentRejectionError):
+        await dispatch_command_to_broker(
+            _close_command("POS-MRVL-001"),
+            client=cast(Any, client),
+            queries=cast(Any, queries),
+            execution=_execution_config(),
+            client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+            position_symbol="MRVL",
+            position_qty=8.0,
+            position_side="long",
+            position_asset_type="equity",
+            close_protective_leg_alpaca_order_ids=(
+                AlpacaOrderId("alp-tp-1"),
+                AlpacaOrderId("alp-stop-1"),
+            ),
+        )
+
+    assert "NAKED POSITION" in caplog.text
+    assert "MRVL" in caplog.text
+    # No sell ever reached the broker.
+    assert [op for op, _ in client.calls] == ["cancel", "cancel", "get_order"]
 
 
 @pytest.mark.asyncio
@@ -905,13 +1046,13 @@ async def test_close_equity_no_naked_alert_when_legs_already_terminal(
     likely already exited) and the sell then fails, no alert is raised — the
     position was not made naked by this close."""
     client = _HeldForOrdersClient(terminal_leg_ids=("alp-tp-1",), sell_fails_after_cancel=True)
-    queries = MagicMock()
+    queries = _FakeAccountQueries(positions={"MRVL": 8.0})
 
     with caplog.at_level("CRITICAL"), pytest.raises(APIError):
         await dispatch_command_to_broker(
             _close_command("POS-MRVL-001"),
             client=cast(Any, client),
-            queries=queries,
+            queries=cast(Any, queries),
             execution=_execution_config(),
             client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
             position_symbol="MRVL",
@@ -933,13 +1074,13 @@ async def test_close_equity_rejected_after_cancel_emits_naked_position_alert(
     position is emitted, and the rejection still propagates to the normal path."""
     leg_ids = ("alp-tp-1", "alp-stop-1")
     client = _HeldForOrdersClient(protective_leg_ids=leg_ids, sell_fails_after_cancel=True)
-    queries = MagicMock()
+    queries = _FakeAccountQueries(positions={"MRVL": 8.0})
 
     with caplog.at_level("CRITICAL"), pytest.raises(APIError):
         await dispatch_command_to_broker(
             _close_command("POS-MRVL-001"),
             client=cast(Any, client),
-            queries=queries,
+            queries=cast(Any, queries),
             execution=_execution_config(),
             client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
             position_symbol="MRVL",
@@ -953,6 +1094,156 @@ async def test_close_equity_rejected_after_cancel_emits_naked_position_alert(
     assert [op for op, _ in client.calls] == ["cancel", "cancel", "submit"]
     assert "NAKED POSITION" in caplog.text
     assert "MRVL" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# 6c. CLOSE equity execution-time drift guard (ALP-943)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_close_equity_flat_at_broker_is_rejected_before_any_rpc() -> None:
+    """ALP-943 — the broker is flat on the symbol (the position exited between
+    the invocation snapshot and dispatch, e.g. a monitor stop-out). The CLOSE is
+    rejected ``position_state_drift`` BEFORE any leg-cancel or order-submit RPC
+    reaches the broker — selling into a flat position would open a naked short
+    (the 2026-06-09 -4 MRVL incident)."""
+    client = _HeldForOrdersClient(protective_leg_ids=("alp-tp-1", "alp-stop-1"))
+    queries = _FakeAccountQueries(positions={})  # broker flat on MRVL
+
+    with pytest.raises(PermanentRejectionError) as excinfo:
+        await dispatch_command_to_broker(
+            _close_command("POS-MRVL-001"),
+            client=cast(Any, client),
+            queries=cast(Any, queries),
+            execution=_execution_config(),
+            client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+            position_symbol="MRVL",
+            position_qty=4.0,
+            position_side="long",
+            position_asset_type="equity",
+            close_protective_leg_alpaca_order_ids=(
+                AlpacaOrderId("alp-tp-1"),
+                AlpacaOrderId("alp-stop-1"),
+            ),
+        )
+
+    assert excinfo.value.rejection.code == "position_state_drift"
+    assert excinfo.value.rejection.http_status == 0
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_close_equity_drift_read_failure_is_gateway_failure_not_blind_close() -> None:
+    """ALP-943 — the drift-guard read shares the submit calls' transient-retry
+    discipline. When it exhausts the window the close is NOT submitted blind:
+    the dispatch returns ``GatewaySubmissionFailed`` before any leg-cancel or
+    order-submit RPC, surfacing through the callers' existing rejection path."""
+    import httpx
+
+    class _UnreachableQueries:
+        def get_open_position(self, symbol: str) -> PositionSnapshot | None:
+            raise httpx.ConnectError("network down")
+
+    client = _HeldForOrdersClient(protective_leg_ids=("alp-tp-1",))
+
+    outcome = await dispatch_command_to_broker(
+        _close_command("POS-MRVL-001"),
+        client=cast(Any, client),
+        queries=cast(Any, _UnreachableQueries()),
+        execution=_execution_config_with_window(1),
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+        position_symbol="MRVL",
+        position_qty=8.0,
+        position_side="long",
+        position_asset_type="equity",
+        close_protective_leg_alpaca_order_ids=(AlpacaOrderId("alp-tp-1"),),
+    )
+
+    assert isinstance(outcome, GatewaySubmissionFailed)
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_close_equity_side_flipped_at_broker_is_rejected() -> None:
+    """ALP-943 — the live broker position's side contradicts the projection
+    (e.g. the projected long already exited and a short now exists). The CLOSE
+    is rejected ``position_state_drift``; a SELL against a live short would
+    grow the wrong-side exposure, not close it."""
+    client = _HeldForOrdersClient()
+    queries = _FakeAccountQueries(positions={"MRVL": -4.0})  # live SHORT 4
+
+    with pytest.raises(PermanentRejectionError) as excinfo:
+        await dispatch_command_to_broker(
+            _close_command("POS-MRVL-001"),
+            client=cast(Any, client),
+            queries=cast(Any, queries),
+            execution=_execution_config(),
+            client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+            position_symbol="MRVL",
+            position_qty=4.0,
+            position_side="long",
+            position_asset_type="equity",
+        )
+
+    assert excinfo.value.rejection.code == "position_state_drift"
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_close_equity_clamps_to_live_qty_when_broker_holds_fewer_shares() -> None:
+    """ALP-943 — the live broker position is smaller than the requested close
+    quantity (part of the position exited between snapshot and dispatch). The
+    submitted sell is clamped to exactly the live quantity — never more shares
+    than exist at the broker."""
+    client = _HeldForOrdersClient()
+    queries = _FakeAccountQueries(positions={"MRVL": 3.0})  # live long 3 of projected 8
+
+    outcome = await dispatch_command_to_broker(
+        _close_command("POS-MRVL-001"),
+        client=cast(Any, client),
+        queries=cast(Any, queries),
+        execution=_execution_config(),
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+        position_symbol="MRVL",
+        position_qty=8.0,
+        position_side="long",
+        position_asset_type="equity",
+    )
+
+    assert isinstance(outcome, Submitted)
+    assert client.submitted_qtys == [3.0]
+
+
+@pytest.mark.asyncio
+async def test_close_equity_numeric_quantity_within_live_qty_is_unchanged() -> None:
+    """ALP-943 — a numeric ``command.quantity`` (partial close) within the live
+    broker quantity dispatches unchanged: the guard resolves the requested
+    quantity from the command, not the projected share count."""
+    client = _HeldForOrdersClient()
+    queries = _FakeAccountQueries(positions={"AAPL": 10.0})
+
+    partial_close = CloseCommand(
+        command_type="close",
+        position_id=PositionId("POS-AAPL-001"),
+        quantity=4.0,
+        order_type="market",
+        close_rationale_type="conviction_reduced",
+    )
+    outcome = await dispatch_command_to_broker(
+        partial_close,
+        client=cast(Any, client),
+        queries=cast(Any, queries),
+        execution=_execution_config(),
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+        position_symbol="AAPL",
+        position_qty=10.0,
+        position_side="long",
+        position_asset_type="equity",
+    )
+
+    assert isinstance(outcome, Submitted)
+    assert client.submitted_qtys == [4.0]
 
 
 # ---------------------------------------------------------------------------
@@ -1193,7 +1484,7 @@ async def test_dispatch_engine_guardrail_close_routes_to_submit_equity_close() -
     fake_order = _make_fake_alpaca_order(order_class=OrderClass.SIMPLE)
     client = MagicMock()
     client.submit_order = MagicMock(return_value=fake_order)
-    queries = MagicMock()
+    queries = _FakeAccountQueries(positions={"AAPL": 10.0})
 
     engine_close = CloseCommand(
         command_type="close",
@@ -1207,7 +1498,7 @@ async def test_dispatch_engine_guardrail_close_routes_to_submit_equity_close() -
     outcome = await dispatch_command_to_broker(
         engine_close,
         client=client,
-        queries=queries,
+        queries=cast(Any, queries),
         execution=_execution_config(),
         client_order_id=ClientOrderId(
             "MON.session-abc.42.0~the-THE-AAPL-0123456789abcdef0123456789abcdef~inv-X"

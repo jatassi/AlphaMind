@@ -669,13 +669,12 @@ async def test_engine_equity_close_cancels_broker_enforced_legs_before_sell(
     only the two broker-enforced legs are sent to the broker.
     """
     from typing import Any, cast
-    from unittest.mock import MagicMock
 
-    from alphamind.execution.broker_adapter import AccountStateQueries
     from alphamind.execution.oms import build_initial_submit_engine_envelope_state
     from alphamind.execution.oms.submit_engine_envelope import submit_engine_envelope
     from tests.execution.oms.test_broker_dispatch import (
         _execution_config,
+        _FakeAccountQueries,
         _HeldForOrdersClient,
     )
 
@@ -693,7 +692,7 @@ async def test_engine_equity_close_cancels_broker_enforced_legs_before_sell(
 
     state = build_initial_submit_engine_envelope_state(monitor_session_id=_MONITOR_SESSION)
     client = _HeldForOrdersClient(protective_leg_ids=("alp-tp-1", "alp-stop-1"))
-    queries = MagicMock(spec=AccountStateQueries)
+    queries = _FakeAccountQueries(positions={"NVDA": 10.0})
 
     ctx, handle = await _open_handle(factory)
     result, _state = await submit_engine_envelope(
@@ -702,7 +701,7 @@ async def test_engine_equity_close_cancels_broker_enforced_legs_before_sell(
         state=state,
         config=_make_state_persistence_config(),
         client=cast(Any, client),
-        queries=queries,
+        queries=cast(Any, queries),
         execution_config=_execution_config(),
     )
     await ctx.__aexit__(None, None, None)

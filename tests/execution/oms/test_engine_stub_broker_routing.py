@@ -117,6 +117,7 @@ from alphamind.state.tables.positions_codec import (
 from alphamind.state.tables.theses_codec import (
     record_to_rows as thesis_record_to_rows,
 )
+from tests.execution.oms.test_broker_dispatch import _live_position
 
 _NOW = datetime(2026, 5, 9, 14, 30, 0, tzinfo=UTC)
 _TRIGGER_TS = datetime(2026, 5, 9, 14, 30, tzinfo=UTC)
@@ -610,6 +611,9 @@ async def test_engine_envelope_routes_close_through_dispatcher(
     # Mock TradingClient isinstance check for AccountStateQueries.
     client.__class__ = type("MockTradingClient", (MagicMock,), {})
     queries = MagicMock(spec=AccountStateQueries)
+    # ALP-943 — the equity CLOSE drift guard consults the live broker position;
+    # report it consistent with the seeded projection so the close proceeds.
+    queries.get_open_position.return_value = _live_position("NVDA", 10.0)
     execution_config = ExecutionConfig(
         greeks_refresh=GreeksRefresh(scheduled_interval_minutes=5, move_trigger_pct=0.01),
         conservative_delta_buffer_pct=0.0,
@@ -1089,6 +1093,9 @@ async def test_pm_envelope_close_equity_routes_through_dispatcher(
         client = MagicMock()
         client.submit_order = MagicMock(side_effect=_submit_order)
         queries = MagicMock(spec=AccountStateQueries)
+        # ALP-943 — report the live broker position consistent with the seeded
+        # projection so the equity CLOSE drift guard lets the close proceed.
+        queries.get_open_position.return_value = _live_position("NVDA", 10.0)
 
         pm_view = _make_pm_view(positions=(_position_view("POS-NVDA-001"),))
 
@@ -1207,6 +1214,9 @@ async def test_pm_envelope_close_with_broker_routing_writes_in_turn(
         client = MagicMock()
         client.submit_order = MagicMock(side_effect=_submit_order)
         queries = MagicMock(spec=AccountStateQueries)
+        # ALP-943 — report the live broker position consistent with the seeded
+        # projection so the equity CLOSE drift guard lets the close proceed.
+        queries.get_open_position.return_value = _live_position("NVDA", 10.0)
 
         pm_view = _make_pm_view(positions=(_position_view("POS-NVDA-001"),))
 
@@ -1347,6 +1357,161 @@ async def test_pm_envelope_permanent_rejection_carries_code_in_gateway_reason(
             assert entry_orders[0].status == "CANCELLED"
     finally:
         await async_engine.dispose()
+
+
+async def test_pm_envelope_close_drift_rejection_abandons_and_tears_down(
+    tmp_path: Any,
+) -> None:
+    """ALP-943 — an equity CLOSE whose symbol is flat at the broker (the
+    position exited between snapshot and dispatch) is rejected
+    ``position_state_drift`` through ``_route_through_broker``: the per-command
+    result is rejected with the code in ``gateway_reason``, the pre-committed
+    CLOSE order row is torn down to CANCELLED, a ``command_abandoned``
+    activity-log entry records why the command never reached the broker, and
+    no order-submit RPC fires."""
+    from alphamind.decision.portfolio_manager.submit_envelope import (
+        _handle_submit_envelope,
+        build_initial_submit_envelope_state,
+    )
+    from alphamind.execution.broker_adapter import AccountStateQueries
+    from tests.execution.oms.test_submit_envelope_mcp import (
+        _DEFAULT_ACTIVE_SECTORS,
+        _close_command,
+        _make_bundle,
+        _make_pm_view,
+        _make_strategist_envelope,
+        _make_validation_state,
+        _position_assessment_stub,
+        _position_view,
+        _retrieval_store,
+        _sector_resolver,
+    )
+
+    async_engine, factory = _build_db_factory(tmp_path)
+    try:
+        await _seed_substrate_with_cash(factory)
+        await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
+
+        invocation_id = "inv-close-drift-1"
+        ctx = InvocationContext(
+            session_factory=factory,
+            record=_make_invocation_record(invocation_id=invocation_id),
+        )
+        handle = await ctx.__aenter__()
+
+        envelope = _make_strategist_envelope(
+            verdict="approve",
+            commands=(_close_command(position_id=PositionId("POS-NVDA-001")),),
+        )
+        validation_state = _make_validation_state()
+        state = build_initial_submit_envelope_state(
+            invocation_id=validation_state.invocation_id,
+            starting_validation_state=validation_state,
+        )
+        bundle = _make_bundle(position_assessments=(_position_assessment_stub("SA-1"),))
+
+        client = MagicMock()
+        queries = MagicMock(spec=AccountStateQueries)
+        queries.get_open_position.return_value = None  # broker flat — the position exited
+
+        pm_view = _make_pm_view(positions=(_position_view("POS-NVDA-001"),))
+
+        _response, state = await _handle_submit_envelope(
+            envelope.model_dump(mode="json"),
+            state=state,
+            retrieval_store=_retrieval_store(),
+            pre_processor_bundle=bundle,
+            pm_view=pm_view,
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            halt_mode=False,
+            sector_resolver=_sector_resolver,
+            state_persistence_config=_make_state_persistence_config(),
+            invocation_handle=handle,
+            client=client,
+            queries=queries,
+            execution_config=_default_execution_config(),
+        )
+        await ctx.__aexit__(None, None, None)
+
+        # No order ever reached the broker.
+        assert client.submit_order.call_count == 0
+
+        # The per-command result is rejected with the drift code.
+        assert len(state.submission_log) == 1
+        result = state.submission_log[0].submission_results[0]
+        assert result.status == "rejected"
+        assert result.rejection_payload is not None
+        assert result.rejection_payload.gateway_reason == "position_state_drift"
+
+        # ALP-836 — pre-committed before dispatch, so the drift rejection tears
+        # the CLOSE row down to CANCELLED; the command_abandoned entry records
+        # why nothing reached the broker.
+        async with factory() as sess:
+            order_rows = (await sess.execute(select(OrderRow))).scalars().all()
+            close_orders = [o for o in order_rows if o.order_role == "CLOSE"]
+            assert len(close_orders) == 1
+            assert close_orders[0].status == "CANCELLED"
+
+            log_rows = (
+                (
+                    await sess.execute(
+                        select(ActivityLogRow).where(ActivityLogRow.invocation_id == invocation_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        types = {r.event_type for r in log_rows}
+        assert EventType.COMMAND_ABANDONED.value in types
+    finally:
+        await async_engine.dispose()
+
+
+async def test_engine_envelope_close_drift_rejection_leaves_trigger_unseen(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ALP-943 — through ``submit_engine_envelope``, the drift guard's rejection
+    yields a ``rejected`` SubmissionResult naming ``position_state_drift``, no
+    order reaches the broker, nothing is persisted, and the trigger is NOT
+    marked seen — the monitor may legitimately retry."""
+    from alphamind.execution.broker_adapter import AccountStateQueries
+    from alphamind.execution.oms import build_initial_submit_engine_envelope_state
+    from alphamind.execution.oms.submit_engine_envelope import submit_engine_envelope
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory)
+    await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
+
+    state = build_initial_submit_engine_envelope_state(monitor_session_id=_MONITOR_SESSION)
+
+    client = MagicMock()
+    queries = MagicMock(spec=AccountStateQueries)
+    queries.get_open_position.return_value = None  # broker flat — the position exited
+
+    ctx, handle = await _open_handle(factory)
+    result, new_state = await submit_engine_envelope(
+        _engine_envelope(),
+        handle=handle,
+        state=state,
+        config=_make_state_persistence_config(),
+        client=client,
+        queries=queries,
+        execution_config=_default_execution_config(),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    assert client.submit_order.call_count == 0
+    assert result.status == "rejected"
+    assert result.rejection_payload is not None
+    assert "position_state_drift" in (result.rejection_payload.suggested_modification or "")
+    # The trigger is not marked seen — the monitor may retry next trigger.
+    assert new_state.seen_trigger_ids == frozenset()
+
+    # Nothing was persisted for the rejected close.
+    async with factory() as sess:
+        orders = (await sess.execute(select(OrderRow))).scalars().all()
+        assert [o for o in orders if o.order_role == "CLOSE"] == []
 
 
 # ---------------------------------------------------------------------------

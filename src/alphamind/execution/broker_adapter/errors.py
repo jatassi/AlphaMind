@@ -23,17 +23,24 @@ PermanentRejectionCode = Literal[
     "underlying_halted",  # 403 options
     "invalid_legs",  # 422 mleg
     "asset_not_tradable",  # 403 / 422 generic
+    "position_state_drift",  # local dispatch-time guard, http_status=0 (ALP-943)
     "other_permanent",  # fallback for unmapped 4xx
 ]
 
 
 @dataclass(frozen=True)
 class PermanentRejection:
-    """Alpaca rejected the submission for a non-retriable reason.
+    """The submission was rejected for a non-retriable reason.
 
     Surfaced to the OMS as a synchronous rejection — the caller does NOT
     re-enqueue the command. The PM may revise and resubmit on its next
     invocation.
+
+    ``http_status`` carries Alpaca's 4xx status for broker rejections.
+    ``http_status == 0`` marks a LOCAL guard rejection — no HTTP exchange
+    occurred and the command never reached the broker (e.g. the ALP-943
+    ``position_state_drift`` dispatch-time guard); consumers may key forensic
+    handling (the ``command_abandoned`` emit) on that sentinel.
     """
 
     code: PermanentRejectionCode

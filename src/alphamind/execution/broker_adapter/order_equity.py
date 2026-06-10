@@ -220,7 +220,7 @@ async def submit_equity_close(
     execution: ExecutionConfig,
     client_order_id: str,
     symbol: str,
-    position_qty: float,
+    qty: float,
     position_side: Literal["long", "short"],
 ) -> SubmissionOutcome[EquitySubmission]:
     """Translate a CLOSE command and submit.
@@ -228,13 +228,16 @@ async def submit_equity_close(
     Always SIMPLE. Uses opposite side of the position:
     long → SELL, short → BUY (buy-to-cover).
 
-    ``symbol``, ``position_qty``, and ``position_side`` are threaded from
-    portfolio state because ``CloseCommand`` references the position by ID.
+    ``symbol``, ``qty``, and ``position_side`` are threaded from the dispatch
+    layer because ``CloseCommand`` references the position by ID. ``qty`` is
+    the FINAL resolved quantity: ``_close_equity`` resolves ``command.quantity``
+    (``"all"`` → projected share count) and runs the ALP-943 live-position
+    drift guard — including its clamp to the live broker quantity — before
+    this translator is reached.
     """
     _validate_client_order_id(client_order_id)
 
     side = OrderSide.SELL if position_side == "long" else OrderSide.BUY
-    qty = position_qty if command.quantity == "all" else float(command.quantity)
 
     if command.order_type == "limit":
         if command.limit_price is None:

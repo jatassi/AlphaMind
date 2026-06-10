@@ -737,7 +737,9 @@ async def test_add_market_order_uses_additional_quantity() -> None:
 
 
 # ---------------------------------------------------------------------------
-# RED → GREEN cycle 10: submit_equity_close side derivation + quantity resolution
+# RED → GREEN cycle 10: submit_equity_close side derivation
+# (quantity resolution hoisted into _close_equity's ALP-943 drift guard —
+# covered by tests/execution/oms/test_broker_dispatch.py)
 # ---------------------------------------------------------------------------
 
 
@@ -760,13 +762,13 @@ async def test_close_long_position_uses_sell_side() -> None:
         execution=_make_execution_config(),
         client_order_id=_CLIENT_ORDER_ID_INV,
         symbol="AAPL",
-        position_qty=100.0,
+        qty=100.0,
         position_side="long",
     )
 
     req = captured[0]
     assert req.side == OrderSide.SELL
-    assert req.qty == 100.0  # "all" → position_qty
+    assert req.qty == 100.0  # the threaded, pre-resolved final qty
 
 
 @pytest.mark.asyncio
@@ -788,41 +790,13 @@ async def test_close_short_position_uses_buy_side() -> None:
         execution=_make_execution_config(),
         client_order_id=_CLIENT_ORDER_ID_INV,
         symbol="MSFT",
-        position_qty=50.0,
+        qty=50.0,
         position_side="short",
     )
 
     req = captured[0]
     assert req.side == OrderSide.BUY
     assert req.qty == 50.0
-
-
-@pytest.mark.asyncio
-async def test_close_numeric_quantity_uses_command_quantity() -> None:
-    """When quantity is numeric, use it directly, not position_qty."""
-    captured: list[Any] = []
-    fake_order = _make_fake_order(order_class=OrderClass.SIMPLE)
-
-    def fake_submit(request: Any) -> Any:
-        captured.append(request)
-        return fake_order
-
-    client = MagicMock()
-    client.submit_order = fake_submit
-
-    cmd = _make_close_command(quantity=25.0, close_rationale="conviction_reduced")
-    await submit_equity_close(
-        cmd,
-        client=client,
-        execution=_make_execution_config(),
-        client_order_id=_CLIENT_ORDER_ID_INV,
-        symbol="AAPL",
-        position_qty=100.0,  # should NOT be used
-        position_side="long",
-    )
-
-    req = captured[0]
-    assert req.qty == 25.0
 
 
 @pytest.mark.asyncio
@@ -845,7 +819,7 @@ async def test_close_limit_order_type() -> None:
         execution=_make_execution_config(),
         client_order_id=_CLIENT_ORDER_ID_INV,
         symbol="AAPL",
-        position_qty=100.0,
+        qty=100.0,
         position_side="long",
     )
 
@@ -1012,7 +986,7 @@ async def test_client_order_id_threaded_onto_close_request() -> None:
         execution=_make_execution_config(),
         client_order_id=_CLIENT_ORDER_ID_INV,
         symbol="AAPL",
-        position_qty=100.0,
+        qty=100.0,
         position_side="long",
     )
 

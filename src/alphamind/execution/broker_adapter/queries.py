@@ -351,6 +351,21 @@ def _convert_order(order: Order) -> OrderSnapshot:
     )
 
 
+def _convert_position(pos: Position) -> PositionSnapshot:
+    return PositionSnapshot(
+        symbol=str(pos.symbol),
+        asset_class=_enum_str(pos.asset_class),  # type: ignore[arg-type]
+        qty=float(pos.qty or 0),
+        avg_entry_price=price(_broker_decimal(pos.avg_entry_price or "1")),
+        market_value=signed_money(_broker_decimal(pos.market_value or "0")),
+        cost_basis=signed_money(_broker_decimal(pos.cost_basis or "0")),
+        unrealized_pl=signed_money(_broker_decimal(pos.unrealized_pl or "0")),
+        unrealized_plpc=float(pos.unrealized_plpc or 0),
+        current_price=_optional_price(pos.current_price),
+        side=_enum_str(pos.side),  # type: ignore[arg-type]
+    )
+
+
 def _broker_decimal(value: str | float | int) -> Decimal:
     """Parse Alpaca's loosely-typed monetary scalars without binary drift.
 
@@ -471,24 +486,33 @@ class AccountStateQueries:
             raise TypeError(msg)
         positions: list[Position] = result
         snapshots = sorted(
-            (
-                PositionSnapshot(
-                    symbol=str(pos.symbol),
-                    asset_class=_enum_str(pos.asset_class),  # type: ignore[arg-type]
-                    qty=float(pos.qty or 0),
-                    avg_entry_price=price(_broker_decimal(pos.avg_entry_price or "1")),
-                    market_value=signed_money(_broker_decimal(pos.market_value or "0")),
-                    cost_basis=signed_money(_broker_decimal(pos.cost_basis or "0")),
-                    unrealized_pl=signed_money(_broker_decimal(pos.unrealized_pl or "0")),
-                    unrealized_plpc=float(pos.unrealized_plpc or 0),
-                    current_price=_optional_price(pos.current_price),
-                    side=_enum_str(pos.side),  # type: ignore[arg-type]
-                )
-                for pos in positions
-            ),
+            (_convert_position(pos) for pos in positions),
             key=lambda s: s.symbol,
         )
         return tuple(snapshots)
+
+    def get_open_position(self, symbol: str) -> PositionSnapshot | None:
+        """Return the live ``PositionSnapshot`` for *symbol*, or ``None`` when flat.
+
+        Alpaca returns 404 from ``GET /v2/positions/{symbol}`` when the account
+        holds no position in the symbol; the wrapper converts 404 → ``None`` so
+        callers treat "no live position" as data (mirroring :meth:`get_asset`).
+        Non-404 errors propagate unchanged. The equity CLOSE dispatch consumes
+        this as its execution-time drift guard (ALP-943): the local positions
+        projection is frozen between fill-collection phases, so a CLOSE resolved
+        from it must be re-checked against the broker's live position before any
+        order reaches the wire.
+        """
+        try:
+            result = self._client.get_open_position(symbol)
+        except APIError as exc:
+            if exc.status_code == 404:
+                return None
+            raise
+        if not isinstance(result, Position):
+            msg = "get_open_position returned unexpected raw-data response"
+            raise TypeError(msg)
+        return _convert_position(result)
 
     async def get_orders(
         self,
