@@ -224,10 +224,10 @@ def _attach_provisional_estimate(
     always persists NULL): a genuine fingerprint divergence — the order row or
     the logged-quantity sum moved between the two passes — logs a WARNING,
     while a fill whose order resolved only under the write lock (nothing was
-    enriched provisionally, an expected commit-ordering race) logs at INFO.
+    enriched provisionally, an expected commit-ordering race) logs at DEBUG.
     """
     if provisional is None:
-        log.info(
+        log.debug(
             "no provisional enrichment for fill_id=%s (the order resolved only "
             "under the write lock); persisting live_execution_estimate=NULL",
             record.fill_id,

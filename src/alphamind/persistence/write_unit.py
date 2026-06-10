@@ -23,7 +23,7 @@ from collections.abc import Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alphamind.persistence.retry import run_with_sqlite_busy_retry
+from alphamind.persistence.retry import _DEFAULT_ATTEMPTS, run_with_sqlite_busy_retry
 from alphamind.persistence.session import _SQLITE_BEGIN_MODE_OPTION, begin_write_immediate
 
 
@@ -31,7 +31,7 @@ async def run_immediate_write_unit[T](
     session_factory: async_sessionmaker[AsyncSession],
     unit: Callable[[AsyncSession], Awaitable[T]],
     *,
-    attempts: int = 5,
+    attempts: int = _DEFAULT_ATTEMPTS,
 ) -> T:
     """Run *unit* as one committed ``BEGIN IMMEDIATE`` transaction, with retry.
 
