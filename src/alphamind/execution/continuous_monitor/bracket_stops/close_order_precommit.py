@@ -43,8 +43,7 @@ from alphamind.execution.write_paths.command_execution._shared import (
     _position_quantity,
 )
 from alphamind.execution.write_paths.command_execution.close import _close_order_id
-from alphamind.persistence.retry import run_with_sqlite_busy_retry
-from alphamind.persistence.session import begin_write_immediate
+from alphamind.persistence.write_unit import run_immediate_write_unit
 from alphamind.portfolio_state.records.orders import (
     OrderClass,
     OrderRole,
@@ -79,20 +78,17 @@ async def precommit_monitor_close_order(
     """
     order_id = _close_order_id(position.position_id, client_order_id)
 
-    async def _write() -> None:
-        async with session_factory() as session:
-            await begin_write_immediate(session)
-            existing = (
-                await session.execute(
-                    select(OrderRow.order_id).where(OrderRow.client_order_id == client_order_id)
-                )
-            ).scalar_one_or_none()
-            if existing is not None:
-                return
-            session.add(_build_monitor_close_order_row(position, order_id, client_order_id))
-            await session.commit()
+    async def _unit(session: AsyncSession) -> None:
+        existing = (
+            await session.execute(
+                select(OrderRow.order_id).where(OrderRow.client_order_id == client_order_id)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return
+        session.add(_build_monitor_close_order_row(position, order_id, client_order_id))
 
-    await run_with_sqlite_busy_retry(_write)
+    await run_immediate_write_unit(session_factory, _unit)
     logger.debug(
         "bracket_stops: pre-committed durable close order %s (client_order_id=%s) for position %s",
         order_id,

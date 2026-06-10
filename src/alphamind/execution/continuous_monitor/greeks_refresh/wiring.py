@@ -52,6 +52,7 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
 from alphamind.execution.continuous_monitor.underlying_stream.subscriptions import (
     OpenPositionsReader,
 )
+from alphamind.persistence.write_unit import run_immediate_write_unit
 from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
 from alphamind.portfolio_state.records.positions import OptionGreeks
 from alphamind.state.records_position_greeks import PositionGreeksRecord
@@ -156,17 +157,20 @@ class SqlGreeksWriter:
             index_elements=[PositionGreeksRow.position_id],
             set_={k: v for k, v in values.items() if k != "position_id"},
         )
-        async with self._session_factory() as sess:
-            try:
-                await sess.execute(stmt)
-                await sess.commit()
-            except IntegrityError as exc:
-                # The DEFERRED ``position_id`` FK to ``positions`` fires at COMMIT
-                # when the position does not exist; translate to the writer's
-                # typed "no such position" contract.
-                await sess.rollback()
-                msg = f"no such position: {position_id!r}"
-                raise LookupError(msg) from exc
+
+        async def _unit(sess: AsyncSession) -> None:
+            await sess.execute(stmt)
+
+        try:
+            # ALP-942 — the shared IMMEDIATE write unit (write lock up front +
+            # transient-lock retry on a fresh session).
+            await run_immediate_write_unit(self._session_factory, _unit)
+        except IntegrityError as exc:
+            # The DEFERRED ``position_id`` FK to ``positions`` fires at COMMIT
+            # when the position does not exist; translate to the writer's
+            # typed "no such position" contract.
+            msg = f"no such position: {position_id!r}"
+            raise LookupError(msg) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -325,9 +329,11 @@ def make_activity_log_emitter(
     )
 
     async def _emit(entry: ActivityLogEntry) -> None:
-        async with session_factory() as sess:
+        async def _unit(sess: AsyncSession) -> None:
             sess.add(activity_log_entry_to_row(entry))
-            await sess.commit()
+
+        # ALP-942 — IMMEDIATE write unit, mirroring every other monitor write.
+        await run_immediate_write_unit(session_factory, _unit)
 
     return _emit
 

@@ -123,38 +123,13 @@ async def run_fill_stream_consumer(  # noqa: PLR0913 — run-forever orchestrato
     attempt = 0
     while True:
         beat()
-        # Opportunistic recovery of quarantined fills (ALP-763): a fill parked
-        # because its ``orders`` row had not yet committed integrates as soon as
-        # that row exists. Run it each reconnect cycle alongside REST recovery.
-        # A drain error must not crash the consumer loop — matching the
-        # reconnect-supervisor tolerance below.
-        try:
-            await drain_unattributed_fills(
-                session_factory=session_factory,
-                enrichment_callable=enrichment_callable,
-                process_lifetime_id=process_lifetime_id,
-                escalation_ttl_seconds=config.unattributed_fill_escalation_ttl_seconds,
-            )
-        except Exception:
-            log.exception("unattributed-fill drain failed; continuing")
-
-        # Startup + post-disconnect recovery: replay missed events from REST.
-        # Same tolerance as the drain above (ALP-942 Scope C): a recovery /
-        # persist error — e.g. a transient SQLite lock that outlived the write
-        # unit's retry budget — must not unwind the supervisor TaskGroup (the
-        # 2026-06-09 17:00:05Z monitor crash). The periodic backfill sweep is
-        # the designed backstop (ALP-763), so log and continue the cycle.
-        try:
-            since = await _latest_fill_timestamp(session_factory)
-            if since is not None:
-                await _replay_recovery(
-                    queries,
-                    since=since,
-                    session_factory=session_factory,
-                    enrichment_callable=enrichment_callable,
-                )
-        except Exception:
-            log.exception("startup/reconnect replay recovery failed; continuing")
+        await _run_pre_stream_recovery(
+            queries,
+            session_factory=session_factory,
+            enrichment_callable=enrichment_callable,
+            process_lifetime_id=process_lifetime_id,
+            escalation_ttl_seconds=config.unattributed_fill_escalation_ttl_seconds,
+        )
 
         try:
             await _consume_stream(
@@ -213,6 +188,50 @@ async def run_fill_stream_consumer(  # noqa: PLR0913 — run-forever orchestrato
                 )
                 raise RuntimeError(msg)
         await asyncio.sleep(_backoff_seconds(attempt))
+
+
+async def _run_pre_stream_recovery(
+    queries: object,
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    enrichment_callable: EnrichmentCallable | None,
+    process_lifetime_id: str | None,
+    escalation_ttl_seconds: int,
+) -> None:
+    """Drain quarantined fills, then replay missed events from REST.
+
+    Runs at the top of each reconnect cycle. Both steps tolerate failure —
+    log and continue (ALP-942 Scope C): an error here, e.g. a transient SQLite
+    lock that outlived the write unit's retry budget, must not unwind the
+    supervisor TaskGroup (the 2026-06-09 17:00:05Z monitor crash propagated
+    from exactly this replay). The periodic backfill sweep is the designed
+    backstop for anything a failed pass misses (ALP-763).
+    """
+    # Opportunistic recovery of quarantined fills (ALP-763): a fill parked
+    # because its ``orders`` row had not yet committed integrates as soon as
+    # that row exists.
+    try:
+        await drain_unattributed_fills(
+            session_factory=session_factory,
+            enrichment_callable=enrichment_callable,
+            process_lifetime_id=process_lifetime_id,
+            escalation_ttl_seconds=escalation_ttl_seconds,
+        )
+    except Exception:
+        log.exception("unattributed-fill drain failed; continuing")
+
+    # Startup + post-disconnect recovery: replay missed events from REST.
+    try:
+        since = await _latest_fill_timestamp(session_factory)
+        if since is not None:
+            await _replay_recovery(
+                queries,
+                since=since,
+                session_factory=session_factory,
+                enrichment_callable=enrichment_callable,
+            )
+    except Exception:
+        log.exception("startup/reconnect replay recovery failed; continuing")
 
 
 async def _consume_stream(

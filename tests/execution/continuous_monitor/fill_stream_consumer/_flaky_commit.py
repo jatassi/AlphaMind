@@ -25,9 +25,7 @@ def flaky_commit_factory(
             if counters["failures_left"] > 0:
                 counters["failures_left"] -= 1
                 await self.rollback()
-                raise OperationalError(
-                    "COMMIT", {}, sqlite3.OperationalError("database is locked")
-                )
+                raise OperationalError("COMMIT", {}, sqlite3.OperationalError("database is locked"))
             counters["commits"] += 1
             await super().commit()
 

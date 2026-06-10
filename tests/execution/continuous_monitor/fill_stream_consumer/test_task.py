@@ -1510,17 +1510,13 @@ class TestPersistFailureTolerance:
         # Recovery yields one report whose persist commit ALWAYS fails with the
         # transient lock error — the write unit's retry budget is spent and the
         # OperationalError escapes persist_fill_report.
-        queries = _FakeAccountStateQueries(
-            [_order_snapshot(filled_at=_now_utc(), filled_qty=2.0)]
-        )
+        queries = _FakeAccountStateQueries([_order_snapshot(filled_at=_now_utc(), filled_qty=2.0)])
         stream = _FakeStream()
         flaky, _counters = flaky_commit_factory(session_factory, failures=1_000)
         kwargs = _build_run_kwargs(session_factory, stream, queries)
         kwargs["session_factory"] = flaky
 
-        task = asyncio.create_task(
-            run_fill_stream_consumer(_session(), _config(), **kwargs)
-        )
+        task = asyncio.create_task(run_fill_stream_consumer(_session(), _config(), **kwargs))
 
         # The consumer must survive the failed replay and reach the stream
         # (registering its handler proves the cycle continued past recovery).
@@ -1547,9 +1543,7 @@ class TestPersistFailureTolerance:
         kwargs = _build_run_kwargs(session_factory, stream, queries)
         kwargs["session_factory"] = flaky
 
-        task = asyncio.create_task(
-            run_fill_stream_consumer(_session(), _config(), **kwargs)
-        )
+        task = asyncio.create_task(run_fill_stream_consumer(_session(), _config(), **kwargs))
 
         await _wait_for_handler(stream)
         ts = _now_utc()

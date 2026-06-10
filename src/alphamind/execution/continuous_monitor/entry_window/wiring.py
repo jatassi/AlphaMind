@@ -61,6 +61,7 @@ from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
 from alphamind.execution.write_paths.broker_event_persistence import append_broker_event
 from alphamind.execution.write_paths.entry_reprice_sync import entry_reprice_event_record
+from alphamind.persistence.write_unit import run_immediate_write_unit
 from alphamind.portfolio_state.records.orders import (
     BracketRecord,
     BracketStatus,
@@ -377,9 +378,12 @@ def make_entry_window_reprice_event_append(
             new_alpaca_order_id=new_alpaca_order_id,
             reason=reprice_reason,
         )
-        async with session_factory() as session:
+
+        async def _unit(session: AsyncSession) -> None:
             await append_broker_event(session, record)
-            await session.commit()
+
+        # ALP-942 — IMMEDIATE write unit, mirroring every other monitor write.
+        await run_immediate_write_unit(session_factory, _unit)
 
     return _append
 
