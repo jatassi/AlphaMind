@@ -109,6 +109,21 @@ unattributed_fill_escalation_ttl_seconds: 1800
 # false-tripping a healthy steady-state task.
 watchdog_cadence_multiplier: 10.0
 
+# Probe cadence (seconds) of the monitor's dedicated out-of-process watchdog
+# (ALP-941). The watchdog is its own NSSM service (alphamind-monitor-watchdog);
+# it reads the monitor's file heartbeat (monitor.heartbeat) and runs
+# `nssm restart alphamind-monitor` when the beat is older than
+# monitor_watchdog_tick_seconds * watchdog_cadence_multiplier (15s x 10 = 150s
+# by default) — bounding a frozen-event-loop wedge (the ALP-841/ALP-941 class,
+# which the in-process watchdog structurally cannot catch) at ~2.5 minutes.
+# The faulthandler deadman re-arms on this cadence with the same bound, so the
+# frozen loop dumps its blocking frame to monitor_faulthandler.log first.
+# Note: this knob does NOT set how often the monitor WRITES the heartbeat —
+# the supervisor beats the file on its own watchdog-check interval (seconds in
+# practice, always far inside the stall bound); this knob governs only the
+# external watchdog's probe cadence + stall bound and the deadman's re-arm.
+monitor_watchdog_tick_seconds: 15.0
+
 # Seconds of trade_updates silence during RTH before the fill-stream consumer
 # forces a reconnect (ALP-819). The websockets library reconnects internally on
 # a transport error (WinError 121) without raising or delivering frames, so the

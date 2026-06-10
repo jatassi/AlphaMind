@@ -153,6 +153,20 @@ class ContinuousMonitorConfig(BaseModel):
             "false-tripping."
         ),
     )
+    monitor_watchdog_tick_seconds: float = Field(
+        default=15.0,
+        gt=0.0,
+        description=(
+            "Probe cadence (seconds) of the monitor's dedicated out-of-process "
+            "watchdog (ALP-941). The watchdog ticks at this cadence and restarts "
+            "the alphamind-monitor service when the monitor's file heartbeat is "
+            "older than monitor_watchdog_tick_seconds * watchdog_cadence_multiplier "
+            "— mirroring the safety core's cadence x multiplier stall bound, so "
+            "no second multiplier knob exists. The monitor's faulthandler deadman "
+            "re-arms on this same cadence with the same bound, so a frozen loop "
+            "self-dumps its blocking frame before the restart lands."
+        ),
+    )
     fill_stream_stale_timeout_seconds: int = Field(
         default=900,
         ge=60,

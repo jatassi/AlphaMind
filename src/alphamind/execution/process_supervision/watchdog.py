@@ -1,17 +1,17 @@
-"""Dedicated out-of-process watchdog for the safety core (ALP-857 / ADR-0004).
+"""Dedicated out-of-process watchdog (ALP-857 / ALP-941, ADR-0004).
 
-A **separate process** that probes the safety core's file heartbeat and restarts
-the core when the heartbeat goes stale. It is NOT a loop-resident probe inside
-the safety core's own event loop: a loop-resident watchdog cannot catch a freeze
-of its own loop — that is the structural ALP-841 failure (a data hang froze the
-safety loop *and* the in-loop watchdog together). Running the watchdog in its own
-process, reading the core's heartbeat across the file boundary, makes that
-mechanism unrepresentable.
+A **separate process** that probes a supervised process's file heartbeat and
+restarts that process when the heartbeat goes stale. It is NOT a loop-resident
+probe inside the supervised process's own event loop: a loop-resident watchdog
+cannot catch a freeze of its own loop — that is the structural ALP-841 failure
+(a data hang froze the supervised loop *and* the in-loop watchdog together).
+Running the watchdog in its own process, reading the heartbeat across the file
+boundary, makes that mechanism unrepresentable.
 
 The shell is thin: each tick reads the heartbeat age and, if it exceeds the
-stall bound, asks the injected :class:`ProcessController` to restart the core.
-In production the controller shells out to NSSM (``nssm restart
-alphamind-safety-core``); in tests a fake controller records the calls, so the
+stall bound, asks the injected :class:`ProcessController` to restart the
+supervised process. In production the controller shells out to NSSM (``nssm
+restart <service>``); in tests a fake controller records the calls, so the
 restart-on-staleness behaviour is unit-testable without a real process or NSSM.
 """
 
@@ -33,7 +33,7 @@ class HeartbeatProbe(Protocol):
 
 
 class ProcessController(Protocol):
-    """Restarts the supervised safety-core process (the one OS-process seam).
+    """Restarts the supervised process (the one OS-process seam).
 
     Production implementations shell out to the service manager (NSSM) or
     ``subprocess``; tests substitute a fake that records ``restart`` calls. The
@@ -47,7 +47,7 @@ class ProcessController(Protocol):
 # A zero-arg factory returning the watchdog's tick iterator. Production binds it
 # to a ``supervised_loop``-style sleeper; tests bind a bounded iterator so the
 # loop terminates. Mirrors the supervisor's ``SupervisedLoop`` seam without
-# importing it (the safety core imports no monitor internals).
+# importing it (this package imports no monitor internals).
 WatchdogLoop = Callable[[], AsyncIterator[None]]
 
 
@@ -62,18 +62,18 @@ async def run_watchdog(
     """Run-forever watchdog loop: probe the heartbeat, restart on staleness.
 
     On each tick, read the heartbeat age. ``None`` (file absent) is startup
-    grace — the core has not yet beaten — so no restart. An age strictly greater
-    than ``stall_bound_seconds`` means the core has wedged: log loudly and ask
-    the controller to restart it.
+    grace — the supervised process has not yet beaten — so no restart. An age
+    strictly greater than ``stall_bound_seconds`` means the supervised process
+    has wedged: log loudly and ask the controller to restart it.
 
     A restart is **debounced** for ``stall_bound_seconds`` after it fires. After
-    a restart, NSSM must stop/relaunch the core and the core must write its first
-    fresh heartbeat; during that whole window the file still holds the OLD stale
-    timestamp, so without a cooldown the watchdog would re-issue ``restart`` every
-    tick — a storm that can interrupt the in-progress relaunch. The cooldown is a
-    grace window for the core to recover, not a permanent mute: if the heartbeat
-    is still stale once the window elapses, the relaunch failed and a fresh
-    restart is issued.
+    a restart, NSSM must stop/relaunch the supervised process and that process
+    must write its first fresh heartbeat; during that whole window the file
+    still holds the OLD stale timestamp, so without a cooldown the watchdog
+    would re-issue ``restart`` every tick — a storm that can interrupt the
+    in-progress relaunch. The cooldown is a grace window for the process to
+    recover, not a permanent mute: if the heartbeat is still stale once the
+    window elapses, the relaunch failed and a fresh restart is issued.
 
     ``now`` defaults to a wall-clock epoch (``datetime.now(UTC).timestamp()``) so
     it compares against the heartbeat's wall-clock timestamp across the process
@@ -90,11 +90,11 @@ async def run_watchdog(
             continue
         if last_restart_at is not None and tick_at - last_restart_at <= stall_bound_seconds:
             # Inside the cooldown window — the prior restart is still relaunching
-            # the core (which has not yet written a fresh beat); suppress.
+            # the supervised process (which has not yet written a fresh beat);
+            # suppress.
             continue
         log.critical(
-            "safety-core watchdog: heartbeat stale (%.0fs > bound %.0fs) — "
-            "restarting the safety-core process",
+            "watchdog: heartbeat stale (%.0fs > bound %.0fs) — restarting the supervised process",
             age,
             stall_bound_seconds,
         )

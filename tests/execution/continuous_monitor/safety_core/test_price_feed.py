@@ -35,7 +35,6 @@ from alphamind.execution.broker_adapter.queries import (
     TradeAccountSnapshot,
 )
 from alphamind.execution.continuous_monitor.safety_core.evaluation import SafetyLimits
-from alphamind.execution.continuous_monitor.safety_core.heartbeat import FileHeartbeatSink
 from alphamind.execution.continuous_monitor.safety_core.loop import run_safety_core
 from alphamind.execution.continuous_monitor.safety_core.price_feed import (
     AlpacaLatestQuoteFetcher,
@@ -46,6 +45,7 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
     UnderlyingPriceCache,
     UnderlyingQuote,
 )
+from alphamind.execution.process_supervision.heartbeat import FileHeartbeatSink
 
 _AS_OF = datetime(2026, 6, 5, 14, 30, tzinfo=UTC)
 

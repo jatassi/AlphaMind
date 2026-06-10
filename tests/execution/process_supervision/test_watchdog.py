@@ -1,10 +1,10 @@
-"""Tests for the dedicated out-of-process safety-core watchdog (ALP-857).
+"""Tests for the dedicated out-of-process watchdog (ALP-857 / ALP-941).
 
-AC: the dedicated out-of-process watchdog restarts a wedged safety core on
-heartbeat staleness. The watchdog is a *separate process* that probes the
-safety core's file heartbeat and restarts it when stale — NOT a loop-resident
-probe (a loop-resident watchdog cannot catch a freeze of its own loop, the
-ALP-841 failure this story makes unrepresentable).
+AC: the dedicated out-of-process watchdog restarts a wedged supervised process
+on heartbeat staleness. The watchdog is a *separate process* that probes the
+supervised process's file heartbeat and restarts it when stale — NOT a
+loop-resident probe (a loop-resident watchdog cannot catch a freeze of its own
+loop, the ALP-841 failure this primitive makes unrepresentable).
 
 These tests drive ``run_watchdog`` against a fake heartbeat probe and a fake
 process controller (the broker/clock/DB boundaries are not involved; the
@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from alphamind.execution.continuous_monitor.safety_core.watchdog import (
+from alphamind.execution.process_supervision.watchdog import (
     WatchdogLoop,
     run_watchdog,
 )

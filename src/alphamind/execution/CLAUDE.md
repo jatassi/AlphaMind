@@ -24,6 +24,7 @@ PM-rejected-proposal simulation → `counterfactual_replay_engine/`
 | `oms/` | OMS package — command-ID derivation and OMS-side submission paths. |
 | `paper_evaluation_harness/` | Paper-evaluation harness — calibrates Alpaca paper fills with estimated live-execution drag. |
 | `position_model/` | Pure-function position-model utilities. |
+| `process_supervision/` | Generic out-of-process supervision primitives (ALP-857 / ALP-941, ADR-0004). |
 | `regt_margin_attribution/` | Reg T margin attribution — OCC TIMS / FINRA 4210 baseline v1 reference model. |
 | `thesis_model/` | Thesis model utilities for the execution layer. |
 | `venue_configuration/` | Venue configuration runtime — settlement / sessions / margin / fees. |

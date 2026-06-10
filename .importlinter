@@ -560,6 +560,10 @@ forbidden_modules =
 # packages, the control surface, the monitor ``__main__`` composition root, or
 # the pipeline / scheduler composition roots. Each is enumerated (grimp rejects
 # forbidding an ancestor of the source package).
+#
+# The generic heartbeat / watchdog / process-control primitives live in the
+# shared ``alphamind.execution.process_supervision`` package (ALP-941 hoist) —
+# not forbidden here, and it imports no monitor internals.
 [importlinter:contract:safety-core-isolation]
 name = Safety core imports neither pipeline nor monitor internals
 type = forbidden

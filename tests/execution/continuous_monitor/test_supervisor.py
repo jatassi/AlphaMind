@@ -488,6 +488,87 @@ class TestStalledLoopTripsWatchdog:
         assert exits == [1]
 
 
+class TestFileHeartbeatSeam:
+    """ALP-941 — the supervisor's off-hot-path file heartbeat for the
+    out-of-process monitor watchdog."""
+
+    async def test_injected_sink_beats_once_per_watchdog_iteration(self) -> None:
+        """With a sink injected, each _watchdog_loop iteration beats exactly once.
+
+        The beat fires immediately after ``await self._sleep(...)`` returns —
+        proving the event loop resumed the coroutine — so the file goes stale
+        the moment the loop freezes.
+        """
+        clock = _FakeClock()
+        beats: list[None] = []
+
+        class _FakeSink:
+            def beat(self) -> None:
+                beats.append(None)
+
+        supervisor = MonitorSupervisor(
+            session=_session(),
+            config=_config(),
+            sleep=clock.sleep,
+            monotonic=clock.monotonic,
+            heartbeat=_FakeSink(),
+        )
+        supervisor._stop_event = asyncio.Event()
+
+        stopper = _StopAfter(clock, passes=3)
+        with pytest.raises(asyncio.CancelledError):
+            supervisor._sleep = stopper
+            await supervisor._watchdog_loop()
+
+        assert len(beats) == 3  # one beat per completed sleep, none after cancel
+
+    async def test_failing_beat_does_not_kill_the_watchdog_loop(self) -> None:
+        """A beat that raises (disk full, permissions) is logged, not fatal.
+
+        The liveness write must never terminate the monitor it reports on; a
+        persistently stale file makes the external watchdog restart the
+        monitor, which is the designed recovery.
+        """
+        clock = _FakeClock()
+        beats = 0
+
+        class _BrokenSink:
+            def beat(self) -> None:
+                nonlocal beats
+                beats += 1
+                raise OSError("disk full")
+
+        supervisor = MonitorSupervisor(
+            session=_session(),
+            config=_config(),
+            sleep=clock.sleep,
+            monotonic=clock.monotonic,
+            heartbeat=_BrokenSink(),
+        )
+        supervisor._stop_event = asyncio.Event()
+
+        stopper = _StopAfter(clock, passes=2)
+        with pytest.raises(asyncio.CancelledError):  # only the stopper's cancel, no OSError
+            supervisor._sleep = stopper
+            await supervisor._watchdog_loop()
+
+        assert beats == 2  # both iterations attempted the beat and survived it
+
+    async def test_no_sink_means_no_beat_and_unchanged_behavior(self) -> None:
+        """Default heartbeat=None preserves the existing watchdog loop exactly."""
+        clock = _FakeClock()
+        supervisor = _supervisor(clock=clock)  # constructed without a heartbeat
+        supervisor._stop_event = asyncio.Event()
+
+        stopper = _StopAfter(clock, passes=2)
+        with (
+            mock.patch(_EXIT_PATH, side_effect=AssertionError("must not exit")),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            supervisor._sleep = stopper
+            await supervisor._watchdog_loop()
+
+
 class TestWatchdogShutdown:
     async def test_graceful_stop_cancels_watchdog_without_hanging(self) -> None:
         """run() must return within the shutdown timeout — the watchdog must not block __aexit__."""

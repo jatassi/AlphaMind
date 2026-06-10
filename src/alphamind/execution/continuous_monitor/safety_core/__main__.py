@@ -27,7 +27,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import os
 import sys
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
@@ -40,27 +39,26 @@ from alphamind.config.loaders import read_yaml_file
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.venue import VenueConfig
 from alphamind.execution.broker_adapter import AccountStateQueries, AlpacaClientFactory
-from alphamind.execution.continuous_monitor.logging_setup import configure_monitor_logging
-from alphamind.execution.continuous_monitor.safety_core.evaluation import SafetyLimits
-from alphamind.execution.continuous_monitor.safety_core.heartbeat import (
-    FileHeartbeatProbe,
-    FileHeartbeatSink,
+from alphamind.execution.continuous_monitor.logging_setup import (
+    configure_monitor_logging,
+    log_directory,
 )
+from alphamind.execution.continuous_monitor.safety_core.evaluation import SafetyLimits
 from alphamind.execution.continuous_monitor.safety_core.loop import run_safety_core
 from alphamind.execution.continuous_monitor.safety_core.price_feed import (
     AlpacaLatestQuoteFetcher,
     run_price_feed,
 )
-from alphamind.execution.continuous_monitor.safety_core.process_control import (
-    NssmServiceController,
-)
-from alphamind.execution.continuous_monitor.safety_core.watchdog import (
-    run_watchdog,
-    supervised_watchdog_loop,
-)
 from alphamind.execution.continuous_monitor.session import MonitorMode, new_session
 from alphamind.execution.continuous_monitor.underlying_stream.cache import (
     UnderlyingPriceCache,
+)
+from alphamind.execution.process_supervision import (
+    FileHeartbeatProbe,
+    FileHeartbeatSink,
+    NssmServiceController,
+    run_watchdog,
+    supervised_watchdog_loop,
 )
 
 log = logging.getLogger(__name__)
@@ -78,11 +76,12 @@ _HEARTBEAT_FILENAME = "safety_core.heartbeat"
 _SAFETY_CORE_SERVICE_NAME = "alphamind-safety-core"
 
 # Per-process rotating-log filenames (ALP-868). The safety core, its watchdog,
-# and the continuous monitor are three separate processes; on Windows
-# ``TimedRotatingFileHandler`` cannot rotate a file held open by another process
-# (``WinError 32``), so each gets its own file. These parallel the per-service
-# NSSM stdout/stderr naming in ``install_safety_core_service.ps1`` (which targets
-# ``safety_core.out.log`` / ``safety_core.err.log``) — distinct files, same prefix.
+# the continuous monitor, and the monitor's watchdog (ALP-941) are four separate
+# processes; on Windows ``TimedRotatingFileHandler`` cannot rotate a file held
+# open by another process (``WinError 32``), so each gets its own file. These
+# parallel the per-service NSSM stdout/stderr naming in
+# ``install_safety_core_service.ps1`` (which targets ``safety_core.out.log`` /
+# ``safety_core.err.log``) — distinct files, same prefix.
 _SAFETY_CORE_LOG_FILENAME = "safety_core.log"
 _WATCHDOG_LOG_FILENAME = "safety_core_watchdog.log"
 
@@ -122,8 +121,7 @@ def _log_filename_for_subcommand(subcommand: str) -> str:
 
 
 def _heartbeat_path() -> Path:  # pragma: no cover - filesystem path resolution
-    base = os.environ.get("USERPROFILE") or str(Path.home())
-    return Path(base) / "AlphaMind" / "logs" / _HEARTBEAT_FILENAME
+    return log_directory() / _HEARTBEAT_FILENAME
 
 
 def _load_safety_limits() -> SafetyLimits:  # pragma: no cover - exercised via python -m

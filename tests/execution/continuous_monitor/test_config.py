@@ -111,6 +111,18 @@ class TestContinuousMonitorConfigModel:
         cfg = ContinuousMonitorConfig(**payload)  # type: ignore[arg-type]
         assert cfg.greeks_refresh_inspection_cadence_seconds == 30
 
+    def test_monitor_watchdog_tick_defaults_when_absent(self) -> None:
+        """ALP-941 adds the out-of-process monitor-watchdog tick with a default
+        so existing YAML files continue to parse without explicit edits."""
+        cfg = ContinuousMonitorConfig(**self._valid_payload())  # type: ignore[arg-type]
+        assert cfg.monitor_watchdog_tick_seconds == 15.0
+
+    def test_non_positive_monitor_watchdog_tick_rejected(self) -> None:
+        payload = self._valid_payload()
+        payload["monitor_watchdog_tick_seconds"] = 0.0
+        with pytest.raises((ValueError, TypeError)):
+            ContinuousMonitorConfig(**payload)  # type: ignore[arg-type]
+
     def test_model_is_frozen(self) -> None:
         cfg = ContinuousMonitorConfig(**self._valid_payload())  # type: ignore[arg-type]
         with pytest.raises((ValueError, TypeError)):

@@ -22,7 +22,6 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime
-from typing import Protocol
 
 from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
@@ -39,6 +38,7 @@ from alphamind.execution.continuous_monitor.safety_core.records import (
 from alphamind.execution.continuous_monitor.underlying_stream.cache import (
     UnderlyingPriceCache,
 )
+from alphamind.execution.process_supervision import HeartbeatSink
 
 log = logging.getLogger(__name__)
 
@@ -52,12 +52,6 @@ GetAccount = Callable[[], TradeAccountSnapshot]
 SafetyLoop = Callable[[], AsyncIterator[None]]
 # A non-DB sink for each tick's evaluation (operator surfaces / tests). Optional.
 OnEvaluation = Callable[[SafetyEvaluation], None]
-
-
-class _HeartbeatSink(Protocol):
-    """Structural Protocol for the heartbeat the shell beats each tick."""
-
-    def beat(self) -> None: ...
 
 
 def _project_positions(snapshots: tuple[PositionSnapshot, ...]) -> tuple[SafetyPosition, ...]:
@@ -83,7 +77,7 @@ async def run_safety_core(  # noqa: PLR0913 — composition root: every arg is o
     get_positions: GetPositions,
     get_account: GetAccount,
     price_cache: UnderlyingPriceCache,
-    heartbeat: _HeartbeatSink,
+    heartbeat: HeartbeatSink,
     limits: SafetyLimits,
     max_age_seconds: float,
     loop: SafetyLoop,

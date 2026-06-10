@@ -15,6 +15,15 @@ logging + config; subsequent stories register their long-running tasks:
 Subcommand layout:
 
     python -m alphamind.execution.continuous_monitor run [--mode {paper,live}]
+    python -m alphamind.execution.continuous_monitor watchdog
+
+``watchdog`` (ALP-941) is the monitor's dedicated out-of-process watchdog — a
+separate NSSM service that probes the monitor's file heartbeat
+(``monitor.heartbeat``) and runs ``nssm restart alphamind-monitor`` when it
+goes stale. The in-process stall watchdog is structurally blind to a freeze of
+its own event loop (its ``asyncio.sleep`` never resumes, so it can never reach
+``os._exit``); the external watchdog bounds that wedge regardless of cause,
+mirroring the safety core's ADR-0004 topology.
 
 Per parent issue ALP-123 § Pre-resolved decision (A), no ``bootstrap`` or
 ``catch-up`` subcommands — the monitor is forward-only.
@@ -24,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import faulthandler
 import logging
 import sys
 import time
@@ -69,12 +79,16 @@ from alphamind.execution.continuous_monitor.control.wiring import (
 from alphamind.execution.continuous_monitor.entry_window import (
     register_entry_window_watcher_task,
 )
+from alphamind.execution.continuous_monitor.faulthandler_deadman import (
+    register_faulthandler_deadman_task,
+)
 from alphamind.execution.continuous_monitor.fill_stream_consumer import EnrichmentCallable
 from alphamind.execution.continuous_monitor.greeks_refresh import (
     register_greeks_refresh_task,
 )
 from alphamind.execution.continuous_monitor.logging_setup import (
     configure_monitor_logging,
+    log_directory,
 )
 from alphamind.execution.continuous_monitor.session import (
     MonitorMode,
@@ -95,6 +109,16 @@ from alphamind.execution.paper_evaluation_harness.lookups import (
     MapVolLookup,
     SqlAdvLookup,
     SqlOrderLookup,
+)
+from alphamind.execution.process_supervision import (
+    FileHeartbeatProbe,
+    FileHeartbeatSink,
+    HeartbeatProbe,
+    NssmServiceController,
+    ProcessController,
+    WatchdogLoop,
+    run_watchdog,
+    supervised_watchdog_loop,
 )
 from alphamind.execution.venue_configuration.calendar_cache import (
     TradingCalendarCache,
@@ -119,6 +143,44 @@ _CONFIG_DIR = Path(__file__).parents[4] / "config"
 _CONFIG_PATH = _CONFIG_DIR / "continuous_monitor.yaml"
 _VENUE_CONFIG_PATH = _CONFIG_DIR / "venue.yaml"
 _EXECUTION_CONFIG_PATH = _CONFIG_DIR / "execution.yaml"
+
+# ALP-941 — the NSSM service name the out-of-process watchdog restarts.
+# Mirrors install_monitor_service.ps1.
+_MONITOR_SERVICE_NAME = "alphamind-monitor"
+
+# The monitor heartbeat file the watchdog probes. Under the AlphaMind log
+# directory, parallel to the safety core's safety_core.heartbeat.
+_HEARTBEAT_FILENAME = "monitor.heartbeat"
+
+# Per-process rotating-log filenames (ALP-868): on Windows
+# ``TimedRotatingFileHandler`` cannot rotate a file held open by another
+# process (``WinError 32``), so the monitor and its watchdog — two separate
+# NSSM services — each get their own file (and neither shares the safety-core
+# services' files).
+_MONITOR_LOG_FILENAME = "monitor.log"
+_WATCHDOG_LOG_FILENAME = "monitor_watchdog.log"
+
+# Where the faulthandler deadman dumps the frozen main-thread stack (ALP-941
+# scope E) — the next wedge self-captures its blocking frame here.
+_FAULTHANDLER_LOG_FILENAME = "monitor_faulthandler.log"
+
+
+def _log_filename_for_subcommand(subcommand: str) -> str:
+    """Pick the rotating-log filename for the running process (ALP-868)."""
+    if subcommand == "watchdog":
+        return _WATCHDOG_LOG_FILENAME
+    return _MONITOR_LOG_FILENAME
+
+
+def _watchdog_stall_bound(config: ContinuousMonitorConfig) -> float:
+    """The freeze bound shared by the external watchdog and the deadman (ALP-941).
+
+    One formula for both consumers: the out-of-process watchdog restarts the
+    monitor when the heartbeat is older than this, and the faulthandler deadman
+    arms its dump timer to it — so the frozen stack is captured at the same
+    age that triggers the restart which would destroy it.
+    """
+    return config.monitor_watchdog_tick_seconds * config.watchdog_cadence_multiplier
 
 
 # Same default the scheduler uses (``alphamind.scheduler.__main__``) so the
@@ -317,6 +379,11 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Trading mode for the session (default: paper).",
     )
 
+    sub.add_parser(
+        "watchdog",
+        help="Start the out-of-process watchdog that restarts the wedged monitor.",
+    )
+
     return parser.parse_args(argv)
 
 
@@ -330,7 +397,6 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     process's lifetime so cross-invocation reads (e.g. underlying-stream
     subscription targets) have a stable handle.
     """
-    configure_monitor_logging()
     config = ContinuousMonitorConfig.model_validate(read_yaml_file(_CONFIG_PATH))
     venue_config = VenueConfig.model_validate(read_yaml_file(_VENUE_CONFIG_PATH))
     execution_config = ExecutionConfig.model_validate(read_yaml_file(_EXECUTION_CONFIG_PATH))
@@ -365,7 +431,15 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     client_factory = AlpacaClientFactory(venue_config, mode)
     account_state_queries = AccountStateQueries(client_factory.build_trading_client())
     calendar_cache = TradingCalendarCache(account_state_queries)
-    supervisor = MonitorSupervisor(session=session, config=config)
+    # ALP-941 — the supervisor's watchdog loop beats this file each time its
+    # sleep resumes; the out-of-process alphamind-monitor-watchdog service
+    # probes it and restarts the monitor when a frozen event loop lets it go
+    # stale (the wedge the in-process watchdog structurally cannot catch).
+    supervisor = MonitorSupervisor(
+        session=session,
+        config=config,
+        heartbeat=FileHeartbeatSink(path=log_directory() / _HEARTBEAT_FILENAME),
+    )
     # ALP-720 — shared SSE event emitter for the /events stream + the
     # production wiring adapters that observe each breach / fill /
     # emergency callsite.
@@ -525,10 +599,42 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     )
 
     try:
-        await supervisor.run()
+        await _run_with_faulthandler_deadman(supervisor, config)
     finally:
         await engine.dispose()
         log.info("monitor session end: session_id=%s", session.session_id)
+
+
+async def _run_with_faulthandler_deadman(
+    supervisor: MonitorSupervisor, config: ContinuousMonitorConfig
+) -> None:
+    """Arm the faulthandler deadman around ``supervisor.run()`` (ALP-941 scope E).
+
+    While the event loop turns, the deadman task re-arms faulthandler's
+    C-thread dump timer before it can expire; a loop freeze stops the re-arm
+    and the timer dumps the frozen main-thread stack (the exact blocking frame)
+    to ``monitor_faulthandler.log`` before the external watchdog's restart
+    destroys the evidence.
+    """
+    faulthandler.enable()
+    fault_log_path = log_directory() / _FAULTHANDLER_LOG_FILENAME
+    fault_log_path.parent.mkdir(parents=True, exist_ok=True)
+    deadman_bound = _watchdog_stall_bound(config)
+    with fault_log_path.open("a", encoding="utf-8") as fault_file:
+        register_faulthandler_deadman_task(
+            supervisor,
+            tick_seconds=config.monitor_watchdog_tick_seconds,
+            arm=lambda: faulthandler.dump_traceback_later(
+                deadman_bound, repeat=False, file=fault_file
+            ),
+            cancel=faulthandler.cancel_dump_traceback_later,
+        )
+        try:
+            await supervisor.run()
+        finally:
+            # faulthandler holds the file's fd until the dump fires or is
+            # cancelled — cancel before the ``with`` closes the file.
+            faulthandler.cancel_dump_traceback_later()
 
 
 # ---------------------------------------------------------------------------
@@ -664,17 +770,58 @@ def _register_fill_stream_consumer(
     supervisor.register_task(name="fill_stream_consumer", coro_fn=_fill_stream_consumer_task)
 
 
+async def _run_watchdog_daemon(
+    *,
+    probe: HeartbeatProbe | None = None,
+    controller: ProcessController | None = None,
+    loop: WatchdogLoop | None = None,
+    now: Callable[[], float] | None = None,
+) -> None:
+    """Wire the monitor's out-of-process watchdog (ALP-941).
+
+    Probes the monitor's file heartbeat and restarts the ``alphamind-monitor``
+    NSSM service when the beat is older than ``monitor_watchdog_tick_seconds *
+    watchdog_cadence_multiplier`` — the same cadence x multiplier stall-bound
+    shape as the safety core's watchdog. The seams default to the production
+    wiring; tests inject a scripted probe + recording controller.
+    """
+    config = ContinuousMonitorConfig.model_validate(read_yaml_file(_CONFIG_PATH))
+    tick = config.monitor_watchdog_tick_seconds
+    stall_bound = _watchdog_stall_bound(config)
+
+    log.info(
+        "monitor watchdog starting: stall_bound=%.0fs (tick=%.0fs x %.1f)",
+        stall_bound,
+        tick,
+        config.watchdog_cadence_multiplier,
+    )
+    await run_watchdog(
+        probe=probe
+        if probe is not None
+        else FileHeartbeatProbe(path=log_directory() / _HEARTBEAT_FILENAME),
+        controller=controller
+        if controller is not None
+        else NssmServiceController(service_name=_MONITOR_SERVICE_NAME),
+        stall_bound_seconds=stall_bound,
+        loop=loop if loop is not None else supervised_watchdog_loop(tick),
+        now=now,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parse_args(argv)
     load_dotenv()
+    configure_monitor_logging(filename=_log_filename_for_subcommand(args.subcommand))
 
-    if args.subcommand != "run":
+    if args.subcommand == "run":
+        asyncio.run(_run_daemon(mode=cast(MonitorMode, args.mode)))
+    elif args.subcommand == "watchdog":
+        asyncio.run(_run_watchdog_daemon())
+    else:
         # ``required=True`` on the subparser makes this unreachable; defensive
         # so a future subcommand addition does not silently fall through.
         msg = f"unknown subcommand: {args.subcommand!r}"
         raise RuntimeError(msg)
-
-    asyncio.run(_run_daemon(mode=cast(MonitorMode, args.mode)))
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised via ``python -m``

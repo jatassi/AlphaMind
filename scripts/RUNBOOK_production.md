@@ -6,13 +6,14 @@ trading machine, against the live `alphamind.db` and paper Alpaca account.
 This runbook covers the day-to-day operating loop, the one-time first-run
 bootstrap, manual invocations, scheduled invocations, how to monitor those
 invocations, command-center access, and service restarts. It assumes the
-six NSSM services are the supported runtime form on prod:
+seven NSSM services are the supported runtime form on prod:
 
 | Service                          | Module entry                                    | Log basename       |
 |----------------------------------|--------------------------------------------------|--------------------|
 | `alphamind-collector`            | `python -m alphamind.collector run`              | `collector.*.log`  |
 | `alphamind-scheduler`            | `python -m alphamind.scheduler run`              | `pipeline.*.log`   |
 | `alphamind-monitor`              | `python -m alphamind.execution.continuous_monitor run` | `monitor.*.log`    |
+| `alphamind-monitor-watchdog`     | `python -m alphamind.execution.continuous_monitor watchdog` | `monitor_watchdog.*.log` |
 | `alphamind-safety-core`          | `python -m alphamind.execution.continuous_monitor.safety_core run`      | `safety_core.*.log`          |
 | `alphamind-safety-core-watchdog` | `python -m alphamind.execution.continuous_monitor.safety_core watchdog` | `safety_core_watchdog.*.log` |
 | `AlphaMindCommandCenter`         | `python -m alphamind.command_center`             | `command_center.*.log` |
@@ -37,6 +38,18 @@ recovery sweep) and is fail-safe under the broker floor — a frozen monitor
 degrades precision while positions stay broker-protected. The watchdog must run
 under the **same Windows account** as the safety core so its `nssm restart` has
 permission.
+
+**Monitor watchdog (ALP-941).** The monitor gets the same treatment: its
+supervisor beats `%USERPROFILE%\AlphaMind\logs\monitor.heartbeat` while its
+event loop turns, and the `alphamind-monitor-watchdog` service probes that file
+and runs `nssm restart alphamind-monitor` when the beat is older than
+`monitor_watchdog_tick_seconds × watchdog_cadence_multiplier` (15 s × 10 =
+150 s by default). The monitor's **in-process** stall watchdog runs on the very
+event loop it guards, so a frozen loop (the 2026-06-09 wedge: 8 h of no fills
+with NSSM "Running") starves it — only an out-of-process watchdog bounds that
+failure. A frozen loop also self-captures its blocking frame: the faulthandler
+deadman dumps the frozen stack to `monitor_faulthandler.log` before the restart
+lands. The same-account rule applies to this watchdog too.
 
 Logs land under `%USERPROFILE%\AlphaMind\logs\`. DB is
 `%USERPROFILE%\AlphaMind\data\alphamind.db`. Invocation archives land under
@@ -109,20 +122,21 @@ restart any services whose code changed.
 The command center depends on scheduler + monitor; stop it first so its
 loopback consumers don't reconnect mid-migration. Collector is independent of
 the trading DB schema but stop it too to keep the snapshot quiet during the
-migration. Stop the safety-core **watchdog before the safety core** so the
-watchdog does not `nssm restart` the core while you are taking it down.
+migration. Stop each **watchdog before the service it supervises** so the
+watchdog does not `nssm restart` its target while you are taking it down.
 
 ```powershell
 nssm stop AlphaMindCommandCenter
 nssm stop alphamind-safety-core-watchdog
 nssm stop alphamind-safety-core
+nssm stop alphamind-monitor-watchdog
 nssm stop alphamind-monitor
 nssm stop alphamind-scheduler
 nssm stop alphamind-collector
-Get-Service alphamind-collector, alphamind-scheduler, alphamind-monitor, alphamind-safety-core, alphamind-safety-core-watchdog, AlphaMindCommandCenter
+Get-Service alphamind-collector, alphamind-scheduler, alphamind-monitor, alphamind-monitor-watchdog, alphamind-safety-core, alphamind-safety-core-watchdog, AlphaMindCommandCenter
 ```
 
-All six should report `Stopped`. The install scripts leave NSSM's default
+All seven should report `Stopped`. The install scripts leave NSSM's default
 stop-method timeouts in place; if one hangs in `StopPending` past ~30 s, see
 § 8.3.
 
@@ -139,21 +153,22 @@ restore the DB from the most recent backup (see `RUNBOOK_command_center.md`
 
 ### 1.6 Restart services in dependency order
 
-Start the safety core **before its watchdog** so the watchdog finds a fresh
-heartbeat on its first probe (and does not restart a core that is still coming
-up).
+Start each supervised service **before its watchdog** so the watchdog finds a
+fresh heartbeat on its first probe (and does not restart a service that is
+still coming up).
 
 ```powershell
 nssm start alphamind-collector
 nssm start alphamind-scheduler
 nssm start alphamind-monitor
+nssm start alphamind-monitor-watchdog
 nssm start alphamind-safety-core
 nssm start alphamind-safety-core-watchdog
 nssm start AlphaMindCommandCenter
-Get-Service alphamind-collector, alphamind-scheduler, alphamind-monitor, alphamind-safety-core, alphamind-safety-core-watchdog, AlphaMindCommandCenter
+Get-Service alphamind-collector, alphamind-scheduler, alphamind-monitor, alphamind-monitor-watchdog, alphamind-safety-core, alphamind-safety-core-watchdog, AlphaMindCommandCenter
 ```
 
-All six should report `Running` within ~60 s (NSSM's `SERVICE_DELAYED_AUTO_START`
+All seven should report `Running` within ~60 s (NSSM's `SERVICE_DELAYED_AUTO_START`
 + the supervisors' own startup time). If any stays in `StartPending` past
 that, tail its `.err.log` immediately.
 
@@ -393,13 +408,14 @@ options, in preference order:
 
    Then re-run the `--fresh-start --once market_open --reason ...` form.
 
-### 2.5 Install the five remaining NSSM services
+### 2.5 Install the six remaining NSSM services
 
-Collector is already installed. Install the other five in dependency order
-from an elevated PowerShell prompt at the repo root. `install_safety_core_service.ps1`
-installs **both** the `alphamind-safety-core` and `alphamind-safety-core-watchdog`
-services — set the `ObjectName` on both (the watchdog must run under the same
-account so its `nssm restart alphamind-safety-core` has permission):
+Collector is already installed. Install the other six in dependency order
+from an elevated PowerShell prompt at the repo root. `install_monitor_service.ps1`
+and `install_safety_core_service.ps1` each install **both** their supervised
+service and its dedicated watchdog — set the `ObjectName` on all four (each
+watchdog must run under the same account so its `nssm restart <target>` has
+permission):
 
 ```powershell
 .\scripts\install_pipeline_scheduler_service.ps1
@@ -407,6 +423,7 @@ nssm set alphamind-scheduler ObjectName .\<YourUsername>     # prompts for pw
 
 .\scripts\install_monitor_service.ps1
 nssm set alphamind-monitor ObjectName .\<YourUsername>
+nssm set alphamind-monitor-watchdog ObjectName .\<YourUsername>
 
 .\scripts\install_safety_core_service.ps1
 nssm set alphamind-safety-core ObjectName .\<YourUsername>
@@ -427,21 +444,22 @@ nssm set AlphaMindCommandCenter AppEnvironmentExtra "COMMAND_CENTER_SESSION_SECR
 (Also copy the value into `.env`'s `COMMAND_CENTER_SESSION_SECRET=` line so
 manual CLI invocations get the same key.)
 
-### 2.6 Start the five new services
+### 2.6 Start the six new services
 
-Start the safety core **before its watchdog** (the watchdog probes the core's
-heartbeat and would restart a core that hasn't beaten yet):
+Start each supervised service **before its watchdog** (a watchdog probes its
+target's heartbeat and would restart a service that hasn't beaten yet):
 
 ```powershell
 nssm start alphamind-scheduler
 nssm start alphamind-monitor
+nssm start alphamind-monitor-watchdog
 nssm start alphamind-safety-core
 nssm start alphamind-safety-core-watchdog
 nssm start AlphaMindCommandCenter
-Get-Service alphamind-collector, alphamind-scheduler, alphamind-monitor, alphamind-safety-core, alphamind-safety-core-watchdog, AlphaMindCommandCenter
+Get-Service alphamind-collector, alphamind-scheduler, alphamind-monitor, alphamind-monitor-watchdog, alphamind-safety-core, alphamind-safety-core-watchdog, AlphaMindCommandCenter
 ```
 
-All six should be `Running`.
+All seven should be `Running`.
 
 ### 2.7 Register the first passkey
 
@@ -1018,6 +1036,7 @@ The valid service names are:
 - `alphamind-collector`
 - `alphamind-scheduler`
 - `alphamind-monitor`
+- `alphamind-monitor-watchdog`
 - `alphamind-safety-core`
 - `alphamind-safety-core-watchdog`
 - `AlphaMindCommandCenter` (note: mixed case, no hyphen)
@@ -1047,18 +1066,28 @@ is no separate SIGTERM "fallback" the supervisor itself fires.
     watchdog is its own process — a frozen safety core is restarted, not masked.
   - **The monitor proper** keeps its in-process per-cadence stall watchdog for
     its precision/data tasks (`cadence_seconds × watchdog_cadence_multiplier`
-    forces `os._exit(1)` → NSSM restart). It no longer runs breach detection, so
-    a monitor wedge now **degrades precision while positions stay
-    broker-protected** (the broker floor + the isolated safety core hold). The
-    **one residual exception is the control-surface HTTP server**, registered
-    `watched=False` (it blocks in `await server.serve()`); that task is not
-    auto-recycled.
+    forces `os._exit(1)` → NSSM restart) — but that watchdog runs on the very
+    event loop it guards, so a freeze of the **loop itself** (the 2026-06-09
+    ALP-941 wedge) starves it. The **dedicated out-of-process
+    `alphamind-monitor-watchdog`** closes that gap: it probes the monitor's
+    heartbeat file (`%USERPROFILE%\AlphaMind\logs\monitor.heartbeat`) and runs
+    `nssm restart alphamind-monitor` when the beat goes stale past
+    `monitor_watchdog_tick_seconds × watchdog_cadence_multiplier` (default
+    15 s × 10 = 150 s). On a loop freeze the faulthandler deadman also dumps
+    the frozen stack to `monitor_faulthandler.log` — read it to identify the
+    blocking frame **before** diagnosing further. The monitor no longer runs
+    breach detection, so a monitor wedge **degrades precision while positions
+    stay broker-protected** (the broker floor + the isolated safety core
+    hold). The **one residual exception is the control-surface HTTP server**,
+    registered `watched=False` (it blocks in `await server.serve()`); that
+    task is not auto-recycled in-process, though a full loop freeze that takes
+    it down now is (via the external watchdog).
 
   For everything, confirm a restart by the process **StartTime**
   (fresh PID / StartTime) **and** a behavioral signal — the daemon's SSE
-  heartbeat (`8765` / `8766`), the safety-core heartbeat file's mtime advancing,
-  fresh structured-log lines, fills flowing — never by `Get-Service Status`
-  alone. Read the StartTime with:
+  heartbeat (`8765` / `8766`), the safety-core / monitor heartbeat files'
+  mtime advancing, fresh structured-log lines, fills flowing — never by
+  `Get-Service Status` alone. Read the StartTime with:
   ```powershell
   $p = (Get-CimInstance Win32_Service -Filter "Name='<svc>'").ProcessId
   (Get-Process -Id $p).StartTime
@@ -1077,7 +1106,8 @@ others:**
 |---------------------|---------------------------------------------------------------|-----------------------------------------------------------------------------------|
 | collector           | After a `config/collector_schedule.yaml` or `config/data_sources.yaml` edit | Up to one cadence-cycle of dropped vendor reads                                   |
 | scheduler           | After a `config/scheduler.yaml`, `config/run_types/*.yaml`, or `config/main.yaml` edit | Pause flag cleared; an in-flight invocation is cancelled mid-pipeline             |
-| monitor             | After a `config/continuous_monitor.yaml` edit affecting precision/data tasks | Halt-mode flag persists; in-flight fill-stream reconnects from the recovery path |
+| monitor             | After a `config/continuous_monitor.yaml` edit affecting precision/data tasks | Halt-mode flag persists; in-flight fill-stream reconnects from the recovery path. Its watchdog tolerates a restart within the stall bound (150 s default); for a longer outage stop `alphamind-monitor-watchdog` first |
+| monitor-watchdog    | After a `monitor_watchdog_tick_seconds` or `watchdog_cadence_multiplier` edit | None to positions; the monitor is unsupervised against loop freezes for the restart window |
 | safety-core         | After a `config/continuous_monitor.yaml` cadence/threshold or a `config/guardrails.yaml` / profile `gross_exposure_pct` / `position_max_size_pct` edit | Brief gap in breach/staleness detection only; positions stay broker-protected. Its watchdog tolerates a restart within the stall bound; for a longer outage stop the watchdog first (else it `nssm restart`s the core mid-restart) |
 | safety-core-watchdog | After a `watchdog_cadence_multiplier` edit                   | None to positions; the safety core is unsupervised for the restart window         |
 | AlphaMindCommandCenter | After a frontend rebuild or alert-rule edit                | Active SSE clients reconnect; operator sessions persist if `COMMAND_CENTER_SESSION_SECRET` is pinned (§ 2.5), else are invalidated |
@@ -1179,7 +1209,19 @@ Both the fill (trade-updates) stream and the underlying-price stream now have
    `os._exit(1)` within `cadence_seconds × watchdog_cadence_multiplier` (the
    `watchdog_cadence_multiplier` default is 10×), and NSSM auto-restarts the
    monitor process. This backstop catches a task wedge that the in-stream reconnect
-   could not resolve.
+   could not resolve — but it runs on the monitor's own event loop, so it cannot
+   catch a freeze of the loop itself.
+
+3. **Out-of-process watchdog on the whole event loop (ALP-941).** The supervisor
+   beats `monitor.heartbeat` each watchdog-loop pass; the separate
+   `alphamind-monitor-watchdog` service probes the file and runs
+   `nssm restart alphamind-monitor` when the beat is older than
+   `monitor_watchdog_tick_seconds × watchdog_cadence_multiplier` (150 s default).
+   This is the only layer that catches a **frozen event loop** (the 2026-06-09
+   wedge: loop blocked, process alive, layers 1–2 starved with it). When it
+   fires, `monitor_faulthandler.log` holds the frozen main-thread stack — the
+   faulthandler deadman dumped it before the restart — so the blocking frame is
+   preserved for diagnosis.
 
 **Operator's primary action** after any suspected monitor wedge:
 
@@ -1463,8 +1505,10 @@ intentional gap, not a missing check.
 | Monitor `/control` + `/events`   | `127.0.0.1:8766` (loopback only)                              |
 | Command center API + UI          | binds `127.0.0.1:8090` (loopback only); **browse via `http://localhost:8090`** — WebAuthn relying-party id is `localhost` |
 | Safety core heartbeat (no port)  | `%USERPROFILE%\AlphaMind\logs\safety_core.heartbeat` (file; the out-of-process watchdog probes it — the safety core has no control port and writes nothing to the DB) |
+| Monitor heartbeat (file)         | `%USERPROFILE%\AlphaMind\logs\monitor.heartbeat` (the `alphamind-monitor-watchdog` service probes it; written by the monitor supervisor's watchdog loop — ALP-941) |
+| Monitor freeze stack dump        | `%USERPROFILE%\AlphaMind\logs\monitor_faulthandler.log` (the faulthandler deadman dumps the frozen main-thread stack here when the monitor's event loop wedges) |
 | Production DB                    | `%USERPROFILE%\AlphaMind\data\alphamind.db`                   |
-| Daemon logs                      | `%USERPROFILE%\AlphaMind\logs\<daemon>.{out,err,log}.log` (`safety_core.*`, `safety_core_watchdog.*` for the safety-core services) |
+| Daemon logs                      | `%USERPROFILE%\AlphaMind\logs\<daemon>.{out,err,log}.log` (`safety_core.*`, `safety_core_watchdog.*` for the safety-core services; `monitor_watchdog.*` for the monitor watchdog) |
 | Invocation archives              | `%USERPROFILE%\AlphaMind\archive\<YYYY-MM-DD>\<invocation_id>\` |
 | Agent-call provenance            | `%USERPROFILE%\AlphaMind\data\provenance\invocations\<invocation_id>\agent_calls\<agent_call_id>\` (one dir per LLM agent call; `system_prompt.md` + `output_schema.json` + `tools_definition.json` + `output.json`; paired with one `agent_calls` table row) |
 | Retrospective reports            | `<repo>\data\retrospective_reports\<report_id>\report.md` (markdown body; the `retrospective_reports` row carries the metadata + `report_file_ref`) |

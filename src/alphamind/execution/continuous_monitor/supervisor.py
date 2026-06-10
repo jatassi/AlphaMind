@@ -35,6 +35,7 @@ from typing import Any
 from alphamind._kernel.exception_group import first_non_cancelled
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.continuous_monitor.session import MonitorSession
+from alphamind.execution.process_supervision import HeartbeatSink
 
 log = logging.getLogger(__name__)
 
@@ -92,11 +93,16 @@ class MonitorSupervisor:
         config: ContinuousMonitorConfig,
         sleep: SleepFn = asyncio.sleep,
         monotonic: MonotonicFn = time.monotonic,
+        heartbeat: HeartbeatSink | None = None,
     ) -> None:
+        # ``heartbeat`` (ALP-941) is the off-hot-path file beat the dedicated
+        # out-of-process monitor watchdog probes. ``None`` (the default) opts
+        # out entirely — existing behavior is unchanged.
         self._session = session
         self._config = config
         self._sleep = sleep
         self._monotonic = monotonic
+        self._heartbeat = heartbeat
         self._registry: list[tuple[str, TaskCoroFn]] = []
         self._stop_event: asyncio.Event | None = None
         # Per-task watchdog state (ALP-826). Seeded at task-registration when an
@@ -277,61 +283,79 @@ class MonitorSupervisor:
         """
         while True:
             await self._sleep(self._check_interval())
+            # The sleep resumed, so the event loop is demonstrably turning —
+            # beat the cross-process file heartbeat (ALP-941). A loop-thread
+            # freeze stops this coroutine inside the sleep above, the file
+            # goes stale, and the out-of-process watchdog restarts the
+            # monitor — the wedge this in-loop watchdog structurally cannot
+            # catch. A failing beat (disk full, permissions) must not kill
+            # the process it reports on: log and keep checking — if the
+            # failure persists, the stale file makes the external watchdog
+            # restart the monitor, which is the correct recovery.
+            if self._heartbeat is not None:
+                try:
+                    self._heartbeat.beat()
+                except Exception:
+                    log.warning("file heartbeat beat failed", exc_info=True)
             # Exit cleanly if the supervisor is shutting down — avoids a
             # spurious os._exit(1) while tasks are mid-cancellation.
             if self._stop_event is not None and self._stop_event.is_set():
                 return
             now = self._monotonic()
             for name, entry in self._watch.items():
-                if not entry.watched:
-                    continue
-                if entry.bound_seconds <= 0.0:
-                    # Watched but no cadence declared, so no stall bound applies
-                    # and the task cannot be tripped. A ``supervised_loop`` task
-                    # registers its bound (via ``register_watch``) before its
-                    # first beat, so a task that has *beaten* yet still carries no
-                    # bound called ``beat()`` directly without ``register_watch``
-                    # — it is silently outside the liveness net. Be loud once
-                    # (the default-on visibility guarantee) rather than skipping
-                    # it without a trace, so a forgotten ``register_watch`` in a
-                    # consumer wiring is caught at runtime, not in production.
-                    if not entry.warned and entry.last_beat is not None:
-                        log.warning(
-                            "watchdog: task %r beats but declared no heartbeat "
-                            "cadence (no register_watch / supervised_loop) — it is "
-                            "outside the liveness net; declare its cadence so a "
-                            "stall bound applies.",
-                            name,
-                        )
-                        entry.warned = True
-                    continue
-                if entry.last_beat is None:
-                    # Never beaten — loud at startup grace (one bound elapsed
-                    # since registration), then latch so it does not spam.
-                    if not entry.warned and now - entry.registered_at > entry.bound_seconds:
-                        log.warning(
-                            "watchdog: task %r is registered watched=True but has not "
-                            "beaten within its %.0fs startup-grace bound — it is outside "
-                            "the liveness net (drive it through supervised_loop or call "
-                            "beat()).",
-                            name,
-                            entry.bound_seconds,
-                        )
-                        entry.warned = True
-                    continue
-                elapsed = now - entry.last_beat
-                if elapsed > entry.bound_seconds:
-                    log.critical(
-                        "watchdog: task %r has not heartbeated in %.0fs "
-                        "(bound %.0fs) — forcing process exit for NSSM restart",
-                        name,
-                        elapsed,
-                        entry.bound_seconds,
-                    )
-                    # ``_exit`` (not ``sys.exit``) skips atexit handlers and
-                    # ``finally`` blocks so the process terminates immediately,
-                    # giving NSSM a clean exit code to restart on.
-                    os._exit(1)
+                self._check_watch_entry(name, entry, now)
+
+    def _check_watch_entry(self, name: str, entry: _WatchEntry, now: float) -> None:
+        """One watchdog check pass for one task: warn on net gaps, trip on stall."""
+        if not entry.watched:
+            return
+        if entry.bound_seconds <= 0.0:
+            # Watched but no cadence declared, so no stall bound applies
+            # and the task cannot be tripped. A ``supervised_loop`` task
+            # registers its bound (via ``register_watch``) before its
+            # first beat, so a task that has *beaten* yet still carries no
+            # bound called ``beat()`` directly without ``register_watch``
+            # — it is silently outside the liveness net. Be loud once
+            # (the default-on visibility guarantee) rather than skipping
+            # it without a trace, so a forgotten ``register_watch`` in a
+            # consumer wiring is caught at runtime, not in production.
+            if not entry.warned and entry.last_beat is not None:
+                log.warning(
+                    "watchdog: task %r beats but declared no heartbeat "
+                    "cadence (no register_watch / supervised_loop) — it is "
+                    "outside the liveness net; declare its cadence so a "
+                    "stall bound applies.",
+                    name,
+                )
+                entry.warned = True
+            return
+        if entry.last_beat is None:
+            # Never beaten — loud at startup grace (one bound elapsed
+            # since registration), then latch so it does not spam.
+            if not entry.warned and now - entry.registered_at > entry.bound_seconds:
+                log.warning(
+                    "watchdog: task %r is registered watched=True but has not "
+                    "beaten within its %.0fs startup-grace bound — it is outside "
+                    "the liveness net (drive it through supervised_loop or call "
+                    "beat()).",
+                    name,
+                    entry.bound_seconds,
+                )
+                entry.warned = True
+            return
+        elapsed = now - entry.last_beat
+        if elapsed > entry.bound_seconds:
+            log.critical(
+                "watchdog: task %r has not heartbeated in %.0fs "
+                "(bound %.0fs) — forcing process exit for NSSM restart",
+                name,
+                elapsed,
+                entry.bound_seconds,
+            )
+            # ``_exit`` (not ``sys.exit``) skips atexit handlers and
+            # ``finally`` blocks so the process terminates immediately,
+            # giving NSSM a clean exit code to restart on.
+            os._exit(1)
 
     def _check_interval(self) -> float:
         """Quarter of the smallest active bound, floored at 1s.
@@ -352,14 +376,16 @@ class MonitorSupervisor:
 def _install_signal_handlers(loop: asyncio.AbstractEventLoop, callback: Callable[[], None]) -> None:
     # ``add_signal_handler`` is unsupported on Windows event loops / loops
     # off the main thread; NSSM shims SIGINT via Ctrl-Break in production.
+    # CPython >= 3.13 surfaces the off-main-thread case as RuntimeError
+    # (wrapping set_wakeup_fd's ValueError), so both are tolerated.
     for sig in _SHUTDOWN_SIGNALS:
         try:
             loop.add_signal_handler(sig, callback)
-        except (NotImplementedError, ValueError):
+        except (NotImplementedError, ValueError, RuntimeError):
             log.debug("could not install signal handler for %s", sig.name)
 
 
 def _remove_signal_handlers(loop: asyncio.AbstractEventLoop) -> None:
     for sig in _SHUTDOWN_SIGNALS:
-        with contextlib.suppress(NotImplementedError, ValueError):
+        with contextlib.suppress(NotImplementedError, ValueError, RuntimeError):
             loop.remove_signal_handler(sig)
