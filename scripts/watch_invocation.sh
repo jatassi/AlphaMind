@@ -51,8 +51,52 @@ done
   echo "usage: watch_invocation.sh (--scheduled <run-type> | --reason <substr> | --inv <id>) [--since ISO] [--tz-offset H]" >&2; exit 2; }
 [ -z "$SINCE" ] && SINCE=$(date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
 
-q() { sqlite3 "$DB" "$1" 2>/dev/null; }
+# tr -d '\r': the Windows sqlite3 CLI emits CRLF; the stray \r survives pipes
+# (command substitution strips it, `while read` does not).
+q() { sqlite3 "$DB" "$1" 2>/dev/null | tr -d '\r'; }
 sched_up() { (echo >/dev/tcp/127.0.0.1/8765) 2>/dev/null && echo UP || echo DOWN; }
+
+# Block-aware fault scan (stdin = fresh log chunk; $1=tag, $2=plain-line fault
+# regex, $3=1 for case-insensitive). A Python traceback block is buffered from
+# its "Traceback (most recent call last):" header through its final exception
+# line, and the whole block is dropped when any of its lines — or the nearest
+# non-blank line above it — matches BENIGN. A per-line `grep -vE` cannot do
+# this: the SDK-subprocess teardown noise puts its benign marker ("deallocator
+# <function _ProactorBasePipeTransport...") and its bare Traceback header on
+# separate lines, so the header leaked through as a spurious FAULT pair per
+# agent completion (2026-06-10). A surviving block emits one line:
+# header + final exception line.
+fault_scan() {
+  awk -v tag="$1" -v pat="$2" -v ci="${3:-0}" -v benign="$BENIGN" '
+    function P(s) { return ci ? tolower(s) : s }
+    function flushblk() {
+      if (inblk && !bad)
+        printf "FAULT(%s) %s%s\n", tag, hdr, (last != "" ? " => " last : "")
+      inblk = 0; bad = 0; hdr = ""; last = ""
+    }
+    # ci=1: probe text is lowercased, so pass `pat` pre-lowercased. (No \b in
+    # patterns — gawk -v assignment turns \b into a literal backspace.)
+    BEGIN { if (ci) benign = tolower(benign) }
+    {
+      if (inblk) {
+        if ($0 == "" || $0 ~ /^[ \t]/) { if (P($0) ~ benign) bad = 1; next }
+        if ($0 ~ /^[A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Warning|Interrupt|Exit)(:|$)/) {
+          if (P($0) ~ benign) bad = 1
+          last = $0; flushblk(); next
+        }
+        flushblk()
+      }
+      if (index($0, "Traceback (most recent call last):") > 0) {
+        inblk = 1; hdr = $0; last = ""
+        bad = (P($0) ~ benign) || prevben
+        next
+      }
+      if ($0 != "") prevben = (P($0) ~ benign)
+      if (P($0) ~ pat && P($0) !~ benign) printf "FAULT(%s) %s\n", tag, $0
+    }
+    END { flushblk() }
+  '
+}
 
 # This run's start in log-local (MT) time, so abort-line greps scope to THIS run.
 inv_local_start() {
@@ -132,13 +176,16 @@ while true; do
     fi
   fi
 
-  # ingestion + command-execution actions: new activity_log rows for this invocation
-  q "SELECT entry_id||char(31)||'ACT '||substr(entry_at,12,8)||' '||event_type||
+  # ingestion + command-execution actions: new activity_log rows for this invocation.
+  # Separator is a TAB (char(9)), not a control char: sqlite3 CLI >= 3.49 escapes
+  # control characters on output (char(31) arrives as the literal text "^_"), which
+  # silently broke the field split and turned every ACT line into an empty echo.
+  q "SELECT entry_id||char(9)||'ACT '||substr(entry_at,12,8)||' '||event_type||
        CASE WHEN COALESCE(order_id,'')!='' THEN ' ord='||substr(order_id,1,32) ELSE '' END||
        CASE WHEN COALESCE(position_id,'')!='' THEN ' pos='||substr(position_id,1,22) ELSE '' END||
        ' | '||REPLACE(REPLACE(substr(COALESCE(detail_json,''),1,90),char(10),' '),char(13),' ')
      FROM activity_log WHERE invocation_id='$INV' ORDER BY entry_at;" \
-  | while IFS=$'\037' read -r eid line; do
+  | while IFS=$'\t' read -r eid line; do
       [ -z "$eid" ] && continue
       grep -qxF "$eid" "$ASEEN" && continue
       echo "$eid" >>"$ASEEN"; echo "$line"
@@ -171,13 +218,13 @@ while true; do
   if [ "$nl" -gt "$lbase" ]; then
     fresh=$(tail -c +$((lbase+1)) "$LOG"); lbase=$nl
     echo "$fresh" | grep -E "distillation.orchestrator run_external_distillation complete" | sed -E 's/.*orchestrator /DISTILL(log) /'
-    echo "$fresh" | grep -E "Traceback|CRITICAL|\bERROR\b|RepositoryConsistency|exceeded latency budget|database is locked" | grep -vE "$BENIGN" | sed 's/^/FAULT(log) /'
+    echo "$fresh" | fault_scan log "Traceback|CRITICAL|(^|[^A-Za-z])ERROR($|[^A-Za-z])|RepositoryConsistency|exceeded latency budget|database is locked"
     echo "$fresh" | grep -qE "$ABORT_PAT" && aborted=1
   fi
   ne=$(wc -c <"$ERR" 2>/dev/null || echo "$ebase")
   if [ "$ne" -gt "$ebase" ]; then
     fresh=$(tail -c +$((ebase+1)) "$ERR"); ebase=$ne
-    echo "$fresh" | grep -iE "traceback|exception|critical|\berror\b|exceeded latency budget" | grep -vE "$BENIGN" | sed 's/^/FAULT(err) /'
+    echo "$fresh" | fault_scan err "traceback|exception|critical|(^|[^a-z])error($|[^a-z])|exceeded latency budget" 1
     echo "$fresh" | grep -qE "$ABORT_PAT" && aborted=1
   fi
 
