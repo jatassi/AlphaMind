@@ -35,7 +35,6 @@ import argparse
 import asyncio
 import faulthandler
 import logging
-import os
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -89,6 +88,7 @@ from alphamind.execution.continuous_monitor.greeks_refresh import (
 )
 from alphamind.execution.continuous_monitor.logging_setup import (
     configure_monitor_logging,
+    log_directory,
 )
 from alphamind.execution.continuous_monitor.session import (
     MonitorMode,
@@ -165,22 +165,22 @@ _WATCHDOG_LOG_FILENAME = "monitor_watchdog.log"
 _FAULTHANDLER_LOG_FILENAME = "monitor_faulthandler.log"
 
 
-def _logs_dir() -> Path:
-    """The AlphaMind log directory (heartbeat + faulthandler files live here).
-
-    Honour ``USERPROFILE`` when set (Windows convention used in production)
-    and fall back to ``Path.home()`` on POSIX — matching
-    ``logging_setup._log_directory`` and the safety core's ``_heartbeat_path``.
-    """
-    base = os.environ.get("USERPROFILE") or str(Path.home())
-    return Path(base) / "AlphaMind" / "logs"
-
-
 def _log_filename_for_subcommand(subcommand: str) -> str:
     """Pick the rotating-log filename for the running process (ALP-868)."""
     if subcommand == "watchdog":
         return _WATCHDOG_LOG_FILENAME
     return _MONITOR_LOG_FILENAME
+
+
+def _watchdog_stall_bound(config: ContinuousMonitorConfig) -> float:
+    """The freeze bound shared by the external watchdog and the deadman (ALP-941).
+
+    One formula for both consumers: the out-of-process watchdog restarts the
+    monitor when the heartbeat is older than this, and the faulthandler deadman
+    arms its dump timer to it — so the frozen stack is captured at the same
+    age that triggers the restart which would destroy it.
+    """
+    return config.monitor_watchdog_tick_seconds * config.watchdog_cadence_multiplier
 
 
 # Same default the scheduler uses (``alphamind.scheduler.__main__``) so the
@@ -438,7 +438,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     supervisor = MonitorSupervisor(
         session=session,
         config=config,
-        heartbeat=FileHeartbeatSink(path=_logs_dir() / _HEARTBEAT_FILENAME),
+        heartbeat=FileHeartbeatSink(path=log_directory() / _HEARTBEAT_FILENAME),
     )
     # ALP-720 — shared SSE event emitter for the /events stream + the
     # production wiring adapters that observe each breach / fill /
@@ -617,9 +617,9 @@ async def _run_with_faulthandler_deadman(
     destroys the evidence.
     """
     faulthandler.enable()
-    fault_log_path = _logs_dir() / _FAULTHANDLER_LOG_FILENAME
+    fault_log_path = log_directory() / _FAULTHANDLER_LOG_FILENAME
     fault_log_path.parent.mkdir(parents=True, exist_ok=True)
-    deadman_bound = config.monitor_watchdog_tick_seconds * config.watchdog_cadence_multiplier
+    deadman_bound = _watchdog_stall_bound(config)
     with fault_log_path.open("a", encoding="utf-8") as fault_file:
         register_faulthandler_deadman_task(
             supervisor,
@@ -787,7 +787,7 @@ async def _run_watchdog_daemon(
     """
     config = ContinuousMonitorConfig.model_validate(read_yaml_file(_CONFIG_PATH))
     tick = config.monitor_watchdog_tick_seconds
-    stall_bound = tick * config.watchdog_cadence_multiplier
+    stall_bound = _watchdog_stall_bound(config)
 
     log.info(
         "monitor watchdog starting: stall_bound=%.0fs (tick=%.0fs x %.1f)",
@@ -798,7 +798,7 @@ async def _run_watchdog_daemon(
     await run_watchdog(
         probe=probe
         if probe is not None
-        else FileHeartbeatProbe(path=_logs_dir() / _HEARTBEAT_FILENAME),
+        else FileHeartbeatProbe(path=log_directory() / _HEARTBEAT_FILENAME),
         controller=controller
         if controller is not None
         else NssmServiceController(service_name=_MONITOR_SERVICE_NAME),

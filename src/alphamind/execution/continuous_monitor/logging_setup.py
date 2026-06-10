@@ -17,13 +17,16 @@ from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 
-def _log_directory() -> Path:
+def log_directory() -> Path:
     """Resolve the AlphaMind log directory.
 
     Honour ``USERPROFILE`` when set (Windows convention used in production)
     and fall back to ``Path.home()`` on POSIX. This matches the precedent in
     ``alphamind.collector.scheduler._configure_logging`` and
-    ``alphamind.scheduler.logging_setup._log_directory``.
+    ``alphamind.scheduler.logging_setup._log_directory``. Public because the
+    monitor + safety-core composition roots also place their liveness files
+    (heartbeats, the faulthandler dump) here — one resolution rule, not three
+    copies (ALP-941).
     """
     base = os.environ.get("USERPROFILE") or str(Path.home())
     return Path(base) / "AlphaMind" / "logs"
@@ -40,7 +43,7 @@ def configure_monitor_logging(filename: str = "monitor.log") -> None:
 
     Idempotent: a repeat call returns without attaching a duplicate handler.
     """
-    log_dir = _log_directory()
+    log_dir = log_directory()
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / filename
 

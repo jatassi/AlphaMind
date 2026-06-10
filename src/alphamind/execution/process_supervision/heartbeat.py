@@ -48,6 +48,9 @@ class FileHeartbeatSink:
         # the separate watchdog process reading this beat across the boundary.
         self._path = path
         self._now = clock
+        # Created once here, not per beat — ``beat()`` runs on the supervised
+        # loop's per-iteration path.
+        path.parent.mkdir(parents=True, exist_ok=True)
 
     def beat(self) -> None:
         """Record the current timestamp as the latest heartbeat.
@@ -56,7 +59,6 @@ class FileHeartbeatSink:
         path, so a concurrent :class:`FileHeartbeatProbe` read never sees a
         torn or empty file.
         """
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(self._path.suffix + ".tmp")
         tmp.write_text(repr(self._now()), encoding="utf-8")
         tmp.replace(self._path)
@@ -73,13 +75,15 @@ class FileHeartbeatProbe:
 
         ``None`` means the heartbeat file does not exist yet (the supervised
         process has not started / not yet written one) — the watchdog treats
-        that as startup grace, not a wedge. A malformed file (truncated
-        mid-write despite the atomic replace, or hand-corrupted) also reads as
-        ``None`` so a single bad read never trips a false restart.
+        that as startup grace, not a wedge. A transiently unreadable file (e.g.
+        Windows briefly locking it around the writer's ``os.replace``) or a
+        malformed one (hand-corrupted) also reads as ``None`` so a single bad
+        read never trips a false restart — and never crashes the watchdog,
+        which must outlive any single probe failure to keep supervising.
         """
         try:
             raw = self._path.read_text(encoding="utf-8")
-        except FileNotFoundError:
+        except OSError:
             return None
         try:
             last_beat = float(raw)

@@ -104,15 +104,6 @@ def _config() -> ContinuousMonitorConfig:
     )
 
 
-def _bounded_loop(n: int) -> object:
-    async def _loop() -> AsyncIterator[None]:
-        for _ in range(n):
-            yield
-            await asyncio.sleep(0)
-
-    return _loop
-
-
 async def test_no_dump_while_the_loop_keeps_rearming() -> None:
     """A turning loop replaces every armed timer before expiry — nothing fires."""
     clock = _FakeClock()

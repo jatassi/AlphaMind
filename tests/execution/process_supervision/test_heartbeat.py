@@ -38,6 +38,20 @@ def test_probe_missing_heartbeat_is_none(tmp_path: Path) -> None:
     assert probe.age(now=100.0) is None
 
 
+def test_probe_unreadable_heartbeat_is_none_not_a_crash(tmp_path: Path) -> None:
+    """A transient OS-level read failure reads as None — the watchdog survives.
+
+    Windows can briefly deny the read while the writer's os.replace holds the
+    file; the probe must treat any OSError as an unreadable beat and re-probe
+    next tick rather than crash the watchdog process. A directory at the
+    heartbeat path raises an OSError subclass on both platforms, standing in
+    for that transient denial.
+    """
+    probe = FileHeartbeatProbe(path=tmp_path)  # a directory: read_text -> OSError
+
+    assert probe.age(now=100.0) is None
+
+
 def test_beat_overwrites_previous(tmp_path: Path) -> None:
     """A later beat resets the timer — age is measured from the most recent beat."""
     clock = {"now": 100.0}

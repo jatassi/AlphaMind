@@ -522,6 +522,38 @@ class TestFileHeartbeatSeam:
 
         assert len(beats) == 3  # one beat per completed sleep, none after cancel
 
+    async def test_failing_beat_does_not_kill_the_watchdog_loop(self) -> None:
+        """A beat that raises (disk full, permissions) is logged, not fatal.
+
+        The liveness write must never terminate the monitor it reports on; a
+        persistently stale file makes the external watchdog restart the
+        monitor, which is the designed recovery.
+        """
+        clock = _FakeClock()
+        beats = 0
+
+        class _BrokenSink:
+            def beat(self) -> None:
+                nonlocal beats
+                beats += 1
+                raise OSError("disk full")
+
+        supervisor = MonitorSupervisor(
+            session=_session(),
+            config=_config(),
+            sleep=clock.sleep,
+            monotonic=clock.monotonic,
+            heartbeat=_BrokenSink(),
+        )
+        supervisor._stop_event = asyncio.Event()
+
+        stopper = _StopAfter(clock, passes=2)
+        with pytest.raises(asyncio.CancelledError):  # only the stopper's cancel, no OSError
+            supervisor._sleep = stopper
+            await supervisor._watchdog_loop()
+
+        assert beats == 2  # both iterations attempted the beat and survived it
+
     async def test_no_sink_means_no_beat_and_unchanged_behavior(self) -> None:
         """Default heartbeat=None preserves the existing watchdog loop exactly."""
         clock = _FakeClock()

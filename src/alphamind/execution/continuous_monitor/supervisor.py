@@ -288,9 +288,15 @@ class MonitorSupervisor:
             # freeze stops this coroutine inside the sleep above, the file
             # goes stale, and the out-of-process watchdog restarts the
             # monitor — the wedge this in-loop watchdog structurally cannot
-            # catch.
+            # catch. A failing beat (disk full, permissions) must not kill
+            # the process it reports on: log and keep checking — if the
+            # failure persists, the stale file makes the external watchdog
+            # restart the monitor, which is the correct recovery.
             if self._heartbeat is not None:
-                self._heartbeat.beat()
+                try:
+                    self._heartbeat.beat()
+                except Exception:
+                    log.warning("file heartbeat beat failed", exc_info=True)
             # Exit cleanly if the supervisor is shutting down — avoids a
             # spurious os._exit(1) while tasks are mid-cancellation.
             if self._stop_event is not None and self._stop_event.is_set():

@@ -280,13 +280,21 @@ class _RecordingController:
 async def test_watchdog_daemon_restarts_only_past_the_config_stall_bound() -> None:
     """The watchdog daemon's bound is monitor_watchdog_tick_seconds x multiplier.
 
-    With the shipped config (15s x 10 = 150s): an absent heartbeat (None) is
-    startup grace, an age inside the bound is healthy, and only an age past the
-    bound restarts — one restart across the three scripted ticks.
+    The ages are derived from the shipped config (so a YAML tuning shifts the
+    test with it): an absent heartbeat (None) is startup grace, an age inside
+    the bound is healthy, and only an age past the bound restarts — one restart
+    across the three scripted ticks.
     """
     from collections.abc import AsyncIterator
 
-    probe = _ScriptedProbe(ages=[None, 149.0, 151.0])
+    from alphamind.config.loaders import read_yaml_file
+    from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
+    from alphamind.execution.continuous_monitor.__main__ import _CONFIG_PATH
+
+    config = ContinuousMonitorConfig.model_validate(read_yaml_file(_CONFIG_PATH))
+    bound = config.monitor_watchdog_tick_seconds * config.watchdog_cadence_multiplier
+
+    probe = _ScriptedProbe(ages=[None, bound - 1.0, bound + 1.0])
     controller = _RecordingController()
 
     async def _three_ticks() -> AsyncIterator[None]:
