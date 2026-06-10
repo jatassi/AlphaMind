@@ -297,55 +297,59 @@ class MonitorSupervisor:
                 return
             now = self._monotonic()
             for name, entry in self._watch.items():
-                if not entry.watched:
-                    continue
-                if entry.bound_seconds <= 0.0:
-                    # Watched but no cadence declared, so no stall bound applies
-                    # and the task cannot be tripped. A ``supervised_loop`` task
-                    # registers its bound (via ``register_watch``) before its
-                    # first beat, so a task that has *beaten* yet still carries no
-                    # bound called ``beat()`` directly without ``register_watch``
-                    # — it is silently outside the liveness net. Be loud once
-                    # (the default-on visibility guarantee) rather than skipping
-                    # it without a trace, so a forgotten ``register_watch`` in a
-                    # consumer wiring is caught at runtime, not in production.
-                    if not entry.warned and entry.last_beat is not None:
-                        log.warning(
-                            "watchdog: task %r beats but declared no heartbeat "
-                            "cadence (no register_watch / supervised_loop) — it is "
-                            "outside the liveness net; declare its cadence so a "
-                            "stall bound applies.",
-                            name,
-                        )
-                        entry.warned = True
-                    continue
-                if entry.last_beat is None:
-                    # Never beaten — loud at startup grace (one bound elapsed
-                    # since registration), then latch so it does not spam.
-                    if not entry.warned and now - entry.registered_at > entry.bound_seconds:
-                        log.warning(
-                            "watchdog: task %r is registered watched=True but has not "
-                            "beaten within its %.0fs startup-grace bound — it is outside "
-                            "the liveness net (drive it through supervised_loop or call "
-                            "beat()).",
-                            name,
-                            entry.bound_seconds,
-                        )
-                        entry.warned = True
-                    continue
-                elapsed = now - entry.last_beat
-                if elapsed > entry.bound_seconds:
-                    log.critical(
-                        "watchdog: task %r has not heartbeated in %.0fs "
-                        "(bound %.0fs) — forcing process exit for NSSM restart",
-                        name,
-                        elapsed,
-                        entry.bound_seconds,
-                    )
-                    # ``_exit`` (not ``sys.exit``) skips atexit handlers and
-                    # ``finally`` blocks so the process terminates immediately,
-                    # giving NSSM a clean exit code to restart on.
-                    os._exit(1)
+                self._check_watch_entry(name, entry, now)
+
+    def _check_watch_entry(self, name: str, entry: _WatchEntry, now: float) -> None:
+        """One watchdog check pass for one task: warn on net gaps, trip on stall."""
+        if not entry.watched:
+            return
+        if entry.bound_seconds <= 0.0:
+            # Watched but no cadence declared, so no stall bound applies
+            # and the task cannot be tripped. A ``supervised_loop`` task
+            # registers its bound (via ``register_watch``) before its
+            # first beat, so a task that has *beaten* yet still carries no
+            # bound called ``beat()`` directly without ``register_watch``
+            # — it is silently outside the liveness net. Be loud once
+            # (the default-on visibility guarantee) rather than skipping
+            # it without a trace, so a forgotten ``register_watch`` in a
+            # consumer wiring is caught at runtime, not in production.
+            if not entry.warned and entry.last_beat is not None:
+                log.warning(
+                    "watchdog: task %r beats but declared no heartbeat "
+                    "cadence (no register_watch / supervised_loop) — it is "
+                    "outside the liveness net; declare its cadence so a "
+                    "stall bound applies.",
+                    name,
+                )
+                entry.warned = True
+            return
+        if entry.last_beat is None:
+            # Never beaten — loud at startup grace (one bound elapsed
+            # since registration), then latch so it does not spam.
+            if not entry.warned and now - entry.registered_at > entry.bound_seconds:
+                log.warning(
+                    "watchdog: task %r is registered watched=True but has not "
+                    "beaten within its %.0fs startup-grace bound — it is outside "
+                    "the liveness net (drive it through supervised_loop or call "
+                    "beat()).",
+                    name,
+                    entry.bound_seconds,
+                )
+                entry.warned = True
+            return
+        elapsed = now - entry.last_beat
+        if elapsed > entry.bound_seconds:
+            log.critical(
+                "watchdog: task %r has not heartbeated in %.0fs "
+                "(bound %.0fs) — forcing process exit for NSSM restart",
+                name,
+                elapsed,
+                entry.bound_seconds,
+            )
+            # ``_exit`` (not ``sys.exit``) skips atexit handlers and
+            # ``finally`` blocks so the process terminates immediately,
+            # giving NSSM a clean exit code to restart on.
+            os._exit(1)
 
     def _check_interval(self) -> float:
         """Quarter of the smallest active bound, floored at 1s.

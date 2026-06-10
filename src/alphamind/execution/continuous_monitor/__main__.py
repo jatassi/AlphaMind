@@ -105,6 +105,11 @@ from alphamind.execution.continuous_monitor.underlying_stream.reader import (
 from alphamind.execution.paper_evaluation_harness import (
     attach_live_execution_estimate,
 )
+from alphamind.execution.paper_evaluation_harness.lookups import (
+    MapVolLookup,
+    SqlAdvLookup,
+    SqlOrderLookup,
+)
 from alphamind.execution.process_supervision import (
     FileHeartbeatProbe,
     FileHeartbeatSink,
@@ -114,11 +119,6 @@ from alphamind.execution.process_supervision import (
     WatchdogLoop,
     run_watchdog,
     supervised_watchdog_loop,
-)
-from alphamind.execution.paper_evaluation_harness.lookups import (
-    MapVolLookup,
-    SqlAdvLookup,
-    SqlOrderLookup,
 )
 from alphamind.execution.venue_configuration.calendar_cache import (
     TradingCalendarCache,
@@ -598,34 +598,43 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         watched=False,
     )
 
-    # ALP-941 scope E — faulthandler deadman. While the event loop turns, the
-    # deadman task re-arms faulthandler's C-thread dump timer before it can
-    # expire; a loop freeze stops the re-arm and the timer dumps the frozen
-    # main-thread stack (the exact blocking frame) to monitor_faulthandler.log
-    # before the external watchdog's restart destroys the evidence.
+    try:
+        await _run_with_faulthandler_deadman(supervisor, config)
+    finally:
+        await engine.dispose()
+        log.info("monitor session end: session_id=%s", session.session_id)
+
+
+async def _run_with_faulthandler_deadman(
+    supervisor: MonitorSupervisor, config: ContinuousMonitorConfig
+) -> None:
+    """Arm the faulthandler deadman around ``supervisor.run()`` (ALP-941 scope E).
+
+    While the event loop turns, the deadman task re-arms faulthandler's
+    C-thread dump timer before it can expire; a loop freeze stops the re-arm
+    and the timer dumps the frozen main-thread stack (the exact blocking frame)
+    to ``monitor_faulthandler.log`` before the external watchdog's restart
+    destroys the evidence.
+    """
     faulthandler.enable()
     fault_log_path = _logs_dir() / _FAULTHANDLER_LOG_FILENAME
     fault_log_path.parent.mkdir(parents=True, exist_ok=True)
     deadman_bound = config.monitor_watchdog_tick_seconds * config.watchdog_cadence_multiplier
-    try:
-        with fault_log_path.open("a", encoding="utf-8") as fault_file:
-            register_faulthandler_deadman_task(
-                supervisor,
-                tick_seconds=config.monitor_watchdog_tick_seconds,
-                arm=lambda: faulthandler.dump_traceback_later(
-                    deadman_bound, repeat=False, file=fault_file
-                ),
-                cancel=faulthandler.cancel_dump_traceback_later,
-            )
-            try:
-                await supervisor.run()
-            finally:
-                # faulthandler holds the file's fd until the dump fires or is
-                # cancelled — cancel before the ``with`` closes the file.
-                faulthandler.cancel_dump_traceback_later()
-    finally:
-        await engine.dispose()
-        log.info("monitor session end: session_id=%s", session.session_id)
+    with fault_log_path.open("a", encoding="utf-8") as fault_file:
+        register_faulthandler_deadman_task(
+            supervisor,
+            tick_seconds=config.monitor_watchdog_tick_seconds,
+            arm=lambda: faulthandler.dump_traceback_later(
+                deadman_bound, repeat=False, file=fault_file
+            ),
+            cancel=faulthandler.cancel_dump_traceback_later,
+        )
+        try:
+            await supervisor.run()
+        finally:
+            # faulthandler holds the file's fd until the dump fires or is
+            # cancelled — cancel before the ``with`` closes the file.
+            faulthandler.cancel_dump_traceback_later()
 
 
 # ---------------------------------------------------------------------------
