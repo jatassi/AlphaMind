@@ -332,8 +332,8 @@ broker order — they are not on Alpaca, by design). Wall-clock is
 `cache_write` cost (no warm prompt cache), the deterministic distillation
 step takes ~3–5 min against the full prod data layer, and at least one of
 the Sonnet phases (`adaptive` is the usual culprit) typically dominates at
-~6–8 min. This is meaningfully slower than the steady-state ~60–180 s
-scheduled invocations document in § 4; budget accordingly and don't restart
+~6–8 min. This is the same band as the steady-state ~25–50 min scheduled
+invocations document in § 4; budget accordingly and don't restart
 the process if it looks "stuck" inside that window — run the e2e progress
 monitor (`scripts/RUNBOOK_end_to_end_verification.md` § Monitoring
 progress mid-run) against the invocation's archive to see live phase
@@ -513,10 +513,9 @@ Where `<run-type>` is one of:
 `market_open`, `market_hours_rolling`, `pre_close`, `off_hours_rolling`,
 `weekend_saturday`, `weekend_sunday`, `emergency`.
 
-The process exits when the invocation completes (~60–180 s steady-state in
-prod; up to a few minutes longer on a cold cache or with the adaptive
-researcher fully consumed). All artifacts land in the same archive layout
-as scheduled runs — under
+The process exits when the invocation completes (~25–50 min steady-state in
+prod — the full agent roster runs on every run-type; see § 4). All
+artifacts land in the same archive layout as scheduled runs — under
 `%USERPROFILE%\AlphaMind\archive\<YYYY-MM-DD>\<invocation_id>\`.
 
 **agent_calls telemetry capture is active in production (ALP-907).** Every LLM
@@ -603,7 +602,13 @@ passes on the `distillation_ticker_baseline` UNIQUE constraint).
 + `pre_close`), ~16 per full trading week including the Sunday run. There is no
 longer any same-minute collision for the dedup window to "collapse" — every slot
 is distinct by construction. **Typical steady-state wall-clock per invocation is
-~60–180 seconds** (longer when the adaptive researcher consumes its full budget).
+~25–50 minutes**: deterministic distillation takes ~5–6 min, and the 9 SDK agents
+(~1–8 min each, domain researchers serial within their phase) dominate the rest;
+the adaptive researcher consuming its full budget pushes a run toward the upper
+band. Observed: 29.7 / 40.8 min `market_open`, ~49 min `market_hours_rolling`
+(2026-06-09/10). The "~60–180 seconds" figure previously documented here
+predates the full agent roster — a sub-5-minute completion now means the run
+aborted early, not that it was fast.
 An `emergency` invocation is **not** a fast path: it runs the full agent roster —
 the same roster as `market_open`, with the heaviest adaptive-researcher budget
 (`config/run_types/emergency.yaml`) — so it lands comparable to or slower than a
@@ -985,8 +990,19 @@ Gotchas baked into the script (worth knowing when reading its output):
   `scheduler exited with error` may land only in the launching shell's stderr (not
   `pipeline.log`) — so for a manual run the **launching process's exit code** stays
   the authoritative terminal signal; the watcher is the live milestone view.
-- Set the `Monitor` `timeout` generously (or `persistent: true`) — cold-cache /
-  adaptive-heavy runs reach 25–40 min; the watch exits itself on the terminal state.
+- Set the `Monitor` `timeout` generously (or `persistent: true`) — a full-roster
+  run takes ~25–50 min (§ 4); the watch exits itself on the terminal state.
+- The ACT field separator is a TAB, not a control character: the sqlite3 CLI
+  (≥ 3.49; prod runs 3.51) escapes control characters on output, so `char(31)`
+  arrives as the literal text `^_` — the field split silently failed and every
+  ACT line emitted empty until 2026-06-10. The same CLI emits CRLF; `q()` strips
+  the `\r` (command substitution hides this, `while read` pipelines don't).
+- The fault legs filter benign noise **per traceback block**, not per line: the
+  SDK-subprocess teardown noise (`_ProactorBasePipeTransport.__del__` →
+  `ValueError: I/O operation on closed pipe`, after every agent completion) puts
+  its benign marker and its bare `Traceback` header on separate lines, so a
+  per-line filter leaks a spurious FAULT pair per agent. A real traceback emits
+  one line: `FAULT(log|err) Traceback … => <final exception line>`.
 
 ---
 
