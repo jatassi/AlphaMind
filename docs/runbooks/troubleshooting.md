@@ -264,3 +264,18 @@ monitor's auto re-protection job (ALP-938, § 8.10). Only investigate if the sam
 symbol rejects across consecutive invocations — that means fill integration is
 not catching the projection up to broker reality.
 
+### 8.12 Pulled an installer-script change, but the live service still has the old config
+
+`scripts/services/install_*_service.ps1` changes only affect *future* installs —
+the update loop never re-runs installers, so an already-registered service keeps
+whatever SCM/NSSM config it was installed with. Observed 2026-06-10: PR #350
+deleted the command center's `DependOnService` edges from its installer, but
+`sc.exe qc AlphaMindCommandCenter` still showed both edges until the one-time
+`sc.exe config AlphaMindCommandCenter depend= /` from the commit's deploy note
+was applied (with services stopped).
+
+When a pulled commit touches `scripts/services/`, read its commit message for a
+deploy note and apply the live-config step it names; verify with `sc.exe qc
+<ServiceName>` / `nssm get <ServiceName> <parameter>` afterward (update-loop.md
+§ 1.1 carries the scan step).
+
