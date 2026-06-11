@@ -499,6 +499,8 @@ async def _seed_position_order_thesis_bracket(
     order: OrderRecord,
     thesis: ThesisRecord,
     bracket: BracketRecord,
+    *,
+    extra_orders: tuple[OrderRecord, ...] = (),
 ) -> None:
     """Seed a full position cluster in a single deferred-FK transaction.
 
@@ -508,6 +510,8 @@ async def _seed_position_order_thesis_bracket(
 
     Protective-leg order_ids (deferred FK to orders) are also seeded as stub
     orders in the same transaction so the COMMIT does not raise IntegrityError.
+    ``extra_orders`` seeds further real orders alongside (e.g. a pending
+    CLOSE-role order against an OPEN position).
     """
     from tests.state._fk_substrate import stub_order_row
 
@@ -515,8 +519,8 @@ async def _seed_position_order_thesis_bracket(
     bracket_row, leg_rows = bracket_record_to_rows(bracket)
 
     # Collect every order_id that appears in the bracket or its legs but is not
-    # the main order being seeded: brackets.entry_order_id and each leg.order_id.
-    seeded_order_ids: set[str] = {order.order_id}
+    # an order being seeded: brackets.entry_order_id and each leg.order_id.
+    seeded_order_ids: set[str] = {order.order_id, *(o.order_id for o in extra_orders)}
     extra_order_ids: list[str] = [bracket_row.entry_order_id] + [
         lrow.order_id for lrow in leg_rows if lrow.order_id is not None
     ]
@@ -527,47 +531,8 @@ async def _seed_position_order_thesis_bracket(
         for crow in component_rows:
             sess.add(crow)
         sess.add(order_record_to_row(order))
-        for oid in extra_order_ids:
-            if oid not in seeded_order_ids:
-                sess.add(stub_order_row(oid, bracket.bracket_id))
-                seeded_order_ids.add(oid)
-        sess.add(bracket_row)
-        await sess.flush()
-        for lrow in leg_rows:
-            sess.add(lrow)
-        await sess.commit()
-
-
-async def _seed_open_position_cluster_with_close_order(
-    factory: async_sessionmaker[AsyncSession],
-    *,
-    position: PositionRecord,
-    close_order: OrderRecord,
-    entry_order: OrderRecord,
-    bracket: BracketRecord,
-) -> None:
-    """Seed an OPEN position cluster plus a pending CLOSE-role order.
-
-    Same single deferred-FK transaction as ``_seed_position_order_thesis_bracket``
-    (the four entities reference each other cyclically), with the close order
-    seeded alongside and any bracket-referenced order not seeded explicitly
-    stubbed so the COMMIT does not raise IntegrityError.
-    """
-    from tests.state._fk_substrate import stub_order_row
-
-    thesis_row, component_rows = thesis_record_to_rows(_make_active_thesis())
-    bracket_row, leg_rows = bracket_record_to_rows(bracket)
-    extra_order_ids = [bracket_row.entry_order_id] + [
-        lrow.order_id for lrow in leg_rows if lrow.order_id is not None
-    ]
-    seeded_order_ids: set[str] = {entry_order.order_id, close_order.order_id}
-    async with factory() as sess:
-        sess.add(position_record_to_row(position))
-        sess.add(thesis_row)
-        for crow in component_rows:
-            sess.add(crow)
-        sess.add(order_record_to_row(entry_order))
-        sess.add(order_record_to_row(close_order))
+        for extra in extra_orders:
+            sess.add(order_record_to_row(extra))
         for oid in extra_order_ids:
             if oid not in seeded_order_ids:
                 sess.add(stub_order_row(oid, bracket.bracket_id))
@@ -773,17 +738,20 @@ async def test_exit_fill_closes_position_and_leaves_thesis_active(
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    await _seed_open_position_cluster_with_close_order(
+    await _seed_position_order_thesis_bracket(
         factory,
-        position=_make_open_position(),
-        close_order=_make_pending_entry_order(
-            order_id=OrderId("ord-close-1"),
-            role=OrderRole.CLOSE,
-            direction=OrderDirection.SELL,
-            position_id=PositionId("pos-1"),
+        _make_open_position(),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_active_bracket(),
+        extra_orders=(
+            _make_pending_entry_order(
+                order_id=OrderId("ord-close-1"),
+                role=OrderRole.CLOSE,
+                direction=OrderDirection.SELL,
+                position_id=PositionId("pos-1"),
+            ),
         ),
-        entry_order=_make_pending_entry_order(),
-        bracket=_make_active_bracket(),
     )
     await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=98_500.0))
     await _seed_drawdown_state(factory)
@@ -902,17 +870,20 @@ async def _run_partial_close_and_read_position(
     from alphamind.execution.write_paths.fill_collection import process_unprocessed_fills
 
     await _seed_invocation_substrate(factory)
-    await _seed_open_position_cluster_with_close_order(
+    await _seed_position_order_thesis_bracket(
         factory,
-        position=_make_open_position(share_count=10.0),
-        close_order=_make_pending_entry_order(
-            order_id=OrderId("ord-close-1"),
-            role=OrderRole.CLOSE,
-            direction=OrderDirection.SELL,
-            position_id=PositionId("pos-1"),
+        _make_open_position(share_count=10.0),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_bracket_with_leg_status(leg_status),
+        extra_orders=(
+            _make_pending_entry_order(
+                order_id=OrderId("ord-close-1"),
+                role=OrderRole.CLOSE,
+                direction=OrderDirection.SELL,
+                position_id=PositionId("pos-1"),
+            ),
         ),
-        entry_order=_make_pending_entry_order(),
-        bracket=_make_bracket_with_leg_status(leg_status),
     )
     await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=98_500.0))
     await _seed_drawdown_state(factory)
@@ -977,37 +948,24 @@ async def test_take_profit_leg_fill_marks_leg_filled_and_closes_position(
     from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
-    from tests.state._fk_substrate import stub_order_row
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    tp_order = _make_pending_entry_order(
-        order_id=OrderId("ord-tp-1"),
-        role=OrderRole.TAKE_PROFIT,
-        direction=OrderDirection.SELL,
-        position_id=PositionId("pos-1"),
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_open_position(),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_active_bracket(),
+        extra_orders=(
+            _make_pending_entry_order(
+                order_id=OrderId("ord-tp-1"),
+                role=OrderRole.TAKE_PROFIT,
+                direction=OrderDirection.SELL,
+                position_id=PositionId("pos-1"),
+            ),
+        ),
     )
-    entry_order = _make_pending_entry_order()
-    thesis_row, component_rows = thesis_record_to_rows(_make_active_thesis())
-    bracket_row, leg_rows = bracket_record_to_rows(_make_active_bracket())
-    leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
-    seeded_order_ids: set[str] = {entry_order.order_id, tp_order.order_id}
-    async with factory() as sess:
-        sess.add(position_record_to_row(_make_open_position()))
-        sess.add(thesis_row)
-        for crow in component_rows:
-            sess.add(crow)
-        sess.add(order_record_to_row(entry_order))
-        sess.add(order_record_to_row(tp_order))
-        for oid in leg_order_ids:
-            if oid not in seeded_order_ids:
-                sess.add(stub_order_row(oid, bracket_row.bracket_id))
-                seeded_order_ids.add(oid)
-        sess.add(bracket_row)
-        await sess.flush()
-        for lrow in leg_rows:
-            sess.add(lrow)
-        await sess.commit()
     await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=98_500.0))
     await _seed_drawdown_state(factory)
     await _append_fill(
@@ -1036,6 +994,25 @@ async def test_take_profit_leg_fill_marks_leg_filled_and_closes_position(
             await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
         ).scalar_one()
         assert position_row_to_record(pos_row).status == PositionStatus.CLOSED
+
+        # A protective-role sell is an exit even though the role partition is
+        # spelled positively (ENTRY/ADD_ENTRY) — guards the TAKE_PROFIT quadrant
+        # of the reason matrix (ALP-944).
+        log_rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.invocation_id == handle.invocation_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    credited = [r for r in log_rows if r.event_type == EventType.CASH_CREDITED.value]
+    assert len(credited) == 1
+    credit_detail = decode_detail(credited[0].detail_json, CashCreditedDetail)
+    assert credit_detail.reason == CashCreditReason.EXIT_FILL
 
 
 async def test_multi_fill_ordering_produces_cumulative_state(
@@ -1805,20 +1782,23 @@ async def test_short_cover_buy_fill_debits_cash_as_exit_without_touching_reserva
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    await _seed_open_position_cluster_with_close_order(
+    await _seed_position_order_thesis_bracket(
         factory,
-        position=_make_open_position(direction=Direction.SHORT),
-        close_order=_make_pending_entry_order(
-            order_id=OrderId("ord-cover-1"),
-            role=OrderRole.CLOSE,
-            direction=OrderDirection.BUY_TO_CLOSE,
-            position_id=PositionId("pos-1"),
-            # A priced cover is the trap: the side-keyed release would have
-            # drained 140 * 10 = 1400 of capital this order never staked.
-            limit_price=140.0,
+        _make_open_position(direction=Direction.SHORT),
+        _make_pending_entry_order(direction=OrderDirection.SELL_TO_OPEN),
+        _make_active_thesis(),
+        _make_active_bracket(),
+        extra_orders=(
+            _make_pending_entry_order(
+                order_id=OrderId("ord-cover-1"),
+                role=OrderRole.CLOSE,
+                direction=OrderDirection.BUY_TO_CLOSE,
+                position_id=PositionId("pos-1"),
+                # A priced cover is the trap: the side-keyed release would have
+                # drained 140 * 10 = 1400 of capital this order never staked.
+                limit_price=140.0,
+            ),
         ),
-        entry_order=_make_pending_entry_order(direction=OrderDirection.SELL_TO_OPEN),
-        bracket=_make_active_bracket(),
     )
     # 2000 of reserved capital belongs to *other* live entry orders.
     await _seed_cash_ledger(

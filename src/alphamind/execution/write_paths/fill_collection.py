@@ -1509,7 +1509,7 @@ async def _apply_strategy_open_fill(
     parent's TAKE_PROFIT / PRICE_STOP / TIME_STOP role — those route to the
     close branch correctly (ALP-614).
     """
-    is_opening_for_leg = updated_order.role in {OrderRole.ENTRY, OrderRole.ADD_ENTRY}
+    is_opening_for_leg = _is_entry_role(updated_order)
     if is_opening_for_leg:
         new_legs = _add_to_leg(details.legs, leg=leg, fill=fill)
         new_details = _recompute_strategy_payoff_metrics(
@@ -2001,14 +2001,9 @@ def _fill_consideration_usd(order: OrderRecord, fill: FillRecord) -> Decimal:
 
 
 def _is_entry_role(order: OrderRecord) -> bool:
-    """The entry-role partition (ENTRY / ADD_ENTRY vs. everything else).
-
-    The same positive list ``_apply_strategy_fill_when_open`` dispatches on and
-    the cancel-path release guard uses (``command_execution.cancel``, ALP-760):
-    only entry-class roles stake capital at submission, so only their fills
-    release it — keyed off role, never off fill side (a short's entry is a
-    sell, its protective legs are buys, ALP-944).
-    """
+    """Entry-role partition: only ENTRY / ADD_ENTRY stake capital at submission,
+    so only their fills release it — keyed off role, never off fill side
+    (a short's entry is a sell, its protective legs are buys, ALP-944)."""
     return order.role in (OrderRole.ENTRY, OrderRole.ADD_ENTRY)
 
 
