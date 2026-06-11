@@ -122,8 +122,7 @@ The install script wires:
 - `python -m alphamind.command_center` as the entry point.
 - AppExit Default Restart with a 60 s throttle.
 - Stdout / stderr → `%USERPROFILE%\AlphaMind\logs\command_center.{out,err}.log`.
-- No SCM service dependencies — the SSE consumers reconnect with capped
-  backoff until the scheduler / monitor come up (ALP-945).
+- No SCM service dependencies (ALP-945; see prerequisite 6).
 
 The `ObjectName` step is manual — NSSM prompts for the account password
 interactively, which keeps it out of shell history.

@@ -28,9 +28,11 @@ def _checked_run(cmd: list[str]) -> None:
 
     Output is captured so the raised :class:`subprocess.CalledProcessError`
     carries the child's stderr — the SCM's refusal reason lives there, not in
-    the exit status (ALP-945).
+    the exit status (ALP-945). ``errors="replace"`` keeps a non-decodable byte
+    in that output from raising ``UnicodeDecodeError`` instead of the
+    ``CalledProcessError`` the caller logs.
     """
-    subprocess.run(cmd, check=True, capture_output=True, text=True)
+    subprocess.run(cmd, check=True, capture_output=True, text=True, errors="replace")
 
 
 class NssmServiceController:
@@ -58,13 +60,11 @@ class NssmServiceController:
         try:
             self._run(list(cmd))
         except subprocess.CalledProcessError as exc:
-            # Surface the child's stderr: the exit status alone hides the SCM's
-            # refusal reason (ALP-945 — sixteen restarts logged only "exit
-            # status 1" while the reason sat in nssm's stderr).
+            # The SCM's refusal reason lives in the child's stderr (ALP-945).
             log.exception(
                 "watchdog: nssm restart of %r failed (stderr: %s); will retry next tick",
                 self._service_name,
-                exc.stderr,
+                exc.stderr or "<no stderr captured>",
             )
         except Exception:
             log.exception(

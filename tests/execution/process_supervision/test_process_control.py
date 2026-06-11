@@ -77,12 +77,15 @@ def test_checked_run_attaches_the_childs_stderr_to_the_raised_error() -> None:
     """The default runner captures the child's stderr onto ``CalledProcessError``.
 
     Exercised against a real subprocess — the runner IS the OS-process
-    boundary, so there is nothing to fake below it.
+    boundary, so there is nothing to fake below it. The child's stderr
+    includes a byte no text encoding need accept: a non-decodable byte must
+    degrade to a replacement character, not raise ``UnicodeDecodeError`` in
+    place of the ``CalledProcessError`` the watchdog logs.
     """
     cmd = [
         sys.executable,
         "-c",
-        "import sys; sys.stderr.write('stop control refused'); sys.exit(1)",
+        "import sys; sys.stderr.buffer.write(b'stop control refused \\xff'); sys.exit(1)",
     ]
 
     with pytest.raises(subprocess.CalledProcessError) as excinfo:

@@ -120,7 +120,8 @@ restart any services whose code changed.
 ### 1.4 Stop services (reverse of the start order)
 
 The stop order is operational convention — no service declares an SCM
-dependency on another (ALP-945), so the SCM enforces no ordering. Stop the
+dependency on another, so the SCM enforces no ordering (the topology
+invariant; § 7). Stop the
 command center first so its loopback consumers sit quiet through the
 migration window rather than reconnect-looping against stopped upstreams.
 Collector is independent of the trading DB schema but stop it too to keep
