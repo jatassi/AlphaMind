@@ -34,6 +34,10 @@ _REGISTERED_AT = datetime(2026, 6, 1, tzinfo=UTC)
 _WINDOW_DAYS = 21
 _DUE_AT = _REGISTERED_AT + timedelta(days=_WINDOW_DAYS)
 _ARTIFACT = "prompts/decision/strategist.md"
+# For no-supersession assertions run against the live repo (repo_root unpinned):
+# a path git has never tracked, so the concurrent-edit trigger cannot fire no
+# matter what real commits land during the test window.
+_NEVER_TRACKED_ARTIFACT = "prompts/decision/never-tracked-test-artifact.md"
 _REG_MODEL = "claude-opus-4-8"
 _REG_REGIME = "normal"
 
@@ -257,7 +261,14 @@ class TestRegimeTransition:
         assert record.superseded_reason is SupersededReason.REGIME_TRANSITION  # type: ignore[attr-defined]
 
     def test_same_regime_in_window_is_not_superseded(self, db_path: str) -> None:
-        _add_validation(db_path, _validation_row("val-stable"))
+        # Watch a never-tracked path: the unpinned repo_root walks the LIVE
+        # repo's git log, so watching a real prompt path makes this test fail
+        # whenever a genuine commit to that prompt lands inside the hard-coded
+        # June 2026 window (surfaced by ALP-948's prompts/decision edits).
+        _add_validation(
+            db_path,
+            _validation_row("val-stable", edited_artifact=_NEVER_TRACKED_ARTIFACT),
+        )
         _add_invocation(
             db_path,
             "inv-post",
@@ -457,7 +468,12 @@ class TestDetectSupersessionsCommand:
     def test_reports_zero_when_nothing_supersedes(
         self, db_path: str, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        _add_validation(db_path, _validation_row("val-cli-clean"))
+        # Never-tracked artifact for the same live-repo reason as
+        # test_same_regime_in_window_is_not_superseded above.
+        _add_validation(
+            db_path,
+            _validation_row("val-cli-clean", edited_artifact=_NEVER_TRACKED_ARTIFACT),
+        )
         rc = cli.main(["detect-supersessions", "--db-path", db_path])
         assert rc == 0
         assert json.loads(capsys.readouterr().out)["marked"] == 0
