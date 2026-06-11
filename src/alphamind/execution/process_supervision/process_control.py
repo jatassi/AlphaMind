@@ -30,7 +30,8 @@ def _checked_run(cmd: list[str]) -> None:
     carries the child's stderr — the SCM's refusal reason lives there, not in
     the exit status (ALP-945). ``errors="replace"`` keeps a non-decodable byte
     in that output from raising ``UnicodeDecodeError`` instead of the
-    ``CalledProcessError`` the caller logs.
+    ``CalledProcessError`` the caller logs. On success the captured output is
+    discarded (it no longer passes through to the watchdog's own stdio).
     """
     subprocess.run(cmd, check=True, capture_output=True, text=True, errors="replace")
 

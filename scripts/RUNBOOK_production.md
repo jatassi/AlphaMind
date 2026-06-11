@@ -1063,9 +1063,9 @@ A plain `nssm restart <service>` works for any single service with all the
 others running: no service declares an SCM dependency on another, so the SCM
 never refuses the stop half of the restart. That is a deliberate topology
 invariant (ALP-945, the 2026-06-10 incident — a `DependOnService` edge from
-the command center made the SCM refuse the monitor watchdog's restarts for
-42 minutes): **never declare an SCM dependency on a watchdog-supervised
-service.**
+the command center made the SCM refuse every monitor-watchdog restart,
+wedging the monitor for 42 minutes): **never declare an SCM dependency on a
+watchdog-supervised service.**
 
 **One restart gotcha that cost real diagnosis time (2026-06-02 monitor wedge):**
 
