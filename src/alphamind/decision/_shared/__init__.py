@@ -10,5 +10,6 @@ direction word shared by the strategist and PM input bundles.
 
 from alphamind.decision._shared.direction_display import direction_display
 from alphamind.decision._shared.prompt_file import system_prompt_as_file
+from alphamind.decision._shared.tool_surface import surface_tool_names
 
-__all__ = ["direction_display", "system_prompt_as_file"]
+__all__ = ["direction_display", "surface_tool_names", "system_prompt_as_file"]

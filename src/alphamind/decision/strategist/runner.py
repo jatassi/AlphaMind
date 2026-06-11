@@ -37,6 +37,7 @@ from alphamind.config.models.agents import (
     AgentsConfig,
     BaseAgentConfig,
 )
+from alphamind.decision._shared import surface_tool_names
 from alphamind.decision.strategist.harness import (  # noqa: F401 — kept for tests that inject the in-process harness
     HarnessSuccess,
     run_strategist_harness,
@@ -105,18 +106,6 @@ STRATEGIST_TOOL_NAMES: tuple[str, ...] = (
     "mcp__alphamind_synthesizer_retrieval__retrieve_brief",
     RETRIEVE_OPTIONS_CHAIN_TOOL_NAME,
 )
-
-
-def _tool_names(options_chain_reader: OptionsChainReader | None) -> tuple[str, ...]:
-    """The AVAILABLE TOOLS render for this composition's mounted surface.
-
-    The chain tool (ALP-948) mounts only when the composition supplies an
-    ``OptionsChainReader``; drop it from the rendered list otherwise so the
-    prompt never advertises an uncallable tool.
-    """
-    if options_chain_reader is not None:
-        return STRATEGIST_TOOL_NAMES
-    return tuple(n for n in STRATEGIST_TOOL_NAMES if n != RETRIEVE_OPTIONS_CHAIN_TOOL_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +367,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
             available_for_new_positions_usd=available_for_new_positions_usd,
             current_price_lookup=current_price_lookup,
             synthesizer_brief_text=synthesizer_brief_text,
-            tool_names=_tool_names(options_chain_reader),
+            tool_names=surface_tool_names(STRATEGIST_TOOL_NAMES, options_chain_reader),
             position_zones=position_zones,
             sector_label_display=sector_label_display,
             regime_transition_breaches=regime_transition_breaches,
@@ -402,7 +391,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
         available_for_new_positions_usd=available_for_new_positions_usd,
         current_price_lookup=current_price_lookup,
         synthesizer_brief_text=synthesizer_brief_text,
-        tool_names=_tool_names(options_chain_reader),
+        tool_names=surface_tool_names(STRATEGIST_TOOL_NAMES, options_chain_reader),
         position_zones=position_zones,
         sector_label_display=sector_label_display,
         regime_transition_breaches=regime_transition_breaches,

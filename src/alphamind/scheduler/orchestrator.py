@@ -188,7 +188,9 @@ from alphamind.state.repository import (
 )
 from alphamind.state.repository.options_chain_read import (
     ChainFilterParams,
+    OptionsChainReader,
     SqlOptionsChainReader,
+    TickerOptionsContext,
     build_options_context,
 )
 from alphamind.state.tables.invocations import InvocationRow
@@ -410,8 +412,8 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     venue_config: VenueConfig | None = None,
     execution_mode: ExecutionMode | None = None,
     execution_config: ExecutionConfig | None = None,
-    options_chain_reader: Any = None,
-    options_context: Any = None,
+    options_chain_reader: OptionsChainReader | None = None,
+    options_context: Mapping[str, TickerOptionsContext] | None = None,
 ) -> dict[str, Any]:
     """Assemble the kwargs ``run_decision_pipeline`` requires."""
     resolved = pipeline_config.resolved
@@ -976,27 +978,28 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     # already did the work inside ``insert_invocation_record``.
     broker_routing_active = context.debug_e2e is None
     # ALP-948 — per-invocation options chain reader + per-ticker options
-    # context. The reader applies the resolved options_chain filter policy;
+    # context, gated on the resolved profile's options feature flag: with
+    # options disabled the chain tool stays unmounted and the validator's
+    # option quote checks stay inert, matching the prompt's Hard blocks
+    # signal. The reader applies the resolved options_chain filter policy;
     # the context map decorates the analyst's REFERENCE PRICES lines for the
-    # same tickers the reference map carries. Built off the sync session
-    # factory in a worker thread so the per-ticker chain reads do not block
-    # the event loop.
-    options_chain_cfg = pipeline_config.resolved.options_chain
-    options_chain_reader = SqlOptionsChainReader(
-        sync_session_factory=context.sync_session_factory,
-        params=ChainFilterParams(
-            strike_band_pct=options_chain_cfg.strike_band_pct,
-            min_days_to_expiration=options_chain_cfg.min_days_to_expiration,
-            max_days_to_expiration=options_chain_cfg.max_days_to_expiration,
-            min_open_interest=options_chain_cfg.min_open_interest,
-            max_contracts_rendered=options_chain_cfg.max_contracts_rendered,
-        ),
-    )
-    options_context = await asyncio.to_thread(
-        build_options_context,
-        options_chain_reader,
-        tickers=sorted(fill_collection_inputs.market_inputs.underlying_prices),
-    )
+    # same tickers the reference map carries. Context is only built for a
+    # normal-mode invocation — the halt-mode watchlist bundle never renders
+    # it — and runs in a worker thread so the per-ticker chain reads do not
+    # block the event loop.
+    options_chain_reader: OptionsChainReader | None = None
+    options_context: Mapping[str, TickerOptionsContext] | None = None
+    if pipeline_config.resolved.feature_flags.options_enabled:
+        options_chain_reader = SqlOptionsChainReader(
+            sync_session_factory=context.sync_session_factory,
+            params=ChainFilterParams.from_config(pipeline_config.resolved.options_chain),
+        )
+        if pipeline_mode is PipelineMode.NORMAL:
+            options_context = await asyncio.to_thread(
+                build_options_context,
+                options_chain_reader,
+                tickers=sorted(fill_collection_inputs.market_inputs.underlying_prices),
+            )
     decision_kwargs = _build_decision_kwargs(
         invocation_id=invocation_id,
         pipeline_config=pipeline_config,

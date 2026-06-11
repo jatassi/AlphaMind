@@ -595,3 +595,16 @@ def test_normal_mode_without_options_context_keeps_bare_price_lines() -> None:
     )
     assert "  NVDA: 905.12\n" in out
     assert "IVr" not in out
+
+
+def test_normal_mode_options_context_with_no_expirations_keeps_bare_line() -> None:
+    kwargs = _normal_kwargs()
+    kwargs["options_context"] = {
+        "NVDA": TickerOptionsContext(iv_rank=62.4, liquid_expirations=()),
+    }
+    out = assemble_input_bundle_normal(
+        **kwargs,  # type: ignore[arg-type]
+        sector_label_display=_MICRO_SECTOR_LABELS,
+    )
+    assert "  NVDA: 905.12\n" in out
+    assert "exp:" not in out

@@ -440,3 +440,54 @@ def test_build_options_context_includes_only_tickers_with_chains(
     context = build_options_context(_reader(sync_factory), tickers=("AAPL", "TSLA"))
 
     assert set(context) == {"AAPL"}
+
+
+def test_latest_quote_skips_newer_unusable_snapshot(
+    sync_factory: sessionmaker[Session],
+) -> None:
+    """A newer garbage row (crossed quote) must not mask the older usable one
+    the chain tool anchored against — latest_quote returns the latest USABLE
+    snapshot."""
+    with sync_factory() as session, session.begin():
+        _seed_underlying(session, "AAPL")
+        ct = _seed_contract(session, underlying="AAPL", strike=100.0, expiration="2026-07-02")
+        _seed_snapshot(
+            session,
+            contract_ticker=ct,
+            underlying="AAPL",
+            snapshot_ts=_NOW - timedelta(minutes=30),
+            bid=4.90,
+            ask=5.10,
+        )
+        _seed_snapshot(
+            session,
+            contract_ticker=ct,
+            underlying="AAPL",
+            snapshot_ts=_NOW - timedelta(minutes=5),
+            bid=5.30,
+            ask=5.10,  # crossed — unusable
+        )
+
+    occ = occ_symbol_for_contract(
+        underlying="AAPL", expiration=date(2026, 7, 2), strike=100.0, contract_type="call"
+    )
+    quote = _reader(sync_factory).latest_quote(occ)
+
+    assert quote is not None
+    assert quote.nbbo_mid == pytest.approx(5.00)
+    assert quote.snapshot_ts == _NOW - timedelta(minutes=30)
+
+
+def test_chain_filter_params_from_config_projects_the_five_filter_fields() -> None:
+    from alphamind.config.models.options_chain import OptionsChainConfig
+
+    config = OptionsChainConfig(
+        strike_band_pct=15.0,
+        min_days_to_expiration=5,
+        max_days_to_expiration=45,
+        min_open_interest=100,
+        max_contracts_rendered=24,
+        premium_staleness_tolerance_pct=10.0,
+    )
+
+    assert ChainFilterParams.from_config(config) == _PARAMS

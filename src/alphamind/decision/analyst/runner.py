@@ -30,6 +30,7 @@ from alphamind.config.models.agents import (
     AgentsConfig,
     BaseAgentConfig,
 )
+from alphamind.decision._shared import surface_tool_names
 from alphamind.decision.analyst.harness import (  # noqa: F401 — kept for tests that inject the in-process harness
     HarnessSuccess,
     invoke_analyst,
@@ -83,21 +84,14 @@ _AGENTS_YAML = _REPO_ROOT / "config" / "agents.yaml"
 # (``build_validate_guardrail_mcp_server``, ``build_retrieve_brief_mcp_server``,
 # and ``build_retrieve_options_chain_mcp_server``) emit these same names as
 # their allowed-tools lists. The chain tool (ALP-948) mounts only when the
-# composition supplies an ``OptionsChainReader``; ``_tool_names`` drops it
-# from the rendered list otherwise so the prompt never advertises an
-# uncallable tool.
+# composition supplies an ``OptionsChainReader``; ``surface_tool_names``
+# drops it from the rendered list otherwise so the prompt never advertises
+# an uncallable tool.
 ANALYST_TOOL_NAMES: tuple[str, ...] = (
     "mcp__alphamind_decision_validation__validate_guardrail",
     "mcp__alphamind_synthesizer_retrieval__retrieve_brief",
     RETRIEVE_OPTIONS_CHAIN_TOOL_NAME,
 )
-
-
-def _tool_names(options_chain_reader: OptionsChainReader | None) -> tuple[str, ...]:
-    """The AVAILABLE TOOLS render for this composition's mounted surface."""
-    if options_chain_reader is not None:
-        return ANALYST_TOOL_NAMES
-    return tuple(n for n in ANALYST_TOOL_NAMES if n != RETRIEVE_OPTIONS_CHAIN_TOOL_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +312,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
             active_sectors=active_sectors_tuple,
             state_delivery_config=state_delivery_config,
             synthesizer_brief_text=synthesizer_text,
-            tool_names=_tool_names(options_chain_reader),
+            tool_names=surface_tool_names(ANALYST_TOOL_NAMES, options_chain_reader),
             underlying_prices=underlying_prices,
             options_context=options_context,
         )
@@ -338,5 +332,5 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
         active_sectors=active_sectors_tuple,
         state_delivery_config=state_delivery_config,
         synthesizer_brief_text=synthesizer_text,
-        tool_names=_tool_names(options_chain_reader),
+        tool_names=surface_tool_names(ANALYST_TOOL_NAMES, options_chain_reader),
     )

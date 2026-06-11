@@ -24,10 +24,10 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -37,6 +37,10 @@ from alphamind.distillation._calibration_core import CalibrationState
 from alphamind.distillation.q3.atm_iv_baseline_compute import compute_atm_iv_baseline
 from alphamind.distillation.q3.atm_iv_baseline_loaders import load_atm_iv_history_by_ticker
 from alphamind.persistence.models import OptionsContracts, OptionsContractSnapshots
+from alphamind.state.repository.sql_option_price_provider import _parse_snapshot_ts
+
+if TYPE_CHECKING:
+    from alphamind.config.models.options_chain import OptionsChainConfig
 
 __all__ = [
     "ChainFilterParams",
@@ -84,6 +88,22 @@ class ChainFilterParams:
     max_days_to_expiration: int
     min_open_interest: int
     max_contracts_rendered: int
+
+    @classmethod
+    def from_config(cls, config: OptionsChainConfig) -> ChainFilterParams:
+        """Project the ``options_chain`` config section onto the filter policy.
+
+        ``premium_staleness_tolerance_pct`` is deliberately excluded — it is
+        validator policy, not chain-selection policy, and travels to
+        ``validate_analyst_output`` separately.
+        """
+        return cls(
+            strike_band_pct=config.strike_band_pct,
+            min_days_to_expiration=config.min_days_to_expiration,
+            max_days_to_expiration=config.max_days_to_expiration,
+            min_open_interest=config.min_open_interest,
+            max_contracts_rendered=config.max_contracts_rendered,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,14 +289,6 @@ class OptionsChainReader(Protocol):
 # ---------------------------------------------------------------------------
 
 
-def _parse_snapshot_ts(raw: str) -> datetime:
-    """Parse the collector's snapshot timestamp into a tz-aware UTC datetime."""
-    parsed = datetime.fromisoformat(raw)
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed
-
-
 _SNAPSHOT_COLUMNS = (
     OptionsContractSnapshots.contract_ticker,
     OptionsContractSnapshots.snapshot_ts,
@@ -325,6 +337,10 @@ class SqlOptionsChainReader:
     # -- chain_slice --------------------------------------------------------
 
     def chain_slice(self, underlying: str) -> ChainSlice | None:
+        with self._sync_session_factory() as session:
+            return self._chain_slice(session, underlying)
+
+    def _chain_slice(self, session: Session, underlying: str) -> ChainSlice | None:
         latest_subq = (
             select(
                 OptionsContractSnapshots.contract_ticker.label("ct"),
@@ -351,20 +367,18 @@ class SqlOptionsChainReader:
         unusable = 0
         spot: float | None = None
         spot_ts: datetime | None = None
-        with self._sync_session_factory() as session:
-            for row in session.execute(stmt).all():
-                (*snapshot_fields, underlying_price) = row
-                quote = _quote_from_row(tuple(snapshot_fields))
-                if quote is None:
-                    unusable += 1
-                else:
-                    quotes.append(quote)
-                # Spot rides on the freshest snapshot row carrying an
-                # underlying_price — usable-quote status is irrelevant to it.
-                row_ts = _parse_snapshot_ts(row[1])
-                if underlying_price is not None and (spot_ts is None or row_ts > spot_ts):
-                    spot = float(underlying_price)
-                    spot_ts = row_ts
+        for row in session.execute(stmt).all():
+            quote = _quote_from_row(row)
+            if quote is None:
+                unusable += 1
+            else:
+                quotes.append(quote)
+            # Spot rides on the freshest snapshot row carrying an
+            # underlying_price — usable-quote status is irrelevant to it.
+            row_ts = _parse_snapshot_ts(row.snapshot_ts)
+            if row.underlying_price is not None and (spot_ts is None or row_ts > spot_ts):
+                spot = float(row.underlying_price)
+                spot_ts = row_ts
 
         if spot is None or spot <= 0:
             return None
@@ -385,6 +399,11 @@ class SqlOptionsChainReader:
     # -- latest_quote -------------------------------------------------------
 
     def latest_quote(self, occ: OccSymbol) -> ContractQuote | None:
+        """The latest USABLE snapshot for *occ* — a newer garbage row (missing
+        or crossed quote, missing IV/delta) must not mask an older usable one,
+        or the validator would reject a premium the chain tool itself anchored.
+        The SQL filter mirrors :func:`_quote_from_row`'s usability predicate.
+        """
         contract_ticker = _polygon_contract_ticker(occ)
         stmt = (
             select(*_SNAPSHOT_COLUMNS)
@@ -392,7 +411,16 @@ class SqlOptionsChainReader:
                 OptionsContracts,
                 OptionsContracts.contract_ticker == OptionsContractSnapshots.contract_ticker,
             )
-            .where(OptionsContractSnapshots.contract_ticker == contract_ticker)
+            .where(
+                OptionsContractSnapshots.contract_ticker == contract_ticker,
+                OptionsContractSnapshots.bid.is_not(None),
+                OptionsContractSnapshots.ask.is_not(None),
+                OptionsContractSnapshots.bid >= 0,
+                OptionsContractSnapshots.ask > 0,
+                OptionsContractSnapshots.bid <= OptionsContractSnapshots.ask,
+                OptionsContractSnapshots.implied_volatility.is_not(None),
+                OptionsContractSnapshots.delta.is_not(None),
+            )
             .order_by(OptionsContractSnapshots.snapshot_ts.desc())
             .limit(1)
         )
@@ -400,30 +428,31 @@ class SqlOptionsChainReader:
             row = session.execute(stmt).first()
         if row is None:
             return None
-        return _quote_from_row(tuple(row))
+        return _quote_from_row(row)
 
     # -- options_context ----------------------------------------------------
 
     def options_context(self, underlying: str) -> TickerOptionsContext | None:
-        chain = self.chain_slice(underlying)
-        if chain is None or not chain.contracts:
-            return None
+        # One session serves both the chain read and the IV-history read —
+        # build_options_context loops this per active-universe ticker, so the
+        # per-call session count matters.
+        with self._sync_session_factory() as session:
+            chain = self._chain_slice(session, underlying)
+            if chain is None or not chain.contracts:
+                return None
+            iv_rank = self._iv_rank(session, underlying)
         expirations = tuple(sorted({quote.expiration for quote in chain.contracts}))
-        return TickerOptionsContext(
-            iv_rank=self._iv_rank(underlying),
-            liquid_expirations=expirations,
-        )
+        return TickerOptionsContext(iv_rank=iv_rank, liquid_expirations=expirations)
 
-    def _iv_rank(self, underlying: str) -> float | None:
+    def _iv_rank(self, session: Session, underlying: str) -> float | None:
         """Read-only IV-rank via the q3 pure compute — no baseline upsert."""
         as_of_iso = self._now().astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        with self._sync_session_factory() as session:
-            history = load_atm_iv_history_by_ticker(
-                session,
-                ticker_scope=(underlying,),
-                as_of=as_of_iso,
-                window_days=_IV_RANK_WINDOW_DAYS,
-            )[underlying]
+        history = load_atm_iv_history_by_ticker(
+            session,
+            ticker_scope=(underlying,),
+            as_of=as_of_iso,
+            window_days=_IV_RANK_WINDOW_DAYS,
+        )[underlying]
         result = compute_atm_iv_baseline(
             history,
             window_days=_IV_RANK_WINDOW_DAYS,
@@ -435,50 +464,39 @@ class SqlOptionsChainReader:
         return float(percentile) if percentile is not None else None
 
 
-def _quote_from_row(row: Sequence[Any]) -> ContractQuote | None:
-    """Build a :class:`ContractQuote` from a ``_SNAPSHOT_COLUMNS`` row.
+def _quote_from_row(row: Any) -> ContractQuote | None:
+    """Build a :class:`ContractQuote` from a row selecting ``_SNAPSHOT_COLUMNS``.
 
-    Returns ``None`` for an unusable row: a missing or crossed two-sided
-    quote, a missing IV or delta, or a contract ticker outside the OCC
-    pattern. A zero bid alone is usable — deep-OTM contracts legitimately
-    quote ``bid=0``.
+    Fields are read by column label (order-independent — a future reorder of
+    ``_SNAPSHOT_COLUMNS`` cannot silently mis-assign them). Returns ``None``
+    for an unusable row: a missing or crossed two-sided quote, a missing IV
+    or delta, or a contract ticker outside the OCC pattern. A zero bid alone
+    is usable — deep-OTM contracts legitimately quote ``bid=0``.
     """
-    (
-        contract_ticker,
-        snapshot_ts,
-        bid,
-        ask,
-        implied_volatility,
-        delta,
-        open_interest,
-        underlying_ticker,
-        expiration_date,
-        strike_price,
-        contract_type,
-    ) = row
+    bid, ask = row.bid, row.ask
     if bid is None or ask is None or float(ask) <= 0 or float(bid) < 0 or float(bid) > float(ask):
         return None
-    if implied_volatility is None or delta is None:
+    if row.implied_volatility is None or row.delta is None:
         return None
-    if contract_type not in ("call", "put"):
+    if row.contract_type not in ("call", "put"):
         return None
     try:
-        occ = make_occ_symbol(str(contract_ticker).removeprefix("O:"))
+        occ = make_occ_symbol(str(row.contract_ticker).removeprefix("O:"))
     except ValueError:
-        logger.warning("skipping non-OCC contract_ticker %r", contract_ticker)
+        logger.warning("skipping non-OCC contract_ticker %r", row.contract_ticker)
         return None
     return ContractQuote(
         occ_symbol=occ,
-        underlying=str(underlying_ticker),
-        expiration=date.fromisoformat(str(expiration_date)),
-        strike=float(strike_price),
-        contract_type=contract_type,
+        underlying=str(row.underlying_ticker),
+        expiration=date.fromisoformat(str(row.expiration_date)),
+        strike=float(row.strike_price),
+        contract_type=row.contract_type,
         bid=float(bid),
         ask=float(ask),
-        implied_volatility=float(implied_volatility),
-        delta=float(delta),
-        open_interest=int(open_interest) if open_interest is not None else 0,
-        snapshot_ts=_parse_snapshot_ts(str(snapshot_ts)),
+        implied_volatility=float(row.implied_volatility),
+        delta=float(row.delta),
+        open_interest=int(row.open_interest) if row.open_interest is not None else 0,
+        snapshot_ts=_parse_snapshot_ts(str(row.snapshot_ts)),
     )
 
 

@@ -179,7 +179,9 @@ def _render_reference_price_line(
 ) -> str:
     """One reference-price line, options-decorated when context exists."""
     base = f"  {ticker}: {price:.2f}"
-    if context is None:
+    if context is None or not context.liquid_expirations:
+        # A context without surviving expirations carries no actionable options
+        # surface — keep the bare price line rather than a dangling "exp:".
         return base
     iv_rank = f"{context.iv_rank:.0f}" if context.iv_rank is not None else "n/a"
     expirations = ", ".join(d.strftime("%m-%d") for d in context.liquid_expirations)
