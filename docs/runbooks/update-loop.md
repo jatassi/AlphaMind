@@ -30,6 +30,12 @@ git pull --ff-only origin main
 If `git status` shows you on a feature branch or with uncommitted changes,
 stop — investigate before pulling. Prod runs `main`, full stop.
 
+Scan what came in: `git log <old-HEAD>..HEAD --oneline`, then read the full
+message of any commit touching `scripts/services/` — installer-script changes
+do **not** reconfigure already-installed services, so such commits carry a
+deploy note naming a one-time live-config step (`sc.exe config ...` /
+`nssm set ...`) to run while services are stopped (troubleshooting.md § 8.12).
+
 ### 1.2 Sync dependencies
 
 ```powershell
@@ -121,13 +127,24 @@ that, tail its `.err.log` immediately.
 
 ### 1.7 Verify green
 
+The `.out.log` files are empty by design — every daemon logs to stderr — so the
+startup signal lives in the `.err.log` files and the monitor's dedicated
+`monitor.log`. Shutdown residue from § 1.4 is expected at the tails: a
+`KeyboardInterrupt` traceback in the collector/safety-core/watchdog `.err.log`s,
+and a cancelled websocket-connect `TimeoutError` in `monitor.err.log`. A
+traceback only matters if it is timestamped **after** the § 1.6 starts.
+
 ```powershell
-# Tail the recent end of each daemon's log; look for "startup complete" /
-# "supervisor started" / equivalent. No traceback should appear in the last
-# 60 s of any .err.log.
-Get-Content "$env:USERPROFILE\AlphaMind\logs\pipeline.out.log" -Tail 30
-Get-Content "$env:USERPROFILE\AlphaMind\logs\monitor.out.log" -Tail 30
-Get-Content "$env:USERPROFILE\AlphaMind\logs\command_center.out.log" -Tail 30
+# Scheduler: expect "Application startup complete" + a next-fire line per trigger.
+Get-Content "$env:USERPROFILE\AlphaMind\logs\pipeline.err.log" -Tail 15
+# Monitor: expect a fresh "monitor session start" + control surface on 8766,
+# and a heartbeat younger than the watchdog's 150 s stall bound.
+Get-Content "$env:USERPROFILE\AlphaMind\logs\monitor.log" -Tail 10
+$hb = [double](Get-Content "$env:USERPROFILE\AlphaMind\logs\monitor.heartbeat")
+"heartbeat age: $([math]::Round([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000 - $hb, 1)) s"
+# Command center: expect uvicorn on 8090 + 200 OK GETs to both upstream /events
+# (8765 pipeline, 8766 monitor). The dormant alert-rule WARNINGs are known noise.
+Get-Content "$env:USERPROFILE\AlphaMind\logs\command_center.err.log" -Tail 15
 ```
 
 Optional gate (runs in ~1 min, exercises 7 command-center checks):
