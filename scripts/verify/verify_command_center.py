@@ -1069,7 +1069,7 @@ class _RunSetup:
 
 def _prepare_run_setup(args: argparse.Namespace, tmp: Path) -> _RunSetup:
     """Materialize the per-run DB + config-dir + bind triple synchronously."""
-    repo_config_dir = Path(__file__).resolve().parents[1] / "config"
+    repo_config_dir = Path(__file__).resolve().parents[2] / "config"
     bind_port = _pick_free_port()
     bind_host: str = args.bind_host
     base_url = f"http://{bind_host}:{bind_port}"

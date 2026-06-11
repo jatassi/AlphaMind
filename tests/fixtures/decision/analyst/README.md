@@ -75,4 +75,4 @@ Refresh procedure:
 4. Run `uv run pytest -n auto` to confirm downstream consumers still
    parse the refreshed fixtures cleanly.
 
-See `scripts/RUNBOOK_analyst.md` for the full operator runbook.
+See `scripts/verify/RUNBOOK_analyst.md` for the full operator runbook.

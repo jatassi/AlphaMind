@@ -66,7 +66,7 @@ $WatchdogServiceName = 'alphamind-monitor-watchdog'
 # unrestartable for as long as the dependent stays up.
 
 # Resolve the project root as the directory containing this script's parent.
-# Script lives in <repo>\scripts\; project root is one level up.
+# Script lives in <repo>\scripts\services\; project root is two levels up.
 $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $ScriptDir)
 

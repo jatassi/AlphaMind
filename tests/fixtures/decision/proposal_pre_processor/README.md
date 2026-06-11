@@ -88,4 +88,4 @@ Re-run the verifier whenever the pre-processor's contract changes:
 4. Run `uv run pytest -n auto` to confirm downstream consumers still parse the
    refreshed fixtures cleanly.
 
-See `scripts/RUNBOOK_proposal_pre_processor.md` for the full operator runbook.
+See `scripts/verify/RUNBOOK_proposal_pre_processor.md` for the full operator runbook.
