@@ -257,14 +257,18 @@ class TestEnumMembers:
         assert {m.name for m in OrderRejectionSource} == {"GUARDRAIL", "BROKER"}
 
     def test_cash_debit_reason_members(self) -> None:
+        # Both fill reasons live in both vocabularies (ALP-944): event_type is
+        # side-shaped, reason is role-shaped — a short's cover debits as EXIT_FILL.
         assert {m.name for m in CashDebitReason} == {
             "ENTRY_FILL",
+            "EXIT_FILL",
             "FEES",
             "CASH_DIVIDEND_SHORT_OBLIGATION",
         }
 
     def test_cash_credit_reason_members(self) -> None:
         assert {m.name for m in CashCreditReason} == {
+            "ENTRY_FILL",
             "EXIT_FILL",
             "CASH_DIVIDEND_LONG",
             "FRACTIONAL_SHARE_CASH_OUT",

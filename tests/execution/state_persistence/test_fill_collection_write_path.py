@@ -38,9 +38,15 @@ from alphamind.execution.write_paths.fill_persistence import (
 )
 from alphamind.persistence.session import begin_write_immediate
 from alphamind.portfolio_state.events.activity_log import (
+    CapitalReleasedDetail,
+    CashCreditedDetail,
+    CashCreditReason,
+    CashDebitedDetail,
+    CashDebitReason,
     CorporateActionType,
     EventType,
 )
+from alphamind.portfolio_state.events.codec import decode_detail
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
@@ -493,6 +499,8 @@ async def _seed_position_order_thesis_bracket(
     order: OrderRecord,
     thesis: ThesisRecord,
     bracket: BracketRecord,
+    *,
+    extra_orders: tuple[OrderRecord, ...] = (),
 ) -> None:
     """Seed a full position cluster in a single deferred-FK transaction.
 
@@ -502,6 +510,8 @@ async def _seed_position_order_thesis_bracket(
 
     Protective-leg order_ids (deferred FK to orders) are also seeded as stub
     orders in the same transaction so the COMMIT does not raise IntegrityError.
+    ``extra_orders`` seeds further real orders alongside (e.g. a pending
+    CLOSE-role order against an OPEN position).
     """
     from tests.state._fk_substrate import stub_order_row
 
@@ -509,8 +519,8 @@ async def _seed_position_order_thesis_bracket(
     bracket_row, leg_rows = bracket_record_to_rows(bracket)
 
     # Collect every order_id that appears in the bracket or its legs but is not
-    # the main order being seeded: brackets.entry_order_id and each leg.order_id.
-    seeded_order_ids: set[str] = {order.order_id}
+    # an order being seeded: brackets.entry_order_id and each leg.order_id.
+    seeded_order_ids: set[str] = {order.order_id, *(o.order_id for o in extra_orders)}
     extra_order_ids: list[str] = [bracket_row.entry_order_id] + [
         lrow.order_id for lrow in leg_rows if lrow.order_id is not None
     ]
@@ -521,6 +531,8 @@ async def _seed_position_order_thesis_bracket(
         for crow in component_rows:
             sess.add(crow)
         sess.add(order_record_to_row(order))
+        for extra in extra_orders:
+            sess.add(order_record_to_row(extra))
         for oid in extra_order_ids:
             if oid not in seeded_order_ids:
                 sess.add(stub_order_row(oid, bracket.bracket_id))
@@ -705,7 +717,13 @@ async def test_entry_fill_transitions_pending_position_to_open(
     assert EventType.POSITION_OPENED.value in types
     assert EventType.BRACKET_ACTIVATED.value in types
     assert EventType.CAPITAL_RELEASED.value in types
-    assert EventType.CASH_DEBITED.value in types
+    # The buy entry's debit carries reason=ENTRY_FILL — keyed off the order's
+    # role, asserted by payload rather than event presence (ALP-944).
+    debited = [r for r in log_rows if r.event_type == EventType.CASH_DEBITED.value]
+    assert len(debited) == 1
+    debit_detail = decode_detail(debited[0].detail_json, CashDebitedDetail)
+    assert debit_detail.reason == CashDebitReason.ENTRY_FILL
+    assert debit_detail.amount_usd == money(1_500.0)
 
 
 async def test_exit_fill_closes_position_and_leaves_thesis_active(
@@ -720,38 +738,21 @@ async def test_exit_fill_closes_position_and_leaves_thesis_active(
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    close_order = _make_pending_entry_order(
-        order_id=OrderId("ord-close-1"),
-        role=OrderRole.CLOSE,
-        direction=OrderDirection.SELL,
-        position_id=PositionId("pos-1"),
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_open_position(),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_active_bracket(),
+        extra_orders=(
+            _make_pending_entry_order(
+                order_id=OrderId("ord-close-1"),
+                role=OrderRole.CLOSE,
+                direction=OrderDirection.SELL,
+                position_id=PositionId("pos-1"),
+            ),
+        ),
     )
-    # All four entities reference each other cyclically — seed in one transaction.
-    # _make_active_bracket uses entry_order_id=OrderId("ord-entry-1") and a protective leg
-    # with order_id=OrderId("brk-1-ord-stop"), so we need stubs for all referenced orders.
-    from tests.state._fk_substrate import stub_order_row
-
-    entry_order = _make_pending_entry_order()
-    thesis_row, component_rows = thesis_record_to_rows(_make_active_thesis())
-    bracket_row, leg_rows = bracket_record_to_rows(_make_active_bracket())
-    leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
-    seeded_order_ids: set[str] = {entry_order.order_id, close_order.order_id}
-    async with factory() as sess:
-        sess.add(position_record_to_row(_make_open_position()))
-        sess.add(thesis_row)
-        for crow in component_rows:
-            sess.add(crow)
-        sess.add(order_record_to_row(entry_order))
-        sess.add(order_record_to_row(close_order))
-        for oid in leg_order_ids:
-            if oid not in seeded_order_ids:
-                sess.add(stub_order_row(oid, bracket_row.bracket_id))
-                seeded_order_ids.add(oid)
-        sess.add(bracket_row)
-        await sess.flush()
-        for lrow in leg_rows:
-            sess.add(lrow)
-        await sess.commit()
     await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=98_500.0))
     await _seed_drawdown_state(factory)
     # Sell 10 shares at $160 -> realized P/L = (160 - 150) * 10 = $100.
@@ -815,8 +816,14 @@ async def test_exit_fill_closes_position_and_leaves_thesis_active(
     assert EventType.POSITION_CLOSED.value in types
     assert EventType.BRACKET_DISSOLVED.value in types
     assert EventType.THESIS_RESOLVED.value not in types
-    assert EventType.CASH_CREDITED.value in types
     assert EventType.ORDER_FILLED.value in types
+    # The sell close's credit carries reason=EXIT_FILL — keyed off the order's
+    # role, asserted by payload rather than event presence (ALP-944).
+    credited = [r for r in log_rows if r.event_type == EventType.CASH_CREDITED.value]
+    assert len(credited) == 1
+    credit_detail = decode_detail(credited[0].detail_json, CashCreditedDetail)
+    assert credit_detail.reason == CashCreditReason.EXIT_FILL
+    assert credit_detail.amount_usd == money(1_600.0)
 
 
 def _make_bracket_with_leg_status(
@@ -861,36 +868,23 @@ async def _run_partial_close_and_read_position(
     """Seed an OPEN position + ACTIVE bracket (legs at *leg_status*) + CLOSE order,
     process a partial-close fill (sell 4 of 10), and return the re-read position."""
     from alphamind.execution.write_paths.fill_collection import process_unprocessed_fills
-    from tests.state._fk_substrate import stub_order_row
 
     await _seed_invocation_substrate(factory)
-    close_order = _make_pending_entry_order(
-        order_id=OrderId("ord-close-1"),
-        role=OrderRole.CLOSE,
-        direction=OrderDirection.SELL,
-        position_id=PositionId("pos-1"),
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_open_position(share_count=10.0),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_bracket_with_leg_status(leg_status),
+        extra_orders=(
+            _make_pending_entry_order(
+                order_id=OrderId("ord-close-1"),
+                role=OrderRole.CLOSE,
+                direction=OrderDirection.SELL,
+                position_id=PositionId("pos-1"),
+            ),
+        ),
     )
-    entry_order = _make_pending_entry_order()
-    thesis_row, component_rows = thesis_record_to_rows(_make_active_thesis())
-    bracket_row, leg_rows = bracket_record_to_rows(_make_bracket_with_leg_status(leg_status))
-    leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
-    seeded_order_ids: set[str] = {entry_order.order_id, close_order.order_id}
-    async with factory() as sess:
-        sess.add(position_record_to_row(_make_open_position(share_count=10.0)))
-        sess.add(thesis_row)
-        for crow in component_rows:
-            sess.add(crow)
-        sess.add(order_record_to_row(entry_order))
-        sess.add(order_record_to_row(close_order))
-        for oid in leg_order_ids:
-            if oid not in seeded_order_ids:
-                sess.add(stub_order_row(oid, bracket_row.bracket_id))
-                seeded_order_ids.add(oid)
-        sess.add(bracket_row)
-        await sess.flush()
-        for lrow in leg_rows:
-            sess.add(lrow)
-        await sess.commit()
     await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=98_500.0))
     await _seed_drawdown_state(factory)
     # Sell 4 of 10 shares -> position stays OPEN with 6 remaining (partial close).
@@ -954,37 +948,24 @@ async def test_take_profit_leg_fill_marks_leg_filled_and_closes_position(
     from alphamind.execution.write_paths.fill_collection import (
         process_unprocessed_fills,
     )
-    from tests.state._fk_substrate import stub_order_row
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    tp_order = _make_pending_entry_order(
-        order_id=OrderId("ord-tp-1"),
-        role=OrderRole.TAKE_PROFIT,
-        direction=OrderDirection.SELL,
-        position_id=PositionId("pos-1"),
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_open_position(),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_active_bracket(),
+        extra_orders=(
+            _make_pending_entry_order(
+                order_id=OrderId("ord-tp-1"),
+                role=OrderRole.TAKE_PROFIT,
+                direction=OrderDirection.SELL,
+                position_id=PositionId("pos-1"),
+            ),
+        ),
     )
-    entry_order = _make_pending_entry_order()
-    thesis_row, component_rows = thesis_record_to_rows(_make_active_thesis())
-    bracket_row, leg_rows = bracket_record_to_rows(_make_active_bracket())
-    leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
-    seeded_order_ids: set[str] = {entry_order.order_id, tp_order.order_id}
-    async with factory() as sess:
-        sess.add(position_record_to_row(_make_open_position()))
-        sess.add(thesis_row)
-        for crow in component_rows:
-            sess.add(crow)
-        sess.add(order_record_to_row(entry_order))
-        sess.add(order_record_to_row(tp_order))
-        for oid in leg_order_ids:
-            if oid not in seeded_order_ids:
-                sess.add(stub_order_row(oid, bracket_row.bracket_id))
-                seeded_order_ids.add(oid)
-        sess.add(bracket_row)
-        await sess.flush()
-        for lrow in leg_rows:
-            sess.add(lrow)
-        await sess.commit()
     await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=98_500.0))
     await _seed_drawdown_state(factory)
     await _append_fill(
@@ -1013,6 +994,25 @@ async def test_take_profit_leg_fill_marks_leg_filled_and_closes_position(
             await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
         ).scalar_one()
         assert position_row_to_record(pos_row).status == PositionStatus.CLOSED
+
+        # A protective-role sell is an exit even though the role partition is
+        # spelled positively (ENTRY/ADD_ENTRY) — guards the TAKE_PROFIT quadrant
+        # of the reason matrix (ALP-944).
+        log_rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.invocation_id == handle.invocation_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    credited = [r for r in log_rows if r.event_type == EventType.CASH_CREDITED.value]
+    assert len(credited) == 1
+    credit_detail = decode_detail(credited[0].detail_json, CashCreditedDetail)
+    assert credit_detail.reason == CashCreditReason.EXIT_FILL
 
 
 async def test_multi_fill_ordering_produces_cumulative_state(
@@ -1691,6 +1691,171 @@ async def test_short_entry_fill_transitions_pending_short_to_open_with_stamped_f
         assert pos.details.locate_status == LocateStatus.LOCATED
         # Reg T initial margin: 10 * 150 * 0.50 = 750.
         assert pos.details.margin_held_usd == pytest.approx(10.0 * 150.0 * 0.50)
+
+
+async def test_short_entry_sell_fill_credits_cash_as_entry_and_releases_reservation(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A sell fill on a SHORT ENTRY order is an *entry*: the cash credit
+    carries ``reason=ENTRY_FILL`` and the capital OPEN staked for the limit
+    entry is released on the same ``reservation_price * fill_quantity`` basis
+    as buy-side entries (ALP-944 — the side-keyed code labeled the credit
+    EXIT_FILL and stranded the stake forever)."""
+    from alphamind.execution.write_paths.fill_collection import (
+        process_unprocessed_fills,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_pending_position(direction=Direction.SHORT),
+        # Sell-limit entry @ $150 x 10 — OPEN reserved 1500 at submission.
+        _make_pending_entry_order(
+            order_id=OrderId("ord-short-entry"),
+            direction=OrderDirection.SELL_TO_OPEN,
+            position_id=PositionId("pos-1"),
+            limit_price=150.0,
+        ),
+        _make_active_thesis(),
+        _make_pending_bracket(),
+    )
+    await _seed_cash_ledger(
+        factory,
+        _make_cash_ledger(current_cash_usd=100_000.0, reserved_capital_usd=1_500.0),
+    )
+    await _seed_drawdown_state(factory)
+    await _append_fill(
+        factory,
+        _make_unprocessed_fill(fill_id="fill-short-1", order_id=OrderId("ord-short-entry")),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+        borrow_cost_resolver=lambda _ticker: 15.0,
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        # Short proceeds credit cash; the staked reservation drains to zero.
+        cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash_row is not None
+        assert cash_row.current_cash_usd == pytest.approx(100_000.0 + 1_500.0)
+        assert cash_row.reserved_capital_usd == money(0.0)
+
+        log_rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.invocation_id == handle.invocation_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    credited = [r for r in log_rows if r.event_type == EventType.CASH_CREDITED.value]
+    assert len(credited) == 1
+    credit_detail = decode_detail(credited[0].detail_json, CashCreditedDetail)
+    assert credit_detail.reason == CashCreditReason.ENTRY_FILL
+    assert credit_detail.amount_usd == money(1_500.0)
+    released = [r for r in log_rows if r.event_type == EventType.CAPITAL_RELEASED.value]
+    assert len(released) == 1
+    release_detail = decode_detail(released[0].detail_json, CapitalReleasedDetail)
+    assert release_detail.amount_usd == money(1_500.0)
+
+
+async def test_short_cover_buy_fill_debits_cash_as_exit_without_touching_reservation(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A buy fill on a CLOSE-role order against an OPEN SHORT is an *exit*: the
+    cash debit carries ``reason=EXIT_FILL`` and the reservation pool is left
+    alone — a non-entry order never staked capital, so its fill must not
+    release any (ALP-944 — the side-keyed gate would have drained another
+    order's live stake by this cover's ``limit_price * quantity``)."""
+    from alphamind.execution.write_paths.fill_collection import (
+        process_unprocessed_fills,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_open_position(direction=Direction.SHORT),
+        _make_pending_entry_order(direction=OrderDirection.SELL_TO_OPEN),
+        _make_active_thesis(),
+        _make_active_bracket(),
+        extra_orders=(
+            _make_pending_entry_order(
+                order_id=OrderId("ord-cover-1"),
+                role=OrderRole.CLOSE,
+                direction=OrderDirection.BUY_TO_CLOSE,
+                position_id=PositionId("pos-1"),
+                # A priced cover is the trap: the side-keyed release would have
+                # drained 140 * 10 = 1400 of capital this order never staked.
+                limit_price=140.0,
+            ),
+        ),
+    )
+    # 2000 of reserved capital belongs to *other* live entry orders.
+    await _seed_cash_ledger(
+        factory,
+        _make_cash_ledger(current_cash_usd=100_000.0, reserved_capital_usd=2_000.0),
+    )
+    await _seed_drawdown_state(factory)
+    # Cover 10 shares at $140 against a $150 short basis -> realized P/L +100.
+    await _append_fill(
+        factory,
+        _make_unprocessed_fill(
+            fill_id="fill-cover-1",
+            order_id=OrderId("ord-cover-1"),
+            fill_price=140.0,
+            fill_quantity=10.0,
+        ),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+        borrow_cost_resolver=lambda _ticker: 15.0,
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert pos.status == PositionStatus.CLOSED
+        assert pos.realized_pnl_to_date_usd == pytest.approx(100.0)
+
+        cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash_row is not None
+        assert cash_row.current_cash_usd == pytest.approx(100_000.0 - 1_400.0)
+        assert cash_row.reserved_capital_usd == money(2_000.0)
+
+        log_rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.invocation_id == handle.invocation_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    debited = [r for r in log_rows if r.event_type == EventType.CASH_DEBITED.value]
+    assert len(debited) == 1
+    debit_detail = decode_detail(debited[0].detail_json, CashDebitedDetail)
+    assert debit_detail.reason == CashDebitReason.EXIT_FILL
+    assert debit_detail.amount_usd == money(1_400.0)
+    assert not [r for r in log_rows if r.event_type == EventType.CAPITAL_RELEASED.value]
 
 
 # ---------------------------------------------------------------------------

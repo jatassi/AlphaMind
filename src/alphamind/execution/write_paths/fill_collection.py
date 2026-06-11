@@ -821,7 +821,7 @@ async def _integrate_one_fill(
         )
     cash_delta = await _apply_cash_movement(handle, order, fill)
 
-    if direction_is_buy:
+    if _is_entry_role(order):
         await _emit_capital_release(handle, order, fill)
 
     outcome = _FillIntegrationOutcome(
@@ -1509,7 +1509,7 @@ async def _apply_strategy_open_fill(
     parent's TAKE_PROFIT / PRICE_STOP / TIME_STOP role — those route to the
     close branch correctly (ALP-614).
     """
-    is_opening_for_leg = updated_order.role in {OrderRole.ENTRY, OrderRole.ADD_ENTRY}
+    is_opening_for_leg = _is_entry_role(updated_order)
     if is_opening_for_leg:
         new_legs = _add_to_leg(details.legs, leg=leg, fill=fill)
         new_details = _recompute_strategy_payoff_metrics(
@@ -1938,7 +1938,9 @@ async def _apply_cash_movement(
     ``OptionsInstrumentSpec`` (typically 100). Equity consideration is
     ``fill_price * fill_quantity`` directly.
 
-    Buy-side fills additionally release the capital command execution reserved for this
+    Entry-role fills (ENTRY / ADD_ENTRY — the roles whose submission staked a
+    reservation, regardless of side; a short's entry is a sell, ALP-944)
+    additionally release the capital command execution reserved for this
     entry order — by the order's *reserved notional* attributable to the filled
     quantity (``_fill_reservation_release_usd``), NOT the fill consideration.
     Reserve and release share the ``reservation_price * quantity`` basis (ALP-741)
@@ -1973,7 +1975,7 @@ async def _apply_cash_movement(
     cash_row.current_cash_usd = cash_row.current_cash_usd + delta
     # ALP-778: settled tracks current (no T+2 lag modelled in paper trading).
     cash_row.settled_cash_usd = cash_row.current_cash_usd
-    if is_buy:
+    if _is_entry_role(order):
         release = _fill_reservation_release_usd(order, fill)
         # Floor at zero (defensive) and wrap in money() — the same non-negative
         # invariant _release_capital enforces on the command execution side (ALP-741).
@@ -1998,8 +2000,15 @@ def _fill_consideration_usd(order: OrderRecord, fill: FillRecord) -> Decimal:
     return base
 
 
+def _is_entry_role(order: OrderRecord) -> bool:
+    """Entry-role partition: only ENTRY / ADD_ENTRY stake capital at submission,
+    so only their fills release it — keyed off role, never off fill side
+    (a short's entry is a sell, its protective legs are buys, ALP-944)."""
+    return order.role in (OrderRole.ENTRY, OrderRole.ADD_ENTRY)
+
+
 def _fill_reservation_release_usd(order: OrderRecord, fill: FillRecord) -> Decimal:
-    """Reserved capital released by a buy-side fill (ALP-741).
+    """Reserved capital released by an entry-role fill (ALP-741).
 
     The order's reservation price (``limit_price`` preferred, ``stop_trigger_price``
     fallback) times *this fill's* quantity — the same ``reservation_price *
@@ -2050,7 +2059,7 @@ async def _read_cash_row_or_raise(handle: InvocationHandle) -> CashLedgerRow:
 async def _emit_capital_release(
     handle: InvocationHandle, order: OrderRecord, fill: FillRecord
 ) -> None:
-    """Buy-side fills release the capital reservation command execution staked.
+    """Entry-role fills release the capital reservation command execution staked.
 
     The emitted amount is the order's reserved notional for the filled quantity
     (``_fill_reservation_release_usd``) — the same basis
@@ -2223,6 +2232,10 @@ async def _emit_fill_activity_log_entries(
         )
 
     new_balance = await _current_cash_balance(handle)
+    # event_type keys off cash direction (every buy debits, every sell
+    # credits); reason keys off the order's role — a short's entry is a sell
+    # that credits cash with reason=ENTRY_FILL (ALP-944).
+    is_entry_fill = _is_entry_role(order)
     if direction_is_buy:
         _emit(
             handle,
@@ -2233,7 +2246,7 @@ async def _emit_fill_activity_log_entries(
             timestamp=fill.fill_timestamp,
             detail=CashDebitedDetail(
                 amount_usd=money(abs(cash_delta_usd)),
-                reason=CashDebitReason.ENTRY_FILL,
+                reason=(CashDebitReason.ENTRY_FILL if is_entry_fill else CashDebitReason.EXIT_FILL),
                 new_balance_usd=signed_money(new_balance),
             ),
         )
@@ -2247,7 +2260,9 @@ async def _emit_fill_activity_log_entries(
             timestamp=fill.fill_timestamp,
             detail=CashCreditedDetail(
                 amount_usd=money(abs(cash_delta_usd)),
-                reason=CashCreditReason.EXIT_FILL,
+                reason=(
+                    CashCreditReason.ENTRY_FILL if is_entry_fill else CashCreditReason.EXIT_FILL
+                ),
                 new_balance_usd=signed_money(new_balance),
             ),
         )
