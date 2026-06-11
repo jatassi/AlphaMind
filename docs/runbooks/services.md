@@ -2,8 +2,8 @@
 
 The seven NSSM services, restarting a single one, and the ports/paths reference.
 The full-cycle deploy order is [update-loop.md](update-loop.md), and its
-service-stop precondition (market open AND open positions → Operator confirmation
-first) applies to any restart that stops the monitor or safety core.
+service-stop precondition applies to any restart that stops the monitor or
+safety core — evaluate it there before stopping either.
 
 The seven NSSM services are the supported runtime form on prod:
 

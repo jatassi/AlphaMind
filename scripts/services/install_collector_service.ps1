@@ -12,7 +12,7 @@
     - AppDirectory set to the project root
 
     The ObjectName (service account) configuration is left as a manual
-    final step documented in RUNBOOK.md to avoid exposing passwords in
+    final step documented in docs/runbooks/bootstrap.md to avoid exposing passwords in
     shell history.
 
 .NOTES
@@ -123,4 +123,4 @@ Write-Host ""
 Write-Host "  nssm start $ServiceName"
 Write-Host "  Get-Service $ServiceName"
 Write-Host ""
-Write-Host "See RUNBOOK.md for full operator instructions."
+Write-Host "See docs/runbooks/services.md for full operator instructions."

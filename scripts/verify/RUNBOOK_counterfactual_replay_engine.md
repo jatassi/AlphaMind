@@ -144,7 +144,7 @@ Each `FAIL | <assertion>: <detail>` line names the exact rule that broke:
 
 1. **Read the failing assertion's detail.** It names the envelope, the expected
    vs actual status / reason / exit-leg / P/L. The assertion helpers live in
-   `src/alphamind/scripts/verify/verify_counterfactual_replay_engine.py` (the `assert_*`
+   `src/alphamind/scripts/verify_counterfactual_replay_engine.py` (the `assert_*`
    functions, each returning a failure message or `None`).
 2. **Inspect the seed builder for the ground-truth expectations.** Each seeded
    proposal has a `_seed_*` helper and a matching `ExpectedProposal` entry in

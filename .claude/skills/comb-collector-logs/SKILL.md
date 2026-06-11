@@ -60,7 +60,7 @@ After identifying a candidate bug in today's log, grep older rotated logs for th
 
 A traceback shows *what raised*, not *what should have caught it*. Always read the relevant file:
 
-- For retry-related errors: read `src/alphamind/data_sources/_common.py` `_is_retryable` to confirm the exception type is covered. If `_is_retryable` returns False, the retry wrapper silently gave up — that's the bug, not the vendor error.
+- For retry-related errors: read `_is_retryable` in `src/alphamind/data_sources/_common/retry.py` to confirm the exception type is covered. If `_is_retryable` returns False, the retry wrapper silently gave up — that's the bug, not the vendor error.
 - For per-ticker collectors: check whether the loop has try/except per ticker. No isolation means one ticker's exhausted retries kills the cycle.
 - For wrapped exceptions: check `__context__` and `__cause__` — fredapi wraps `urllib.HTTPError` as `ValueError(None)`, the message is lost but the context isn't.
 
@@ -94,7 +94,7 @@ For each event group:
 1. **Read the surrounding traceback** in `collector.log`. Note: full exception type, the immediate raising frame, and `__context__` if present.
 2. **Cross-check operator memory** at `collector-service-ops.md` for known-transient patterns. If listed there with "should retry":
    - Verify retries actually engaged by checking elapsed time between cycle start (`collector=X start`) and error. Sub-second to a few seconds = retry didn't fire; tens of seconds = retry fired but exhausted.
-   - If retry didn't fire, the bug is in `_is_retryable` not classifying that exception as retryable. Read `src/alphamind/data_sources/_common.py:276-296` to confirm.
+   - If retry didn't fire, the bug is in `_is_retryable` not classifying that exception as retryable. Read `_is_retryable` in `src/alphamind/data_sources/_common/retry.py` to confirm.
 3. **Read the source file from the traceback.** Confirm root cause — don't trust the traceback alone (Rule 4).
 4. **Check rotated logs for recurrence** — grep the same error signature across `collector.log.YYYY-MM-DD` files. Record cadence (one-off, daily, multi-day pattern).
 5. **Check git log for recent fixes** — `git log --oneline -5 -- <path-from-traceback>`. A commit in the last day that matches the symptom means it was already fixed.

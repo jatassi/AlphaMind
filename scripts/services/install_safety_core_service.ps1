@@ -31,7 +31,7 @@
     - AppDirectory set to the project root
 
     The ObjectName (service account) configuration is left as a manual final
-    step documented in RUNBOOK_end_to_end_verification.md to avoid exposing
+    step documented in scripts/verify/RUNBOOK_end_to_end_verification.md to avoid exposing
     passwords in shell history.
 
     Service names parallel alphamind-collector / alphamind-scheduler /
@@ -180,4 +180,4 @@ Write-Host "  nssm start $WatchdogServiceName"
 Write-Host "  Get-Service $CoreServiceName, $WatchdogServiceName"
 Write-Host ""
 Write-Host "See docs/runbooks/: services.md (service table, § 7), update-loop.md (§ 1.4/1.6), bootstrap.md (§ 2.5-2.6), troubleshooting.md"
-Write-Host "and RUNBOOK_end_to_end_verification.md for full operator instructions."
+Write-Host "and scripts/verify/RUNBOOK_end_to_end_verification.md for full operator instructions."

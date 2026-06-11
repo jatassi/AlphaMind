@@ -20,6 +20,7 @@ duty to keep the docs true.
 | Watch / post-mortem an invocation | `docs/runbooks/monitoring.md` |
 | Restart a service | `docs/runbooks/services.md` |
 | Triage a symptom | `docs/runbooks/troubleshooting.md` |
+| Command-center access / passkeys / LAN | `docs/runbooks/command-center.md` |
 
 Named, not routed: first-time bootstrap (`docs/runbooks/bootstrap.md`) and genesis
 cutover (`docs/runbooks/genesis-cutover.md`) are one-time Operator-supervised
@@ -31,13 +32,11 @@ operational context is `docs/runbooks/feedback-loop.md`.
 
 - Prod is Windows: NSSM services, elevated PowerShell, repo checkout at
   `$env:USERPROFILE\AlphaMind` on branch `main`, clean.
-- `.env` never auto-sources. Load it explicitly before anything that hits a vendor
-  API: `set -a && source <(tr -d '\r' < .env) && set +a` under Git Bash, or
-  `load_dotenv()` in Python.
+- `.env` never auto-sources (per CLAUDE.md) — load it before anything that hits a
+  vendor API; the CRLF-safe form is in `docs/runbooks/bootstrap.md` § 2.1.
 - Single-writer discipline: write the DB only through the sanctioned CLIs and
   services; ad-hoc SQL is read-only.
 - Confirm the Alpaca `account_number` before treating broker output as prod evidence.
-- Establish local time + timezone first, then translate, before reporting any time.
 
 ## Autonomy gate
 

@@ -12,7 +12,7 @@
     - AppDirectory set to the project root
 
     The ObjectName (service account) configuration is left as a manual
-    final step documented in RUNBOOK_end_to_end_verification.md to avoid
+    final step documented in scripts/verify/RUNBOOK_end_to_end_verification.md to avoid
     exposing passwords in shell history.
 
     Service name parallels alphamind-collector and the future
@@ -128,4 +128,4 @@ Write-Host ""
 Write-Host "  nssm start $ServiceName"
 Write-Host "  Get-Service $ServiceName"
 Write-Host ""
-Write-Host "See RUNBOOK_end_to_end_verification.md for full operator instructions."
+Write-Host "See scripts/verify/RUNBOOK_end_to_end_verification.md for full operator instructions."

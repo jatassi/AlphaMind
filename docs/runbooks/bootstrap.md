@@ -301,5 +301,3 @@ set -a && source <(tr -d '\r' < .env) && set +a && \
 
 Expect `7/7 checks passed`. AlphaMind is live in paper-trading mode.
 
----
-

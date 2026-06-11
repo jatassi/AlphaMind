@@ -37,7 +37,7 @@ lands, listed here so the feedback-loop picture is complete:
 - **Per-invocation thesis resolution (`ACTIVE → RESOLVED`)** — every deliberative
   invocation runs a `thesis_resolution` step between fill collection and snapshot
   assembly, authoring each closed-position thesis's component outcomes + resolution
-  category. See monitoring.md § 5 ("Thesis-resolution skip warnings"). The outcome-tier metrics
+  category. See monitoring.md § 5.7 ("Thesis-resolution skip warnings"). The outcome-tier metrics
   calibrate against these resolved theses; a per-thesis data gap is a skip-WARNING,
   not a fault.
 - **Distillation anomaly emission to `activity_log`** — the distillation layer emits
@@ -139,6 +139,4 @@ engine (ALP-129). They are **verified when story 06e (ALP-887) lands** alongside
 engine — the spine verify above does not assert them, and `metrics-list` simply
 omits the gated metric ids until the dependency is present. This is a known,
 intentional gap, not a missing check.
-
----
 

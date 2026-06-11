@@ -73,8 +73,14 @@ def _scanned_docs() -> list[Path]:
     files += sorted(SRC_ROOT.rglob("CLAUDE.md"))
     files += sorted((REPO_ROOT / "docs").rglob("CLAUDE.md"))
     files += sorted((REPO_ROOT / "docs" / "runbooks").rglob("*.md"))
+    # operate-prod is the one router-class skill: every path in it is a navigation
+    # pointer, so the pathish heuristic applies cleanly. Other skills' prose carries
+    # illustrative example paths and runtime-artifact paths (audited 2026-06-10:
+    # 12 false positives vs 1 real catch across the other 13 skills), so they stay
+    # out of the scan set; add a skill here only if it is likewise pure navigation.
     files.append(REPO_ROOT / ".claude" / "skills" / "operate-prod" / "SKILL.md")
-    return [f for f in files if f.exists() and not _excluded(f)]
+    deduped = list(dict.fromkeys(files))
+    return [f for f in deduped if f.exists() and not _excluded(f)]
 
 
 def _is_pathish(token: str) -> bool:
@@ -160,3 +166,30 @@ def test_no_dead_pointers_in_nav_docs() -> None:
                 dead.append(f"{rel_doc} -> {ref}")
 
     assert not dead, "Dead pointers in navigation docs:\n" + "\n".join(dead)
+
+
+_SECTION_REF = re.compile(r"([a-z][a-z0-9-]*\.md) § (\d+(?:\.\d+)?)")
+
+
+def test_runbook_section_refs_resolve() -> None:
+    """Cross-doc ``<doc>.md § N[.M]`` references must name a real heading.
+
+    The runbook split keeps the monolith's section numbering precisely so these
+    prose references stay stable. Each one is validated against the target doc's
+    headings (``## N.`` top level, ``### N.M`` subsection) — a renumbering or
+    deletion in one runbook cannot silently strand the docs pointing at it.
+    Fenced blocks are included on purpose: operators copy-paste from them.
+    """
+    runbooks = REPO_ROOT / "docs" / "runbooks"
+    dead: list[str] = []
+    for doc in sorted(runbooks.glob("*.md")):
+        for name, sec in _SECTION_REF.findall(doc.read_text(encoding="utf-8")):
+            target = runbooks / name
+            if not target.exists():
+                dead.append(f"{doc.name} -> {name} § {sec} (no such runbook)")
+                continue
+            heading = rf"^### {re.escape(sec)} " if "." in sec else rf"^## {sec}\. "
+            if not re.search(heading, target.read_text(encoding="utf-8"), re.MULTILINE):
+                dead.append(f"{doc.name} -> {name} § {sec} (no such heading)")
+
+    assert not dead, "Dangling section references in runbooks:\n" + "\n".join(dead)

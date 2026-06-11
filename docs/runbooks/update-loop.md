@@ -137,5 +137,3 @@ set -a && source <(tr -d '\r' < .env) && set +a && \
     uv run python scripts/verify/verify_command_center.py
 ```
 
----
-

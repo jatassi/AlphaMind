@@ -82,7 +82,7 @@ not composed into the running monitor, so none of them are emitted:
 - **`breach_detected` / `emergency_invocation_triggered`** — breach detection +
   price-staleness moved out of the monitor into the isolated, **log-only safety
   core** (ADR-0004 / ALP-857). The safety core has no SSE surface and writes
-  nothing; it logs to `safety_core.log` (troubleshooting.md § 8.9). The monitor proper no longer
+  nothing; it logs to `safety_core.log` (troubleshooting.md § 8.9, its breach + price-staleness signals subsection). The monitor proper no longer
   runs a breach loop.
 - **`greeks_refreshed`** — the greeks-refresh task runs, but its SSE emit adapter
   is not wired; confirm greeks via `monitor.log` / the per-position diagnostics.
@@ -233,7 +233,7 @@ recent `activity_log` rows for the prior emergency.
 > and writes nothing (ADR-0004 / ALP-857), so nothing currently enqueues an
 > `EMERGENCY_INVOCATION_REQUESTED` row on a breach. The auto-trigger evaluator
 > still exists in the tree but is not composed into the running monitor — so a
-> breach surfaces in `safety_core.log` (troubleshooting.md § 8.9) and via the broker-enforced
+> breach surfaces in `safety_core.log` (troubleshooting.md § 8.9, its breach + price-staleness signals subsection) and via the broker-enforced
 > bracket floor, not as an automatic emergency invocation.
 
 **Cost / token regression.** The `metadata.json` files under each agent's
@@ -354,6 +354,4 @@ Gotchas baked into the script (worth knowing when reading its output):
   its benign marker and its bare `Traceback` header on separate lines, so a
   per-line filter leaks a spurious FAULT pair per agent. A real traceback emits
   one line: `FAULT(log|err) Traceback … => <final exception line>`.
-
----
 

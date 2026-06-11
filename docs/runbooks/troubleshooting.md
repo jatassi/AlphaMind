@@ -264,5 +264,3 @@ monitor's auto re-protection job (ALP-938, § 8.10). Only investigate if the sam
 symbol rejects across consecutive invocations — that means fill integration is
 not catching the projection up to broker reality.
 
----
-

@@ -1,7 +1,7 @@
 # Asset universe — authoritative ticker list scoping all external data collection.
 # Validation procedure: docs/design/asset-universe-validation.md
-# Run:           uv run python scripts/validate_universe.py
-# Discover:      uv run python scripts/validate_universe.py --discover
+# Run:           uv run python scripts/ops/validate_universe.py
+# Discover:      uv run python scripts/ops/validate_universe.py --discover
 
 last_full_validation: 2026-04-25
 

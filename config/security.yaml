@@ -11,7 +11,7 @@ webauthn:
                                  # rpId requires passkey re-enrollment (old creds
                                  # bound to prior rpId). For LAN: set to your
                                  # chosen hostname (e.g. "alphamind.local").
-                                 # See RUNBOOK_command_center.md § "LAN access
+                                 # See docs/runbooks/command-center.md § "LAN access
                                  # (local network)" and the access: block docs.
   relying_party_name: "AlphaMind Command Center"
 # cookies_secure: false       # DEPLOY_TIME (ALP-725). False for http LAN/localhost;

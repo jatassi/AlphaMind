@@ -162,5 +162,3 @@ restart (a restarted scheduler is unpaused by default). Use the
 command-center UI for the audited path — it writes an `OPERATOR_CONSOLE` row
 to `activity_log` for each pause/resume.
 
----
-

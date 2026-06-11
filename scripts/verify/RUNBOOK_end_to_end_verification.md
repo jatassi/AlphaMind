@@ -536,7 +536,7 @@ The report shows a 12-phase verdict ribbon, the SDK-call table with each
 call's `agent_response` fields, the `resolved_config.json` payload, an
 incomplete-phase failure section, and a collapsible `pipeline.log`
 excerpt. Open the file in a browser — it carries its own CSS via the
-sidecar at `scripts/_e2e_report_assets/style.css`.
+sidecar at `scripts/verify/_e2e_report_assets/style.css`.
 
 ## Wall-clock + cost
 
