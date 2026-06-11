@@ -158,7 +158,7 @@ LAN / hostname suggestion for passkey support:
       relying_party_id: "{suggested}"
       ...
   Then restart. You will need to re-enroll passkeys (rpId change).
-  See RUNBOOK_command_center.md § LAN access for the full recipe.
+  See docs/runbooks/command-center.md § LAN access for the full recipe.
 """
             ).strip()
             logger.info(block)
@@ -203,7 +203,7 @@ def _warn_if_mixed_lan_bind_and_access(config: CommandCenterConfig) -> None:
                 "command_center: bind.host=%s is not loopback but access.host=%s "
                 "still looks localhost-ish. Edit the access: block (scheme + host + port) "
                 "in command-center.yaml and align webauthn.relying_party_id in security.yaml; "
-                "see RUNBOOK_command_center.md for LAN setup.",
+                "see docs/runbooks/command-center.md for LAN setup.",
                 bind_host,
                 access.host,
             )
@@ -216,7 +216,7 @@ def _warn_if_mixed_lan_bind_and_access(config: CommandCenterConfig) -> None:
             "command_center: bind.port=%s but no explicit access: block was supplied. "
             "The default origin will be http://localhost:8080 (not port %s). "
             "Supply an explicit access: block with a matching port to keep WebAuthn "
-            "and cookies correct. See RUNBOOK_command_center.md § LAN access.",
+            "and cookies correct. See docs/runbooks/command-center.md § LAN access.",
             config.bind.port,
             config.bind.port,
         )

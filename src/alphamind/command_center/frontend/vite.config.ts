@@ -41,7 +41,7 @@ const API_TARGET = 'http://127.0.0.1:8080'
 //
 // The committed defaults remain intentionally loopback-only for safe local
 // development. Temporary LAN-dev edits to host should never be committed.
-// See the approved LAN plan (§5, §8 story 03c) and RUNBOOK_command_center.md
+// See the approved LAN plan (§5, §8 story 03c) and docs/runbooks/command-center.md
 // for production LAN wiring details.
 
 // https://vite.dev/config/

@@ -558,7 +558,7 @@ async def _run_control_surface(session: PipelineSession, *, app: FastAPI, port: 
 def main(argv: Sequence[str] | None = None) -> None:
     # Switch stdout/stderr to UTF-8 with ``replace`` errors so a Windows
     # ``cp1252`` default doesn't mangle the JSON ``InvocationSummary``
-    # captured by ``scripts/verify_debug_e2e.py`` (or surface as a
+    # captured by ``scripts/verify/verify_debug_e2e.py`` (or surface as a
     # ``UnicodeEncodeError`` inside the subprocess on non-ASCII output).
     configure_utf8_stdio()
     args = _parse_args(argv)

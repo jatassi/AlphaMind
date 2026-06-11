@@ -309,7 +309,7 @@ class DeferredUniverseValidator:
     The verb's ``UniverseValidationFailedError`` maps to HTTP 500
     ``internal_error``; this placeholder fires it with a descriptive
     cause so the command-center surfaces a useful operator message.
-    Follow-up: wire ``scripts/validate_universe.py`` through this adapter.
+    Follow-up: wire ``scripts/ops/validate_universe.py`` through this adapter.
     """
 
     def validate(self, *, as_of: date) -> UniverseValidationReportRecord:
@@ -317,7 +317,7 @@ class DeferredUniverseValidator:
         raise UniverseValidationFailedError(
             cause=RuntimeError(
                 "Universe validation via /control/run_universe_validation is "
-                "not yet wired in production. Run scripts/validate_universe.py "
+                "not yet wired in production. Run scripts/ops/validate_universe.py "
                 "directly or file a follow-up to ALP-720."
             )
         )

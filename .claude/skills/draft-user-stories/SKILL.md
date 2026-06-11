@@ -106,7 +106,7 @@ Don't worry about ordering or naming conventions yet — those happen in Phase 5
 
 Anchor the Scope sections of subsequent stories to the brief's concrete names — a story's "produces `PositionRecord` with these fields" is far more useful to a dispatched subagent than "introduces a position record". When the brief surfaces a hardest-to-reverse decision the design doc hasn't settled, add it to your Phase 6 open-decisions list. Skill invocation runs in your thread (no Agent dispatch), compatible with the no-delegation rule. Skip design mode when the feature is small, purely additive to an existing module, or already fully specified at the type level by its design doc.
 
-**Operational runbook story.** Assess whether the feature changes production operational behavior — a service, the schedule, a port, an env var, a migration / bootstrap step, a CLI flag, a monitoring surface, or a new failure mode / gotcha. If so, add a final story that updates `scripts/RUNBOOK_production.md` (its Living-document rule keeps the runbook moving with the behavior), `blockedBy` every story whose operational change it documents so it lands last. Omit it for features with no operator-visible prod-runtime effect (pure internal logic, analysis / decision-layer changes, test-only work).
+**Operational runbook story.** Assess whether the feature changes production operational behavior — a service, the schedule, a port, an env var, a migration / bootstrap step, a CLI flag, a monitoring surface, or a new failure mode / gotcha. If so, add a final story that updates the affected runbook under `docs/runbooks/` (the README's Living-document rule keeps the runbooks moving with the behavior), `blockedBy` every story whose operational change it documents so it lands last. Omit it for features with no operator-visible prod-runtime effect (pure internal logic, analysis / decision-layer changes, test-only work).
 
 ### Phase 5 — Order by dependency, name with parallelism convention
 
@@ -180,7 +180,7 @@ Compute how many issues you're about to create:
 Run the cap-check script with that count:
 
 ```
-uv run python scripts/check_linear_cap.py --needed <needed> --json
+uv run python scripts/linear/check_linear_cap.py --needed <needed> --json
 ```
 
 The script queries the Linear GraphQL API directly (key from the repo-root `.env`), paginates the whole workspace, and prints one JSON line — e.g. `{"active": 243, "cap": 250, "buffer": 7, "needed": 12, "margin": 2, "required": 14, "ok": false}`. It applies a 2-issue safety margin internally (`required = needed + margin`), so you pass only the raw `needed` count. Exit code mirrors `ok`: `0` = clear, `1` = cap risk, `2` = error.
@@ -188,7 +188,7 @@ The script queries the Linear GraphQL API directly (key from the repo-root `.env
 Decision:
 
 - **`ok == true` (exit 0)** — cap risk is low. Note `active` in your working memory and proceed to 7a.
-- **`ok == false` (exit 1)** — surface to the operator *before any writes*. Report `active`, `buffer`, `needed`, and `required` from the JSON. Recommend running the consolidation rollup per the `project_linear_consolidation` memory and the `/linear-consolidate` skill — `uv run python scripts/linear_consolidation_candidates.py` ranks which shipped feature would free the most slots, and `scripts/check_linear_cap.py --breakdown` shows where the active issues sit. Ask whether to (a) pause for rollup, (b) proceed accepting that the cap may fire mid-drafting (you will catch the error gracefully and surface the remaining drafts inline as a hand-off), or (c) trim story count if you can identify a fold.
+- **`ok == false` (exit 1)** — surface to the operator *before any writes*. Report `active`, `buffer`, `needed`, and `required` from the JSON. Recommend running the consolidation rollup per the `project_linear_consolidation` memory and the `/linear-consolidate` skill — `uv run python scripts/linear/linear_consolidation_candidates.py` ranks which shipped feature would free the most slots, and `scripts/linear/check_linear_cap.py --breakdown` shows where the active issues sit. Ask whether to (a) pause for rollup, (b) proceed accepting that the cap may fire mid-drafting (you will catch the error gracefully and surface the remaining drafts inline as a hand-off), or (c) trim story count if you can identify a fold.
 - **exit 2** — the script failed (missing `LINEAR_API_KEY` in `.env`, or a network/API error; the stderr message says which). Surface it to the operator and resolve the cause before proceeding — don't fall back to a manual MCP count.
 
 The cap is occasionally enforced at counts above 250 — Linear's exact threshold depends on workspace age and account state. Treat the check as early-warning, not exact predictor. If a create fails despite a pre-flight `ok == true`, surface the blocker and inline the remaining drafts in the operator hand-off.

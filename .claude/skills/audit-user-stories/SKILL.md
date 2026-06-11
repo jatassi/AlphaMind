@@ -227,12 +227,12 @@ Execute the operator's chosen scope in this wave order. Each wave can run in par
 If the operator's chosen scope creates any new sub-issues (e.g., a shared-types consolidation story, a verification-conversion that splits one story into two), run the cap check before any writes — the same pre-flight `draft-user-stories` runs. Hitting the cap mid-repair leaves the work tree half-fixed and forces an out-of-band consolidation rollup before you can resume.
 
 - `needed` = number of new sub-issues the repair will create. If the repair only rewrites + cancels existing issues (the common case), `needed = 0` and you can skip — `save_issue(id=...)` updates don't consume cap.
-- For `needed > 0`, run `uv run python scripts/check_linear_cap.py --needed <needed> --json` (one JSON line: `active`, `cap`, `buffer`, `needed`, `margin`, `required`, `ok`; 2-issue safety margin applied internally; exit code mirrors `ok`: `0` clear, `1` cap risk, `2` error).
+- For `needed > 0`, run `uv run python scripts/linear/check_linear_cap.py --needed <needed> --json` (one JSON line: `active`, `cap`, `buffer`, `needed`, `margin`, `required`, `ok`; 2-issue safety margin applied internally; exit code mirrors `ok`: `0` clear, `1` cap risk, `2` error).
 
 Decision:
 
 - **`ok == true`** — proceed to Wave 1.
-- **`ok == false`** — surface to the operator *before any writes*. Report the numbers from the JSON. Recommend `/linear-consolidate` (per the `project_linear_consolidation` memory) or `scripts/linear_consolidation_candidates.py` to free slots. Ask whether to (a) pause for rollup, (b) proceed accepting cap-risk and inline the un-created stories in the hand-off, or (c) trim repair scope to drop the new creations.
+- **`ok == false`** — surface to the operator *before any writes*. Report the numbers from the JSON. Recommend `/linear-consolidate` (per the `project_linear_consolidation` memory) or `scripts/linear/linear_consolidation_candidates.py` to free slots. Ask whether to (a) pause for rollup, (b) proceed accepting cap-risk and inline the un-created stories in the hand-off, or (c) trim repair scope to drop the new creations.
 - **exit 2** — script failure (missing `LINEAR_API_KEY` in `.env`, network/API error). Surface and resolve before proceeding; don't fall back to manual MCP counting.
 
 #### Wave 1 — Duplicate cleanup

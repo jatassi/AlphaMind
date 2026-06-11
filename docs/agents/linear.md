@@ -18,7 +18,7 @@ Referenced from the root `CLAUDE.md` "Linear" section.
 ## Active-issue cap
 
 The repo is on Linear's free tier (250 active issues). For the exact active count, use
-`uv run python scripts/check_linear_cap.py` (`--breakdown` / `--needed N` / `--json`) —
+`uv run python scripts/linear/check_linear_cap.py` (`--breakdown` / `--needed N` / `--json`) —
 don't paginate `list_issues`. A recount must pass `includeArchived=false` to see
 post-delete state. Cmd+Delete soft-archives (populates `archivedAt`) and frees the cap.
 

@@ -1,4 +1,4 @@
-"""Tests for ``scripts/verify_debug_e2e.py`` (story 05 / ALP-502).
+"""Tests for ``scripts/verify/verify_debug_e2e.py`` (story 05 / ALP-502).
 
 The script is the operator-runnable end-to-end gate for the
 ``--debug-e2e`` mode; its six check helpers (``check_auth``,
@@ -35,13 +35,13 @@ import alphamind.state.tables  # noqa: F401  # registers every state table on Ba
 from alphamind._kernel.archive_layout import invocation_archive_dir
 from alphamind.persistence.models import Base
 
-_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "verify_debug_e2e.py"
+_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "verify" / "verify_debug_e2e.py"
 _INVOCATION_AS_OF = datetime(2026, 5, 26, tzinfo=UTC)
 
 
 @pytest.fixture(scope="module")
 def verify_module() -> ModuleType:
-    """Load ``scripts/verify_debug_e2e.py`` as an importable module.
+    """Load ``scripts/verify/verify_debug_e2e.py`` as an importable module.
 
     The script lives under ``scripts/`` rather than ``src/`` per the
     "no shim split" decision in ALP-502; we use ``spec_from_file_location``

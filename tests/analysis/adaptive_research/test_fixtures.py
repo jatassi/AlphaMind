@@ -11,7 +11,7 @@ still mirror the canonical regime-payload keys
 production.
 
 Originally extracted from a live-SDK e2e test (ALP-265); the live path is
-covered by ``scripts/verify_debug_e2e.py`` end-to-end, but the fixture
+covered by ``scripts/verify/verify_debug_e2e.py`` end-to-end, but the fixture
 invariants are worth keeping as a fast, no-SDK canary.
 """
 

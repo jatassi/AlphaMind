@@ -209,7 +209,7 @@ OPERATOR_SUMMARY_SCHEMA_VERSION: str = "2"
 Bumped to ``"2"`` for ALP-709 to admit the ``inflow_metrics`` top-level
 key (currently carrying ``sentiment`` inter-baseline news-window
 telemetry; future surfaces — news-price divergence, prediction-market
-inflow — extend the same key). The renderer in ``scripts/verify_debug_e2e.py``
+inflow — extend the same key). The renderer in ``scripts/verify/verify_debug_e2e.py``
 must bump :data:`_OPERATOR_SNAPSHOT_SCHEMA_VERSION` in lockstep so a V1
 payload at the operator path does not silently render as zeros.
 """

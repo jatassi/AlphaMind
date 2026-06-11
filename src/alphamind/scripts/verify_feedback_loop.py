@@ -1,7 +1,7 @@
 """Standalone end-to-end verify for the feedback-loop spine (ALP-896 / story 10).
 
 The feedback loop runs **out-of-pipeline** (operator CLIs + a per-invocation
-resolver step), so ``scripts/verify_debug_e2e.py`` does not cover it. This script
+resolver step), so ``scripts/verify/verify_debug_e2e.py`` does not cover it. This script
 is the deterministic operator check after a code change or a migration that
 touches the feedback-loop tables: it runs ``alembic upgrade head`` on a fresh
 scratch DB, seeds one controlled scenario (a CLOSED position + its linked ACTIVE
@@ -43,7 +43,7 @@ LLM-boundary fake, so no run touches the Anthropic API.
 
 Usage::
 
-    uv run python scripts/verify_feedback_loop.py [--db-path PATH]
+    uv run python scripts/verify/verify_feedback_loop.py [--db-path PATH]
 
 Exit codes: ``0`` on full PASS, ``1`` on any FAIL.
 """
@@ -170,7 +170,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Seed clock + controlled identifiers
 # ---------------------------------------------------------------------------
-#: The repo root (``…/scripts/verify_feedback_loop.py`` → repo root): the alembic.ini
+#: The repo root (``…/scripts/verify/verify_feedback_loop.py`` → repo root): the alembic.ini
 #: + config dir anchor. Resolved once at import (a sync context) so the I/O-driven
 #: async runner never stats the filesystem itself.
 _REPO_ROOT = Path(__file__).resolve().parents[3]

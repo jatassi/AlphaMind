@@ -2,8 +2,10 @@
 
 AlphaMind: autonomous LLM swing-trading system (4–72h horizon, ~60–80 US equities),
 currently in the paper-trading phase. This file is project-wide rules + a navigation
-map. Process playbooks live in `docs/agents/`; per-package orientation lives in nested
-`CLAUDE.md` files; design intent (point-in-time, **not** code-truth) in `docs/design/`.
+map. Process playbooks live in `docs/agents/`; production operational runbooks in
+`docs/runbooks/` (routed by the `operate-prod` skill); per-package orientation lives in
+nested `CLAUDE.md` files; design intent (point-in-time, **not** code-truth) in
+`docs/design/`.
 
 ## Navigation
 

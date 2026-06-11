@@ -116,14 +116,14 @@ class MissingArtifactError(FileNotFoundError):
     """Raised when a required stage artifact is absent.
 
     Carries the producer-script name so the consumer can render
-    "run scripts/verify_<producer>.py first" without the operator having to
+    "run scripts/verify/verify_<producer>.py first" without the operator having to
     map filenames to their producers.
     """
 
     def __init__(self, *, missing_path: Path, producer_script: str) -> None:
         message = (
             f"required stage artifact {missing_path} is missing — "
-            f"run scripts/{producer_script} first to produce it"
+            f"run scripts/verify/{producer_script} first to produce it"
         )
         super().__init__(message)
         self.missing_path = missing_path

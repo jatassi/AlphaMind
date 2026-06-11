@@ -4,7 +4,7 @@ bind:
   host: "127.0.0.1"           # loopback for v1 zero-config installs. For LAN access
                               # from other machines, widen this (0.0.0.0 or the
                               # trading machine's LAN IP) together with the
-                              # `access:` block below. See RUNBOOK_command_center.md
+                              # `access:` block below. See docs/runbooks/command-center.md
                               # § "LAN access (local network)" for the supported
                               # recipe (hostname choice, exact YAML, re-enroll,
                               # firewall). The old direct "switch to LAN IP" path

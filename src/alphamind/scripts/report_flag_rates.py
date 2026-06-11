@@ -16,7 +16,7 @@ Exit code is 0 regardless of silence findings; non-zero is reserved for
 script-internal errors (DB unreachable, corrupt fixture).
 
 Usage:
-  uv run python scripts/report_flag_rates.py \\
+  uv run python scripts/ops/report_flag_rates.py \\
       [--window-days N] [--db-path PATH] [--threshold-class CLASS] \\
       [--ticker T] [--output text|json]
 """

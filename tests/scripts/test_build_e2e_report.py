@@ -1,4 +1,4 @@
-"""Tests for ``scripts/build_e2e_report.py`` (story 05 / ALP-502).
+"""Tests for ``scripts/verify/build_e2e_report.py`` (story 05 / ALP-502).
 
 The HTML report builder was rewritten in ALP-502 to consume the
 debug-e2e single-invocation archive (``progress.jsonl`` +
@@ -26,12 +26,12 @@ import pytest
 
 from alphamind._kernel.archive_layout import invocation_archive_dir
 
-_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "build_e2e_report.py"
+_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "verify" / "build_e2e_report.py"
 
 
 @pytest.fixture(scope="module")
 def report_module() -> ModuleType:
-    """Load ``scripts/build_e2e_report.py`` as an importable module."""
+    """Load ``scripts/verify/build_e2e_report.py`` as an importable module."""
     spec = importlib.util.spec_from_file_location("build_e2e_report", _SCRIPT_PATH)
     assert spec is not None
     assert spec.loader is not None
