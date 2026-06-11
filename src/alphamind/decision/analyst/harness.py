@@ -58,6 +58,10 @@ from alphamind.risk_guardrails.state_delivery.validation_tool import ValidationT
 from alphamind.risk_guardrails.state_delivery.validation_tool_mcp import (
     build_validate_guardrail_mcp_server,
 )
+from alphamind.state.repository.options_chain_read import OptionsChainReader
+from alphamind.state.repository.options_chain_tool_mcp import (
+    build_retrieve_options_chain_mcp_server,
+)
 
 __all__ = [
     "ContextOverflowFailure",
@@ -80,9 +84,9 @@ __all__ = [
 # loops. Mirrors the qualitative-researcher cap.
 _MAX_TURNS = 25
 
-# Real tool calls go through the two in-process MCP servers registered as
-# ``alphamind_decision_validation`` (story 04) and
-# ``alphamind_synthesizer_retrieval`` (synthesizer's factory); the bundled
+# Real tool calls go through the in-process MCP servers registered as
+# ``alphamind_decision_validation`` (story 04), ``alphamind_synthesizer_retrieval``
+# (synthesizer's factory), and ``alphamind_options_chain`` (ALP-948); the bundled
 # CLI rewrites those names to ``mcp__<server>__<tool>`` on the wire. Any
 # other ``ToolUseBlock.name`` (``ToolSearch``, ``StructuredOutput``, …) is an
 # SDK-internal pseudo-event injected by the JSON-Schema output mode and must
@@ -90,6 +94,7 @@ _MAX_TURNS = 25
 _TOOL_NAME_PREFIXES: tuple[str, ...] = (
     "mcp__alphamind_decision_validation__",
     "mcp__alphamind_synthesizer_retrieval__",
+    "mcp__alphamind_options_chain__",
 )
 
 
@@ -173,11 +178,17 @@ class _ValidatorContext:
     together through the harness's parse/validate path; bundling them keeps the
     helper signatures narrow. ``underlying_prices`` is the guardrail library's
     latest ``ohlcv_bars`` close per ticker (ALP-742 bracket-coherence checks).
+    ``options_chain_reader`` / ``premium_staleness_tolerance_pct`` feed the
+    ALP-948 InstrumentOption checks — the same reader the
+    ``retrieve_options_chain`` MCP tool is mounted with, so the premium the
+    agent saw is the premium it is judged against.
     """
 
     retrieval_store: RetrievalStore
     active_sectors: frozenset[str]
     underlying_prices: Mapping[str, float]
+    options_chain_reader: OptionsChainReader | None = None
+    premium_staleness_tolerance_pct: float | None = None
 
 
 def _parse_and_validate(
@@ -221,6 +232,8 @@ def _parse_and_validate(
         retrieval_store=validator.retrieval_store,
         active_sectors=validator.active_sectors,
         underlying_prices=validator.underlying_prices,
+        options_chain_reader=validator.options_chain_reader,
+        premium_staleness_tolerance_pct=validator.premium_staleness_tolerance_pct,
     )
     if not validation.is_valid:
         for ve in validation.errors:
@@ -254,12 +267,15 @@ def _build_mcp_wiring(
     *,
     initial_validation_state: ValidationToolState,
     retrieval_store: RetrievalStore,
+    options_chain_reader: OptionsChainReader | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
-    """Compose the two MCP servers and merge their allowed-tool lists.
+    """Compose the MCP servers and merge their allowed-tool lists.
 
     Returns ``(merged_servers, merged_allowed_tools)`` ready for direct
     assignment to ``ClaudeAgentOptions.mcp_servers`` and
-    ``ClaudeAgentOptions.allowed_tools``.
+    ``ClaudeAgentOptions.allowed_tools``. The ``retrieve_options_chain``
+    server (ALP-948) mounts only when a reader is supplied — composition
+    without one (tests, degraded paths) keeps the legacy two-server surface.
     """
     # The analyst's prompt does not document the batch tool — and the
     # agents.yaml `tools` allowlist for `analyst` does not include
@@ -270,10 +286,13 @@ def _build_mcp_wiring(
         initial_validation_state, include_batch_tool=False
     )
     retrieval_servers, retrieval_tools = build_retrieve_brief_mcp_server(retrieval_store)
-    return (
-        {**validation_servers, **retrieval_servers},
-        [*validation_tools, *retrieval_tools],
-    )
+    servers = {**validation_servers, **retrieval_servers}
+    tools = [*validation_tools, *retrieval_tools]
+    if options_chain_reader is not None:
+        chain_servers, chain_tools = build_retrieve_options_chain_mcp_server(options_chain_reader)
+        servers |= chain_servers
+        tools += chain_tools
+    return servers, tools
 
 
 _INCOMPAT_KEYWORDS: frozenset[str] = frozenset({"format", "discriminator"})
@@ -471,6 +490,8 @@ async def invoke_analyst(  # noqa: PLR0913 — public signature is fixed by ALP-
     phase: str = "analyst",
     telemetry_session: AsyncSession | None = None,
     provenance_root: Path | None = None,
+    options_chain_reader: OptionsChainReader | None = None,
+    premium_staleness_tolerance_pct: float | None = None,
 ) -> HarnessSuccess:
     """Invoke the analyst agent and return :class:`HarnessSuccess`.
 
@@ -500,6 +521,15 @@ async def invoke_analyst(  # noqa: PLR0913 — public signature is fixed by ALP-
     sdk_query_fn:
         Callable matching ``claude_agent_sdk.query``. Defaults to the real
         SDK function. Inject a stub in tests.
+    options_chain_reader:
+        Per-invocation :class:`OptionsChainReader` (ALP-948). When supplied,
+        the ``retrieve_options_chain`` MCP server mounts and the validator's
+        InstrumentOption premium checks run against the same reader. ``None``
+        keeps the legacy two-tool surface.
+    premium_staleness_tolerance_pct:
+        The ``options_chain`` config section's premium drift tolerance,
+        threaded into the validator. ``None`` falls back to the validator's
+        module default.
 
     Raises
     ------
@@ -526,10 +556,13 @@ async def invoke_analyst(  # noqa: PLR0913 — public signature is fixed by ALP-
         retrieval_store=retrieval_store,
         active_sectors=active_sectors,
         underlying_prices=initial_validation_state.library_market.underlying_prices,
+        options_chain_reader=options_chain_reader,
+        premium_staleness_tolerance_pct=premium_staleness_tolerance_pct,
     )
     mcp_servers, allowed_tools = _build_mcp_wiring(
         initial_validation_state=initial_validation_state,
         retrieval_store=retrieval_store,
+        options_chain_reader=options_chain_reader,
     )
     prompt_text = await _load_prompt(agent_config.prompt)
 

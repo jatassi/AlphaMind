@@ -53,6 +53,13 @@ from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 from alphamind.risk_guardrails.state_delivery.validation_tool_mcp import (
     build_initial_validation_state,
 )
+from alphamind.state.repository.options_chain_read import (
+    OptionsChainReader,
+    TickerOptionsContext,
+)
+from alphamind.state.repository.options_chain_tool_mcp import (
+    RETRIEVE_OPTIONS_CHAIN_TOOL_NAME,
+)
 
 __all__ = ["ANALYST_TOOL_NAMES", "AnalystResult", "load_analyst_agent_config", "run_analyst"]
 
@@ -72,13 +79,25 @@ _AGENTS_YAML = _REPO_ROOT / "config" / "agents.yaml"
 # ---------------------------------------------------------------------------
 
 # Wire-form names rendered into the analyst's input bundle's ``=== AVAILABLE
-# TOOLS ===`` section. The harness's two MCP factories
-# (``build_validate_guardrail_mcp_server`` and ``build_retrieve_brief_mcp_server``)
-# emit these same names as their allowed-tools lists.
+# TOOLS ===`` section. The harness's MCP factories
+# (``build_validate_guardrail_mcp_server``, ``build_retrieve_brief_mcp_server``,
+# and ``build_retrieve_options_chain_mcp_server``) emit these same names as
+# their allowed-tools lists. The chain tool (ALP-948) mounts only when the
+# composition supplies an ``OptionsChainReader``; ``_tool_names`` drops it
+# from the rendered list otherwise so the prompt never advertises an
+# uncallable tool.
 ANALYST_TOOL_NAMES: tuple[str, ...] = (
     "mcp__alphamind_decision_validation__validate_guardrail",
     "mcp__alphamind_synthesizer_retrieval__retrieve_brief",
+    RETRIEVE_OPTIONS_CHAIN_TOOL_NAME,
 )
+
+
+def _tool_names(options_chain_reader: OptionsChainReader | None) -> tuple[str, ...]:
+    """The AVAILABLE TOOLS render for this composition's mounted surface."""
+    if options_chain_reader is not None:
+        return ANALYST_TOOL_NAMES
+    return tuple(n for n in ANALYST_TOOL_NAMES if n != RETRIEVE_OPTIONS_CHAIN_TOOL_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +173,9 @@ async def run_analyst(  # noqa: PLR0913 — signature dictated by ALP-299 spec p
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     agent_config: BaseAgentConfig | None = None,
     borrow_cost_resolver: Callable[[str], float | None] | None = None,
+    options_chain_reader: OptionsChainReader | None = None,
+    options_context: Mapping[str, TickerOptionsContext] | None = None,
+    premium_staleness_tolerance_pct: float | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "analyst",
 ) -> AnalystResult:
@@ -209,8 +231,15 @@ async def run_analyst(  # noqa: PLR0913 — signature dictated by ALP-299 spec p
         state_delivery_config=state_delivery_config,
         synthesizer_text=synthesizer_text,
         underlying_prices=library_market.underlying_prices,
+        options_chain_reader=options_chain_reader,
+        options_context=options_context,
     )
-    logger.info("analyst input bundle assembled (mode=%s, chars=%d)", mode, len(user_message))
+    logger.info(
+        "analyst input bundle assembled (mode=%s, chars=%d, options_context_tickers=%d)",
+        mode,
+        len(user_message),
+        len(options_context or {}),
+    )
 
     # HarnessFailure propagates up unchanged — the runner does NOT catch and
     # degrade. The pipeline-level orchestrator handles fail-closed semantics.
@@ -227,6 +256,8 @@ async def run_analyst(  # noqa: PLR0913 — signature dictated by ALP-299 spec p
         archive_root=archive_root,
         provenance_root=provenance_root,
         sdk_query_fn=sdk_query_fn,
+        options_chain_reader=options_chain_reader,
+        premium_staleness_tolerance_pct=premium_staleness_tolerance_pct,
         progress=progress,
         phase=phase,
     )
@@ -263,13 +294,17 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
     state_delivery_config: StateDeliveryConfig,
     synthesizer_text: str,
     underlying_prices: Mapping[str, float],
+    options_chain_reader: OptionsChainReader | None,
+    options_context: Mapping[str, TickerOptionsContext] | None,
 ) -> str:
     """Dispatch to the mode-specific input-bundle assembler.
 
     Both assemblers share the same non-halt arguments; pulling the dispatch
     out of :func:`run_analyst` keeps that function under the linter's
-    PLR0915 threshold. ``underlying_prices`` (the ALP-742 reference map) is only
-    surfaced in normal mode — watchlist mode emits no brackets to anchor.
+    PLR0915 threshold. ``underlying_prices`` (the ALP-742 reference map) and
+    ``options_context`` (the ALP-948 per-ticker IVr/expirations decoration)
+    are only surfaced in normal mode — watchlist mode emits no brackets to
+    anchor and no sized options proposals.
     """
     if mode == "normal":
         return assemble_input_bundle_normal(
@@ -283,8 +318,9 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
             active_sectors=active_sectors_tuple,
             state_delivery_config=state_delivery_config,
             synthesizer_brief_text=synthesizer_text,
-            tool_names=ANALYST_TOOL_NAMES,
+            tool_names=_tool_names(options_chain_reader),
             underlying_prices=underlying_prices,
+            options_context=options_context,
         )
 
     # mode == "watchlist" — the runner-side guard above guarantees halt_state
@@ -302,5 +338,5 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
         active_sectors=active_sectors_tuple,
         state_delivery_config=state_delivery_config,
         synthesizer_brief_text=synthesizer_text,
-        tool_names=ANALYST_TOOL_NAMES,
+        tool_names=_tool_names(options_chain_reader),
     )

@@ -84,6 +84,7 @@ from alphamind.config.models.modes import (
     StrategistOutputMode,
 )
 from alphamind.config.models.news_outlets import CredibilityTier, NewsOutletsConfig, OutletEntry
+from alphamind.config.models.options_chain import OptionsChainConfig
 from alphamind.config.models.overlays import (
     EventType,
     FinalInvocationBeforeEvent,
@@ -219,6 +220,7 @@ __all__ = [
     "NarrativeLag",
     "NewsDigestConfig",
     "NewsOutletsConfig",
+    "OptionsChainConfig",
     "OrderType",
     "OutletEntry",
     "Overlay",

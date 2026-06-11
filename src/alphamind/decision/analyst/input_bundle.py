@@ -27,6 +27,7 @@ from alphamind.risk_guardrails.state_delivery import (
     render_analyst_header_halt_mode,
 )
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
+from alphamind.state.repository.options_chain_read import TickerOptionsContext
 
 __all__ = ["assemble_input_bundle_halt", "assemble_input_bundle_normal"]
 
@@ -62,6 +63,7 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_analyst_he
     tool_names: tuple[str, ...],
     underlying_prices: Mapping[str, float],
     sector_label_display: dict[str, str] | None = None,
+    options_context: Mapping[str, TickerOptionsContext] | None = None,
 ) -> str:
     """Compose the analyst's user-message text for a normal-mode invocation.
 
@@ -70,6 +72,10 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_analyst_he
     the ALP-742 validator enforces, so the analyst anchors brackets to the same
     number it is judged against — ALP-758), a brief tool-reminder section, then
     the synthesizer brief verbatim.
+
+    ``options_context`` (ALP-948) decorates a ticker's reference-price line
+    with its IV rank and liquid expirations when the name has a usable options
+    surface; tickers absent from the map keep the bare price line.
     """
     header = render_analyst_header(
         analyst_view=analyst_view,
@@ -83,7 +89,7 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_analyst_he
         config=state_delivery_config,
         sector_label_display=sector_label_display,
     )
-    reference_prices = _render_reference_prices(underlying_prices)
+    reference_prices = _render_reference_prices(underlying_prices, options_context or {})
     tool_reminder = _render_tool_reminder(tool_names, halt_mode=False)
     return (
         f"{header}\n\n{reference_prices}\n\n{tool_reminder}\n\n"
@@ -136,7 +142,10 @@ def assemble_input_bundle_halt(  # noqa: PLR0913 — mirrors render_analyst_head
 # ---------------------------------------------------------------------------
 
 
-def _render_reference_prices(underlying_prices: Mapping[str, float]) -> str:
+def _render_reference_prices(
+    underlying_prices: Mapping[str, float],
+    options_context: Mapping[str, TickerOptionsContext],
+) -> str:
     """Render the ``=== REFERENCE PRICES ===`` block.
 
     One ``  TICKER: price`` line per entry in ``underlying_prices`` — the exact
@@ -147,15 +156,34 @@ def _render_reference_prices(underlying_prices: Mapping[str, float]) -> str:
     a reference it was never shown. Sorted by ticker for determinism; prices are
     rendered to two decimals (a percentage staleness tolerance dwarfs the
     rounding).
+
+    A ticker present in ``options_context`` (ALP-948) extends its line to
+    ``  TICKER: price | IVr NN | exp: MM-DD, MM-DD`` — the ATM-IV percentile
+    rank (``n/a`` while the baseline is uncalibrated) and the expirations that
+    survive the chain-slice liquidity filters. Contract detail stays behind
+    the ``retrieve_options_chain`` tool.
     """
     lines: list[str] = [_REFERENCE_PRICES_HEADER, _REFERENCE_PRICES_GUIDANCE]
     if not underlying_prices:
         lines.append(_REFERENCE_PRICES_NONE)
         return "\n".join(lines)
     lines.extend(
-        f"  {ticker}: {underlying_prices[ticker]:.2f}" for ticker in sorted(underlying_prices)
+        _render_reference_price_line(ticker, underlying_prices[ticker], options_context.get(ticker))
+        for ticker in sorted(underlying_prices)
     )
     return "\n".join(lines)
+
+
+def _render_reference_price_line(
+    ticker: str, price: float, context: TickerOptionsContext | None
+) -> str:
+    """One reference-price line, options-decorated when context exists."""
+    base = f"  {ticker}: {price:.2f}"
+    if context is None:
+        return base
+    iv_rank = f"{context.iv_rank:.0f}" if context.iv_rank is not None else "n/a"
+    expirations = ", ".join(d.strftime("%m-%d") for d in context.liquid_expirations)
+    return f"{base} | IVr {iv_rank} | exp: {expirations}"
 
 
 # ---------------------------------------------------------------------------

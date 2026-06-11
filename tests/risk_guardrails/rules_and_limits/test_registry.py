@@ -35,6 +35,7 @@ from alphamind.config.models import (
     LoadedConfig,
     MainConfig,
     Mode,
+    OptionsChainConfig,
     Profile,
     Regime,
     ResolvedConfig,
@@ -88,6 +89,7 @@ def _resolved_for_profile(profile: Profile) -> ResolvedConfig:
         continuous_monitor=ContinuousMonitorConfig.model_validate(
             _read_yaml("continuous_monitor.yaml")
         ),
+        options_chain=OptionsChainConfig.model_validate(_read_yaml("options_chain.yaml")),
         profiles=dict(load_profiles(CONFIG_DIR)),
         regimes=dict(load_regimes(CONFIG_DIR)),
         modes=dict(load_modes(CONFIG_DIR)),

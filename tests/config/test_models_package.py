@@ -56,6 +56,7 @@ _EXPECTED_PUBLIC_NAMES = {
     "NarrativeLag",
     "NewsDigestConfig",
     "NewsOutletsConfig",
+    "OptionsChainConfig",
     "OrderType",
     "OutletEntry",
     "Overlay",

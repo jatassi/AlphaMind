@@ -1099,3 +1099,57 @@ async def test_tokens_used_accumulates_across_retry(
     assert result.metadata["attempts"] == 2
     assert result.tokens_used.input_tokens == 180
     assert result.tokens_used.output_tokens == 170
+
+
+# ---------------------------------------------------------------------------
+# ALP-948 — retrieve_options_chain mounts when a chain reader is supplied
+# ---------------------------------------------------------------------------
+
+
+class _NoChainReader:
+    """Minimal ``OptionsChainReader`` stand-in for wiring tests."""
+
+    def chain_slice(self, underlying: str) -> None:
+        return None
+
+    def latest_quote(self, occ: object) -> None:
+        return None
+
+    def options_context(self, underlying: str) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_options_chain_reader_mounts_third_mcp_server(
+    agent_config: BaseAgentConfig,
+    archive_root: Path,
+    validation_state: ValidationToolState,
+    retrieval_store: RetrievalStore,
+    active_sectors: frozenset[str],
+) -> None:
+    """Supplying an OptionsChainReader mounts ``alphamind_options_chain`` and
+    adds ``retrieve_options_chain`` to allowed_tools (ALP-948)."""
+    captured_options: list[Any] = []
+
+    async def _capturing_stub(**kwargs: Any) -> AsyncIterator[Any]:
+        captured_options.append(kwargs.get("options"))
+        async for msg in _async_iter(_make_sdk_response(_MINIMAL_PAYLOAD)):
+            yield msg
+
+    await run_strategist_harness(
+        user_message="Produce strategist output.",
+        system_prompt="You are the strategist.",
+        invocation_id="inv-chain-001",
+        agent_config=agent_config,
+        validation_state=validation_state,
+        retrieval_store=retrieval_store,
+        active_sectors=active_sectors,
+        archive_root=archive_root,
+        as_of=_AS_OF,
+        sdk_query_fn=_capturing_stub,
+        options_chain_reader=_NoChainReader(),
+    )
+
+    options = captured_options[0]
+    assert "alphamind_options_chain" in options.mcp_servers
+    assert "mcp__alphamind_options_chain__retrieve_options_chain" in options.allowed_tools

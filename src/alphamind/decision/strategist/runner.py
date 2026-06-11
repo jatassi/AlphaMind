@@ -64,6 +64,10 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery import build_initial_validation_state
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
+from alphamind.state.repository.options_chain_read import OptionsChainReader
+from alphamind.state.repository.options_chain_tool_mcp import (
+    RETRIEVE_OPTIONS_CHAIN_TOOL_NAME,
+)
 
 __all__ = [
     "STRATEGIST_TOOL_NAMES",
@@ -99,7 +103,20 @@ STRATEGIST_TOOL_NAMES: tuple[str, ...] = (
     "mcp__alphamind_decision_validation__validate_guardrail",
     "mcp__alphamind_decision_validation__validate_guardrail_batch",
     "mcp__alphamind_synthesizer_retrieval__retrieve_brief",
+    RETRIEVE_OPTIONS_CHAIN_TOOL_NAME,
 )
+
+
+def _tool_names(options_chain_reader: OptionsChainReader | None) -> tuple[str, ...]:
+    """The AVAILABLE TOOLS render for this composition's mounted surface.
+
+    The chain tool (ALP-948) mounts only when the composition supplies an
+    ``OptionsChainReader``; drop it from the rendered list otherwise so the
+    prompt never advertises an uncallable tool.
+    """
+    if options_chain_reader is not None:
+        return STRATEGIST_TOOL_NAMES
+    return tuple(n for n in STRATEGIST_TOOL_NAMES if n != RETRIEVE_OPTIONS_CHAIN_TOOL_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +226,7 @@ async def run_strategist(  # noqa: PLR0913 — signature dictated by ALP-308 spe
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     borrow_cost_resolver: Callable[[str], float | None] | None = None,
     prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
+    options_chain_reader: OptionsChainReader | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "strategist",
 ) -> StrategistResult:
@@ -254,6 +272,7 @@ async def run_strategist(  # noqa: PLR0913 — signature dictated by ALP-308 spe
     user_message = _assemble_user_message(
         mode=mode,
         halt_state=halt_state,
+        options_chain_reader=options_chain_reader,
         strategist_view=strategist_view,
         invocation_id=invocation_id,
         timestamp=timestamp,
@@ -289,6 +308,7 @@ async def run_strategist(  # noqa: PLR0913 — signature dictated by ALP-308 spe
         archive_root=archive_root,
         provenance_root=provenance_root,
         sdk_query_fn=sdk_query_fn,
+        options_chain_reader=options_chain_reader,
         progress=progress,
         phase=phase,
     )
@@ -319,6 +339,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
     *,
     mode: Literal["normal", "defensive_posture"],
     halt_state: HaltState | None,
+    options_chain_reader: OptionsChainReader | None,
     strategist_view: StrategistView,
     invocation_id: str,
     timestamp: datetime,
@@ -357,7 +378,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
             available_for_new_positions_usd=available_for_new_positions_usd,
             current_price_lookup=current_price_lookup,
             synthesizer_brief_text=synthesizer_brief_text,
-            tool_names=STRATEGIST_TOOL_NAMES,
+            tool_names=_tool_names(options_chain_reader),
             position_zones=position_zones,
             sector_label_display=sector_label_display,
             regime_transition_breaches=regime_transition_breaches,
@@ -381,7 +402,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
         available_for_new_positions_usd=available_for_new_positions_usd,
         current_price_lookup=current_price_lookup,
         synthesizer_brief_text=synthesizer_brief_text,
-        tool_names=STRATEGIST_TOOL_NAMES,
+        tool_names=_tool_names(options_chain_reader),
         position_zones=position_zones,
         sector_label_display=sector_label_display,
         regime_transition_breaches=regime_transition_breaches,

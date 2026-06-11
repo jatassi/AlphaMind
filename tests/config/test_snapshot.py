@@ -33,6 +33,7 @@ from alphamind.config.models import (
     LoadedConfig,
     MainConfig,
     Mode,
+    OptionsChainConfig,
     Profile,
     Regime,
     RegimeConfig,
@@ -74,6 +75,7 @@ _FEEDBACK = FeedbackLoopConfig.model_validate(_read("feedback.yaml"))
 _ASSETS = AssetsConfig.model_validate(_read("assets.yaml"))
 _AGENTS = AgentsConfig.model_validate(_read("agents.yaml"))
 _CONTINUOUS_MONITOR = ContinuousMonitorConfig.model_validate(_read("continuous_monitor.yaml"))
+_OPTIONS_CHAIN = OptionsChainConfig.model_validate(_read("options_chain.yaml"))
 _PROFILES = load_profiles(CONFIG_DIR)
 _RAW_REGIMES = load_regimes(CONFIG_DIR)
 _MODES = load_modes(CONFIG_DIR)
@@ -115,6 +117,7 @@ def _fixture_resolved() -> ResolvedConfig:
         assets=_ASSETS,
         agents=_AGENTS,
         continuous_monitor=_CONTINUOUS_MONITOR,
+        options_chain=_OPTIONS_CHAIN,
         profiles=dict(_PROFILES),
         regimes=dict(_REGIMES),
         modes=dict(_MODES),
@@ -274,7 +277,11 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     # ContinuousMonitorConfig (the dedicated monitor watchdog's probe cadence; stall
     # bound = tick x watchdog_cadence_multiplier), shifting the resolved-config
     # canonical bytes.
-    expected = "5c2aab97a711674c0e4ddc302910df06ddb2508c1353586710e4fd198bcb5999"
+    # Pin updated 2026-06-10 (options_chain section, ALP-948): ALP-948 added
+    # config/options_chain.yaml and OptionsChainConfig (chain-slice filters +
+    # premium staleness tolerance for the analyst options enablement) to
+    # LoadedConfig/ResolvedConfig, adding a new canonical-bytes block.
+    expected = "1021bfccf6da71ac7b5a2353cbff703433f3d2df99437d9f58e7e27eee0abaf2"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

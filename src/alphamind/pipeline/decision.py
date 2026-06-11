@@ -103,6 +103,10 @@ from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
     RegimeOverride,
 )
 from alphamind.state.config import StatePersistenceConfig
+from alphamind.state.repository.options_chain_read import (
+    OptionsChainReader,
+    TickerOptionsContext,
+)
 
 # Synthesizer's ``RetrievalStore`` is the harness-side type the analyst,
 # strategist, and PM consume.
@@ -381,6 +385,9 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
     venue_config: VenueConfig | None = None,
     execution_mode: ExecutionMode | None = None,
     execution_config: ExecutionConfig | None = None,
+    options_chain_reader: OptionsChainReader | None = None,
+    options_context: Mapping[str, TickerOptionsContext] | None = None,
+    premium_staleness_tolerance_pct: float | None = None,
 ) -> DecisionPipelineResult:
     """Run the decision-layer composition end-to-end.
 
@@ -601,6 +608,9 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
                         provenance_root=provenance_root,
                         agent_config=resolved_agents.get(AgentName.analyst.value),
                         borrow_cost_resolver=borrow_cost_resolver,
+                        options_chain_reader=options_chain_reader,
+                        options_context=options_context,
+                        premium_staleness_tolerance_pct=premium_staleness_tolerance_pct,
                         progress=progress,
                         phase="analyst",
                     )
@@ -633,6 +643,7 @@ async def run_decision_pipeline(  # noqa: PLR0913, PLR0915 — composition surfa
                         regime_transition_breaches=regime_transition_breaches,
                         borrow_cost_resolver=borrow_cost_resolver,
                         prior_health_snapshots=prior_health_snapshots,
+                        options_chain_reader=options_chain_reader,
                         progress=progress,
                         phase="strategist",
                     )

@@ -22,7 +22,7 @@ Errors disqualify the output (``is_valid=False``); warnings do not.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 
 from alphamind.analysis.synthesizer.models import (
     REF_ID_RE,
@@ -38,13 +38,19 @@ from alphamind.commands.validation_results import (
 from alphamind.decision.analyst.models import (
     AnalystOutput,
     InstrumentEquity,
+    InstrumentOption,
     PriceCondition,
     Recommendation,
     WatchlistEntry,
 )
+from alphamind.state.repository.options_chain_read import (
+    OptionsChainReader,
+    occ_symbol_for_contract,
+)
 
 __all__ = [
     "DEFAULT_CONVICTION_BANDS",
+    "DEFAULT_PREMIUM_STALENESS_TOLERANCE_PCT",
     "DEFAULT_PRICE_STALENESS_TOLERANCE_PCT",
     "ValidationError",
     "ValidationResult",
@@ -81,6 +87,13 @@ _FEATURE_DISABLED_TOKEN = "feature_disabled"
 # Mirrors the ``DEFAULT_CONVICTION_BANDS`` pattern: a module default the caller
 # may override; it is not (yet) YAML-wired.
 DEFAULT_PRICE_STALENESS_TOLERANCE_PCT: float = 5.0
+
+# Options counterpart of the equity staleness tolerance (ALP-948): maximum
+# tolerated drift between an InstrumentOption recommendation's entry limit
+# premium and the latest chain-snapshot NBBO midpoint, as a percentage of the
+# midpoint. Production overrides this with the ``options_chain`` config
+# section's ``premium_staleness_tolerance_pct``.
+DEFAULT_PREMIUM_STALENESS_TOLERANCE_PCT: float = 10.0
 
 
 # ---------------------------------------------------------------------------
@@ -516,6 +529,102 @@ def _check_reference_price_staleness(
 
 
 # ---------------------------------------------------------------------------
+# Layer-2 (l)-(m) — option premium coherence vs the chain-snapshot NBBO (ALP-948)
+# ---------------------------------------------------------------------------
+
+
+def _check_option_quote_anchoring(
+    rec: Recommendation,
+    *,
+    field_prefix: str,
+    options_chain_reader: OptionsChainReader,
+    tolerance_pct: float,
+) -> Iterable[ValidationError]:
+    """(l) An InstrumentOption proposal must anchor to a resolvable chain quote.
+
+    Mirrors the ALP-742 equity staleness-check shape for the options leg of
+    the book: the proposed contract must resolve to a latest snapshot in
+    ``options_contract_snapshots`` (rule ``option_contract_unknown`` — a
+    fabricated or stale-surface contract has no premium anchor at all), and
+    the entry limit premium must sit within *tolerance_pct* of that
+    snapshot's NBBO midpoint (rule ``option_premium_staleness`` — a premium
+    drawn from anywhere but the chain tool mis-states capital at risk and
+    rests at a level the market will not fill).
+    """
+    if not isinstance(rec.instrument, InstrumentOption):
+        return
+    instrument = rec.instrument
+    try:
+        occ = occ_symbol_for_contract(
+            underlying=instrument.underlying,
+            expiration=instrument.expiration,
+            strike=float(instrument.strike),
+            contract_type=instrument.contract_type,
+        )
+    except ValueError:
+        occ = None
+    quote = options_chain_reader.latest_quote(occ) if occ is not None else None
+    if quote is None:
+        yield ValidationError(
+            field_path=f"{field_prefix}.instrument",
+            rule="option_contract_unknown",
+            message=(
+                f"{rec.underlying} {instrument.expiration.isoformat()} "
+                f"{float(instrument.strike):g}{instrument.contract_type[0].upper()} "
+                f"({rec.recommendation_id}): no latest chain snapshot resolves for this "
+                "contract. Propose a contract returned by retrieve_options_chain — "
+                "its NBBO is the only valid premium anchor."
+            ),
+        )
+        return
+    limit = rec.entry_order.limit_price
+    mid = quote.nbbo_mid
+    if limit is None or mid <= 0:
+        return
+    drift_pct = abs(float(limit) - mid) / mid * 100.0
+    if drift_pct > tolerance_pct:
+        yield ValidationError(
+            field_path=f"{field_prefix}.entry_order.limit_price",
+            rule="option_premium_staleness",
+            message=(
+                f"{quote.occ_symbol} ({rec.recommendation_id}): entry limit premium "
+                f"{float(limit):.2f} is {drift_pct:.1f}% off the latest NBBO midpoint "
+                f"{mid:.2f} (bid/ask {quote.bid:.2f}/{quote.ask:.2f}; tolerance "
+                f"{tolerance_pct:g}%). Re-anchor the premium to the chain tool's NBBO."
+            ),
+        )
+
+
+def _check_option_expiration_covers_deadline(
+    rec: Recommendation,
+    *,
+    field_prefix: str,
+    reference_clock: datetime,
+) -> Iterable[ValidationError]:
+    """(m) An InstrumentOption's expiration must not precede the entry deadline.
+
+    The deadline is ``entry_window.deadline`` when present (a resting options
+    entry may legitimately wait until then), else ``output.timestamp`` — a
+    contract that expires before the entry can even fill is structurally
+    dead. Rule ``option_expiration_before_deadline``.
+    """
+    if not isinstance(rec.instrument, InstrumentOption):
+        return
+    deadline = rec.entry_window.deadline if rec.entry_window is not None else reference_clock
+    if rec.instrument.expiration < deadline.astimezone(UTC).date():
+        yield ValidationError(
+            field_path=f"{field_prefix}.instrument.expiration",
+            rule="option_expiration_before_deadline",
+            message=(
+                f"{rec.underlying} ({rec.recommendation_id}): expiration "
+                f"{rec.instrument.expiration.isoformat()} falls before the entry-window "
+                f"deadline {deadline.isoformat()}; the contract would expire before the "
+                "entry resolves"
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Layer-3 referential integrity
 # ---------------------------------------------------------------------------
 
@@ -657,6 +766,8 @@ def validate_analyst_output(
     conviction_bands: dict[int, tuple[float, float]] | None = None,
     underlying_prices: Mapping[str, float] | None = None,
     price_staleness_tolerance_pct: float | None = None,
+    options_chain_reader: OptionsChainReader | None = None,
+    premium_staleness_tolerance_pct: float | None = None,
 ) -> ValidationResult:
     """Run Layer-2 + Layer-3 checks on *output*.
 
@@ -687,6 +798,16 @@ def validate_analyst_output(
         Maximum tolerated drift between the analyst's implied entry anchor and
         the live close before the recommendation is flagged for redraft.
         Defaults to :data:`DEFAULT_PRICE_STALENESS_TOLERANCE_PCT`.
+    options_chain_reader:
+        Contract-level chain read the ALP-948 option checks resolve quotes
+        against (``option_contract_unknown`` / ``option_premium_staleness``).
+        ``None`` skips those two checks — production threads the same reader
+        the ``retrieve_options_chain`` tool is mounted with.
+    premium_staleness_tolerance_pct:
+        Maximum tolerated drift between an option entry's limit premium and
+        the latest NBBO midpoint. Defaults to
+        :data:`DEFAULT_PREMIUM_STALENESS_TOLERANCE_PCT`; production threads
+        the ``options_chain`` config section's value.
 
     Returns
     -------
@@ -698,6 +819,11 @@ def validate_analyst_output(
         price_staleness_tolerance_pct
         if price_staleness_tolerance_pct is not None
         else DEFAULT_PRICE_STALENESS_TOLERANCE_PCT
+    )
+    premium_tolerance = (
+        premium_staleness_tolerance_pct
+        if premium_staleness_tolerance_pct is not None
+        else DEFAULT_PREMIUM_STALENESS_TOLERANCE_PCT
     )
     errors: list[ValidationError] = []
     warnings: list[ValidationWarning] = []
@@ -744,6 +870,20 @@ def validate_analyst_output(
                         tolerance_pct=tolerance,
                     )
                 )
+            if options_chain_reader is not None:
+                errors.extend(
+                    _check_option_quote_anchoring(
+                        rec,
+                        field_prefix=field_prefix,
+                        options_chain_reader=options_chain_reader,
+                        tolerance_pct=premium_tolerance,
+                    )
+                )
+            errors.extend(
+                _check_option_expiration_covers_deadline(
+                    rec, field_prefix=field_prefix, reference_clock=output.timestamp
+                )
+            )
     elif output.mode == "watchlist" and output.watchlist is not None:
         for k, entry in enumerate(output.watchlist):
             errors.extend(
