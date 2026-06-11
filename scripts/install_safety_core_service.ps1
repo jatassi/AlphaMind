@@ -55,6 +55,12 @@ $ErrorActionPreference = 'Stop'
 $CoreServiceName     = 'alphamind-safety-core'
 $WatchdogServiceName = 'alphamind-safety-core-watchdog'
 
+# Topology invariant (ALP-945, the 2026-06-10 incident): no service may
+# declare an SCM dependency (DependOnService) on alphamind-safety-core. The
+# watchdog's `nssm restart` is stop + start, and the SCM refuses the stop
+# while a dependent service runs — a wedged safety core would then be
+# unrestartable for as long as the dependent stays up.
+
 # Resolve the project root as the directory containing this script's parent.
 # Script lives in <repo>\scripts\; project root is one level up.
 $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path

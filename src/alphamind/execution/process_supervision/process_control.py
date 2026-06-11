@@ -24,8 +24,13 @@ RunCommand = Callable[[list[str]], object]
 
 
 def _checked_run(cmd: list[str]) -> None:
-    """Default runner: ``subprocess.run`` with ``check=True`` (raises on failure)."""
-    subprocess.run(cmd, check=True)
+    """Default runner: ``subprocess.run`` with ``check=True`` (raises on failure).
+
+    Output is captured so the raised :class:`subprocess.CalledProcessError`
+    carries the child's stderr — the SCM's refusal reason lives there, not in
+    the exit status (ALP-945).
+    """
+    subprocess.run(cmd, check=True, capture_output=True, text=True)
 
 
 class NssmServiceController:
@@ -52,6 +57,15 @@ class NssmServiceController:
         log.critical("watchdog: restarting service %r", self._service_name)
         try:
             self._run(list(cmd))
+        except subprocess.CalledProcessError as exc:
+            # Surface the child's stderr: the exit status alone hides the SCM's
+            # refusal reason (ALP-945 — sixteen restarts logged only "exit
+            # status 1" while the reason sat in nssm's stderr).
+            log.exception(
+                "watchdog: nssm restart of %r failed (stderr: %s); will retry next tick",
+                self._service_name,
+                exc.stderr,
+            )
         except Exception:
             log.exception(
                 "watchdog: nssm restart of %r failed; will retry next tick", self._service_name

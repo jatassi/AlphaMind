@@ -117,13 +117,16 @@ uv run alembic heads       # what the codebase expects
 If the two revisions match, **skip to § 1.6**. Nothing to migrate; just
 restart any services whose code changed.
 
-### 1.4 Stop services in reverse dependency order
+### 1.4 Stop services (reverse of the start order)
 
-The command center depends on scheduler + monitor; stop it first so its
-loopback consumers don't reconnect mid-migration. Collector is independent of
-the trading DB schema but stop it too to keep the snapshot quiet during the
-migration. Stop each **watchdog before the service it supervises** so the
-watchdog does not `nssm restart` its target while you are taking it down.
+The stop order is operational convention — no service declares an SCM
+dependency on another (ALP-945), so the SCM enforces no ordering. Stop the
+command center first so its loopback consumers sit quiet through the
+migration window rather than reconnect-looping against stopped upstreams.
+Collector is independent of the trading DB schema but stop it too to keep
+the snapshot quiet during the migration. Stop each **watchdog before the
+service it supervises** so the watchdog does not `nssm restart` its target
+while you are taking it down.
 
 ```powershell
 nssm stop AlphaMindCommandCenter
@@ -151,11 +154,14 @@ If the upgrade fails, **do not restart services.** Read the traceback,
 restore the DB from the most recent backup (see `RUNBOOK_command_center.md`
 § Recovery → DB corruption restore), then re-apply.
 
-### 1.6 Restart services in dependency order
+### 1.6 Restart services (conventional start order)
 
-Start each supervised service **before its watchdog** so the watchdog finds a
-fresh heartbeat on its first probe (and does not restart a service that is
-still coming up).
+The start order is operational convention, not SCM-enforced. Start each
+supervised service **before its watchdog** so the watchdog finds a fresh
+heartbeat on its first probe (and does not restart a service that is still
+coming up). The command center comes last only by symmetry with § 1.4 — it
+starts fine before its upstreams (its consumers reconnect with capped
+backoff until they come up).
 
 ```powershell
 nssm start alphamind-collector
@@ -1052,7 +1058,15 @@ per daemon; the scheduler supervisor uses a manually-bounded wait rather than
 in the window are abandoned and NSSM/the SCM force-terminates the process; there
 is no separate SIGTERM "fallback" the supervisor itself fires.
 
-**Two restart gotchas that cost real diagnosis time (2026-06-02 monitor wedge):**
+A plain `nssm restart <service>` works for any single service with all the
+others running: no service declares an SCM dependency on another, so the SCM
+never refuses the stop half of the restart. That is a deliberate topology
+invariant (ALP-945, the 2026-06-10 incident — a `DependOnService` edge from
+the command center made the SCM refuse the monitor watchdog's restarts for
+42 minutes): **never declare an SCM dependency on a watchdog-supervised
+service.**
+
+**One restart gotcha that cost real diagnosis time (2026-06-02 monitor wedge):**
 
 - **`Get-Service … Running` does NOT mean healthy.** NSSM reports `Running`
   while the *wrapper* process is alive. Two liveness layers now apply:
@@ -1093,11 +1107,6 @@ is no separate SIGTERM "fallback" the supervisor itself fires.
   (Get-Process -Id $p).StartTime
   ```
   See § 8.9 for the fill-stream and underlying-stream auto-recovery details.
-- **Restarting `alphamind-scheduler` or `alphamind-monitor` while
-  `AlphaMindCommandCenter` is up can be silently refused** (the command center
-  depends on both). Stop CC first, restart the target, then start CC — stop
-  reverse / start forward: `nssm stop AlphaMindCommandCenter` →
-  `nssm restart <target>` → `nssm start AlphaMindCommandCenter`.
 
 **When the operator can restart a single service without coordinating the
 others:**
@@ -1242,10 +1251,9 @@ Both the fill (trade-updates) stream and the underlying-price stream now have
 
 **Manual § 7 restart is the fallback** when auto-recovery is itself suspect (e.g.
 the StartTime is stale, no `8766` heartbeat is appearing, or `monitor.err.log`
-shows a `reconnect budget exhausted` entry). Use the CC-dependency order:
-`nssm stop AlphaMindCommandCenter` → `nssm stop` + `nssm start alphamind-monitor`
-→ `nssm start AlphaMindCommandCenter`. Confirm by StartTime + heartbeat, not
-`Get-Service`.
+shows a `reconnect budget exhausted` entry): `nssm stop alphamind-monitor` +
+`nssm start alphamind-monitor` — no other service needs touching. Confirm by
+StartTime + heartbeat, not `Get-Service`.
 
 #### Pre-fix history (2026-06-02 — for reference only)
 

@@ -56,19 +56,21 @@ per-step PASS / FAIL report.
    `install_pipeline_scheduler_service.ps1` /
    `install_monitor_service.ps1`. NSSM ships as a single .exe; drop into a
    directory on PATH.
-6. **Pipeline + monitor services already installed.** The command center
-   declares both as service dependencies (see
-   `install_command_center_service.ps1`); a missing dependency causes the
-   Windows SCM to refuse the start.
+6. **No service-ordering prerequisite.** The command center declares no SCM
+   service dependencies (ALP-945) — it installs and starts whether or not
+   the scheduler / monitor services exist yet. Its SSE consumers reconnect
+   with capped backoff until the upstreams come up, and the control proxy
+   reaches them per-request.
 
-The full prod runtime is **six** NSSM services (see `RUNBOOK_production.md`'s
+The full prod runtime is **seven** NSSM services (see `RUNBOOK_production.md`'s
 service table): `alphamind-collector`, `alphamind-scheduler`,
-`alphamind-monitor`, `alphamind-safety-core`, `alphamind-safety-core-watchdog`,
-and `AlphaMindCommandCenter`. The `alphamind-safety-core` service is the isolated
-breach + price-staleness safety core (ADR-0004 / ALP-857); its dedicated
-out-of-process watchdog `alphamind-safety-core-watchdog` restarts it on heartbeat
-staleness. The command center does **not** depend on the safety-core services and
-does not surface their state — they are monitored via their logs
+`alphamind-monitor`, `alphamind-monitor-watchdog`, `alphamind-safety-core`,
+`alphamind-safety-core-watchdog`, and `AlphaMindCommandCenter`. The
+`alphamind-safety-core` service is the isolated breach + price-staleness safety
+core (ADR-0004 / ALP-857); each supervised service's dedicated out-of-process
+watchdog (`alphamind-monitor-watchdog` / `alphamind-safety-core-watchdog`,
+ALP-941) restarts its target on heartbeat staleness. The command center does
+not surface the safety-core services' state — they are monitored via their logs
 (`safety_core.*.log`) and the heartbeat file, per `RUNBOOK_production.md` §7/§9.
 
 ## Initial bring-up
@@ -120,7 +122,8 @@ The install script wires:
 - `python -m alphamind.command_center` as the entry point.
 - AppExit Default Restart with a 60 s throttle.
 - Stdout / stderr → `%USERPROFILE%\AlphaMind\logs\command_center.{out,err}.log`.
-- Dependency on `alphamind-scheduler` + `alphamind-monitor`.
+- No SCM service dependencies — the SSE consumers reconnect with capped
+  backoff until the scheduler / monitor come up (ALP-945).
 
 The `ObjectName` step is manual — NSSM prompts for the account password
 interactively, which keeps it out of shell history.
@@ -378,11 +381,13 @@ The command center's three owned tables (`alerts`, `webauthn_credentials`,
 pipeline + monitor's state. The canonical recovery is the same as for the
 pipeline / monitor:
 
-1. Stop all six services (reverse-dependency order; stop watchdog before core):
+1. Stop all seven services (reverse start order — operational convention,
+   not SCM-enforced; stop each watchdog before the service it supervises):
    ```powershell
    nssm stop AlphaMindCommandCenter
    nssm stop alphamind-safety-core-watchdog
    nssm stop alphamind-safety-core
+   nssm stop alphamind-monitor-watchdog
    nssm stop alphamind-monitor
    nssm stop alphamind-scheduler
    nssm stop alphamind-collector
@@ -391,11 +396,13 @@ pipeline / monitor:
    `archive/` directory carries periodic snapshots; pick the most recent
    verified-good copy).
 3. `uv run alembic upgrade head` to bring the restored DB's schema current.
-4. Restart all six services in dependency order (core before watchdog):
+4. Restart all seven services in the conventional start order (each
+   supervised service before its watchdog):
    ```powershell
    nssm start alphamind-collector
    nssm start alphamind-scheduler
    nssm start alphamind-monitor
+   nssm start alphamind-monitor-watchdog
    nssm start alphamind-safety-core
    nssm start alphamind-safety-core-watchdog
    nssm start AlphaMindCommandCenter

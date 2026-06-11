@@ -10,11 +10,11 @@
     - Automatic (Delayed Start) start type
     - Stdout / stderr redirected to %USERPROFILE%\AlphaMind\logs\
     - AppDirectory set to the project root
-    - DependsOnService = AlphaMindPipeline + AlphaMindMonitor so the
-      command center starts only after the pipeline + monitor processes
-      have come up (the SSE consumer tasks fail-fast when their
-      upstreams are unreachable, so a too-eager start would cycle
-      through restarts; the dependency makes the boot ordering explicit).
+    - No SCM service-ordering edges: the command center starts on its
+      own, before or after its upstreams. Its SSE consumers reconnect
+      with capped backoff until the scheduler / monitor come up
+      (command_center/events/multiplexer.py), and the control proxy
+      reaches upstreams per-request (ALP-945).
 
     The ObjectName (service account) configuration is left as a manual
     final step documented in RUNBOOK_command_center.md to avoid
@@ -33,9 +33,6 @@
       src/alphamind/command_center/frontend/dist/ (run "bun install
       --frozen-lockfile && bun run build" before this script — see
       RUNBOOK_command_center.md § Initial bring-up).
-    - The pipeline + monitor services must already be installed (this
-      script declares them as dependencies; absent services cause
-      Windows to refuse to start the command center).
     - Tested on Windows 10/11 with PowerShell 5.1+
 #>
 
@@ -47,13 +44,6 @@ $ErrorActionPreference = 'Stop'
 # ---------------------------------------------------------------------------
 
 $ServiceName = 'AlphaMindCommandCenter'
-
-# The two services this one depends on. Their install scripts:
-#   - install_pipeline_scheduler_service.ps1  -> alphamind-scheduler
-#   - install_monitor_service.ps1             -> alphamind-monitor
-# The dependency names below match those service names verbatim.
-$PipelineDependency = 'alphamind-scheduler'
-$MonitorDependency = 'alphamind-monitor'
 
 # Resolve the project root as the directory containing this script's parent.
 # Script lives in <repo>\scripts\; project root is one level up.
@@ -114,7 +104,6 @@ Write-Host "  Python:      $PythonExe"
 Write-Host "  ProjectRoot: $ProjectRoot"
 Write-Host "  Stdout log:  $StdoutLog"
 Write-Host "  Stderr log:  $StderrLog"
-Write-Host "  Depends on:  $PipelineDependency, $MonitorDependency"
 Write-Host ""
 
 # Install: nssm install <service> <exe> <args...>
@@ -141,11 +130,13 @@ nssm set $ServiceName AppStderr $StderrLog
 nssm set $ServiceName AppStdoutCreationDisposition 4
 nssm set $ServiceName AppStderrCreationDisposition 4
 
-# Declare service dependencies — Windows will only start
-# AlphaMindCommandCenter after alphamind-scheduler + alphamind-monitor
-# have entered the Running state. The SCM honors the dependency on
-# both Start and Stop (cmd center stops first on a system shutdown).
-nssm set $ServiceName DependOnService $PipelineDependency $MonitorDependency
+# Deliberately NO SCM service-ordering edge on the scheduler / monitor:
+# the command center starts on its own — its SSE consumers reconnect with
+# capped backoff until the upstreams come up (events/multiplexer.py), and
+# the control proxy reaches them per-request. An SCM edge pointing at a
+# watchdog-supervised service would also make the SCM refuse the watchdog's
+# `nssm restart` (stop + start) while this service runs — the 2026-06-10
+# 42-minute monitor wedge (ALP-945).
 
 # ---------------------------------------------------------------------------
 # Summary and next steps
