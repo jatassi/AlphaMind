@@ -127,6 +127,20 @@ shows a `reconnect budget exhausted` entry): `nssm stop alphamind-monitor` +
 `nssm start alphamind-monitor` — no other service needs touching. Confirm by
 StartTime + heartbeat, not `Get-Service`.
 
+The layer-3 path has now fired successfully in production (2026-06-11 market
+open): the ALP-946 `subscribe_quotes` wedge recurred when the open-positions
+subscription set changed at 13:35Z, the faulthandler deadman dumped the frozen
+frame, and the watchdog restarted the monitor unrefused — wedge to fresh
+process in ~2.6 min, no operator action. A recurrence of that wedge is
+ALP-946 evidence, not a new incident, as long as auto-recovery completes.
+
+A lone `WARNING … file heartbeat beat failed` with
+`PermissionError: [WinError 5]` on `monitor.heartbeat.tmp → monitor.heartbeat`
+is benign: the watchdog's probe can hold the file open at the moment of the
+supervisor's atomic replace, and the next 15 s beat succeeds. It only matters
+if the failures run consecutively long enough to exceed the 150 s stall bound —
+that would restart a healthy monitor (false-positive stale heartbeat).
+
 #### Pre-fix history (2026-06-02 — for reference only)
 
 Before ALP-825: the continuous monitor's Alpaca trade-updates websocket failed on
