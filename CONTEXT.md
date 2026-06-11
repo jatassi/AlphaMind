@@ -1,8 +1,18 @@
-# AlphaMind — Execution & Broker Boundary
+# AlphaMind — Canonical Vocabulary
 
-Canonical vocabulary for how AlphaMind relates to the external broker. This is a
-glossary, not a spec — it fixes the words so both the architecture conversation and the
-code stay precise about *who owns which fact*.
+Canonical vocabulary for AlphaMind. This is a glossary, not a spec — it fixes the words
+so both the architecture conversation and the code stay precise about *who owns which
+fact* and *who holds which authority*.
+
+## Actors
+
+**Operator**:
+The human with decision authority over the trading system — the escalation target for
+any fork an agent cannot resolve from evidence, and the executor of supervised one-time
+procedures. Agents execute operator workflows on the Operator's behalf; they do not
+hold the Operator's authority.
+_Avoid_: operator (for an agent running prod procedures — the agent operates prod; it
+is not the Operator)
 
 ## Invocation lifecycle
 
