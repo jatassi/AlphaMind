@@ -176,16 +176,29 @@ class OrderRejectionSource(StrEnum):
 
 
 class CashDebitReason(StrEnum):
-    """Reason for a cash debit event."""
+    """Reason for a cash debit event.
+
+    Both fill reasons appear in both vocabularies (ALP-944): cash direction is
+    side-shaped (every buy debits, every sell credits) while entry/exit is
+    role-shaped, so a short's buy-to-cover is a debit with ``EXIT_FILL``.
+    Stored inside ``activity_log.detail_json`` (not a CHECK-constrained
+    column), so no migration is required for these members.
+    """
 
     ENTRY_FILL = "ENTRY_FILL"
+    EXIT_FILL = "EXIT_FILL"
     FEES = "FEES"
     CASH_DIVIDEND_SHORT_OBLIGATION = "CASH_DIVIDEND_SHORT_OBLIGATION"
 
 
 class CashCreditReason(StrEnum):
-    """Reason for a cash credit event."""
+    """Reason for a cash credit event.
 
+    Carries ``ENTRY_FILL`` for the same reason ``CashDebitReason`` carries
+    ``EXIT_FILL`` — a short's entry is a sell that credits cash (ALP-944).
+    """
+
+    ENTRY_FILL = "ENTRY_FILL"
     EXIT_FILL = "EXIT_FILL"
     CASH_DIVIDEND_LONG = "CASH_DIVIDEND_LONG"
     FRACTIONAL_SHARE_CASH_OUT = "FRACTIONAL_SHARE_CASH_OUT"
