@@ -37,7 +37,6 @@ from alphamind.distillation._calibration_core import CalibrationState
 from alphamind.distillation.q3.atm_iv_baseline_compute import compute_atm_iv_baseline
 from alphamind.distillation.q3.atm_iv_baseline_loaders import load_atm_iv_history_by_ticker
 from alphamind.persistence.models import OptionsContracts, OptionsContractSnapshots
-from alphamind.state.repository.sql_option_price_provider import _parse_snapshot_ts
 
 if TYPE_CHECKING:
     from alphamind.config.models.options_chain import OptionsChainConfig
@@ -287,6 +286,22 @@ class OptionsChainReader(Protocol):
 # ---------------------------------------------------------------------------
 # SQL shell
 # ---------------------------------------------------------------------------
+
+
+def _parse_snapshot_ts(raw: str) -> datetime:
+    """Parse the collector's snapshot timestamp into a tz-aware UTC datetime.
+
+    Kept local rather than imported from ``sql_option_price_provider`` —
+    importing that module transitively reaches ``sql_repository`` and its
+    execution-layer aggregates, which breaks the ``decision-not-execution``
+    import contract for this module's decision-layer consumers. Mirrors the
+    same kept-local rationale in
+    ``execution.continuous_monitor.greeks_refresh.iv_provider._parse_snapshot_ts``.
+    """
+    parsed = datetime.fromisoformat(raw)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 _SNAPSHOT_COLUMNS = (
