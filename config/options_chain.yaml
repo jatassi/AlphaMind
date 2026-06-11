@@ -1,0 +1,15 @@
+# Options chain-slice selection policy + premium validation tolerance (ALP-948).
+# Governs the decision layer's contract-level options read: which contracts the
+# retrieve_options_chain tool renders for the analyst/strategist, and how far an
+# option entry's limit premium may drift from the latest chain-snapshot NBBO
+# midpoint before the analyst validator rejects it for redraft. Filter values
+# are config-owned — the tool's input is the underlying ticker only.
+#
+# Starting values are operator-tunable configuration, not contract.
+
+strike_band_pct: 15                  # contracts within ±15% of spot
+min_days_to_expiration: 5            # skip imminent expiries (gamma/pin risk dominates the 4-72h horizon)
+max_days_to_expiration: 45           # beyond ~45 DTE the premium decay profile stops fitting the swing horizon
+min_open_interest: 100               # liquidity floor — thinner books quote untradeable NBBOs
+max_contracts_rendered: 24           # per-underlying render cap; nearest-the-money win, drops are named in the omitted note
+premium_staleness_tolerance_pct: 10  # entry limit premium vs latest NBBO midpoint, % of midpoint

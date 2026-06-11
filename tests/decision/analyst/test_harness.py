@@ -1373,3 +1373,57 @@ async def test_stale_anchor_bracket_redrafted_to_coherent_succeeds(
     assert result.retry_count == 1
     assert result.output.recommendations is not None
     assert float(result.output.recommendations[0].target.price) == 90.0
+
+
+# ---------------------------------------------------------------------------
+# ALP-948 — retrieve_options_chain mounts when a chain reader is supplied
+# ---------------------------------------------------------------------------
+
+
+class _NoChainReader:
+    """Minimal ``OptionsChainReader`` stand-in for wiring tests."""
+
+    def chain_slice(self, underlying: str) -> None:
+        return None
+
+    def latest_quote(self, occ: object) -> None:
+        return None
+
+    def options_context(self, underlying: str) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_options_chain_reader_mounts_third_mcp_server(
+    agent_config: BaseAgentConfig,
+    archive_root: Path,
+    initial_validation_state: ValidationToolState,
+    retrieval_store: RetrievalStore,
+    active_sectors: frozenset[str],
+) -> None:
+    """Supplying an OptionsChainReader mounts ``alphamind_options_chain`` and
+    adds ``retrieve_options_chain`` to allowed_tools (ALP-948)."""
+    captured_options: list[Any] = []
+
+    async def _capturing_stub(**kwargs: Any) -> AsyncIterator[Any]:
+        captured_options.append(kwargs.get("options"))
+        async for msg in _async_iter(_make_sdk_response(_MINIMAL_PAYLOAD)):
+            yield msg
+
+    await invoke_analyst(
+        agent_config=agent_config,
+        user_message="Produce analyst output.",
+        invocation_id="inv-chain-001",
+        initial_validation_state=initial_validation_state,
+        retrieval_store=retrieval_store,
+        active_sectors=active_sectors,
+        archive_root=archive_root,
+        as_of=_AS_OF,
+        sdk_query_fn=_capturing_stub,
+        options_chain_reader=_NoChainReader(),
+    )
+
+    options = captured_options[0]
+    assert "alphamind_options_chain" in options.mcp_servers
+    assert options.mcp_servers["alphamind_options_chain"]["type"] == "sdk"
+    assert "mcp__alphamind_options_chain__retrieve_options_chain" in options.allowed_tools

@@ -47,6 +47,7 @@ from alphamind.config.models.modes import (
     StrategistAction,
     StrategistOutputMode,
 )
+from alphamind.config.models.options_chain import OptionsChainConfig
 from alphamind.config.models.overlays import (
     Overlay,
     PreEventOverlay,
@@ -129,6 +130,7 @@ class ResolvedConfig:
     assets: AssetsConfig
     agents: AgentsConfig
     continuous_monitor: ContinuousMonitorConfig
+    options_chain: OptionsChainConfig
 
     def __hash__(self) -> int:
         # Pydantic frozen models with list/dict fields are not hashable, and
@@ -175,6 +177,7 @@ class ResolvedConfig:
                 self.assets.model_dump_json(),
                 self.agents.model_dump_json(),
                 self.continuous_monitor.model_dump_json(),
+                self.options_chain.model_dump_json(),
             )
         )
 
@@ -293,6 +296,7 @@ class LoadedConfig:
     assets: AssetsConfig
     agents: AgentsConfig
     continuous_monitor: ContinuousMonitorConfig
+    options_chain: OptionsChainConfig
     profiles: Mapping[Profile, ProfileConfig]
     regimes: Mapping[Regime, RegimeConfig]
     modes: Mapping[Mode, ModeConfig]
@@ -374,4 +378,5 @@ def compose_config(inputs: LoadedConfig, runtime: RuntimeDimensions) -> Resolved
         assets=inputs.assets,
         agents=inputs.agents,
         continuous_monitor=inputs.continuous_monitor,
+        options_chain=inputs.options_chain,
     )

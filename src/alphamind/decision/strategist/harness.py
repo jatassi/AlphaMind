@@ -61,6 +61,10 @@ from alphamind.risk_guardrails.state_delivery.validation_tool import ValidationT
 from alphamind.risk_guardrails.state_delivery.validation_tool_mcp import (
     build_validate_guardrail_mcp_server,
 )
+from alphamind.state.repository.options_chain_read import OptionsChainReader
+from alphamind.state.repository.options_chain_tool_mcp import (
+    build_retrieve_options_chain_mcp_server,
+)
 
 __all__ = [
     "ContextOverflowFailure",
@@ -92,6 +96,7 @@ _MAX_TURNS = 25
 _TOOL_NAME_PREFIXES: tuple[str, ...] = (
     "mcp__alphamind_decision_validation__",
     "mcp__alphamind_synthesizer_retrieval__",
+    "mcp__alphamind_options_chain__",
 )
 
 
@@ -352,14 +357,23 @@ def _build_mcp_wiring(
     *,
     validation_state: ValidationToolState,
     retrieval_store: RetrievalStore,
+    options_chain_reader: OptionsChainReader | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
-    """Compose the two MCP servers and merge their allowed-tool lists."""
+    """Compose the MCP servers and merge their allowed-tool lists.
+
+    The ``retrieve_options_chain`` server (ALP-948) mounts only when a reader
+    is supplied — composition without one (tests, degraded paths) keeps the
+    legacy two-server surface.
+    """
     validation_servers, validation_tools = build_validate_guardrail_mcp_server(validation_state)
     retrieval_servers, retrieval_tools = build_retrieve_brief_mcp_server(retrieval_store)
-    return (
-        {**validation_servers, **retrieval_servers},
-        [*validation_tools, *retrieval_tools],
-    )
+    servers = {**validation_servers, **retrieval_servers}
+    tools = [*validation_tools, *retrieval_tools]
+    if options_chain_reader is not None:
+        chain_servers, chain_tools = build_retrieve_options_chain_mcp_server(options_chain_reader)
+        servers |= chain_servers
+        tools += chain_tools
+    return servers, tools
 
 
 _INCOMPAT_KEYWORDS: frozenset[str] = frozenset({"format", "discriminator"})
@@ -578,6 +592,7 @@ async def run_strategist_harness(  # noqa: PLR0913 — public signature is fixed
     phase: str = "strategist",
     telemetry_session: AsyncSession | None = None,
     provenance_root: Path | None = None,
+    options_chain_reader: OptionsChainReader | None = None,
 ) -> HarnessSuccess:
     """Invoke the strategist agent and return :class:`HarnessSuccess`.
 
@@ -632,6 +647,7 @@ async def run_strategist_harness(  # noqa: PLR0913 — public signature is fixed
     mcp_servers, allowed_tools = _build_mcp_wiring(
         validation_state=validation_state,
         retrieval_store=retrieval_store,
+        options_chain_reader=options_chain_reader,
     )
 
     with system_prompt_as_file(system_prompt) as prompt_path:

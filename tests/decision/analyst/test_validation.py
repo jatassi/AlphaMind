@@ -50,6 +50,10 @@ from alphamind.decision.analyst.validation import (
     validate_analyst_output,
 )
 from alphamind.risk_guardrails.guardrail_evaluation import RuleProjection, Status
+from alphamind.state.repository.options_chain_read import (
+    ContractQuote,
+    occ_symbol_for_contract,
+)
 
 # ---------------------------------------------------------------------------
 # Fixture builders
@@ -1584,3 +1588,201 @@ class TestValidationTypesAreFrozenDataclasses:
         assert result.is_valid is True
         with pytest.raises(dataclasses.FrozenInstanceError):
             result.errors = (ValidationError(field_path="x", rule="r", message="m"),)  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Option premium / contract / expiration closure (ALP-948)
+# ---------------------------------------------------------------------------
+
+
+class _FakeChainReader:
+    """In-memory ``OptionsChainReader`` keyed by compressed OCC symbol."""
+
+    def __init__(self, quotes: dict[str, ContractQuote] | None = None) -> None:
+        self._quotes = quotes or {}
+
+    def chain_slice(self, underlying: str) -> None:
+        return None
+
+    def latest_quote(self, occ: str) -> ContractQuote | None:
+        return self._quotes.get(str(occ))
+
+    def options_context(self, underlying: str) -> None:
+        return None
+
+
+def _option_quote(*, bid: float = 24.10, ask: float = 24.90) -> ContractQuote:
+    return ContractQuote(
+        occ_symbol=occ_symbol_for_contract(
+            underlying="NVDA",
+            expiration=date(2026, 7, 17),
+            strike=850.0,
+            contract_type="call",
+        ),
+        underlying="NVDA",
+        expiration=date(2026, 7, 17),
+        strike=850.0,
+        contract_type="call",
+        bid=bid,
+        ask=ask,
+        implied_volatility=0.41,
+        delta=0.52,
+        open_interest=1834,
+        snapshot_ts=_ts("2026-04-23T14:20:00Z"),
+    )
+
+
+def _option_recommendation(**overrides: Any) -> Recommendation:
+    defaults: dict[str, Any] = {
+        "instrument": InstrumentOption(
+            asset_type="option",
+            underlying=Symbol("NVDA"),
+            strike=price(850.0),
+            expiration=date(2026, 7, 17),
+            contract_type="call",
+            direction="long",
+        ),
+        "entry_order": EntryOrder(type="limit", limit_price=price(24.50)),
+        "position_size": PositionSize(
+            quantity=2,
+            dollar_value=money(4900.0),
+            pct_of_portfolio=4.9,
+            premium_at_risk=money(4900.0),
+        ),
+        "target": Target(
+            target_type="pl_percentage",
+            price=price(39.20),
+            dollar_pl_target=money(2940.0),
+            pl_percentage=60.0,
+        ),
+    }
+    return _make_recommendation(**(defaults | overrides))
+
+
+def _reader_with_quote(**quote_overrides: Any) -> _FakeChainReader:
+    quote = _option_quote(**quote_overrides)
+    return _FakeChainReader({str(quote.occ_symbol): quote})
+
+
+class TestOptionChecks:
+    def test_anchored_option_recommendation_passes(self) -> None:
+        output = _make_output(recommendations=(_option_recommendation(),))
+        result = validate_analyst_output(
+            output,
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            options_chain_reader=_reader_with_quote(),
+        )
+        assert result.is_valid, result.errors
+
+    def test_unknown_contract_rejected(self) -> None:
+        output = _make_output(recommendations=(_option_recommendation(),))
+        result = validate_analyst_output(
+            output,
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            options_chain_reader=_FakeChainReader(),  # no quotes resolve
+        )
+        assert not result.is_valid
+        assert [e.rule for e in result.errors] == ["option_contract_unknown"]
+        assert result.errors[0].field_path == "recommendations[0].instrument"
+
+    def test_out_of_tolerance_premium_rejected(self) -> None:
+        # NBBO mid is 24.50; a 30.00 limit is ~22.4% off — beyond the 10% default.
+        rec = _option_recommendation(entry_order=EntryOrder(type="limit", limit_price=price(30.0)))
+        output = _make_output(recommendations=(rec,))
+        result = validate_analyst_output(
+            output,
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            options_chain_reader=_reader_with_quote(),
+        )
+        assert not result.is_valid
+        assert [e.rule for e in result.errors] == ["option_premium_staleness"]
+        assert result.errors[0].field_path == "recommendations[0].entry_order.limit_price"
+
+    def test_premium_tolerance_is_caller_configurable(self) -> None:
+        # 24.50 mid vs 25.50 limit is ~4.1% drift: inside the 10% default,
+        # outside a 2% configured tolerance.
+        rec = _option_recommendation(entry_order=EntryOrder(type="limit", limit_price=price(25.50)))
+        output = _make_output(recommendations=(rec,))
+        lenient = validate_analyst_output(
+            output,
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            options_chain_reader=_reader_with_quote(),
+        )
+        strict = validate_analyst_output(
+            output,
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            options_chain_reader=_reader_with_quote(),
+            premium_staleness_tolerance_pct=2.0,
+        )
+        assert lenient.is_valid
+        assert [e.rule for e in strict.errors] == ["option_premium_staleness"]
+
+    def test_expiration_before_entry_window_deadline_rejected(self) -> None:
+        rec = _option_recommendation(
+            instrument=InstrumentOption(
+                asset_type="option",
+                underlying=Symbol("NVDA"),
+                strike=price(850.0),
+                expiration=date(2026, 5, 1),
+                contract_type="call",
+                direction="long",
+            ),
+            entry_window=EntryWindow(
+                deadline=_ts("2026-05-05T20:00:00Z"),
+                decay_type="gradual",
+                rationale="Edge erodes into the catalyst.",
+            ),
+            entry_window_rationale="Gradual decay into the catalyst window.",
+        )
+        output = _make_output(recommendations=(rec,))
+        result = validate_analyst_output(
+            output,
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+        )
+        assert not result.is_valid
+        assert [e.rule for e in result.errors] == ["option_expiration_before_deadline"]
+        assert result.errors[0].field_path == "recommendations[0].instrument.expiration"
+
+    def test_expiration_before_output_timestamp_rejected_without_entry_window(self) -> None:
+        rec = _option_recommendation(
+            instrument=InstrumentOption(
+                asset_type="option",
+                underlying=Symbol("NVDA"),
+                strike=price(850.0),
+                expiration=date(2026, 4, 17),  # before output.timestamp 2026-04-23
+                contract_type="call",
+                direction="long",
+            ),
+        )
+        output = _make_output(recommendations=(rec,))
+        result = validate_analyst_output(
+            output,
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+        )
+        assert [e.rule for e in result.errors] == ["option_expiration_before_deadline"]
+
+    def test_quote_checks_skipped_without_a_reader(self) -> None:
+        output = _make_output(recommendations=(_option_recommendation(),))
+        result = validate_analyst_output(
+            output,
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+        )
+        assert result.is_valid, result.errors
+
+    def test_equity_recommendation_never_trips_option_rules(self) -> None:
+        output = _make_output()  # baseline equity recommendation
+        result = validate_analyst_output(
+            output,
+            retrieval_store=_store_with_baseline_refs(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            options_chain_reader=_FakeChainReader(),
+        )
+        assert result.is_valid, result.errors

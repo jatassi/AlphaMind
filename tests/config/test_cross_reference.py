@@ -31,6 +31,7 @@ from alphamind.config.models import (
     LLMFailureConfig,
     LoadedConfig,
     MainConfig,
+    OptionsChainConfig,
     Overlay,
     Profile,
     ProfileConfig,
@@ -64,6 +65,7 @@ _FEEDBACK = FeedbackLoopConfig.model_validate(_read("feedback.yaml"))
 _ASSETS = AssetsConfig.model_validate(_read("assets.yaml"))
 _AGENTS = AgentsConfig.model_validate(_read("agents.yaml"))
 _CONTINUOUS_MONITOR = ContinuousMonitorConfig.model_validate(_read("continuous_monitor.yaml"))
+_OPTIONS_CHAIN = OptionsChainConfig.model_validate(_read("options_chain.yaml"))
 _PROFILES = load_profiles(CONFIG_DIR)
 _REGIMES = load_regimes(CONFIG_DIR)
 _MODES = load_modes(CONFIG_DIR)
@@ -95,6 +97,7 @@ def _make_inputs(
         assets=assets if assets is not None else _ASSETS,
         agents=agents if agents is not None else _AGENTS,
         continuous_monitor=_CONTINUOUS_MONITOR,
+        options_chain=_OPTIONS_CHAIN,
         profiles=dict(profiles) if profiles is not None else dict(_PROFILES),
         regimes=dict(regimes) if regimes is not None else dict(_REGIMES),
         modes=dict(_MODES),

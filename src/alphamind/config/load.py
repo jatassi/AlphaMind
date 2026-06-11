@@ -45,6 +45,7 @@ from alphamind.config.models.feedback import FeedbackLoopConfig
 from alphamind.config.models.guardrails import GuardrailsConfig
 from alphamind.config.models.llm_failure import LLMFailureConfig
 from alphamind.config.models.main import MainConfig
+from alphamind.config.models.options_chain import OptionsChainConfig
 from alphamind.config.models.scheduler import SchedulerConfig
 from alphamind.config.models.venue import VenueConfig
 from alphamind.config.resolver import (
@@ -107,6 +108,9 @@ def parse_loaded_config(config_dir: Path) -> LoadedConfig:
         agents=AgentsConfig.model_validate(read_yaml_file(config_dir / "agents.yaml")),
         continuous_monitor=ContinuousMonitorConfig.model_validate(
             read_yaml_file(config_dir / "continuous_monitor.yaml")
+        ),
+        options_chain=OptionsChainConfig.model_validate(
+            read_yaml_file(config_dir / "options_chain.yaml")
         ),
         profiles=load_profiles(config_dir),
         regimes=load_regimes(config_dir),

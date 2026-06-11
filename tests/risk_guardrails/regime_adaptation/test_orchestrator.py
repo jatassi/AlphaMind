@@ -51,6 +51,7 @@ from alphamind.config.models.feedback import FeedbackLoopConfig
 from alphamind.config.models.guardrails import GuardrailsConfig
 from alphamind.config.models.llm_failure import LLMFailureConfig
 from alphamind.config.models.main import MainConfig
+from alphamind.config.models.options_chain import OptionsChainConfig
 from alphamind.config.models.overlays import (
     EventType,
     FinalInvocationBeforeEvent,
@@ -169,6 +170,7 @@ def loaded_config_session_scoped() -> LoadedConfig:
         continuous_monitor=ContinuousMonitorConfig.model_validate(
             _read_yaml("continuous_monitor.yaml")
         ),
+        options_chain=OptionsChainConfig.model_validate(_read_yaml("options_chain.yaml")),
         profiles=load_profiles(CONFIG_DIR),
         regimes=load_regimes(CONFIG_DIR),
         modes=load_modes(CONFIG_DIR),

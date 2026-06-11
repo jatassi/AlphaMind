@@ -50,6 +50,7 @@ onto :class:`alphamind._kernel.mode.PipelineMode`.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -184,6 +185,13 @@ from alphamind.state.invocation_context.records import (
 from alphamind.state.repository import (
     SqlOptionPriceProvider,
     build_sql_portfolio_state_repository,
+)
+from alphamind.state.repository.options_chain_read import (
+    ChainFilterParams,
+    OptionsChainReader,
+    SqlOptionsChainReader,
+    TickerOptionsContext,
+    build_options_context,
 )
 from alphamind.state.tables.invocations import InvocationRow
 
@@ -404,6 +412,8 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     venue_config: VenueConfig | None = None,
     execution_mode: ExecutionMode | None = None,
     execution_config: ExecutionConfig | None = None,
+    options_chain_reader: OptionsChainReader | None = None,
+    options_context: Mapping[str, TickerOptionsContext] | None = None,
 ) -> dict[str, Any]:
     """Assemble the kwargs ``run_decision_pipeline`` requires."""
     resolved = pipeline_config.resolved
@@ -445,6 +455,13 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
         "venue_config": venue_config,
         "execution_mode": execution_mode,
         "execution_config": execution_config,
+        # ALP-948 — the contract-level options surface for the analyst /
+        # strategist: the chain reader backs the retrieve_options_chain tool
+        # and the analyst validator's premium checks; options_context is the
+        # per-ticker IVr/expirations decoration on REFERENCE PRICES.
+        "options_chain_reader": options_chain_reader,
+        "options_context": options_context,
+        "premium_staleness_tolerance_pct": (resolved.options_chain.premium_staleness_tolerance_pct),
     }
 
 
@@ -960,6 +977,29 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
     # rather than re-parsing ``execution.yaml`` — ``parse_loaded_config``
     # already did the work inside ``insert_invocation_record``.
     broker_routing_active = context.debug_e2e is None
+    # ALP-948 — per-invocation options chain reader + per-ticker options
+    # context, gated on the resolved profile's options feature flag: with
+    # options disabled the chain tool stays unmounted and the validator's
+    # option quote checks stay inert, matching the prompt's Hard blocks
+    # signal. The reader applies the resolved options_chain filter policy;
+    # the context map decorates the analyst's REFERENCE PRICES lines for the
+    # same tickers the reference map carries. Context is only built for a
+    # normal-mode invocation — the halt-mode watchlist bundle never renders
+    # it — and runs in a worker thread so the per-ticker chain reads do not
+    # block the event loop.
+    options_chain_reader: OptionsChainReader | None = None
+    options_context: Mapping[str, TickerOptionsContext] | None = None
+    if pipeline_config.resolved.feature_flags.options_enabled:
+        options_chain_reader = SqlOptionsChainReader(
+            sync_session_factory=context.sync_session_factory,
+            params=ChainFilterParams.from_config(pipeline_config.resolved.options_chain),
+        )
+        if pipeline_mode is PipelineMode.NORMAL:
+            options_context = await asyncio.to_thread(
+                build_options_context,
+                options_chain_reader,
+                tickers=sorted(fill_collection_inputs.market_inputs.underlying_prices),
+            )
     decision_kwargs = _build_decision_kwargs(
         invocation_id=invocation_id,
         pipeline_config=pipeline_config,
@@ -985,6 +1025,8 @@ async def run_invocation(  # noqa: PLR0915 — composition root sequences every 
         venue_config=venue_config if broker_routing_active else None,
         execution_mode=execution_mode if broker_routing_active else None,
         execution_config=pipeline_config.loaded.execution if broker_routing_active else None,
+        options_chain_reader=options_chain_reader,
+        options_context=options_context,
     )
     _emit_phase_transition(sse_emitter, invocation_id=invocation_id, phase="decide")
     decision_result = await run_decision_pipeline(**decision_kwargs, progress=progress)

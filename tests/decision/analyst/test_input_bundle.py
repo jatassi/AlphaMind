@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from alphamind._kernel.ids import PositionId, Symbol
 from alphamind._kernel.money import money
@@ -32,6 +32,7 @@ from alphamind.portfolio_state.consumers.analyst import (
 from alphamind.portfolio_state.records.positions import Direction, InstrumentType
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
+from alphamind.state.repository.options_chain_read import TickerOptionsContext
 
 # ---------------------------------------------------------------------------
 # Constants — canonical analyst tool names (story 04 + synthesizer story 06a)
@@ -551,3 +552,59 @@ def test_halt_mode_deterministic() -> None:
         sector_label_display=_MICRO_SECTOR_LABELS,
     )
     assert out_a == out_b
+
+
+# ---------------------------------------------------------------------------
+# Per-ticker options context (ALP-948) — IVr + liquid expirations decoration
+# ---------------------------------------------------------------------------
+
+
+def test_normal_mode_options_context_decorates_reference_price_line() -> None:
+    kwargs = _normal_kwargs()
+    kwargs["options_context"] = {
+        "NVDA": TickerOptionsContext(
+            iv_rank=62.4,
+            liquid_expirations=(date(2026, 7, 2), date(2026, 7, 17)),
+        ),
+    }
+    out = assemble_input_bundle_normal(
+        **kwargs,  # type: ignore[arg-type]
+        sector_label_display=_MICRO_SECTOR_LABELS,
+    )
+    assert "  NVDA: 905.12 | IVr 62 | exp: 07-02, 07-17" in out
+    # Tickers without context keep the bare price line.
+    assert "  AVGO: 446.80\n" in out
+
+
+def test_normal_mode_options_context_uncalibrated_iv_rank_renders_na() -> None:
+    kwargs = _normal_kwargs()
+    kwargs["options_context"] = {
+        "GS": TickerOptionsContext(iv_rank=None, liquid_expirations=(date(2026, 6, 19),)),
+    }
+    out = assemble_input_bundle_normal(
+        **kwargs,  # type: ignore[arg-type]
+        sector_label_display=_MICRO_SECTOR_LABELS,
+    )
+    assert "  GS: 1024.00 | IVr n/a | exp: 06-19" in out
+
+
+def test_normal_mode_without_options_context_keeps_bare_price_lines() -> None:
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(),  # type: ignore[arg-type]
+        sector_label_display=_MICRO_SECTOR_LABELS,
+    )
+    assert "  NVDA: 905.12\n" in out
+    assert "IVr" not in out
+
+
+def test_normal_mode_options_context_with_no_expirations_keeps_bare_line() -> None:
+    kwargs = _normal_kwargs()
+    kwargs["options_context"] = {
+        "NVDA": TickerOptionsContext(iv_rank=62.4, liquid_expirations=()),
+    }
+    out = assemble_input_bundle_normal(
+        **kwargs,  # type: ignore[arg-type]
+        sector_label_display=_MICRO_SECTOR_LABELS,
+    )
+    assert "  NVDA: 905.12\n" in out
+    assert "exp:" not in out

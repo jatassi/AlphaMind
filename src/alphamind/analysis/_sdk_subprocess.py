@@ -68,6 +68,11 @@ from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import (
     RealizedVolEntry,
     SqlOptionsIvProvider,
 )
+from alphamind.state.repository.options_chain_read import (
+    ChainFilterParams,
+    OptionsChainReader,
+    SqlOptionsChainReader,
+)
 
 # Decision/analysis-layer harness HarnessSuccess types and the heavy state
 # Pydantic models are referenced only as type annotations in this module.
@@ -152,6 +157,41 @@ def _prepare_market_inputs_for_pickle(market_inputs: MarketInputs) -> MarketInpu
         shim = _SqlIvProviderShim(realized_vol=market_inputs.iv_provider.realized_vol)
         return dataclasses.replace(market_inputs, iv_provider=shim)
     return market_inputs
+
+
+@dataclass(frozen=True, slots=True)
+class _OptionsChainReaderShim:
+    """Pickle-friendly stand-in for :class:`SqlOptionsChainReader` (ALP-948).
+
+    Carries only the config-owned :class:`ChainFilterParams`; the worker
+    reconstructs a real reader against its own fresh ``DATABASE_PATH``
+    sessionmaker. The instance never reaches a read method — it is swapped
+    out by ``_rehydrate_options_chain_reader`` before the harness call.
+    """
+
+    params: ChainFilterParams
+
+    def chain_slice(self, *_: Any) -> Any:  # pragma: no cover - never invoked
+        raise RuntimeError("_OptionsChainReaderShim must be rehydrated before use")
+
+    def latest_quote(self, *_: Any) -> Any:  # pragma: no cover - never invoked
+        raise RuntimeError("_OptionsChainReaderShim must be rehydrated before use")
+
+    def options_context(self, *_: Any) -> Any:  # pragma: no cover - never invoked
+        raise RuntimeError("_OptionsChainReaderShim must be rehydrated before use")
+
+
+def _prepare_options_chain_reader_for_pickle(
+    reader: OptionsChainReader | None,
+) -> OptionsChainReader | None:
+    """Swap a session-bound ``SqlOptionsChainReader`` for its shim before pickling.
+
+    Other implementations (data-only fakes in tests) pickle as-is; ``None``
+    (chain tool unmounted) passes through.
+    """
+    if isinstance(reader, SqlOptionsChainReader):
+        return _OptionsChainReaderShim(params=reader.params)
+    return reader
 
 
 def _prepare_validation_state_for_pickle(state: ValidationToolState) -> ValidationToolState:
@@ -593,6 +633,8 @@ async def invoke_analyst_in_subprocess(  # noqa: PLR0913 — signature parity wi
     archive_root: Path | None = None,
     provenance_root: Path | None = None,
     sdk_query_fn: Any = None,
+    options_chain_reader: OptionsChainReader | None = None,
+    premium_staleness_tolerance_pct: float | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "analyst",
 ) -> AnalystHarnessSuccess:
@@ -622,6 +664,8 @@ async def invoke_analyst_in_subprocess(  # noqa: PLR0913 — signature parity wi
             as_of=as_of,
             archive_root=archive_root,
             sdk_query_fn=sdk_query_fn,
+            options_chain_reader=options_chain_reader,
+            premium_staleness_tolerance_pct=premium_staleness_tolerance_pct,
             progress=progress,
             phase=phase,
         )
@@ -641,6 +685,12 @@ async def invoke_analyst_in_subprocess(  # noqa: PLR0913 — signature parity wi
         "provenance_root": str(provenance_root) if provenance_root is not None else None,
         "progress_jsonl_path": _extract_progress_jsonl_path(progress),
         "phase": phase,
+        "options_chain_reader_pickle": (
+            _encode_pickle(_prepare_options_chain_reader_for_pickle(options_chain_reader))
+            if options_chain_reader is not None
+            else None
+        ),
+        "premium_staleness_tolerance_pct": premium_staleness_tolerance_pct,
     }
     result = await _run_worker(payload)
     if result["kind"] == "failure":
@@ -667,6 +717,7 @@ async def invoke_strategist_in_subprocess(  # noqa: PLR0913 — signature parity
     archive_root: Path | None = None,
     provenance_root: Path | None = None,
     sdk_query_fn: Any = None,
+    options_chain_reader: OptionsChainReader | None = None,
     progress: ProgressEmitter = NOOP_PROGRESS_EMITTER,
     phase: str = "strategist",
 ) -> StratHarnessSuccess:
@@ -691,6 +742,7 @@ async def invoke_strategist_in_subprocess(  # noqa: PLR0913 — signature parity
             as_of=as_of,
             archive_root=archive_root,
             sdk_query_fn=sdk_query_fn,
+            options_chain_reader=options_chain_reader,
             progress=progress,
             phase=phase,
         )
@@ -711,6 +763,11 @@ async def invoke_strategist_in_subprocess(  # noqa: PLR0913 — signature parity
         "provenance_root": str(provenance_root) if provenance_root is not None else None,
         "progress_jsonl_path": _extract_progress_jsonl_path(progress),
         "phase": phase,
+        "options_chain_reader_pickle": (
+            _encode_pickle(_prepare_options_chain_reader_for_pickle(options_chain_reader))
+            if options_chain_reader is not None
+            else None
+        ),
     }
     result = await _run_worker(payload)
     if result["kind"] == "failure":

@@ -39,6 +39,7 @@ from alphamind.analysis._harness_core import (
 from alphamind.analysis._sdk_subprocess import (
     _decode_pickle,
     _encode_pickle,
+    _OptionsChainReaderShim,
     _SqlIvProviderShim,
 )
 from alphamind.analysis._shared import Sector
@@ -64,6 +65,7 @@ from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import SqlOption
 from alphamind.risk_guardrails.state_delivery.validation_tool import ValidationToolState
 from alphamind.state.config import StatePersistenceConfig
 from alphamind.state.invocation_context.context import InvocationHandle
+from alphamind.state.repository.options_chain_read import SqlOptionsChainReader
 
 
 class _JsonlAppender:
@@ -378,6 +380,26 @@ def _rehydrate_market_inputs(
     return market_inputs
 
 
+def _rehydrate_options_chain_reader(payload: dict[str, Any], *, sync_session_factory: Any) -> Any:
+    """Reconstruct the options chain reader from the worker payload (ALP-948).
+
+    ``None`` (chain tool unmounted) passes through; the parent's
+    ``_OptionsChainReaderShim`` becomes a real :class:`SqlOptionsChainReader`
+    against this worker's own ``DATABASE_PATH`` sessionmaker; any other
+    pickled reader (a data-only test fake) is used as-is.
+    """
+    encoded = payload.get("options_chain_reader_pickle")
+    if encoded is None:
+        return None
+    reader = _decode_pickle(encoded)
+    if isinstance(reader, _OptionsChainReaderShim):
+        return SqlOptionsChainReader(
+            sync_session_factory=sync_session_factory,
+            params=reader.params,
+        )
+    return reader
+
+
 def _rehydrate_validation_state(
     state: ValidationToolState, *, sync_session_factory: Any
 ) -> ValidationToolState:
@@ -490,6 +512,9 @@ async def _run_analyst(payload: dict[str, Any]) -> dict[str, Any]:
             _decode_pickle(payload["initial_validation_state_pickle"]),
             sync_session_factory=sync_session_factory,
         )
+        options_chain_reader = _rehydrate_options_chain_reader(
+            payload, sync_session_factory=sync_session_factory
+        )
         try:
             async with _telemetry_session(provenance_root) as telemetry_session:
                 result = await invoke_analyst(
@@ -503,6 +528,8 @@ async def _run_analyst(payload: dict[str, Any]) -> dict[str, Any]:
                     archive_root=archive_root,
                     telemetry_session=telemetry_session,
                     provenance_root=provenance_root,
+                    options_chain_reader=options_chain_reader,
+                    premium_staleness_tolerance_pct=payload.get("premium_staleness_tolerance_pct"),
                     progress=progress,
                     phase=payload.get("phase", "analyst"),
                 )
@@ -530,6 +557,9 @@ async def _run_strategist(payload: dict[str, Any]) -> dict[str, Any]:
             _decode_pickle(payload["validation_state_pickle"]),
             sync_session_factory=sync_session_factory,
         )
+        options_chain_reader = _rehydrate_options_chain_reader(
+            payload, sync_session_factory=sync_session_factory
+        )
         try:
             async with _telemetry_session(provenance_root) as telemetry_session:
                 result = await run_strategist_harness(
@@ -544,6 +574,7 @@ async def _run_strategist(payload: dict[str, Any]) -> dict[str, Any]:
                     archive_root=archive_root,
                     telemetry_session=telemetry_session,
                     provenance_root=provenance_root,
+                    options_chain_reader=options_chain_reader,
                     progress=progress,
                     phase=payload.get("phase", "strategist"),
                 )
