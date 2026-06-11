@@ -101,7 +101,7 @@ Rewrite the **entire** body via `save_issue`, conforming to
 **Operational runbook impact.** Assess whether the work changes production operational behavior
 — a service, the schedule, a port, an env var, a migration / bootstrap step, a CLI flag, a
 monitoring surface, or a new failure mode / gotcha. If so, add an acceptance criterion that the
-same change updates `scripts/RUNBOOK_production.md` (its Living-document rule: the runbook moves
+same change updates the affected runbook under `docs/runbooks/` (the README's Living-document rule: the runbooks move
 with the behavior). Skip for work with no operator-visible prod-runtime effect (pure internal
 logic, analysis / decision-layer changes, test-only work).
 

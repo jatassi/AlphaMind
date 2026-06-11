@@ -216,7 +216,7 @@ Triage convention: a finding is presumed **tracked** if the comment cites a Line
 
 - **src/alphamind/collector/scheduler.py:128-132** — `polygon needs 2: polygon.equity holds executor 6-13 min ... polygon.options gets misfired` — **Operational workaround for executor contention**
 - **src/alphamind/commands/command_models.py:467-474** — `rejecting non-pl_percentage targets here keeps the OPEN write path's ... unreachable`
-- **src/alphamind/scripts/verify_bootstrap_calibration_mix.py:32** — `deferred=True state-table pattern in verify_distillation`
+- **src/alphamind/scripts/verify/verify_bootstrap_calibration_mix.py:32** — `deferred=True state-table pattern in verify_distillation`
 
 ### tests/
 

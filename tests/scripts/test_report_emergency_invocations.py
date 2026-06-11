@@ -1,4 +1,4 @@
-"""Tests for ``scripts/report_emergency_invocations.py`` (story 15 / ALP-99).
+"""Tests for ``scripts/ops/report_emergency_invocations.py`` (story 15 / ALP-99).
 
 The report joins ``invocations.trigger_type='emergency'`` to ``activity_log``
 to classify each emergency invocation by downstream consequence and surface

@@ -1,4 +1,4 @@
-"""Tests for ``scripts/reconcile_alpaca_state.py`` (ALP-818).
+"""Tests for ``scripts/ops/reconcile_alpaca_state.py`` (ALP-818).
 
 The operator helper compares the live Alpaca paper account against local
 SQLite portfolio state and prints a ``<<< DIVERGENCE`` flag per symbol. The
@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "reconcile_alpaca_state.py"
+_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "ops" / "reconcile_alpaca_state.py"
 
 
 def _load_script() -> Any:

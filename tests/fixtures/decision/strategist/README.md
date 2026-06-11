@@ -1,7 +1,7 @@
 # Strategist output fixtures
 
 Canonical `StrategistOutput` JSON fixtures emitted by
-`scripts/verify_strategist.py --save-fixtures` against a recorded
+`scripts/verify/verify_strategist.py --save-fixtures` against a recorded
 synthesizer archive. Three scenarios:
 
 - `normal.json` — parsed strategist output from the normal-mode
@@ -32,7 +32,7 @@ None of the three fixture JSONs have been emitted yet. The 2026-05-05 verificati
 Fixtures are produced by:
 
 ```bash
-uv run python scripts/verify_strategist.py \
+uv run python scripts/verify/verify_strategist.py \
     --archive-root <archive-root> \
     --synthesizer-invocation-id <synth-inv-id> \
     --save-fixtures
@@ -56,8 +56,8 @@ emergency-invocation paths.
 These fixtures are the canonical strategist-output input for the
 downstream feature trees' verifiers:
 
-- `scripts/verify_proposal_pre_processor.py` (future feature work tree).
-- `scripts/verify_portfolio_manager.py` (future feature work tree).
+- `scripts/verify/verify_proposal_pre_processor.py` (future feature work tree).
+- `scripts/verify/verify_portfolio_manager.py` (future feature work tree).
 
 Each downstream verifier reads the appropriate scenario JSON directly
 rather than chaining live strategist calls (per ALP-116 parent-issue
@@ -86,10 +86,10 @@ Re-run the verifier whenever the strategist's contract changes:
 
 Refresh procedure:
 
-1. Run `scripts/verify_synthesizer.py --archive-root <DIR>
+1. Run `scripts/verify/verify_synthesizer.py --archive-root <DIR>
    --invocation-id <INV>` to produce a fresh synthesizer archive (or
    reuse an existing one if the synthesizer's contract is unchanged).
-2. Run `scripts/verify_strategist.py --archive-root <DIR>
+2. Run `scripts/verify/verify_strategist.py --archive-root <DIR>
    --synthesizer-invocation-id <INV> --save-fixtures` to overwrite
    the three fixture files.
 3. Confirm all three scenarios reported `PASS` (or, if `WARN`, that

@@ -34,8 +34,8 @@ re-creates a husk at genesis (a Broker-Owned Fact with no Intent).
       stream, bracket-stops, greeks, entry-window, recovery sweep),
       `alphamind-safety-core` (**new** — isolated breach + price-staleness), and the
       **out-of-process watchdog** `alphamind-safety-core-watchdog` for the safety core
-      (per ADR-0004). Install scripts: `scripts/install_pipeline_scheduler_service.ps1`,
-      `scripts/install_monitor_service.ps1`, `scripts/install_safety_core_service.ps1`
+      (per ADR-0004). Install scripts: `scripts/services/install_pipeline_scheduler_service.ps1`,
+      `scripts/services/install_monitor_service.ps1`, `scripts/services/install_safety_core_service.ps1`
       (installs both safety-core + watchdog).
 
 ## New account checklist (provision + verify before cutover)

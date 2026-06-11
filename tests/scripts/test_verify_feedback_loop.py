@@ -2,7 +2,7 @@
 
 The script's *seed builder* (``build_test_seed``) and its pure *assertion helpers*
 are the unit-testable surface; the full end-to-end run is exercised by invoking
-``scripts/verify_feedback_loop.py`` manually (it is the verify-of-the-verify, and it
+``scripts/verify/verify_feedback_loop.py`` manually (it is the verify-of-the-verify, and it
 runs ``alembic upgrade head`` against a scratch DB — embedding that in pytest would
 just duplicate the script). These tests pin:
 

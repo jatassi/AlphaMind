@@ -2,7 +2,7 @@
 
 The script's *seed builder* (``build_test_seed``) and its pure *assertion
 helpers* are the unit-testable surface; the full end-to-end run is exercised by
-invoking ``scripts/verify_counterfactual_replay_engine.py`` manually (it is the
+invoking ``scripts/verify/verify_counterfactual_replay_engine.py`` manually (it is the
 verify-of-the-verify, so embedding the whole standalone run in pytest would just
 duplicate the script). These tests pin:
 

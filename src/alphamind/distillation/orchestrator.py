@@ -335,7 +335,7 @@ def _refresh_class_b_state(
 # All six categories (q1, q3, q6, q7, q12, qualitative) wire up directly
 # to their module-level entry points. The :data:`_CATEGORY_COMPUTE_PLACEHOLDER_GAPS`
 # table is preserved as an empty tuple for the verification script in
-# story 13 (`scripts/verify_distillation.py`) so its summary section's
+# story 13 (`scripts/verify/verify_distillation.py`) so its summary section's
 # shape stays stable; it now reports "all categories integrated."
 
 _CATEGORY_COMPUTE_PLACEHOLDER_GAPS: tuple[tuple[str, str], ...] = ()

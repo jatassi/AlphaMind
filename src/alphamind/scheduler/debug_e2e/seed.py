@@ -84,7 +84,7 @@ _STRATEGY_SHORT_LEG_MARK_USD = 1.0
 # State-persistence tables wiped at the start of every debug-e2e
 # invocation, in FK-safe order — children before parents.
 #
-# The snapshot-from-prod workflow (``scripts/snapshot_prod_for_debug_e2e.py``)
+# The snapshot-from-prod workflow (``scripts/verify/snapshot_prod_for_debug_e2e.py``)
 # means the bootstrap DB carries real production rows for every table below,
 # so the wipe list MUST cover all state-persistence tables — not just the
 # narrower set the original design enumerated when the seeder ran against a

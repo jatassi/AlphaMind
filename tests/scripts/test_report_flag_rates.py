@@ -1,4 +1,4 @@
-"""Tests for ``scripts/report_flag_rates.py`` (story 16 / ALP-96).
+"""Tests for ``scripts/ops/report_flag_rates.py`` (story 16 / ALP-96).
 
 The report reads every ``DISTILLATION_ANOMALY_FLAG`` activity-log entry over a
 trailing window, groups by ``(threshold_class, threshold_key)``, and reports the

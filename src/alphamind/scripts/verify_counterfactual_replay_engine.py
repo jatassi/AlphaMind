@@ -1,6 +1,6 @@
 """Standalone end-to-end verify for the counterfactual replay engine (ALP-566).
 
-The engine runs **out-of-pipeline** (CLI only), so ``scripts/verify_debug_e2e.py``
+The engine runs **out-of-pipeline** (CLI only), so ``scripts/verify/verify_debug_e2e.py``
 does not cover it. This script is the deterministic operator check after a code
 change or a migration that touches ``counterfactual_replays``: it seeds a
 controlled DB state of PM-decision rows + bar history + IV snapshots + (for the
@@ -27,7 +27,7 @@ verify-of-the-verify and is not embedded in pytest.
 
 Usage::
 
-    uv run python scripts/verify_counterfactual_replay_engine.py [--db-path PATH]
+    uv run python scripts/verify/verify_counterfactual_replay_engine.py [--db-path PATH]
 
 Exit codes: ``0`` on full PASS, ``1`` on any FAIL.
 """

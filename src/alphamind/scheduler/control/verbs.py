@@ -157,7 +157,7 @@ class UniverseValidationReportRecord:
 
 
 class UniverseValidator(Protocol):
-    """Adapter over ``scripts/validate_universe.py``'s entrypoint.
+    """Adapter over ``scripts/ops/validate_universe.py``'s entrypoint.
 
     The concrete adapter calls the script's per-ticker validator and
     shapes results into :class:`UniverseValidationReportRecord`.  Tests
@@ -364,7 +364,7 @@ def run_universe_validation(
 ) -> RunUniverseValidationResult:
     """``POST /control/run_universe_validation`` — synchronous validation run.
 
-    The validator is the injected adapter over ``scripts/validate_universe.py``.
+    The validator is the injected adapter over ``scripts/ops/validate_universe.py``.
     Any exception from the validator is wrapped in
     :class:`UniverseValidationFailedError` so the route layer can map to
     the ``internal_error`` (HTTP 500) envelope without leaking the

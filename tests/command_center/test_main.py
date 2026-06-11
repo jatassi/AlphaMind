@@ -132,7 +132,7 @@ class TestMaybeEmitSetupToken:
         assert "Edit config/security.yaml:" in caplog.text
         assert 'relying_party_id: "' in caplog.text
         assert "socket.gethostname() ==" in caplog.text  # derives realistic suggestion
-        assert "RUNBOOK_command_center.md § LAN access for the full recipe." in caplog.text
+        assert "docs/runbooks/command-center.md § LAN access for the full recipe." in caplog.text
 
     async def test_no_lan_suggestion_on_localhost_bind(
         self, cc_factory: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture

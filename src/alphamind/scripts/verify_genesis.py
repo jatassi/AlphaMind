@@ -48,7 +48,7 @@ seeded by driving the **production** primitives — :func:`bootstrap_singletons_
 fill consumer), and the real state codecs / ``command_ids`` derivation — so the
 assertions exercise the post-wave behaviors rather than re-implementations.
 
-Operator usage is documented in ``scripts/RUNBOOK_genesis_verify.md``.
+Operator usage is documented in ``scripts/verify/RUNBOOK_genesis_verify.md``.
 
 Exit codes:
 - 0 — every genesis assertion holds

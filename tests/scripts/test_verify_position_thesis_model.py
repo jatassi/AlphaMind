@@ -1,4 +1,4 @@
-"""Tests for scripts/verify_position_thesis_model.py (ALP-336).
+"""Tests for scripts/verify/verify_position_thesis_model.py (ALP-336).
 
 The verify script is offline-only (no SDK, no DB) and exercises every
 deliverable from the position-thesis-model work tree's 15 sub-stories.
@@ -42,7 +42,7 @@ from alphamind._kernel.money import money, price, signed_money
 # Helpers
 # ---------------------------------------------------------------------------
 
-_SCRIPT_PATH = Path(__file__).parents[2] / "scripts" / "verify_position_thesis_model.py"
+_SCRIPT_PATH = Path(__file__).parents[2] / "scripts" / "verify" / "verify_position_thesis_model.py"
 
 
 def _load_script() -> ModuleType:

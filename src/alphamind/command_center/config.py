@@ -111,7 +111,7 @@ class BindConfig(BaseModel):
     For LAN access from other machines on the same network, the bind can be
     widened (0.0.0.0 or the host LAN IP) independently of the public origin
     thanks to the ``access:`` block (see :class:`AccessConfig`). See the
-    RUNBOOK_command_center.md § "LAN access (local network)" for the
+    docs/runbooks/command-center.md § "LAN access (local network)" for the
     supported recipe (hostname choice via mDNS/hosts-file, exact YAML edits,
     restart, re-enrollment on rpId change, firewall note). The old assumption
     that editing bind.host alone suffices for LAN is superseded by the
@@ -155,7 +155,7 @@ class AccessConfig(BaseModel):
     exact v1 shipped configuration.
 
     For LAN usage, supply an explicit ``access:`` block (see
-    RUNBOOK_command_center.md § "LAN access (local network)" for the exact
+    docs/runbooks/command-center.md § "LAN access (local network)" for the exact
     recipe, hostname choice, re-enrollment steps, and firewall guidance).
     Widened binds are supported when paired with the access: origin (the mixed
     case emits a startup warning directing the operator to the RUNBOOK).

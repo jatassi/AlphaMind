@@ -12,7 +12,7 @@ Exit code is 0 regardless of REVIEW verdicts; non-zero exit is reserved
 for script-internal errors.
 
 Usage:
-  uv run python scripts/report_emergency_invocations.py \\
+  uv run python scripts/ops/report_emergency_invocations.py \\
       [--db-path PATH] [--window-days N] [--output text|json]
 """
 

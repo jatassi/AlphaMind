@@ -1,10 +1,14 @@
-"""Dead-pointer guard for CLAUDE.md navigation files.
+"""Dead-pointer guard for navigation docs: CLAUDE.md files, runbooks, operate-prod.
 
-Every path referenced in a tracked ``CLAUDE.md`` must resolve to a real file or
+Every path referenced in a scanned navigation doc must resolve to a real file or
 directory. Stale pointers are the worst documentation failure mode — they send agents on
 wild-goose chases — so this turns a dead reference into a red CI check.
 
-What is checked, per ``CLAUDE.md``:
+Scanned docs: every tracked ``CLAUDE.md``, every ``docs/runbooks/**/*.md`` (the prod
+operational runbooks form a pointer web with the scripts they invoke), and
+``.claude/skills/operate-prod/SKILL.md`` (a pure router over the runbooks).
+
+What is checked, per doc:
   * Markdown link targets ``[text](path)`` (skipping URLs and ``#anchors``).
   * Inline ``code`` spans **outside** fenced ``` code blocks that look like repo paths.
 
@@ -12,7 +16,7 @@ Fenced code blocks are skipped on purpose: they hold commands and placeholder ex
 (``tests/<sub-path>/``, ``test_x.py::test_case``) that are not real paths. Navigation
 pointers that we want guaranteed live in prose / tables as inline code or links.
 
-A candidate resolves if it exists relative to any of: the repo root, the ``CLAUDE.md``'s
+A candidate resolves if it exists relative to any of: the repo root, the doc's
 own directory, or ``src/alphamind/`` (so ``execution/`` shorthand for a package resolves).
 """
 
@@ -24,8 +28,20 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src" / "alphamind"
 
-# Directories whose CLAUDE.md files are copies / vendored and must not be scanned.
-_EXCLUDED_PARTS = {".claude", "node_modules", ".git"}
+# Vendored / copy directories that must not be scanned. Judged on the path RELATIVE to
+# REPO_ROOT — an absolute-parts check would match the ``.claude`` in
+# ``.claude/worktrees/<name>/...`` and silently exclude *every* doc when the suite runs
+# inside a worktree checkout. ``.claude`` itself is only excluded for worktree copies
+# (``.claude/worktrees/``); tracked skill files under ``.claude/skills/`` are scannable.
+_VENDORED_PARTS = {"node_modules", ".git"}
+
+
+def _excluded(f: Path) -> bool:
+    rel_parts = f.relative_to(REPO_ROOT).parts
+    if _VENDORED_PARTS & set(rel_parts):
+        return True
+    return ".claude" in rel_parts and "worktrees" in rel_parts
+
 
 _FENCED_BLOCK = re.compile(r"```.*?```", re.DOTALL)
 _MD_LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
@@ -52,11 +68,13 @@ _EXTENSIONS = (
 )
 
 
-def _claude_md_files() -> list[Path]:
+def _scanned_docs() -> list[Path]:
     files = [REPO_ROOT / "CLAUDE.md"]
     files += sorted(SRC_ROOT.rglob("CLAUDE.md"))
     files += sorted((REPO_ROOT / "docs").rglob("CLAUDE.md"))
-    return [f for f in files if f.exists() and not (set(f.parts) & _EXCLUDED_PARTS)]
+    files += sorted((REPO_ROOT / "docs" / "runbooks").rglob("*.md"))
+    files.append(REPO_ROOT / ".claude" / "skills" / "operate-prod" / "SKILL.md")
+    return [f for f in files if f.exists() and not _excluded(f)]
 
 
 def _is_pathish(token: str) -> bool:
@@ -120,12 +138,25 @@ def test_claude_md_files_exist() -> None:
     assert (REPO_ROOT / "CLAUDE.md").exists()
 
 
-def test_no_dead_pointers_in_claude_md() -> None:
+def test_runbook_web_is_in_scan_set() -> None:
+    """The runbook map and the operate-prod router must exist and be scanned.
+
+    These two docs anchor the prod-operations pointer web (the runbook split):
+    ``docs/runbooks/README.md`` maps the runbooks, and the ``operate-prod`` skill
+    routes situations onto them. If either goes missing — or the collector stops
+    picking them up — the guard would silently shrink its coverage.
+    """
+    scanned = set(_scanned_docs())
+    assert REPO_ROOT / "docs" / "runbooks" / "README.md" in scanned
+    assert REPO_ROOT / ".claude" / "skills" / "operate-prod" / "SKILL.md" in scanned
+
+
+def test_no_dead_pointers_in_nav_docs() -> None:
     dead: list[str] = []
-    for doc in _claude_md_files():
+    for doc in _scanned_docs():
         rel_doc = doc.relative_to(REPO_ROOT)
         for ref in sorted(_candidates(doc.read_text(encoding="utf-8"))):
             if not _resolves(doc, ref):
                 dead.append(f"{rel_doc} -> {ref}")
 
-    assert not dead, "Dead pointers in CLAUDE.md files:\n" + "\n".join(dead)
+    assert not dead, "Dead pointers in navigation docs:\n" + "\n".join(dead)

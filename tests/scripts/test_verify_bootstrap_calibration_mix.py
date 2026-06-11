@@ -1,4 +1,4 @@
-"""Unit tests for ``scripts/verify_bootstrap_calibration_mix.py`` (story 13).
+"""Unit tests for ``scripts/verify/verify_bootstrap_calibration_mix.py`` (story 13).
 
 The calibration-mix verifier reads ``distillation_ticker_baseline`` and
 asserts the calibration-state distribution per ``baseline_kind`` matches

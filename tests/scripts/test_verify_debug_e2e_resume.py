@@ -1,5 +1,5 @@
 """Tests for the ``--resume-from`` plumbing + ``check_deterministic_prefix``
-in ``scripts/verify_debug_e2e.py`` (story ALP-696).
+in ``scripts/verify/verify_debug_e2e.py`` (story ALP-696).
 
 Exercises the four user-visible surfaces this story adds:
 
@@ -34,13 +34,13 @@ import pytest
 
 from alphamind._kernel.archive_layout import invocation_archive_dir
 
-_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "verify_debug_e2e.py"
+_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "verify" / "verify_debug_e2e.py"
 _INVOCATION_AS_OF = datetime(2026, 5, 26, tzinfo=UTC)
 
 
 @pytest.fixture(scope="module")
 def verify_module() -> ModuleType:
-    """Load ``scripts/verify_debug_e2e.py`` as an importable module.
+    """Load ``scripts/verify/verify_debug_e2e.py`` as an importable module.
 
     Mirrors :func:`tests.scripts.test_verify_debug_e2e.verify_module`
     so the two suites can co-exist under the same conftest without

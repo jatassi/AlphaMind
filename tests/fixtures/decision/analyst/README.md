@@ -1,7 +1,7 @@
 # Analyst output fixtures
 
 Canonical `AnalystOutput` JSON fixtures emitted by
-`scripts/verify_analyst.py --save-fixtures` against a recorded
+`scripts/verify/verify_analyst.py --save-fixtures` against a recorded
 synthesizer archive. Two scenarios:
 
 - `normal.json` — parsed analyst output from the normal-mode scenario.
@@ -18,7 +18,7 @@ Both files validate cleanly against
 Fixtures are produced by:
 
 ```bash
-uv run python scripts/verify_analyst.py \
+uv run python scripts/verify/verify_analyst.py \
     --archive-root <archive-root> \
     --synthesizer-invocation-id <synth-inv-id> \
     --save-fixtures
@@ -36,9 +36,9 @@ in the same archive.
 These fixtures are the canonical analyst-output input for the downstream
 feature trees' verifiers:
 
-- `scripts/verify_strategist.py` (future feature work tree).
-- `scripts/verify_proposal_pre_processor.py` (future feature work tree).
-- `scripts/verify_portfolio_manager.py` (future feature work tree).
+- `scripts/verify/verify_strategist.py` (future feature work tree).
+- `scripts/verify/verify_proposal_pre_processor.py` (future feature work tree).
+- `scripts/verify/verify_portfolio_manager.py` (future feature work tree).
 
 Each downstream verifier reads `normal.json` and `halt.json` directly
 rather than chaining live analyst calls (per ALP-115 parent-issue
@@ -64,9 +64,9 @@ Re-run the verifier whenever the analyst's contract changes:
 
 Refresh procedure:
 
-1. Run `scripts/verify_synthesizer.py --archive-root <DIR> --invocation-id <INV>`
+1. Run `scripts/verify/verify_synthesizer.py --archive-root <DIR> --invocation-id <INV>`
    to produce a fresh synthesizer archive.
-2. Run `scripts/verify_analyst.py --archive-root <DIR>
+2. Run `scripts/verify/verify_analyst.py --archive-root <DIR>
    --synthesizer-invocation-id <INV> --save-fixtures` to overwrite the
    two fixture files.
 3. Confirm both scenarios reported `PASS` (or, if `WARN`, that the

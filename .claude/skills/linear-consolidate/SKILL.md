@@ -1,11 +1,11 @@
 ---
 name: linear-consolidate
-description: Use to consolidate AlphaMind's Linear workspace under the free-tier 250-issue cap by rolling up Done feature sub-issues into the parent Issue's body and archiving the sub-issues. Triggers on `/linear-consolidate <Feature>` and operator phrases like "free up Linear slots", "I'm hitting the Linear free-tier limit", "consolidate Done features", "roll up the X sub-issues", "clean up Linear", "the Linear workspace is full", "archive shipped sub-issues without losing history". The skill verifies parity between Linear sub-issue bodies and local archive files at `docs/_archive/implementation/<layer>/<feature>/`, resolves drift via shipped `src/` as tiebreaker (the local archive is the in-repo canonical record), drafts a rolled-up parent body that opens with a non-bullet paragraph (Linear's renderer drops bullets in the second list otherwise), saves it, and archives the sub-issues via `scripts/archive_linear_issues.py` after operator approval. The supporting scripts (`check_linear_cap.py`, `export_linear_issues.py`, `linear_parity_diff.py`, `archive_linear_issues.py`) hit the Linear GraphQL API directly — the Linear MCP cannot count issues, archive them, or return un-truncated bodies. Do NOT use for non-AlphaMind workspaces, in-flight features, or features without local archive copies.
+description: Use to consolidate AlphaMind's Linear workspace under the free-tier 250-issue cap by rolling up Done feature sub-issues into the parent Issue's body and archiving the sub-issues. Triggers on `/linear-consolidate <Feature>` and operator phrases like "free up Linear slots", "I'm hitting the Linear free-tier limit", "consolidate Done features", "roll up the X sub-issues", "clean up Linear", "the Linear workspace is full", "archive shipped sub-issues without losing history". The skill verifies parity between Linear sub-issue bodies and local archive files at `docs/_archive/implementation/<layer>/<feature>/`, resolves drift via shipped `src/` as tiebreaker (the local archive is the in-repo canonical record), drafts a rolled-up parent body that opens with a non-bullet paragraph (Linear's renderer drops bullets in the second list otherwise), saves it, and archives the sub-issues via `scripts/linear/archive_linear_issues.py` after operator approval. The supporting scripts (`check_linear_cap.py`, `export_linear_issues.py`, `linear_parity_diff.py`, `archive_linear_issues.py`) hit the Linear GraphQL API directly — the Linear MCP cannot count issues, archive them, or return un-truncated bodies. Do NOT use for non-AlphaMind workspaces, in-flight features, or features without local archive copies.
 ---
 
 # Linear consolidation under free-tier ceiling
 
-The operator names a Done AlphaMind feature whose Linear sub-issues should be rolled up into the parent Issue's body and then archived, freeing slots against the free-tier 250-issue cap. The output of a successful run is: the parent Issue body updated with a `## Shipped stories` index of every sub-issue, every Done sub-issue archived via `scripts/archive_linear_issues.py`, and the workspace's active (non-archived) issue count reduced by exactly the number archived.
+The operator names a Done AlphaMind feature whose Linear sub-issues should be rolled up into the parent Issue's body and then archived, freeing slots against the free-tier 250-issue cap. The output of a successful run is: the parent Issue body updated with a `## Shipped stories` index of every sub-issue, every Done sub-issue archived via `scripts/linear/archive_linear_issues.py`, and the workspace's active (non-archived) issue count reduced by exactly the number archived.
 
 This skill leans on four scripts under `scripts/` that hit the Linear GraphQL API directly — the Linear MCP server can neither count issues, archive them, nor return un-truncated issue bodies:
 
@@ -29,7 +29,7 @@ A feature name (e.g. `Configuration management`, `Collector`, `Portfolio state`)
 1. **Parent ALP-ID** — via `mcp__linear-server__list_issues` filtered by `query=<feature name>`, or by reading the project bullet in `docs/project-tracker.md`.
 2. **Local archive path** at `docs/_archive/implementation/<layer>/<feature>/` — e.g. `foundation/configuration/`, `01-data-layer/collector/`, `06-risk-guardrails/breach-behavior/`. List with `ls` to confirm the directory exists and holds one `.md` per expected sub-issue.
 
-If the operator doesn't know which feature to consolidate, run `uv run python scripts/linear_consolidation_candidates.py` — it lists every parent whose sub-issues are all Done, ranked by the slots each rollup would free.
+If the operator doesn't know which feature to consolidate, run `uv run python scripts/linear/linear_consolidation_candidates.py` — it lists every parent whose sub-issues are all Done, ranked by the slots each rollup would free.
 
 If the parent isn't in `Done` status, **stop** — the feature is in flight, its sub-issues should not be archived (orchestration may still need the dependency graph). Surface to the operator and exit.
 
@@ -61,7 +61,7 @@ This isn't optional. A pilot run found one cosmetic drift (`18 entries` vs `19 e
 
 ### 3. Archiving runs through the script, not the MCP or the UI
 
-The Linear MCP exposes no archive or delete tool — `save_issue` only updates fields. Archiving happens via `scripts/archive_linear_issues.py`, which calls the GraphQL `issueArchive` mutation. The script is **dry-run by default**: a plain invocation prints exactly what it would archive and changes nothing; `--apply` performs the archive. Never hand the operator a manual Cmd+Delete instruction — the script is the mechanism, and the operator's role is to approve the dry-run plan before you re-run with `--apply`.
+The Linear MCP exposes no archive or delete tool — `save_issue` only updates fields. Archiving happens via `scripts/linear/archive_linear_issues.py`, which calls the GraphQL `issueArchive` mutation. The script is **dry-run by default**: a plain invocation prints exactly what it would archive and changes nothing; `--apply` performs the archive. Never hand the operator a manual Cmd+Delete instruction — the script is the mechanism, and the operator's role is to approve the dry-run plan before you re-run with `--apply`.
 
 ### 4. Parity verification runs through the diff script
 
@@ -76,7 +76,7 @@ Parity-checking 10–30 sub-issue bodies against local files is a deterministic 
 3. Fetch the parent body (`get_issue`) and the Done sub-issues (`list_issues parentId=ALP-X state=Done`).
 4. List the local archive files (`ls`).
 5. Build an ID-to-filename mapping by user-story index (the local files use `01-…`, `02-…`, `03a-…` prefixes; Linear sub-issue titles start with `01 — `, `02 — `, etc.).
-6. Capture the baseline cap count: run `uv run python scripts/check_linear_cap.py` and note the `active (non-archived) issues` figure. Phase 6 re-runs the script; the drop should equal the number of sub-issues archived.
+6. Capture the baseline cap count: run `uv run python scripts/linear/check_linear_cap.py` and note the `active (non-archived) issues` figure. Phase 6 re-runs the script; the drop should equal the number of sub-issues archived.
 
 ### Phase 1.5 — Materialize missing archives (when needed)
 
@@ -85,7 +85,7 @@ If `docs/_archive/implementation/<layer>/<feature>/` doesn't exist, or holds few
 1. Confirm the `<layer>` segment matches the existing convention — `ls docs/_archive/implementation/` first (`foundation`, `01-data-layer`, `02-distillation-layer`, `03-analysis-layer`, `04-decision-layer`, `05-execution-layer`, `06-risk-guardrails`).
 2. Run the export script — it resolves the parent, fetches every sub-issue body via GraphQL (full, no truncation), and writes one `.md` per sub-issue named by user-story index (`03a — Bracket-thesis coverage cross-validator` → `03a-bracket-thesis-coverage-cross-validator.md`):
 
-       uv run python scripts/export_linear_issues.py ALP-X \
+       uv run python scripts/linear/export_linear_issues.py ALP-X \
            --out-dir docs/_archive/implementation/<layer>/<feature>
 
    Add `--include-archived` if some sub-issues were already archived in a prior partial run.
@@ -97,7 +97,7 @@ If `docs/_archive/implementation/<layer>/<feature>/` doesn't exist, or holds few
 
 Run the parity-diff script against the pre-existing local archive:
 
-    uv run python scripts/linear_parity_diff.py ALP-X \
+    uv run python scripts/linear/linear_parity_diff.py ALP-X \
         --archive-dir docs/_archive/implementation/<layer>/<feature>
 
 It prints a per-story table — `MATCH`, `DIFFERS`, `LINEAR-ONLY` (a sub-issue with no local file), `LOCAL-ONLY` (a local file with no sub-issue) — followed by a unified diff for every `DIFFERS` row. Exit code is `0` when every story matches, `1` when any drift is found.
@@ -150,15 +150,15 @@ Show the proposed body in a markdown code block. Wait for operator approval befo
 
 1. Dry-run the archive to produce the plan — it changes nothing:
 
-       uv run python scripts/archive_linear_issues.py --parent ALP-X
+       uv run python scripts/linear/archive_linear_issues.py --parent ALP-X
 
    The script lists every Done sub-issue as `WOULD-ARCHIVE` and reports any non-Done sub-issue as `SKIP-NOT-DONE` (see "Features with active gaps" below — handled automatically).
 2. Show the operator the plan and get explicit approval.
 3. On approval, re-run with `--apply`:
 
-       uv run python scripts/archive_linear_issues.py --parent ALP-X --apply
+       uv run python scripts/linear/archive_linear_issues.py --parent ALP-X --apply
 
-4. Recount: `uv run python scripts/check_linear_cap.py`. Compare `active` against the Phase 1 baseline — the drop should equal the number archived. If it didn't, something went wrong (a per-issue archive failed, network issue) — the script's own output flags `FAILED` rows; surface and investigate. The freed `buffer` is the headline result of the run.
+4. Recount: `uv run python scripts/linear/check_linear_cap.py`. Compare `active` against the Phase 1 baseline — the drop should equal the number archived. If it didn't, something went wrong (a per-issue archive failed, network issue) — the script's own output flags `FAILED` rows; surface and investigate. The freed `buffer` is the headline result of the run.
 
 To archive a hand-picked set rather than a whole parent's Done children, use `--ids ALP-a,ALP-b,…` instead of `--parent`.
 
@@ -176,7 +176,7 @@ Some features have non-Done sub-issues mixed into a contiguous Done range (e.g. 
 
 The "To-dos" project holds standalone Done issues with no sub-issues — one-off bug fixes (e.g. ALP-266 "session.py should fail loudly…", ALP-267 "Suppress benign aclose() warning…"). These need no rollup; archive them directly with `archive_linear_issues.py --ids ALP-a,ALP-b,…` after confirming the list with the operator.
 
-For dead-weight beyond shipped features, `uv run python scripts/linear_stale_sweep.py` finds non-archived Canceled / Duplicate issues — they count against the cap too, and can be archived directly via `--ids`.
+For dead-weight beyond shipped features, `uv run python scripts/linear/linear_stale_sweep.py` finds non-archived Canceled / Duplicate issues — they count against the cap too, and can be archived directly via `--ids`.
 
 ### Parent not in Done status
 
@@ -190,4 +190,4 @@ Skip the feature. The dependency graph is still load-bearing for `/orchestrate` 
 
 ## Status checks
 
-When the operator asks for a status check ("what have we cleaned up so far?" / "how much headroom is left?"), compute it on demand — `uv run python scripts/check_linear_cap.py --breakdown` reports the current active count, buffer to the cap, and the per-state/per-project split. Don't maintain a running tally in memory; the live count is authoritative and the scripts already produce it.
+When the operator asks for a status check ("what have we cleaned up so far?" / "how much headroom is left?"), compute it on demand — `uv run python scripts/linear/check_linear_cap.py --breakdown` reports the current active count, buffer to the cap, and the per-state/per-project split. Don't maintain a running tally in memory; the live count is authoritative and the scripts already produce it.

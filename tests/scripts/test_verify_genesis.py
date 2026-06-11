@@ -1,6 +1,6 @@
 """Genesis-verify script — the §8 first-run assertions made executable (ALP-858).
 
-``scripts/verify_genesis.py`` (module:
+``scripts/verify/verify_genesis.py`` (module:
 :mod:`alphamind.scripts.verify_genesis`) asserts the genesis-cutover runbook §8
 checklist on a fresh account: zero reconciliation alerts (by construction), a
 canary entry fill that self-attributes via the broker-carried link (no

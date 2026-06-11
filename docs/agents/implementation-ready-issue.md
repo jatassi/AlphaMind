@@ -113,5 +113,5 @@ The issue-body-specific subset of `docs/agents/linear.md` — read that for the 
   cosmetic, don't chase the diff.
 - **Status names are case-sensitive** (`Todo`, not `todo`). An authoring skill leaves status
   at `Todo` unless told otherwise — it makes an issue ready, it doesn't start it.
-- **Active-issue cap** (free tier, ~250): `uv run python scripts/check_linear_cap.py` for
+- **Active-issue cap** (free tier, ~250): `uv run python scripts/linear/check_linear_cap.py` for
   the count; mind it when an authoring run creates new issues or files spin-offs.

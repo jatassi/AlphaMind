@@ -18,7 +18,7 @@ Secrets live in `.env` (referenced by env-var name from `config/*.yaml`). See [`
 ## Scripts
 
 ```bash
-uv run python scripts/validate_universe.py
+uv run python scripts/ops/validate_universe.py
 ```
 
 Validates `config/assets.yaml` against the five inclusion criteria documented in [`docs/design/asset-universe-validation.md`](docs/design/asset-universe-validation.md).

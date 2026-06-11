@@ -1,4 +1,4 @@
-"""Shape tests for ``scripts/verify_command_center.py`` (story 07 / ALP-685).
+"""Shape tests for ``scripts/verify/verify_command_center.py`` (story 07 / ALP-685).
 
 The script is the operator-runnable end-to-end gate for the command
 center; its seven check helpers (``check_daemons_bind``,
@@ -28,12 +28,14 @@ from types import ModuleType
 
 import pytest
 
-_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "verify_command_center.py"
+_SCRIPT_PATH = (
+    Path(__file__).resolve().parents[2] / "scripts" / "verify" / "verify_command_center.py"
+)
 
 
 @pytest.fixture(scope="module")
 def verify_module() -> ModuleType:
-    """Load ``scripts/verify_command_center.py`` as an importable module.
+    """Load ``scripts/verify/verify_command_center.py`` as an importable module.
 
     The script lives under ``scripts/`` rather than ``src/`` per the
     "no shim split" convention shared by ``verify_debug_e2e.py``; we
