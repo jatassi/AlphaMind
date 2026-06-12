@@ -167,9 +167,8 @@ def collect_options_chains(
     def _fetch_chain(underlying: str) -> list[Any]:
         return _client.list_snapshot_options_chain(underlying)  # type: ignore[no-any-return]
 
-    spot_by_ticker = _fetch_spot_map(ticker_scope, _alpaca_stock_client)
-
     with track_run("polygon.options", _repo=_repo) as run:
+        spot_by_ticker = _fetch_spot_map(ticker_scope, _alpaca_stock_client)
         rows_written = 0
         single = len(ticker_scope) == 1
 
@@ -222,6 +221,7 @@ def _build_rows(
     instead of ``polygon+alpaca``.
     """
     snapshot_source = "polygon" if alpaca_quotes is None else "polygon+alpaca"
+    quote_lookup: Mapping[str, OptionQuote] = alpaca_quotes or {}
     contract_rows: list[dict[str, Any]] = []
     snapshot_rows: list[dict[str, Any]] = []
     for snap in snapshots:
@@ -231,7 +231,7 @@ def _build_rows(
         lq = snap.last_quote
         lt = snap.last_trade
         ua = snap.underlying_asset
-        aq = (alpaca_quotes or {}).get(details.ticker.removeprefix("O:"))
+        aq = quote_lookup.get(details.ticker.removeprefix("O:"))
 
         contract_rows.append(
             {

@@ -18,6 +18,7 @@ ALPACA_FETCH_ERRORS                        — exception classes callers degrade
 
 from __future__ import annotations
 
+import functools
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -36,10 +37,35 @@ _OPTIONS_FEED = OptionsFeed.INDICATIVE
 
 # Exceptions a chain/spot fetch raises on vendor or transport failure —
 # callers degrade to Polygon-only rows on these rather than aborting.
+# ``ValueError`` covers alpaca-py's unexpected-response-shape error ("The
+# data in response does not match any known keys") and pydantic response
+# validation (``ValidationError`` subclasses ``ValueError``) — a vendor
+# format change must degrade, not abort the collection run.
 ALPACA_FETCH_ERRORS: tuple[type[Exception], ...] = (
     APIError,
     requests.exceptions.RequestException,
+    ValueError,
 )
+
+# alpaca-py issues blocking ``requests`` calls without a timeout, so a hung
+# connection would wedge the collector task forever. Mirrors the execution
+# layer's client factory (``broker_adapter/client_factory.py``, ALP-841) —
+# duplicated because ``data_sources`` and ``execution`` are independent
+# siblings under the import-linter layer contract.
+_SOCKET_TIMEOUT_SECONDS = 60.0
+
+
+def _install_socket_timeout(client: Any) -> None:
+    """Default a connect/read timeout onto a REST client's ``requests`` session."""
+    session: Any = client._session
+    original_request = session.request
+
+    @functools.wraps(original_request)
+    def request_with_timeout(*args: Any, **kwargs: Any) -> Any:
+        kwargs.setdefault("timeout", _SOCKET_TIMEOUT_SECONDS)
+        return original_request(*args, **kwargs)
+
+    session.request = request_with_timeout
 
 
 @dataclass(frozen=True)
@@ -58,18 +84,22 @@ def make_option_client() -> OptionHistoricalDataClient:
     mirrors the :class:`~alphamind.data_sources.polygon.client.PolygonClient`
     convention. Raises ``ValueError`` (from the SDK) when the keys are unset.
     """
-    return OptionHistoricalDataClient(
+    client = OptionHistoricalDataClient(
         api_key=os.environ.get("ALPACA_PAPER_KEY"),
         secret_key=os.environ.get("ALPACA_PAPER_SECRET"),
     )
+    _install_socket_timeout(client)
+    return client
 
 
 def make_stock_client() -> StockHistoricalDataClient:
     """Build the stock-trade client from ``ALPACA_PAPER_*`` env vars."""
-    return StockHistoricalDataClient(
+    client = StockHistoricalDataClient(
         api_key=os.environ.get("ALPACA_PAPER_KEY"),
         secret_key=os.environ.get("ALPACA_PAPER_SECRET"),
     )
+    _install_socket_timeout(client)
+    return client
 
 
 def fetch_chain_quotes(underlying: str, *, _client: Any = None) -> dict[str, OptionQuote]:

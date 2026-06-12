@@ -721,8 +721,8 @@ class TestCollectOptionsChainsAlpacaMerge:
         assert merged.source == "polygon+alpaca"
 
     def test_spot_fetch_failure_leaves_underlying_price_none_without_aborting(self) -> None:
-        from alpaca.common.exceptions import APIError
-
+        """Raises ValueError — alpaca-py's unexpected-response-shape error —
+        which must degrade like any vendor failure, not abort the run."""
         from alphamind.data_sources.polygon import options
 
         sf, _ = _make_db()
@@ -741,7 +741,7 @@ class TestCollectOptionsChainsAlpacaMerge:
 
         class _SpotFails(FakeAlpacaStockClient):
             def get_stock_latest_trade(self, request_params: Any) -> dict[str, Any]:
-                raise APIError("spot down")  # type: ignore[no-untyped-call]
+                raise ValueError("The data in response does not match any known keys.")
 
         options.collect_options_chains(
             ticker_scope=["AAPL"],

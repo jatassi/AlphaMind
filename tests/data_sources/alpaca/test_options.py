@@ -68,6 +68,41 @@ class TestFetchChainQuotes:
 # ---------------------------------------------------------------------------
 
 
+class TestInstallSocketTimeout:
+    def test_defaults_a_timeout_on_session_request(self) -> None:
+        """alpaca-py issues blocking ``requests`` calls with no ``timeout``;
+        the factories wrap the session's ``request`` so a stalled socket
+        cannot wedge the collector task forever (mirrors the execution
+        layer's client factory — ALP-841)."""
+        from typing import Any, cast
+
+        import requests
+
+        from alphamind.data_sources.alpaca.options import (
+            _SOCKET_TIMEOUT_SECONDS,
+            _install_socket_timeout,
+        )
+
+        captured: dict[str, Any] = {}
+
+        class _RecordingSession(requests.Session):
+            def request(self, *args: Any, **kwargs: Any) -> Any:
+                captured.update(kwargs)
+                return "ok"
+
+        client = cast(Any, type("FakeRest", (), {})())
+        client._session = _RecordingSession()
+
+        _install_socket_timeout(client)
+
+        assert client._session.request("GET", "https://example/x") == "ok"
+        assert captured["timeout"] == _SOCKET_TIMEOUT_SECONDS
+
+        captured.clear()
+        client._session.request("GET", "https://example/x", timeout=5.0)
+        assert captured["timeout"] == 5.0
+
+
 class TestFetchUnderlyingTrades:
     def test_one_multi_symbol_iex_request_maps_prices_and_omits_missing(self) -> None:
         from alpaca.data.enums import DataFeed
