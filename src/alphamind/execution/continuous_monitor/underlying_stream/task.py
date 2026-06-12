@@ -40,13 +40,14 @@ import contextlib
 import logging
 import os
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 
 from alphamind._kernel.exception_group import first_non_cancelled
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.broker_adapter import StreamActivityMonitor, StreamStalledError
+from alphamind.execution.broker_adapter.bounded_streams import QuoteHandler
 from alphamind.execution.continuous_monitor.session import MonitorMode, MonitorSession
 from alphamind.execution.continuous_monitor.underlying_stream.cache import (
     UnderlyingPriceCache,
@@ -63,9 +64,6 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Vendor surface — Protocols the task depends on
 # ---------------------------------------------------------------------------
-
-
-QuoteHandler = Callable[[Any], Awaitable[None]]
 
 
 @runtime_checkable
@@ -331,8 +329,9 @@ async def _run_one_connection(  # noqa: PLR0913 — internal plumbing; each para
     if current:
         await stream.subscribe_quotes(_handler, *sorted(current))
     else:
-        # ``subscribe_quotes`` with no symbols still registers the handler so
-        # late-arriving subscribe calls reuse it.
+        # With no symbols the vendor registers nothing; ``_run_forever`` then
+        # waits (by design) until the first diff delta registers a symbol, at
+        # which point its connect-time subscribe message carries the full set.
         await stream.subscribe_quotes(_handler)
 
     # ``_run_forever`` is alpaca-py's documented async entry point — the

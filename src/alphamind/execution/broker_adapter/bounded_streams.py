@@ -117,6 +117,8 @@ class _SyncTradingStream(Protocol):
 
     async def _run_forever(self) -> None: ...
 
+    async def stop_ws(self) -> None: ...
+
 
 class BoundedTradingStream:
     """Async facade over a vendor ``TradingStream`` (ALP-946).
@@ -143,3 +145,6 @@ class BoundedTradingStream:
 
     async def _run_forever(self) -> None:
         await self._stream._run_forever()
+
+    async def stop_ws(self) -> None:
+        await self._stream.stop_ws()

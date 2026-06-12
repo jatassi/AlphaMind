@@ -61,10 +61,10 @@ _PAGE_SIZE = 500
 # endpoints cannot share ``_PAGE_SIZE`` — requesting 500 here is a hard 422 (ALP-932).
 _ACTIVITIES_PAGE_SIZE = 100
 
-# Per-page wall-clock budget (seconds) for a synchronous Alpaca REST call run on
-# a worker thread. alpaca-py's ``TradingClient`` issues blocking ``requests``
-# calls with no socket timeout, so a hung connection would otherwise block its
-# worker thread forever; bounding the ``to_thread`` await with ``wait_for``
+# Per-page wall-clock budget (seconds) for a synchronous Alpaca REST call run
+# through ``bounded_call``. alpaca-py's ``TradingClient`` issues blocking
+# ``requests`` calls with no socket timeout, so a hung connection would
+# otherwise block its worker thread forever; the ``bounded_call`` bound
 # guarantees the *calling event loop* never freezes regardless of how long the
 # socket hangs (the ALP-841 lesson — a bare-sync ``get_orders`` froze the
 # monitor loop and its watchdog for ~4.5h). The client factory also installs a

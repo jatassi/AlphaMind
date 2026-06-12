@@ -122,12 +122,16 @@ class _RecordingVendorTradingStream:
     def __init__(self) -> None:
         self.subscribe_calls: list[tuple[int, object]] = []
         self.run_forever_called = False
+        self.stop_ws_called = False
 
     def subscribe_trade_updates(self, handler: Any) -> None:
         self.subscribe_calls.append((threading.get_ident(), handler))
 
     async def _run_forever(self) -> None:
         self.run_forever_called = True
+
+    async def stop_ws(self) -> None:
+        self.stop_ws_called = True
 
 
 class TestBoundedTradingStream:
@@ -143,10 +147,12 @@ class TestBoundedTradingStream:
         assert thread_id != threading.get_ident()
         assert seen_handler is handler
 
-    async def test_run_forever_delegates(self) -> None:
+    async def test_run_forever_and_stop_ws_delegate(self) -> None:
         vendor = _RecordingVendorTradingStream()
         facade = BoundedTradingStream(vendor)
 
         await facade._run_forever()
+        await facade.stop_ws()
 
         assert vendor.run_forever_called
+        assert vendor.stop_ws_called
