@@ -22,6 +22,14 @@ from alphamind.persistence.models import (
     OptionsContractSnapshots,
 )
 from alphamind.persistence.session import make_engine, make_session_factory
+from tests.data_sources._fakes.alpaca import (
+    FakeAlpacaOptionClient,
+    FakeAlpacaStockClient,
+    FakeOptionQuoteRecord,
+    FakeOptionSnapshotRecord,
+    FakeOptionTradeRecord,
+    FakeStockTradeRecord,
+)
 from tests.data_sources._fakes.polygon import (
     FakePolygonAPI,
     make_agg,
@@ -421,6 +429,7 @@ class TestCollectOptionsChains:
             _client=client,
             _session_factory=sf,
             _repo=FakeRunRepo(),
+            **_empty_alpaca_clients(),
         )
 
         with sf() as sess:
@@ -447,6 +456,7 @@ class TestCollectOptionsChains:
             _client=client,
             _session_factory=sf,
             _repo=FakeRunRepo(),
+            **_empty_alpaca_clients(),
         )
 
         with sf() as sess:
@@ -458,6 +468,7 @@ class TestCollectOptionsChains:
             _client=client,
             _session_factory=sf,
             _repo=FakeRunRepo(),
+            **_empty_alpaca_clients(),
         )
 
         with sf() as sess:
@@ -483,6 +494,7 @@ class TestCollectOptionsChains:
             _session_factory=sf,
             _repo=FakeRunRepo(),
             _snapshot_ts=fixed_ts,
+            **_empty_alpaca_clients(),
         )
         options.collect_options_chains(
             ticker_scope=["AAPL"],
@@ -490,6 +502,7 @@ class TestCollectOptionsChains:
             _session_factory=sf,
             _repo=FakeRunRepo(),
             _snapshot_ts=fixed_ts,
+            **_empty_alpaca_clients(),
         )
 
         with sf() as sess:
@@ -516,11 +529,234 @@ class TestCollectOptionsChains:
                 _client=client,
                 _session_factory=sf,
                 _repo=repo,
+                **_empty_alpaca_clients(),
             )
 
         assert repo.failed()
         with sf() as sess:
             assert sess.query(OptionsContracts).count() == 0
+
+
+def _quoteless_snapshot(**overrides: Any) -> Any:
+    """The production Polygon plan shape: greeks/OI present, NBBO/spot withheld."""
+    return make_option_snapshot(
+        bid=None, ask=None, last_price=None, underlying_price=None, **overrides
+    )
+
+
+def _empty_alpaca_clients() -> dict[str, Any]:
+    """Hermetic no-data Alpaca fakes — keeps tests off the real SDK clients
+    (and the network) even when ``ALPACA_PAPER_*`` env vars are set."""
+    return {
+        "_alpaca_option_client": FakeAlpacaOptionClient(),
+        "_alpaca_stock_client": FakeAlpacaStockClient(),
+    }
+
+
+class TestCollectOptionsChainsAlpacaMerge:
+    """ALP-949 — Alpaca indicative quotes + IEX spot merged into Polygon rows."""
+
+    def test_alpaca_fills_quote_columns_on_quoteless_polygon_rows(self) -> None:
+        """Quote-less Polygon snapshots gain bid/ask/last_price from the
+        Alpaca chain (matched via the bare OCC symbol — Polygon's ``O:``
+        prefix stripped) and the IEX spot on every row; a contract absent
+        from the Alpaca chain keeps None quote fields. Source records the
+        merge for the whole underlying."""
+        from alphamind.data_sources.polygon import options
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, ["AAPL"], [])
+
+        polygon_client = FakePolygonAPI(
+            snapshots_by_underlying={
+                "AAPL": [
+                    _quoteless_snapshot(),
+                    _quoteless_snapshot(
+                        contract_ticker="O:AAPL260117P00200000", contract_type="put"
+                    ),
+                ]
+            }
+        )
+        alpaca_option_client = FakeAlpacaOptionClient(
+            chains_by_underlying={
+                "AAPL": {
+                    "AAPL260117C00200000": FakeOptionSnapshotRecord(
+                        latest_quote=FakeOptionQuoteRecord(bid_price=5.0, ask_price=5.5),
+                        latest_trade=FakeOptionTradeRecord(price=5.2),
+                    )
+                }
+            }
+        )
+        alpaca_stock_client = FakeAlpacaStockClient(
+            trades_by_symbol={"AAPL": FakeStockTradeRecord(price=195.5)}
+        )
+
+        options.collect_options_chains(
+            ticker_scope=["AAPL"],
+            _client=polygon_client,
+            _session_factory=sf,
+            _repo=FakeRunRepo(),
+            _alpaca_option_client=alpaca_option_client,
+            _alpaca_stock_client=alpaca_stock_client,
+        )
+
+        with sf() as sess:
+            rows = {r.contract_ticker: r for r in sess.query(OptionsContractSnapshots).all()}
+        assert len(rows) == 2
+        call_row = rows["O:AAPL260117C00200000"]
+        assert call_row.bid == pytest.approx(5.0)
+        assert call_row.ask == pytest.approx(5.5)
+        assert call_row.last_price == pytest.approx(5.2)
+        put_row = rows["O:AAPL260117P00200000"]
+        assert (put_row.bid, put_row.ask, put_row.last_price) == (None, None, None)
+        for row in rows.values():
+            assert row.underlying_price == pytest.approx(195.5)
+            assert row.source == "polygon+alpaca"
+
+    def test_polygon_delivered_values_win_per_field(self) -> None:
+        """Under a future Polygon plan upgrade the Polygon-parsed bid/ask/
+        last_price/underlying_price survive the merge unchanged."""
+        from alphamind.data_sources.polygon import options
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, ["AAPL"], [])
+
+        polygon_client = FakePolygonAPI(snapshots_by_underlying={"AAPL": [make_option_snapshot()]})
+        alpaca_option_client = FakeAlpacaOptionClient(
+            chains_by_underlying={
+                "AAPL": {
+                    "AAPL260117C00200000": FakeOptionSnapshotRecord(
+                        latest_quote=FakeOptionQuoteRecord(bid_price=9.0, ask_price=9.9),
+                        latest_trade=FakeOptionTradeRecord(price=9.5),
+                    )
+                }
+            }
+        )
+        alpaca_stock_client = FakeAlpacaStockClient(
+            trades_by_symbol={"AAPL": FakeStockTradeRecord(price=200.0)}
+        )
+
+        options.collect_options_chains(
+            ticker_scope=["AAPL"],
+            _client=polygon_client,
+            _session_factory=sf,
+            _repo=FakeRunRepo(),
+            _alpaca_option_client=alpaca_option_client,
+            _alpaca_stock_client=alpaca_stock_client,
+        )
+
+        with sf() as sess:
+            row = sess.query(OptionsContractSnapshots).one()
+        assert row.bid == pytest.approx(5.0)
+        assert row.ask == pytest.approx(5.5)
+        assert row.last_price == pytest.approx(5.25)
+        assert row.underlying_price == pytest.approx(195.0)
+        assert row.source == "polygon+alpaca"
+
+    def test_alpaca_chain_failure_isolated_per_underlying(self) -> None:
+        """A chain-fetch failure for one underlying writes its quote-less
+        Polygon rows with ``source`` ``polygon`` and leaves the other
+        underlyings in the run fully merged."""
+        from alpaca.common.exceptions import APIError
+
+        from alphamind.data_sources.polygon import options
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, ["AAPL", "MSFT"], [])
+
+        polygon_client = FakePolygonAPI(
+            snapshots_by_underlying={
+                "AAPL": [_quoteless_snapshot()],
+                "MSFT": [
+                    _quoteless_snapshot(
+                        contract_ticker="O:MSFT260117C00400000", underlying="MSFT", strike=400.0
+                    )
+                ],
+            }
+        )
+
+        class _ChainFailsForAAPL(FakeAlpacaOptionClient):
+            def get_option_chain(self, request_params: Any) -> dict[str, Any]:
+                if request_params.underlying_symbol == "AAPL":
+                    raise APIError("boom")  # type: ignore[no-untyped-call]
+                return super().get_option_chain(request_params)
+
+        alpaca_option_client = _ChainFailsForAAPL(
+            chains_by_underlying={
+                "MSFT": {
+                    "MSFT260117C00400000": FakeOptionSnapshotRecord(
+                        latest_quote=FakeOptionQuoteRecord(bid_price=12.0, ask_price=12.6),
+                    )
+                }
+            }
+        )
+        alpaca_stock_client = FakeAlpacaStockClient(
+            trades_by_symbol={
+                "AAPL": FakeStockTradeRecord(price=195.5),
+                "MSFT": FakeStockTradeRecord(price=410.0),
+            }
+        )
+
+        options.collect_options_chains(
+            ticker_scope=["AAPL", "MSFT"],
+            _client=polygon_client,
+            _session_factory=sf,
+            _repo=FakeRunRepo(),
+            _alpaca_option_client=alpaca_option_client,
+            _alpaca_stock_client=alpaca_stock_client,
+        )
+
+        with sf() as sess:
+            rows = {r.contract_ticker: r for r in sess.query(OptionsContractSnapshots).all()}
+        assert len(rows) == 2
+        failed = rows["O:AAPL260117C00200000"]
+        assert (failed.bid, failed.ask, failed.last_price) == (None, None, None)
+        assert failed.source == "polygon"
+        # The batch-level spot still stamps the failed underlying's rows.
+        assert failed.underlying_price == pytest.approx(195.5)
+        merged = rows["O:MSFT260117C00400000"]
+        assert merged.bid == pytest.approx(12.0)
+        assert merged.ask == pytest.approx(12.6)
+        assert merged.underlying_price == pytest.approx(410.0)
+        assert merged.source == "polygon+alpaca"
+
+    def test_spot_fetch_failure_leaves_underlying_price_none_without_aborting(self) -> None:
+        """Raises ValueError — alpaca-py's unexpected-response-shape error —
+        which must degrade like any vendor failure, not abort the run."""
+        from alphamind.data_sources.polygon import options
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, ["AAPL"], [])
+
+        polygon_client = FakePolygonAPI(snapshots_by_underlying={"AAPL": [_quoteless_snapshot()]})
+        alpaca_option_client = FakeAlpacaOptionClient(
+            chains_by_underlying={
+                "AAPL": {
+                    "AAPL260117C00200000": FakeOptionSnapshotRecord(
+                        latest_quote=FakeOptionQuoteRecord(bid_price=5.0, ask_price=5.5),
+                    )
+                }
+            }
+        )
+
+        class _SpotFails(FakeAlpacaStockClient):
+            def get_stock_latest_trade(self, request_params: Any) -> dict[str, Any]:
+                raise ValueError("The data in response does not match any known keys.")
+
+        options.collect_options_chains(
+            ticker_scope=["AAPL"],
+            _client=polygon_client,
+            _session_factory=sf,
+            _repo=FakeRunRepo(),
+            _alpaca_option_client=alpaca_option_client,
+            _alpaca_stock_client=_SpotFails(),
+        )
+
+        with sf() as sess:
+            row = sess.query(OptionsContractSnapshots).one()
+        assert row.underlying_price is None
+        assert row.bid == pytest.approx(5.0)
+        assert row.source == "polygon+alpaca"
 
 
 # ---------------------------------------------------------------------------
