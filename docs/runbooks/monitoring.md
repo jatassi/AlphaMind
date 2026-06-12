@@ -72,7 +72,18 @@ curl -N http://127.0.0.1:8766/events
 | `fill_received` | A fill arrived from the trade-updates stream  |
 | `heartbeat`     | 15 s idle keep-alive                          |
 
-Watch this stream to see fills landing between invocations.
+> **`fill_received` does not fire in practice (observed 2026-06-12).** The emit
+> *is* composed (the fill-stream consumer's and backfill task's enrichment
+> callables are both wrapped, `continuous_monitor/control/wiring.py`), but the
+> wrapper's guard silently skips unless `order_id` + `position_id` +
+> `fill_price` + `fill_quantity` are all resolved on the record at that seam —
+> and across six fills on 2026-06-12 (a subscriber attached the whole time)
+> zero frames were published, while every fill persisted to `fill_records`
+> within ~100 ms. Until that's fixed, do **not** rely on this stream to watch
+> fills; use the § 5.9 watcher's `FILLS` leg (polls `fill_records`) or query
+> `fill_records` directly. The fill-append log lines are DEBUG-level, so
+> `monitor.log` silence proves nothing either — only the terminal order-status
+> events log at INFO.
 
 **What is *not* on this stream (and why).** The monitor's SSE emitter still
 *defines* `websocket_connected` / `websocket_disconnected` / `breach_detected` /
