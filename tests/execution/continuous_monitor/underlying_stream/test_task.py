@@ -153,14 +153,16 @@ class _FakeStream:
         self._run_started = asyncio.Event()
         self._stop_run = asyncio.Event()
 
-    def subscribe_quotes(self, handler: Callable[[Any], Awaitable[None]], *symbols: str) -> None:
+    async def subscribe_quotes(
+        self, handler: Callable[[Any], Awaitable[None]], *symbols: str
+    ) -> None:
         # alpaca-py uses the handler from the first ``subscribe_quotes`` call.
         if self._handler is None:
             self._handler = handler
         self.subscribed.update(symbols)
         self.subscribe_calls.append(tuple(symbols))
 
-    def unsubscribe_quotes(self, *symbols: str) -> None:
+    async def unsubscribe_quotes(self, *symbols: str) -> None:
         self.subscribed.difference_update(symbols)
         self.unsubscribe_calls.append(tuple(symbols))
 
@@ -193,16 +195,18 @@ class _FakeFactory:
     """Yields a fresh ``_FakeStream`` on each ``build`` call.
 
     Reconnect cycles create a new ``_FakeStream``; tests can inspect the
-    full sequence via ``streams``.
+    full sequence via ``streams``. ``stream_cls`` lets a test substitute a
+    misbehaving stream variant.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, stream_cls: type[_FakeStream] = _FakeStream) -> None:
         self.streams: list[_FakeStream] = []
         self.build_calls: list[str] = []  # mode tags for assertions
+        self._stream_cls = stream_cls
 
     def build(self, *, mode: str) -> _FakeStream:
         self.build_calls.append(mode)
-        stream = _FakeStream()
+        stream = self._stream_cls()
         self.streams.append(stream)
         return stream
 
@@ -422,6 +426,69 @@ class TestSubscriptionRediffOnCadence:
                 timeout=3.0,
             )
             assert any("AAPL" in call for call in stream.unsubscribe_calls)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+class TestFacadeTimeoutReconnect:
+    """ALP-946 — a facade ``TimeoutError`` on a diff delta rides the existing
+    budget-counted reconnect, and the rebuilt connection re-subscribes the
+    full target set (healing any half-applied subscription state)."""
+
+    async def test_timeout_on_subscribe_delta_reconnects_and_resubscribes_full_set(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        class _TimeoutOnDeltaStream(_FakeStream):
+            """Times out the AAPL delta; connect-time full-set calls succeed."""
+
+            async def subscribe_quotes(
+                self, handler: Callable[[Any], Awaitable[None]], *symbols: str
+            ) -> None:
+                if symbols == ("AAPL",):
+                    raise TimeoutError
+                await super().subscribe_quotes(handler, *symbols)
+
+        reader = _MutableReader(
+            (_equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),)
+        )
+        factory = _FakeFactory(stream_cls=_TimeoutOnDeltaStream)
+        cache = UnderlyingPriceCache()
+        task = asyncio.create_task(
+            run_underlying_stream(
+                _session(),
+                _config(subscription_refresh_seconds=1, max_reconnect_attempts=3),
+                repository=reader,
+                cache=cache,
+                factory=factory,
+            )
+        )
+        try:
+            await asyncio.wait_for(_eventually(lambda: bool(factory.streams)), timeout=1.0)
+            stream1 = factory.streams[0]
+            await asyncio.wait_for(
+                _eventually(lambda: stream1.subscribed == {"SPY"}),
+                timeout=1.0,
+            )
+            # A new position makes the next diff issue the fatal AAPL delta.
+            reader.set_positions(
+                (
+                    _equity_position(position_id=PositionId("p1"), ticker=Symbol("SPY")),
+                    _equity_position(position_id=PositionId("p2"), ticker=Symbol("AAPL")),
+                )
+            )
+            # The TimeoutError tears down connection 1 and a fresh stream is built.
+            await asyncio.wait_for(_eventually(lambda: len(factory.streams) >= 2), timeout=5.0)
+            stream2 = factory.streams[1]
+            # The rebuilt connection subscribes the FULL current target set at
+            # connect time — not just the failed delta.
+            await asyncio.wait_for(
+                _eventually(lambda: ("AAPL", "SPY") in stream2.subscribe_calls),
+                timeout=2.0,
+            )
+            # Budget-counted (not budget-neutral): the disconnect branch logged
+            # the remaining-attempts countdown, not the budget-neutral refresh.
+            assert any("reconnect attempts remaining" in rec.message for rec in caplog.records)
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)

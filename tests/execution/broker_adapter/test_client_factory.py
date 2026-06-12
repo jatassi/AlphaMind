@@ -174,10 +174,12 @@ def test_build_trading_client_returns_live_client_when_mode_live(
         assert "paper" not in str(base_url)
 
 
-def test_build_trading_stream_returns_stream_instance(
+def test_build_trading_stream_returns_bounded_facade_over_vendor_stream(
     monkeypatch: pytest.MonkeyPatch, venue: VenueConfig
 ) -> None:
+    """The factory hands out the async facade, never a bare vendor stream (ALP-946)."""
     from alphamind.execution.broker_adapter import AlpacaClientFactory
+    from alphamind.execution.broker_adapter.bounded_streams import BoundedTradingStream
 
     monkeypatch.setenv("ALPACA_PAPER_KEY", "paper-key")
     monkeypatch.setenv("ALPACA_PAPER_SECRET", "paper-secret")
@@ -185,7 +187,8 @@ def test_build_trading_stream_returns_stream_instance(
     factory = AlpacaClientFactory(venue, mode="paper")
     stream = factory.build_trading_stream()
 
-    assert isinstance(stream, TradingStream)
+    assert isinstance(stream, BoundedTradingStream)
+    assert isinstance(stream._stream, TradingStream)
 
 
 def test_build_corporate_actions_client_returns_paper_client(

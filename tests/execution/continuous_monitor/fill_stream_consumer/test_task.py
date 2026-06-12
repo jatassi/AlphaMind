@@ -182,7 +182,7 @@ class _FakeStream:
         self.handler: Any = None
         self.run_cancelled = False
 
-    def subscribe_trade_updates(self, handler: Any) -> None:
+    async def subscribe_trade_updates(self, handler: Any) -> None:
         self.handler = handler
 
     async def inject(self, update: TradeUpdate) -> None:

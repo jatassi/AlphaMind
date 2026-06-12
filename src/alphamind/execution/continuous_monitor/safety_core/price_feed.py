@@ -27,6 +27,7 @@ from alpaca.data.enums import DataFeed
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestQuoteRequest
 
+from alphamind.execution.broker_adapter import bounded_call
 from alphamind.execution.continuous_monitor.underlying_stream.cache import (
     UnderlyingPriceCache,
     UnderlyingQuote,
@@ -106,9 +107,9 @@ class AlpacaLatestQuoteFetcher:
 
     Wraps a ``StockHistoricalDataClient`` (IEX feed, sharing the trading
     credentials, socket-timeout installed by the client factory). The synchronous
-    SDK call runs off the event loop via :func:`asyncio.to_thread`, time-bounded
-    by :func:`asyncio.wait_for` so a hung socket never wedges the poll loop. The
-    keyed response is mapped through the pure :func:`_latest_quotes_to_underlying`.
+    SDK call runs off the event loop via :func:`bounded_call` so a hung socket
+    never wedges the poll loop. The keyed response is mapped through the pure
+    :func:`_latest_quotes_to_underlying`.
     """
 
     client: StockHistoricalDataClient
@@ -117,8 +118,7 @@ class AlpacaLatestQuoteFetcher:
     async def __call__(self, symbols: frozenset[str]) -> list[UnderlyingQuote]:
         ordered = sorted(symbols)
         request = StockLatestQuoteRequest(symbol_or_symbols=ordered, feed=self.feed)
-        response = await asyncio.wait_for(
-            asyncio.to_thread(self.client.get_stock_latest_quote, request),
-            timeout=_FETCH_TIMEOUT_SECONDS,
+        response = await bounded_call(
+            self.client.get_stock_latest_quote, request, timeout_seconds=_FETCH_TIMEOUT_SECONDS
         )
         return _latest_quotes_to_underlying(response, ordered)

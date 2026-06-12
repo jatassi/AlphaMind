@@ -40,13 +40,14 @@ import contextlib
 import logging
 import os
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 
 from alphamind._kernel.exception_group import first_non_cancelled
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.broker_adapter import StreamActivityMonitor, StreamStalledError
+from alphamind.execution.broker_adapter.bounded_streams import QuoteHandler
 from alphamind.execution.continuous_monitor.session import MonitorMode, MonitorSession
 from alphamind.execution.continuous_monitor.underlying_stream.cache import (
     UnderlyingPriceCache,
@@ -65,21 +66,22 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-QuoteHandler = Callable[[Any], Awaitable[None]]
-
-
 @runtime_checkable
 class StockDataStreamProtocol(Protocol):
-    """Subset of ``alpaca.data.live.stock.StockDataStream`` this task uses.
+    """Async surface of the bounded stock-stream facade this task uses.
 
     Defined as a Protocol so the test suite can swap a fake without
-    inheriting from alpaca-py's network-touching class. The runtime real
-    object satisfies this surface by construction.
+    inheriting from alpaca-py's network-touching class. The runtime object
+    is a :class:`~alphamind.execution.broker_adapter.bounded_streams.BoundedStockDataStream`
+    wrapping the vendor stream. The mutators are ``async`` by contract
+    (ALP-946): alpaca-py's bare sync mutators are loop-affined — calling one
+    on the stream's own loop thread self-deadlocks the whole process loop —
+    so the seam only admits the bounded off-thread form.
     """
 
-    def subscribe_quotes(self, handler: QuoteHandler, *symbols: str) -> None: ...
+    async def subscribe_quotes(self, handler: QuoteHandler, *symbols: str) -> None: ...
 
-    def unsubscribe_quotes(self, *symbols: str) -> None: ...
+    async def unsubscribe_quotes(self, *symbols: str) -> None: ...
 
     async def _run_forever(self) -> None: ...
 
@@ -118,6 +120,8 @@ class DefaultAlpacaStreamFactory:
         from alpaca.data.enums import DataFeed
         from alpaca.data.live.stock import StockDataStream
 
+        from alphamind.execution.broker_adapter.bounded_streams import BoundedStockDataStream
+
         if mode == "live":
             key_env, secret_env = "ALPACA_LIVE_KEY", "ALPACA_LIVE_SECRET"
         else:
@@ -131,10 +135,12 @@ class DefaultAlpacaStreamFactory:
                 f"{missing} are unset or empty"
             )
             raise RuntimeError(msg)
-        return StockDataStream(
-            api_key=api_key,
-            secret_key=api_secret,
-            feed=DataFeed.IEX,
+        return BoundedStockDataStream(
+            StockDataStream(
+                api_key=api_key,
+                secret_key=api_secret,
+                feed=DataFeed.IEX,
+            )
         )
 
 
@@ -321,11 +327,12 @@ async def _run_one_connection(  # noqa: PLR0913 — internal plumbing; each para
     # Subscribe to the initial target set.
     current: frozenset[str] = await compute_target_underlyings(repository)
     if current:
-        stream.subscribe_quotes(_handler, *sorted(current))
+        await stream.subscribe_quotes(_handler, *sorted(current))
     else:
-        # ``subscribe_quotes`` with no symbols still registers the handler so
-        # late-arriving subscribe calls reuse it.
-        stream.subscribe_quotes(_handler)
+        # With no symbols the vendor registers nothing; ``_run_forever`` then
+        # waits (by design) until the first diff delta registers a symbol, at
+        # which point its connect-time subscribe message carries the full set.
+        await stream.subscribe_quotes(_handler)
 
     # ``_run_forever`` is alpaca-py's documented async entry point — the
     # underscore-prefixed name is the library's own convention, not a
@@ -417,9 +424,9 @@ async def _periodic_subscription_diff(
         added = target - live
         removed = live - target
         if added:
-            stream.subscribe_quotes(handler, *sorted(added))
+            await stream.subscribe_quotes(handler, *sorted(added))
         if removed:
-            stream.unsubscribe_quotes(*sorted(removed))
+            await stream.unsubscribe_quotes(*sorted(removed))
         live = set(target)
 
 
