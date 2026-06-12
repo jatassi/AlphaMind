@@ -50,6 +50,20 @@ failure. A frozen loop also self-captures its blocking frame: the faulthandler
 deadman dumps the frozen stack to `monitor_faulthandler.log` before the restart
 lands. The same-account rule applies to this watchdog too.
 
+**Collector's Alpaca market-data dependency (ALP-949).** The
+`alphamind-collector`'s `polygon.options` task merges Alpaca market data into
+every chain snapshot at collection time: per-underlying option NBBO quotes
+from Alpaca's free **indicative** options feed (bid/ask/last) plus one
+multi-symbol **IEX** latest-trade call for the underlying spot — the Polygon
+plan withholds those fields (greeks/open interest stay Polygon-sourced).
+Credentials are `ALPACA_PAPER_KEY` / `ALPACA_PAPER_SECRET` from `.env`.
+**Degraded mode:** any Alpaca failure (missing credentials, API or transport
+error) never aborts the task — it still writes that scope's rows
+Polygon-only (`source` `polygon`, quote columns NULL), logged as warnings in
+`collector.log`. A per-underlying chain-fetch failure degrades only that
+underlying; a failed batch spot fetch leaves `underlying_price` NULL for the
+run. Rows written with `source` `polygon+alpaca` confirm the merge is live.
+
 Logs land under `%USERPROFILE%\AlphaMind\logs\`. DB is
 `%USERPROFILE%\AlphaMind\data\alphamind.db`. Invocation archives land under
 `%USERPROFILE%\AlphaMind\archive\<YYYY-MM-DD>\<invocation_id>\`.
