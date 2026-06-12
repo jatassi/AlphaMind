@@ -22,6 +22,7 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.stream import TradingStream
 
 from alphamind.config.models.venue import AlpacaCredentials, VenueConfig
+from alphamind.execution.broker_adapter.bounded_streams import BoundedTradingStream
 
 ExecutionMode = Literal["paper", "live"]
 
@@ -127,13 +128,20 @@ class AlpacaClientFactory:
         _install_socket_timeout(client)
         return client
 
-    def build_trading_stream(self) -> TradingStream:
-        """Return a fresh ``TradingStream`` bound to the resolved credentials."""
-        return TradingStream(
-            api_key=self._credentials.api_key,
-            secret_key=self._credentials.api_secret,
-            paper=(self._credentials.mode == "paper"),
-            url_override=self._credentials.ws_url,
+    def build_trading_stream(self) -> BoundedTradingStream:
+        """Return a fresh ``TradingStream`` wrapped in the async facade.
+
+        The vendor stream's ``subscribe_trade_updates`` is a loop-affined sync
+        API (ALP-946); the facade is the only surface handed out so no caller
+        can issue the bare blocking call on the event loop.
+        """
+        return BoundedTradingStream(
+            TradingStream(
+                api_key=self._credentials.api_key,
+                secret_key=self._credentials.api_secret,
+                paper=(self._credentials.mode == "paper"),
+                url_override=self._credentials.ws_url,
+            )
         )
 
     def build_stock_data_client(self) -> StockHistoricalDataClient:

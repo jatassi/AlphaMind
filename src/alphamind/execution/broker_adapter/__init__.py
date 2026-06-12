@@ -25,6 +25,7 @@ Subsequent wave-3 stories ship in parallel; see the parent issue
 (`ALP-121 <https://linear.app/alphamind-jatassi/issue/ALP-121>`_).
 """
 
+from alphamind.execution.broker_adapter.bounded_streams import bounded_call
 from alphamind.execution.broker_adapter.client_factory import (
     AlpacaClientFactory,
     ExecutionMode,
@@ -150,6 +151,7 @@ __all__ = [
     "Submitted",
     "TouchQuote",
     "TradeAccountSnapshot",
+    "bounded_call",
     "build_occ_symbol",
     "classify_alpaca_error",
     "derive_capital_floor_client_order_id",

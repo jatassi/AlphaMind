@@ -321,13 +321,18 @@ def _coerce_float(value: object) -> float:
 
 
 class _SubscribableStream(Protocol):
-    """Subset of ``alpaca.trading.stream.TradingStream`` we depend on.
+    """Async surface of the bounded trading-stream facade we depend on.
 
     Defined as a protocol so the test suite can swap a fake without inheriting
-    from the real (network-touching) class.
+    from the real (network-touching) class. The runtime object is a
+    :class:`~alphamind.execution.broker_adapter.bounded_streams.BoundedTradingStream`
+    wrapping the vendor stream. ``subscribe_trade_updates`` is ``async`` by
+    contract (ALP-946): alpaca-py's bare sync mutator is loop-affined —
+    calling it on the stream's own loop thread self-deadlocks the process
+    loop — so the seam only admits the bounded off-thread form.
     """
 
-    def subscribe_trade_updates(self, handler: Any) -> None: ...
+    async def subscribe_trade_updates(self, handler: Any) -> None: ...
 
     async def _run_forever(self) -> None: ...
 
@@ -378,7 +383,7 @@ async def subscribe_trade_updates(
     async def _handler(update: TradeUpdate) -> None:
         await queue.put(update)
 
-    stream.subscribe_trade_updates(_handler)
+    await stream.subscribe_trade_updates(_handler)
     # ``asyncio.TaskGroup`` is incompatible with async-generator cleanup:
     # ``gen.aclose()`` injects ``GeneratorExit`` into the body, which a
     # surrounding ``async with TaskGroup()`` re-raises as

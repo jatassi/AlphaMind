@@ -445,7 +445,7 @@ class _FakeStream:
         self.run_cancelled = False
         self._park = asyncio.Event()
 
-    def subscribe_trade_updates(self, handler: Any) -> None:
+    async def subscribe_trade_updates(self, handler: Any) -> None:
         self.handler = handler
 
     async def inject(self, update: TradeUpdate) -> None:
@@ -594,7 +594,7 @@ class TestSubscribeTradeUpdates:
         """
 
         class _ErrorStream:
-            def subscribe_trade_updates(self, handler: Any) -> None:
+            async def subscribe_trade_updates(self, handler: Any) -> None:
                 pass  # no real events — the error fires before any arrive
 
             async def _run_forever(self) -> None:
@@ -624,7 +624,7 @@ class TestSubscribeTradeUpdates:
         """
 
         class _CleanStream:
-            def subscribe_trade_updates(self, handler: Any) -> None:
+            async def subscribe_trade_updates(self, handler: Any) -> None:
                 pass
 
             async def _run_forever(self) -> None:

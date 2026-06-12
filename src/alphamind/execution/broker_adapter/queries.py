@@ -15,10 +15,9 @@ async generators so callers can stop early without fetching every page.
 
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 import functools
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator
 from decimal import Decimal
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
@@ -46,6 +45,7 @@ from alpaca.trading.requests import (
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from alphamind._kernel.money import Money, Price, money, price, signed_money
+from alphamind.execution.broker_adapter.bounded_streams import bounded_call
 
 _ET = ZoneInfo("America/New_York")
 
@@ -73,24 +73,6 @@ _ACTIVITIES_PAGE_SIZE = 100
 # round-trip yet short enough that a sweep iteration retries on the next
 # interval rather than wedging.
 _REST_TIMEOUT_SECONDS = 30.0
-
-
-async def _rest_call[T](fn: Callable[[], T]) -> T:
-    """Run a synchronous Alpaca REST call off the event loop, time-bounded.
-
-    The paginating query generators (:meth:`AccountStateQueries.get_orders`,
-    :meth:`~AccountStateQueries.get_account_activities`) are consumed from the
-    continuous monitor's recovery sweep and the account-activities poll — both
-    on an event loop shared with the fill stream and (pre-isolation) the safety
-    watchdog. alpaca-py is synchronous, so calling it inline would block that
-    loop for the full network round-trip; a *hung* call would freeze it
-    indefinitely (ALP-841). Offloading to a worker thread keeps the loop
-    running, and the :func:`asyncio.wait_for` bound guarantees the await resolves
-    within :data:`_REST_TIMEOUT_SECONDS` even if the socket never returns —
-    raising :class:`TimeoutError`, which the adapter's error classifier treats as
-    transient so the sweep retries on its next interval.
-    """
-    return await asyncio.wait_for(asyncio.to_thread(fn), timeout=_REST_TIMEOUT_SECONDS)
 
 
 # ---------------------------------------------------------------------------
@@ -545,7 +527,10 @@ class AccountStateQueries:
             # a hung connection must not freeze the loop (ALP-841). ``partial``
             # binds this page's request by value (the call is awaited before the
             # next iteration rebinds ``req``).
-            page_result = await _rest_call(functools.partial(self._client.get_orders, filter=req))
+            page_result = await bounded_call(
+                functools.partial(self._client.get_orders, filter=req),
+                timeout_seconds=_REST_TIMEOUT_SECONDS,
+            )
             if not isinstance(page_result, list) or not page_result:
                 break
             page: list[Order] = page_result
@@ -587,8 +572,9 @@ class AccountStateQueries:
             # a hung connection must not freeze the loop (ALP-841). ``partial``
             # binds this page's params by value (the call is awaited before the
             # next iteration mutates them).
-            result = await _rest_call(
-                functools.partial(self._client.get, "/account/activities", params)
+            result = await bounded_call(
+                functools.partial(self._client.get, "/account/activities", params),
+                timeout_seconds=_REST_TIMEOUT_SECONDS,
             )
             if not isinstance(result, list) or not result:
                 break
