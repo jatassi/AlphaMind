@@ -218,7 +218,10 @@ def _build_rows(
     never delivers them, so Alpaca always fills; precedence stays correct
     under a future plan upgrade). ``alpaca_quotes=None`` means the Alpaca
     chain fetch failed — the snapshot ``source`` then stays ``polygon``
-    instead of ``polygon+alpaca``.
+    instead of ``polygon+alpaca``. ``source`` records that the merge ran
+    for the underlying, not that a given row carries Alpaca data — a
+    contract absent from the Alpaca chain keeps NULL quote columns under
+    ``source`` ``polygon+alpaca``.
     """
     snapshot_source = "polygon" if alpaca_quotes is None else "polygon+alpaca"
     quote_lookup: Mapping[str, OptionQuote] = alpaca_quotes or {}
