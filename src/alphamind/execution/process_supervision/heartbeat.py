@@ -63,7 +63,11 @@ class FileHeartbeatSink:
         which Windows denies (``PermissionError``) while the watchdog's
         :class:`FileHeartbeatProbe` holds the file open for its concurrent read
         (ALP-951). A probe read landing inside the truncate-write window sees an
-        empty file, which :meth:`FileHeartbeatProbe.age` reports as ``None``.
+        empty file, which :meth:`FileHeartbeatProbe.age` reports as ``None``. The
+        timestamp itself lands in one small buffered ``write``, which concurrent
+        reads observe all-or-nothing on both platforms — empty is the only
+        intermediate state a probe can see, never a torn numeric prefix (which
+        could parse as an ancient epoch and trip a false restart).
         """
         self._path.write_text(repr(self._now()), encoding="utf-8")
 
