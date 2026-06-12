@@ -129,7 +129,10 @@ that, tail its `.err.log` immediately.
 
 The `.out.log` files are empty by design — every daemon logs to stderr — so the
 startup signal lives in the `.err.log` files and the monitor's dedicated
-`monitor.log`. Shutdown residue from § 1.4 is expected at the tails: a
+`monitor.log`. (One exception: the collector also mirrors apscheduler INFO
+chatter to `collector.out.log`, unrotated and hundreds of MB — ignore it; the
+collector's startup signal is the `scheduler startup` / `collector scheduler
+starting` lines in its dedicated `collector.log`.) Shutdown residue from § 1.4 is expected at the tails: a
 `KeyboardInterrupt` traceback in the collector/safety-core/watchdog `.err.log`s,
 and a cancelled websocket-connect `TimeoutError` in `monitor.err.log`. A
 traceback only matters if it is timestamped **after** the § 1.6 starts.
