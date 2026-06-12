@@ -14,8 +14,12 @@ not ``time.monotonic()`` — a monotonic clock is per-process and meaningless to
 separate watchdog process. Both processes read the same wall clock, so age is
 comparable across the boundary.
 
-The write is atomic (write-temp + ``os.replace``) so a watchdog reading
-concurrently never observes a half-written or empty file.
+The beat is a single in-place write to the heartbeat path. Renaming onto the
+path is not an option: Windows denies it while the watchdog probe holds the
+file open for its concurrent read (ALP-951). The liveness contract is
+per-write freshness with read-side tolerance — a probe read landing inside
+the writer's truncate-write window sees an empty file and reports ``None``,
+which the watchdog treats as one missed probe, never a restart trigger.
 """
 
 from __future__ import annotations
@@ -39,7 +43,7 @@ class HeartbeatSink(Protocol):
 
 
 class FileHeartbeatSink:
-    """Writes the supervised process's latest beat timestamp to a file (atomically)."""
+    """Writes the supervised process's latest beat timestamp to a file (in place)."""
 
     def __init__(self, *, path: Path, clock: Callable[[], float] = time.time) -> None:
         # ``clock`` is the injected wall-clock port (default ``time.time``); tests
@@ -55,13 +59,13 @@ class FileHeartbeatSink:
     def beat(self) -> None:
         """Record the current timestamp as the latest heartbeat.
 
-        Atomic: writes to a sibling ``*.tmp`` then ``os.replace`` onto the real
-        path, so a concurrent :class:`FileHeartbeatProbe` read never sees a
-        torn or empty file.
+        A single in-place write to the heartbeat path — never a rename onto it,
+        which Windows denies (``PermissionError``) while the watchdog's
+        :class:`FileHeartbeatProbe` holds the file open for its concurrent read
+        (ALP-951). A probe read landing inside the truncate-write window sees an
+        empty file, which :meth:`FileHeartbeatProbe.age` reports as ``None``.
         """
-        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp.write_text(repr(self._now()), encoding="utf-8")
-        tmp.replace(self._path)
+        self._path.write_text(repr(self._now()), encoding="utf-8")
 
 
 class FileHeartbeatProbe:
@@ -75,11 +79,12 @@ class FileHeartbeatProbe:
 
         ``None`` means the heartbeat file does not exist yet (the supervised
         process has not started / not yet written one) — the watchdog treats
-        that as startup grace, not a wedge. A transiently unreadable file (e.g.
-        Windows briefly locking it around the writer's ``os.replace``) or a
-        malformed one (hand-corrupted) also reads as ``None`` so a single bad
-        read never trips a false restart — and never crashes the watchdog,
-        which must outlive any single probe failure to keep supervising.
+        that as startup grace, not a wedge. A transiently unreadable file
+        (e.g. an antivirus scan holding it), an empty one (a read landing
+        inside the writer's in-place truncate-write window), or a malformed
+        one (hand-corrupted) also reads as ``None`` so a single bad read never
+        trips a false restart — and never crashes the watchdog, which must
+        outlive any single probe failure to keep supervising.
         """
         try:
             raw = self._path.read_text(encoding="utf-8")
