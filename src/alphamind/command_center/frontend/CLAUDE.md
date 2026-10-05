@@ -21,7 +21,7 @@ bun run build               # tsc -b && vite build → dist/ (consumed by FastAP
 bun run generate-types      # openapi-typescript: /openapi.json → src/api/openapi.d.ts
 ```
 
-Config: `eslint.config.js`, `.prettierrc`. Rules mirror `~/Git/SlipStream/web/`: max-lines
+Config: `eslint.config.js`, `.prettierrc`. Rules mirror `~/Git/SlipStream-v1/web/`: max-lines
 350, max-lines-per-function 50, max-depth 3, max-params 3, complexity 10, no TS enums (use
 `as const`), kebab-case filenames. Never disable a rule without alerting the operator.
 
