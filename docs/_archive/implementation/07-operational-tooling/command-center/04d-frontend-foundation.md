@@ -14,7 +14,7 @@ Wants Opus despite the mechanical-feeling scaffolding surface — the TanStack R
 * `src/alphamind/command_center/auth/routes.py` (from [ALP-667](https://linear.app/alphamind-jatassi/issue/ALP-667/03-webauthn-sessions-csrf)) — `/auth/*` endpoints the registration + login UI calls.
 * `src/alphamind/command_center/app.py` (from [ALP-666](https://linear.app/alphamind-jatassi/issue/ALP-666/02-command-center-backend-foundation)) — where the `StaticFiles` mount registers.
 * `src/alphamind/command_center/frontend/eslint.config.js` and `.prettierrc` (from [ALP-688](https://linear.app/alphamind-jatassi/issue/ALP-688/04c-frontend-lint-formatter-setup-mirror-slipstream)) — the lint + format rules every file added here must satisfy.
-* `~/Git/SlipStream-v1/web/` — the canonical React + Vite + TanStack + bun project structure this work tree mirrors (lint config already mirrored by 04c; this story mirrors the project layout + dep choices).
+* `~/Developer/SlipStream-v1/web/` — the canonical React + Vite + TanStack + bun project structure this work tree mirrors (lint config already mirrored by 04c; this story mirrors the project layout + dep choices).
 
 ## Depends on
 

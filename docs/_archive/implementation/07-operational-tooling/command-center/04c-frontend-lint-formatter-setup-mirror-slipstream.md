@@ -2,16 +2,16 @@
 
 ## Goal
 
-Land the TypeScript / React lint + formatter configuration **before any TypeScript source file is written** in this work tree, so the frontend foundation story (04d) and every subsequent view story is constrained by the rules from day one. Mirror the canonical setup from the operator's `~/Git/SlipStream-v1/web/` project verbatim — same **bun** runtime + toolchain, same ESLint 9 flat config, same Prettier 3 config, same dev-dep floor versions, same `lint` / `lint:fix` / `format` / `format:check` scripts. Update `CLAUDE.md` with a frontend-linting section mirroring the existing Python-linting block so subsequent agents know to run the linter after every batch of TS changes.
+Land the TypeScript / React lint + formatter configuration **before any TypeScript source file is written** in this work tree, so the frontend foundation story (04d) and every subsequent view story is constrained by the rules from day one. Mirror the canonical setup from the operator's `~/Developer/SlipStream-v1/web/` project verbatim — same **bun** runtime + toolchain, same ESLint 9 flat config, same Prettier 3 config, same dev-dep floor versions, same `lint` / `lint:fix` / `format` / `format:check` scripts. Update `CLAUDE.md` with a frontend-linting section mirroring the existing Python-linting block so subsequent agents know to run the linter after every batch of TS changes.
 
 ## Reading
 
-* `~/Git/SlipStream-v1/web/package.json` — canonical dev-dep list + scripts to copy.
-* `~/Git/SlipStream-v1/web/bun.lock` — canonical lockfile shape (bun, not npm).
-* `~/Git/SlipStream-v1/web/eslint.config.js` — full ESLint flat config (typescript-eslint strict + react + react-hooks + react-refresh + jsx-a11y + unicorn + simple-import-sort + import-x + prettier-config) with the SlipStream rule customizations (max-lines 350, max-lines-per-function 50, max-depth 3, max-params 3, complexity 10, banned TS enums, kebab-case filename enforcement, etc.).
-* `~/Git/SlipStream-v1/web/.prettierrc` — Prettier 3 config with `prettier-plugin-tailwindcss`.
-* `~/Git/SlipStream-v1/web/.prettierignore` — `dist`.
-* `~/Git/SlipStream-v1/web/tsconfig.app.json` — referenced by `eslint.config.js`'s `import-x/resolver` settings; copy structure but adapt paths for this project.
+* `~/Developer/SlipStream-v1/web/package.json` — canonical dev-dep list + scripts to copy.
+* `~/Developer/SlipStream-v1/web/bun.lock` — canonical lockfile shape (bun, not npm).
+* `~/Developer/SlipStream-v1/web/eslint.config.js` — full ESLint flat config (typescript-eslint strict + react + react-hooks + react-refresh + jsx-a11y + unicorn + simple-import-sort + import-x + prettier-config) with the SlipStream rule customizations (max-lines 350, max-lines-per-function 50, max-depth 3, max-params 3, complexity 10, banned TS enums, kebab-case filename enforcement, etc.).
+* `~/Developer/SlipStream-v1/web/.prettierrc` — Prettier 3 config with `prettier-plugin-tailwindcss`.
+* `~/Developer/SlipStream-v1/web/.prettierignore` — `dist`.
+* `~/Developer/SlipStream-v1/web/tsconfig.app.json` — referenced by `eslint.config.js`'s `import-x/resolver` settings; copy structure but adapt paths for this project.
 * `CLAUDE.md` § Linting (project root) — existing Python linting block this story mirrors for the frontend.
 
 ## Depends on
@@ -54,13 +54,13 @@ Create `src/alphamind/command_center/frontend/package.json` containing:
 
 ### 3\. ESLint flat config
 
-Copy `~/Git/SlipStream-v1/web/eslint.config.js` to `src/alphamind/command_center/frontend/eslint.config.js` **verbatim** — same imports, same `defineConfig([globalIgnores(['dist']), ...])`, same `extends`, same `rules` block (the SlipStream rule customizations are intentional and the operator wants identical enforcement across both projects).
+Copy `~/Developer/SlipStream-v1/web/eslint.config.js` to `src/alphamind/command_center/frontend/eslint.config.js` **verbatim** — same imports, same `defineConfig([globalIgnores(['dist']), ...])`, same `extends`, same `rules` block (the SlipStream rule customizations are intentional and the operator wants identical enforcement across both projects).
 
 Only allowed deviation: the `import-x/resolver` `project` path — if 04d's `tsconfig.app.json` lives at a different location relative to `eslint.config.js` than SlipStream's does, adjust the path string to point at the correct location.
 
 ### 4\. Prettier config
 
-Copy `~/Git/SlipStream-v1/web/.prettierrc` and `~/Git/SlipStream-v1/web/.prettierignore` verbatim to `src/alphamind/command_center/frontend/.prettierrc` and `.prettierignore`. No deviations.
+Copy `~/Developer/SlipStream-v1/web/.prettierrc` and `~/Developer/SlipStream-v1/web/.prettierignore` verbatim to `src/alphamind/command_center/frontend/.prettierrc` and `.prettierignore`. No deviations.
 
 ### 5\. Minimal `tsconfig.app.json`
 
@@ -84,7 +84,7 @@ bun run lint                # ESLint 9 flat config — must exit zero
 bun run format:check        # Prettier 3 — must exit zero (use `bun run format` to autofix)
 `​`​`
 
-Config files are `eslint.config.js` and `.prettierrc`, mirrored verbatim from `~/Git/SlipStream-v1/web/`.
+Config files are `eslint.config.js` and `.prettierrc`, mirrored verbatim from `~/Developer/SlipStream-v1/web/`.
 Same rule customizations apply (max-lines 350, max-lines-per-function 50, max-depth 3, max-params 3,
 complexity 10, banned TS enums in favor of `as const` objects, kebab-case filenames). The alert
 discipline from the Python side carries over: never disable a rule (via `// eslint-disable-*` or
@@ -106,9 +106,9 @@ Add a new GitHub Actions job under `.github/workflows/ci.yml` (or a new file und
 
 ## Acceptance criteria
 
-- [ ] `src/alphamind/command_center/frontend/package.json` exists with the exact devDependencies list from `~/Git/SlipStream-v1/web/package.json` and the four lint / format scripts (`lint`, `lint:fix`, `format`, `format:check`).
+- [ ] `src/alphamind/command_center/frontend/package.json` exists with the exact devDependencies list from `~/Developer/SlipStream-v1/web/package.json` and the four lint / format scripts (`lint`, `lint:fix`, `format`, `format:check`).
 - [ ] `src/alphamind/command_center/frontend/bun.lock` exists (generated by `bun install`); no `package-lock.json` is committed.
-- [ ] `src/alphamind/command_center/frontend/eslint.config.js` is byte-identical to `~/Git/SlipStream-v1/web/eslint.config.js` modulo the `import-x/resolver` `project` path field.
+- [ ] `src/alphamind/command_center/frontend/eslint.config.js` is byte-identical to `~/Developer/SlipStream-v1/web/eslint.config.js` modulo the `import-x/resolver` `project` path field.
 - [ ] `src/alphamind/command_center/frontend/.prettierrc` and `.prettierignore` are byte-identical to SlipStream's copies.
 - [ ] `src/alphamind/command_center/frontend/tsconfig.app.json` + `tsconfig.json` exist as stubs sufficient for `bun run lint` to load without error.
 - [ ] `cd src/alphamind/command_center/frontend && bun install --frozen-lockfile && bun run lint && bun run format:check` exits zero against an empty `src/` (or a `src/` containing only a `.gitkeep`).

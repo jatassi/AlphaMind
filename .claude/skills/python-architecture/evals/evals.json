@@ -4,14 +4,14 @@
     {
       "id": 0,
       "name": "audit-distillation",
-      "prompt": "Audit the alphamind.distillation subpackage at /Users/jatassi/Git/AlphaMind/src/alphamind/distillation. Scope: a medium-depth audit (~30 min worth) of layout, data modelling, runtime concerns, and testing. The pipeline is meant to take typed vendor data out of the data layer and produce distilled features for the analysis layer. Don't re-litigate the choice of SQLite or APScheduler. Produce findings ordered by what to tackle first.",
+      "prompt": "Audit the alphamind.distillation subpackage at /Users/jatassi/Developer/AlphaMind/src/alphamind/distillation. Scope: a medium-depth audit (~30 min worth) of layout, data modelling, runtime concerns, and testing. The pipeline is meant to take typed vendor data out of the data layer and produce distilled features for the analysis layer. Don't re-litigate the choice of SQLite or APScheduler. Produce findings ordered by what to tackle first.",
       "expected_output": "An audit_report.md following the audit_report_template.md scaffold: scoped, scripts-run summary, findings grouped by load-bearing / high-yield / worth-knowing, each finding with what / where / why / fix and citing a P-principle or reference thesis, ending with an ordered punch list.",
       "files": []
     },
     {
       "id": 1,
       "name": "audit-buggy-fixture",
-      "prompt": "Audit the codebase at /Users/jatassi/Git/AlphaMind/.claude/skills/python-architecture/evals/fixtures/buggy_app/src/buggy_app. Produce findings ordered by severity. This is for a small internal tool, sync, no external concurrency. The codebase has known issues — find them.",
+      "prompt": "Audit the codebase at /Users/jatassi/Developer/AlphaMind/.claude/skills/python-architecture/evals/fixtures/buggy_app/src/buggy_app. Produce findings ordered by severity. This is for a small internal tool, sync, no external concurrency. The codebase has known issues — find them.",
       "expected_output": "An audit_report.md that finds the planted antipatterns: mutable dataclass (L8), naive datetime (L11), float for money (L12), Pydantic for internal domain object (L9), broad except (L4), star import (L5), mutable default arg (L3), httpx without timeout (L17), create_task without TaskGroup (L16), free-text fstring log (L20), print in non-CLI code (L25), the cycle between core.orders and storage.repo, the god module core/risk.py.",
       "files": []
     },

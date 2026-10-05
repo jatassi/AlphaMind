@@ -10,7 +10,7 @@ This story is the gate: after it lands, the parent issue <issue id="596c36c6-62e
 
 * `audit-alphamind-2026-05-12.html` — the audit this work tree implements; verification criteria across the load-bearing findings
 * Every other story in this work tree (01a–12b)
-* `.claude/projects/-Users-jatassi-Git-AlphaMind/memory/feedback_prompt_output_format_compat.md` — memory entry to update
+* `.claude/projects/-Users-jatassi-Developer-AlphaMind/memory/feedback_prompt_output_format_compat.md` — memory entry to update
 * `docs/project-tracker.md` — tracker to update
 
 ## Depends on
@@ -43,7 +43,7 @@ Author a one-page audit summary at `docs/audit-summary-2026-05-12.md` capturing 
 
 ### 3\. Memory hygiene (folded in from former story 12c)
 
-Update `/Users/jatassi/.claude/projects/-Users-jatassi-Git-AlphaMind/memory/feedback_prompt_output_format_compat.md`:
+Update `/Users/jatassi/.claude/projects/-Users-jatassi-Developer-AlphaMind/memory/feedback_prompt_output_format_compat.md`:
 
 * Remove the residual "pm.md still carries it" line (the audit verified it was already resolved at `prompts/decision/pm.md:121`).
 * Mark the entry as historical / resolved per the audit's W7 finding.

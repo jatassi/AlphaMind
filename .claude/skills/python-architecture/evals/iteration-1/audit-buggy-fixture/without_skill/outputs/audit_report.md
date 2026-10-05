@@ -1,7 +1,7 @@
 # Codebase Audit Report: buggy_app
 
 **Audit Date:** 2026-05-06  
-**Scope:** `/Users/jatassi/Git/AlphaMind/.claude/skills/python-architecture/evals/fixtures/buggy_app/src/buggy_app`  
+**Scope:** `/Users/jatassi/Developer/AlphaMind/.claude/skills/python-architecture/evals/fixtures/buggy_app/src/buggy_app`  
 **Context:** Small internal tool, sync execution, no external concurrency expected.
 
 ---

@@ -9,7 +9,7 @@ allow = [
 ]
 
 [paths]
-extra_skill_dirs = ["/Users/jatassi/Git/AlphaMind/.claude/skills"]
+extra_skill_dirs = ["/Users/jatassi/Developer/AlphaMind/.claude/skills"]
 
 [mcp_servers.shadcn]
 command = "npx"

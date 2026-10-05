@@ -84,11 +84,11 @@ The protocol is `async` (not sync) to match the SDK's `@tool` registration patte
 
 The deliberately narrow output shape is the design's anti-overspending lever. The synthesizer asks the portfolio "do my upstream signals matter to my book?" — answering that needs ticker, direction, sector, size, age, exposure totals. P/L, recent activity, thesis component status, all the rich detail the strategist and PM consume, would just bloat the synthesizer's context and invite the LLM to do strategist-style reasoning that is not its job.
 
-Per [`feedback_no_inventing_component_names.md`](../../../../.claude/projects/-Users-jatassi-Git-AlphaMind/memory/feedback_no_inventing_component_names.md), `PortfolioStateReader` is the named protocol; downstream stories cite it. `StubPortfolioStateReader` is the test fixture; the production implementation can name itself whatever fits its location (e.g., `SqlitePortfolioStateReader` under `alphamind.persistence`).
+Per [`feedback_no_inventing_component_names.md`](../../../../.claude/projects/-Users-jatassi-Developer-AlphaMind/memory/feedback_no_inventing_component_names.md), `PortfolioStateReader` is the named protocol; downstream stories cite it. `StubPortfolioStateReader` is the test fixture; the production implementation can name itself whatever fits its location (e.g., `SqlitePortfolioStateReader` under `alphamind.persistence`).
 
 The `Sector` import: this story imports from `alphamind.analysis.domain_researchers.models`. Cross-package import within the analysis layer is fine — both packages live under `alphamind.analysis`. If the import order ever becomes circular (e.g., domain-researchers eventually wanting to import from synthesizer), refactor `Sector` into `alphamind.analysis._common` rather than duplicating it.
 
-Per [`feedback_avoid_numeric_anchors.md`](../../../../.claude/projects/-Users-jatassi-Git-AlphaMind/memory/feedback_avoid_numeric_anchors.md), the field docstrings should NOT impose numeric thresholds like "size_pct above 5% is a large position." Those are downstream interpretive concerns; the protocol carries the data, not the judgment.
+Per [`feedback_avoid_numeric_anchors.md`](../../../../.claude/projects/-Users-jatassi-Developer-AlphaMind/memory/feedback_avoid_numeric_anchors.md), the field docstrings should NOT impose numeric thresholds like "size_pct above 5% is a large position." Those are downstream interpretive concerns; the protocol carries the data, not the judgment.
 
 ## Acceptance criteria
 
